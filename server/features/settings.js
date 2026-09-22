@@ -6,6 +6,7 @@ import { loadSeriesPrefixes, invalidateSeriesCache, normalizePrefix, describeSer
 import { isValidBranchCode } from '../lib/branchCode.js';
 import { isValidTimeZone, setBusinessTimeZone, businessTimeZone } from '../lib/businessTime.js';
 import { moduleStates, MODULE_KEYS, truthy } from '../lib/optionalModules.js';
+import { cleanPrivacyContact } from '../lib/privacyContact.js';
 
 export default function registerSettings(ctx) {
   const {
@@ -248,6 +249,16 @@ app.get('/api/settings/public', async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
+// PUBLIC, no session - the Privacy Notice and Terms must be readable by the
+// customer scanning a table QR, before any account exists. Only the contact
+// block the business chose to publish is returned.
+app.get('/api/settings/privacy', async (req, res) => {
+  try {
+    const row = await Settings.findOne({ key: 'privacyContact' }).lean();
+    res.json({ success: true, privacy: cleanPrivacyContact(row?.value).value || {} });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 // Which optional accounting modules this business uses. Read by the sidebar so
 // a module that is off does not appear at all - a screen that posts into books
 // nobody reads is worse than no screen.
@@ -478,6 +489,18 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
       invalidateBranchCodeCache();
       emitToAll('settingsUpdated', { key: 'branchCode', value: code });
       return res.json({ success: true, setting: saved });
+    }
+
+    // Who customers and staff contact about their personal information. Printed
+    // on the public Privacy Notice and Terms, so every field is plain text,
+    // trimmed and capped - nothing here is ever rendered as markup.
+    if (req.params.key === 'privacyContact') {
+      const clean = cleanPrivacyContact(value);
+      if (clean.error) return res.status(400).json({ success: false, error: clean.error });
+      const saved = await Settings.findOneAndUpdate({ key: 'privacyContact' }, { value: clean.value }, { upsert: true, returnDocument: 'after' });
+      try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: 'privacyContact', after: clean.value }); } catch { /* audit is best-effort */ }
+      emitToAll('settingsUpdated', { key: 'privacyContact', value: clean.value });
+      return res.json({ success: true, setting: saved, privacy: clean.value });
     }
 
     // The business's clock. Every day boundary hangs off it - report ranges,

@@ -3,6 +3,7 @@ import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus,
 
 import { todayStr } from '../../shared/businessDay.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
+import { useRefreshTick } from '../../shared/refreshBus';
 const statusColor = {
   // Awaiting our own approval before the partner is even told about it.
   Requested: 'bg-orange-500/15 text-warning',
@@ -249,7 +250,8 @@ export default function HubTab({ ctx }) {
       if (r.ok) setTransferRequests(d.requests || []);
     } catch {}
   }, [authFetch]);
-  useEffect(() => { loadTransferRequests(); }, [loadTransferRequests]);
+  const refreshTickA = useRefreshTick();
+  useEffect(() => { loadTransferRequests(); }, [loadTransferRequests, refreshTickA]);
 
   // Counter-offer modal: lets the party being asked adjust quantities down or
   // drop a line entirely - never add a new one (this is "what we can give",
@@ -335,7 +337,8 @@ export default function HubTab({ ctx }) {
     } catch {}
   }, [authFetch]);
 
-  useEffect(() => { load(); }, [load]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { load(); }, [load, refreshTick]);
 
   const loadNetwork = useCallback(async () => {
     setNetworkLoading(true);

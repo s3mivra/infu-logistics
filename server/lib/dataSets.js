@@ -551,7 +551,7 @@ export const DATASETS = {
       intro: 'One row per expense. Each posts its own balanced entry immediately - unlike bills there is no approval step, so check the sheet before importing. A date inside a closed month is refused.',
       columns: [
         { name: 'amount', required: true, note: 'The full amount, before any tax withheld.', example: '3500' },
-        { name: 'categoryCode', required: true, note: 'Which expense account. See the Accounts sheet.', example: '610000' },
+        { name: 'categoryCode', required: true, note: 'Which expense account. See the Accounts sheet.', example: '640000' },
         { name: 'description', required: true, example: 'March electricity' },
         { name: 'paymentMethod', required: true, note: 'What it was paid from. See the Valid Values sheet.', example: 'Cash on Hand' },
         { name: 'date', note: 'YYYY-MM-DD. Defaults to today.', example: '2026-03-31' },

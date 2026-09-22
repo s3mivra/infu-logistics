@@ -4,6 +4,7 @@ import * as ui from '../../shared/ui';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import { socket } from '../../shared/staffSocket.js';
 import { useDashboard } from '../dashboard/DashboardContext';
+import { useRefreshTick } from '../../shared/refreshBus';
 
 // Order changes arrive on the dashboard's signed-in connection. This tab used
 // to open its own, without a token, which the server places in no room - so
@@ -47,7 +48,8 @@ export default function ClientsTab() {
     finally { setLoading(false); }
   }, [apiFetch]);
 
-  useEffect(() => { load(); }, [load]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { load(); }, [load, refreshTick]);
 
   // Keep payment method (and status) live when staff change it in Orders/POS.
   // orderUpdated carries the full updated order object; patch it in-place so

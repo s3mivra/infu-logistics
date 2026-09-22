@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Receipt, RefreshCw, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react';
 import { useDashboard } from '../dashboard/DashboardContext';
 import * as ui from '../../shared/ui';
+import { useRefreshTick } from '../../shared/refreshBus';
 
 // Withholding tax - money deducted from someone else's payment and held.
 //
@@ -38,7 +39,8 @@ export default function WithholdingTaxTab() {
     finally { setLoading(false); }
   }, [apiFetch, range.start, range.end]);
 
-  useEffect(() => { load(); }, [load]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { load(); }, [load, refreshTick]);
 
   const t = data?.totals || { withheld: 0, remitted: 0, outstanding: 0 };
 

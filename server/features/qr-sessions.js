@@ -2,7 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
-import { requirePermission as permit } from '../lib/authz.js';
+import { requirePermission as permit, hasPermission } from '../lib/authz.js';
 
 export default function registerQrSessions(ctx) {
   const {
@@ -339,6 +339,33 @@ app.delete('/api/qr-devices/:id', ...canManageDevices, async (req, res) => {
     if (!r.matchedCount) return res.status(404).json({ success: false, error: 'Not found' });
     await logAudit(req, { action: 'delete', entity: 'QrDevice', entityId: req.params.id });
     res.json({ success: true });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// Turning a device on from the Just QR screen itself. The tablet is at the
+// counter with nobody signed in, and sending someone to find a Settings card
+// meant signing in, finding it, and signing out again. A manager types their
+// name and password right there instead. It checks them the way the login
+// does, but opens no session: nobody is left signed in on the tablet.
+app.post('/api/qr-devices/enable-here', loginLimiter, async (req, res) => {
+  try {
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const label = String(req.body?.label || '').trim().slice(0, 60) || 'Counter tablet';
+    if (!name || !password) return res.status(400).json({ success: false, error: 'Enter a manager name and password.' });
+    const user = await User.findOne({ name });
+    const ok = user && user.password && await bcrypt.compare(password, user.password);
+    if (!ok) return res.status(401).json({ success: false, error: 'That name and password do not match.' });
+    if (!hasPermission(user, 'settings.manage')) {
+      return res.status(403).json({ success: false, error: `${user.name} cannot turn devices on - it needs someone who can change system settings.` });
+    }
+    const key = crypto.randomBytes(32).toString('hex');
+    const device = await QrDevice.create({ businessType: BUSINESS_TYPE, label, keyHash: hashKey(key), createdBy: user.name });
+    req.user = { _id: user._id, name: user.name, role: user.role };   // the manager who turned it on, for the audit log
+    await logAudit(req, { action: 'create', entity: 'QrDevice', entityId: device._id, after: { label, via: 'just-qr' } });
+    res.json({ success: true, key, device: { _id: device._id, label } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

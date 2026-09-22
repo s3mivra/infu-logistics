@@ -3,6 +3,7 @@ import { SlidersHorizontal, AlertTriangle, QrCode, Clock, DollarSign, Image as I
 import { readPrinterMode, writePrinterMode } from '../../shared/escpos';
 import * as ui from '../../shared/ui';
 import { readDeviceKey, writeDeviceKey } from '../qr/JustQr';
+import PrivacyContactCard from './PrivacyContactCard';
 
 // ── SettingsTab - system preferences & account controls ───────────────────────
 // Houses the toggles that used to live crammed in the sidebar's "Tools" dropdown
@@ -344,6 +345,13 @@ export default function SettingsTab({ ctx }) {
       )}
 
       <div className="space-y-6">
+        {/* QR display first: it is what a counter tablet is set up for. */}
+        {BUSINESS_TYPE !== 'log' && (isSuperAdmin || ctx.can?.('settings.manage')) && <QrDevicesCard apiFetch={apiFetch} />}
+
+        {(isSuperAdmin || ctx.can?.('settings.manage')) && (
+          <PrivacyContactCard value={systemSettings.privacyContact} onSave={v => saveSetting?.('privacyContact', v)} />
+        )}
+
         {/* System toggles - superadmin only */}
         {isSuperAdmin ? (
           <Card title="System">
@@ -439,11 +447,6 @@ export default function SettingsTab({ ctx }) {
             </div>
           </Card>
         )}
-
-        {/* QR display - which devices may show the ordering code from the
-            login screen without anyone signing in. Cafe only: the logistics
-            code is the public client portal and needs no device. */}
-        {BUSINESS_TYPE !== 'log' && (isSuperAdmin || ctx.can?.('settings.manage')) && <QrDevicesCard apiFetch={apiFetch} />}
 
         {/* Branding - business logo, shown on sidebar, login, receipts, menu & portal. */}
         {isSuperAdmin && (

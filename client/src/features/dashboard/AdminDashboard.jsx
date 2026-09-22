@@ -1,6 +1,7 @@
 ﻿import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { socket, reconnectSocket } from '../../shared/staffSocket.js';
+import { broadcastRefresh } from '../../shared/refreshBus';
 import JustQr from '../qr/JustQr';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network, Factory, Landmark, Receipt } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
@@ -2187,6 +2188,13 @@ export default function AdminDashboard() {
     if (lastRefreshedTab.current === null) { lastRefreshedTab.current = activeTab; return; }
     if (lastRefreshedTab.current === activeTab) return;
     lastRefreshedTab.current = activeTab;
+    refreshTab(activeTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, isAuthenticated]);
+
+  // What each tab shows, fetched again. Used when a tab is opened, and when the
+  // app catches up after being asleep or offline (below).
+  function refreshTab(tab) {
     const refresh = {
       orders:     () => { fetchOrders(); fetchData(); fetchParked(); },
       history:    () => { fetchOrders(); },
@@ -2199,10 +2207,52 @@ export default function AdminDashboard() {
       ledger:     () => { fetchERPData(); },
       reports:    () => { fetchERPData(); },
       settings:   () => { fetchSettings(); },
-    }[activeTab];
+    }[tab];
     refresh?.();
+  }
+
+  // Catching up. Live updates keep the screen current while connected, but
+  // nothing replays what was sent while the tablet slept, the app sat in the
+  // background, or the connection was down - so the tab on screen went on
+  // showing what it last heard. Coming back now refreshes it: the dashboard's
+  // own data for this tab, orders (the one thing every screen leans on), and a
+  // signal that the tabs which load their own data listen for. Lists only -
+  // nothing anyone is typing is touched.
+  const catchUpRef = useRef({ hiddenAt: 0, last: 0 });
+  const catchUp = () => {
+    const now = Date.now();
+    if (now - catchUpRef.current.last < 10000) return;      // at most every 10 s
+    catchUpRef.current.last = now;
+    fetchOrders();
+    refreshTab(activeTabRef.current);
+    broadcastRefresh();
+  };
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') { catchUpRef.current.hiddenAt = Date.now(); return; }
+      // A glance away and back is not worth a reload; half a minute is.
+      if (catchUpRef.current.hiddenAt && Date.now() - catchUpRef.current.hiddenAt >= 30000) catchUp();
+      catchUpRef.current.hiddenAt = 0;
+    };
+    let dropped = false;
+    // Our own disconnects (sign-in, switching user) are not a gap in the feed.
+    const onDisconnect = (reason) => { if (reason !== 'io client disconnect') dropped = true; };
+    const onConnect = () => { if (dropped) { dropped = false; catchUp(); } };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('online', catchUp);
+    socket.on('disconnect', onDisconnect);
+    socket.on('connect', onConnect);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('online', catchUp);
+      socket.off('disconnect', onDisconnect);
+      socket.off('connect', onConnect);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, isAuthenticated]);
+  }, [isAuthenticated]);
 
   // Effect 2: Order list + menu listeners - named callbacks so cleanup doesn't nuke Effect 1's handlers
   useEffect(() => {
@@ -3738,11 +3788,13 @@ const updateStatus = async (orderId, newStatus) => {
       const col = (...names) => header.findIndex(h => names.includes(norm(h)));
       const cRef = col('refno', 'reference', 'refnumber');
       const cDate = col('date');
-      const cCat = col('category');
+      // categoryCode is the template's own header; Category is the older one.
+      const cCat = col('category', 'categorycode');
       const cAmt = col('totalamount', 'amount');
       const cPay = col('payment', 'paidfrom', 'paymentmethod');
       const cVendor = col('paidto', 'vendor');
       const cDesc = col('description');
+      const cWht = col('withholdingrate', 'withholding', 'ewtrate');
       if (cCat === -1 || cAmt === -1 || cPay === -1 || cDesc === -1) {
         return ui.alert('Could not find the Category, Total Amount, Payment, and Description columns - use the downloaded template as a starting point.');
       }
@@ -3775,6 +3827,7 @@ const updateStatus = async (orderId, newStatus) => {
         const amountRaw = row[cAmt];
         const vendor = cVendor >= 0 ? String(row[cVendor] ?? '').trim() : '';
         const description = String(row[cDesc] ?? '').trim();
+        const withholdingRate = cWht >= 0 && String(row[cWht] ?? '').trim() !== '' ? parseFloat(row[cWht]) : undefined;
         const category = findCategory(row[cCat]);
         const payment = findPayment(row[cPay]);
         const amount = parseFloat(amountRaw);
@@ -3806,6 +3859,7 @@ const updateStatus = async (orderId, newStatus) => {
           amount: Number.isFinite(amount) ? amount : null,
           paymentMethod: payment.name, paymentMatched: payment.matched,
           vendor, description,
+          ...(Number.isFinite(withholdingRate) ? { withholdingRate } : {}),
           status: errors.length ? 'error' : (warnings.length ? 'warn' : 'ok'),
           message: [...errors, ...warnings].join('; '),
         });
@@ -3835,6 +3889,7 @@ const updateStatus = async (orderId, newStatus) => {
           rows: importable.map(r => ({
             amount: r.amount, categoryCode: r.categoryCode, paymentMethod: r.paymentMethod,
             description: r.description, vendor: r.vendor, refNo: r.refNo, date: r.date || undefined,
+            ...(r.withholdingRate !== undefined ? { withholdingRate: r.withholdingRate } : {}),
           })),
         }),
       });
@@ -8202,6 +8257,11 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             className="w-full mt-3 flex items-center justify-center gap-2 border border-white/15 hover:border-brand/60 text-fg/80 hover:text-fg font-bold py-3 rounded-xl transition text-sm uppercase tracking-widest">
             <QrCode size={16} /> Just QR
           </button>
+          <p className="mt-5 text-center text-xs text-fg/65">
+            <a href="/privacy" target="_blank" rel="noopener" className="underline hover:text-fg">Privacy Notice</a>
+            {' · '}
+            <a href="/terms" target="_blank" rel="noopener" className="underline hover:text-fg">Terms of Use</a>
+          </p>
         </form>
         {justQrOpen && <JustQr apiUrl={API_URL} businessType={BUSINESS_TYPE} bizName={BIZ_NAME} onClose={() => setJustQrOpen(false)} />}
         </div>

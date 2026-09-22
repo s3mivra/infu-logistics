@@ -90,8 +90,11 @@ describe('a regular who does give a name', () => {
 
     const account = await accountNamed(/^maria santos$/i);
     expect(account.clientCode).toMatch(/^CUS-1000-/);
-    // Her earlier sales roll up under the new code too.
-    expect(await M('Order').countDocuments({ clientAccountId: String(account._id) })).toBe(3);
+    // Her earlier sales roll up under the new code too. The account is created
+    // before they are re-linked, so wait for the link rather than read it at once
+    // - reading straight away failed under a loaded full run.
+    const linked = () => M('Order').countDocuments({ clientAccountId: String(account._id) });
+    expect(await waitFor(async () => (await linked()) === 3)).toBe(true);
   });
 
   it('is not held back just for sharing letters with the stand-in', async () => {

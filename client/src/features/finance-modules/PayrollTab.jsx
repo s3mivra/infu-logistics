@@ -7,6 +7,7 @@ import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocume
 import * as ui from '../../shared/ui';
 
 import { todayStr } from '../../shared/businessDay.js';
+import { useRefreshTick } from '../../shared/refreshBus';
 // Payroll - what the work cost, and what each person took home.
 //
 // Those are different numbers, and the screen keeps them visibly apart: gross
@@ -58,7 +59,8 @@ export default function PayrollTab() {
     finally { setLoading(false); }
   }, [apiFetch]);
 
-  useEffect(() => { load(); }, [load]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { load(); }, [load, refreshTick]);
 
   const act = async (run, what) => {
     const label = what === 'approve' ? 'Approve' : 'Pay out';

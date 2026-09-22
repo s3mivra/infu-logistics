@@ -70,3 +70,32 @@ describe('showing the code', () => {
     expect((await device(key)('post', '/api/qr-devices/session')).status).toBe(403);
   });
 });
+
+describe('turning a device on from the Just QR screen', () => {
+  it('works with a manager name and password, and leaves nobody signed in', async () => {
+    const res = await request(app).post('/api/qr-devices/enable-here')
+      .send({ name: 'QrBoss', password: 'pw', label: 'Front counter' });
+    expect(res.status).toBe(200);
+    expect(res.body.key).toMatch(/^[0-9a-f]{64}$/);
+    // No session cookie: the tablet is not signed in as the manager afterwards.
+    expect(String(res.headers['set-cookie'] || '')).not.toMatch(/refresh/i);
+    const qr = await device(res.body.key)('post', '/api/qr-devices/session');
+    expect(qr.status).toBe(200);
+  });
+
+  it('refuses a wrong password', async () => {
+    const res = await request(app).post('/api/qr-devices/enable-here').send({ name: 'QrBoss', password: 'nope' });
+    expect(res.status).toBe(401);
+  });
+
+  it('refuses someone who cannot change system settings', async () => {
+    const res = await request(app).post('/api/qr-devices/enable-here').send({ name: 'QrStaff', password: 'pw' });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/cannot turn devices on/);
+  });
+
+  it('refuses a probe that sends objects instead of text', async () => {
+    const res = await request(app).post('/api/qr-devices/enable-here').send({ name: { $ne: null }, password: { $ne: null } });
+    expect(res.status).toBe(400);
+  });
+});

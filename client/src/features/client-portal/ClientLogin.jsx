@@ -2,6 +2,7 @@
 import { useNavigate } from 'react-router-dom';
 import { Package, Eye, EyeOff, AlertCircle, Loader2, LogIn } from 'lucide-react';
 import { saveSession, loadSession, clientIdOf } from './clientSession';
+import LegalLinks from '../../shared/LegalLinks';
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
@@ -109,6 +110,7 @@ export default function ClientLogin() {
           {loading ? <Loader2 size={15} className="animate-spin" /> : <LogIn size={15} />}
           {loading ? 'Signing in…' : 'Sign In'}
         </button>
+        <LegalLinks lead="By signing in you agree to our" className="mt-4" />
       </form>
     </div>
   );

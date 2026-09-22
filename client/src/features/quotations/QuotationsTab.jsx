@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { useDashboard } from '../dashboard/DashboardContext';
 import * as ui from '../../shared/ui';
+import { useRefreshTick } from '../../shared/refreshBus';
 
 // Quotations - prices asked for, not sales made.
 //
@@ -43,7 +44,8 @@ export default function QuotationsTab() {
     finally { setLoading(false); }
   }, [apiFetch, status]);
 
-  useEffect(() => { load(); }, [load]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { load(); }, [load, refreshTick]);
 
   if (open) {
     return <QuoteSheet id={open} apiFetch={apiFetch} onBack={() => { setOpen(null); load(); }} />;
@@ -163,7 +165,8 @@ function QuoteSheet({ id, apiFetch, onBack }) {
     } catch { ui.alert('Network error.'); }
   }, [apiFetch, id]);
 
-  useEffect(() => { load(); }, [load]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { load(); }, [load, refreshTick]);
 
   const send = async () => {
     setBusy(true);

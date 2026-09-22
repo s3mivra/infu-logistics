@@ -3,6 +3,7 @@ import { Copy, Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, Tr
 import SearchSelect from '../../shared/ui/SearchSelect';
 import * as ui from '../../shared/ui';
 import RecipeMatrix from './RecipeMatrix';
+import LinkAddOns from './LinkAddOns';
 import { columnsOf, readiness, marginOf, rowKeyOf } from '../../shared/recipeMatrix';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
@@ -1245,6 +1246,10 @@ export default function ProductsTab({ ctx }) {
                   </div>
                 ))}
               </div>
+              {/* One step for "put the Extra Shot on every coffee" instead of an edit per drink. */}
+              {can('products.manage') && globalAddOns.length > 0 && (
+                <LinkAddOns addOns={globalAddOns} products={products} categories={categories} apiFetch={apiFetch} onDone={fetchData} />
+              )}
             </div>
           </div>
 

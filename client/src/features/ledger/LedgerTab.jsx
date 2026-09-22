@@ -10,6 +10,7 @@ import { LEDGER_TAB_GROUPS, REPORT_TAB_GROUPS } from '../dashboard/navRegistry';
 
 import { monthStartStr, todayStr } from '../../shared/businessDay.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
+import TemplatesCard from './TemplatesCard';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 // ── LedgerTab - extracted from AdminDashboard.jsx ──
@@ -6002,6 +6003,11 @@ export default function LedgerTab({ ctx }) {
             const presetBtn = 'text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-lg border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 transition disabled:opacity-40';
             return (
             <div className="space-y-4">
+
+            {/* Every import template in one workbook, and that workbook back in. */}
+            <TemplatesCard apiFetch={apiFetch} can={can} isSuperAdmin={isSuperAdmin} businessType={BUSINESS_TYPE}
+              parseImportFile={parseImportFile}
+              onImported={() => { fetchSuppliers?.(); fetchBills?.(); fetchExpenses?.(); fetchERPData?.(); }} />
 
             {/* The export below is a set of REPORTS - chosen columns, derived
                 figures, for a person or an accountant to read. It cannot rebuild

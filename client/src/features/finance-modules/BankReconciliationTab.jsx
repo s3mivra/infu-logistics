@@ -6,6 +6,7 @@ import { useDashboard } from '../dashboard/DashboardContext';
 import * as ui from '../../shared/ui';
 
 import { todayStr } from '../../shared/businessDay.js';
+import { useRefreshTick } from '../../shared/refreshBus';
 // Bank reconciliation - explaining the gap between the ledger and the bank.
 //
 // The screen is a worksheet, not a report: you tick off what the statement
@@ -46,7 +47,8 @@ export default function BankReconciliationTab() {
     finally { setLoading(false); }
   }, [apiFetch]);
 
-  useEffect(() => { load(); }, [load]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { load(); }, [load, refreshTick]);
   useEffect(() => {
     (async () => {
       try {
@@ -220,7 +222,8 @@ function Worksheet({ id, onBack, apiFetch }) {
     } catch { ui.alert('Network error.'); }
   }, [apiFetch, id]);
 
-  useEffect(() => { load(); }, [load]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { load(); }, [load, refreshTick]);
 
   // The running figures, computed here so every tick updates instantly rather
   // than waiting on a round trip. The server recomputes the same way on save.

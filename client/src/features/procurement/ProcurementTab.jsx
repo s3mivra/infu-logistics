@@ -5,6 +5,7 @@ import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocume
 
 import { monthStartStr, todayStr } from '../../shared/businessDay.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
+import { useRefreshTick } from '../../shared/refreshBus';
 // ── ProcurementTab - Purchase Order workflow ──────────────────────────────────
 // Two-stage tracking. LEFT tab ("Purchase Orders") drafts & tracks planned POs
 // through Ordered → Processing. RIGHT tab ("Receiving") reconciles a delivery by
@@ -145,7 +146,8 @@ export default function ProcurementTab({ ctx }) {
     finally { setLoading(false); }
   }, [apiFetch]);
 
-  useEffect(() => { fetchPOs(); }, [fetchPOs]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { fetchPOs(); }, [fetchPOs, refreshTick]);
 
   // ── Suppliers ─────────────────────────────────────────────────────────────────
   const [suppliers, setSuppliers] = useState([]);
@@ -156,7 +158,7 @@ export default function ProcurementTab({ ctx }) {
       if (d.success) setSuppliers(d.suppliers || []);
     } catch { /* non-fatal */ }
   }, [apiFetch]);
-  useEffect(() => { fetchSuppliers(); }, [fetchSuppliers]);
+  useEffect(() => { fetchSuppliers(); }, [fetchSuppliers, refreshTick]);
 
   // ── Excel PO import ───────────────────────────────────────────────────────────
   // Parses a supplier's PO/delivery spreadsheet, finds the header row, groups rows

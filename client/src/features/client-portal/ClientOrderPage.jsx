@@ -6,6 +6,7 @@ import * as ui from '../../shared/ui';
 import { loadSession, clearSession, saveSession, loadDraft, saveDraft } from './clientSession';
 import { CLIENT_THEMES, applyClientTheme, cachedClientTheme, clearClientTheme } from './clientTheme';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
+import PortalGuide from './PortalGuide';
 import {
   Package, ShoppingCart, Plus, Minus, X, LogOut, CheckCircle,
   CreditCard, Loader2, ChevronLeft, Search, Download, FileText, Menu, Megaphone,
@@ -1791,6 +1792,11 @@ export default function ClientOrderPage() {
         </div>
       )}
 
+      {/* The tutorial - only while the order is still empty. */}
+      {cart.length === 0 && !loadingProducts && visibleProducts.length > 0 && (
+        <PortalGuide quoteOnly={quoteOnly} showPrices={showPrices} hasQr={!!portal.paymentQrImage} />
+      )}
+
       {/* Search + category filter - sticky right under the header, so both
           stay reachable while scrolling the product grid instead of
           scrolling away with the welcome banner and announcement above them. */}
@@ -1893,6 +1899,13 @@ export default function ClientOrderPage() {
               <div className="flex flex-col items-center py-16 text-center">
                 <ShoppingCart size={36} className="text-fg/10 mb-3" />
                 <p className="text-fg/70 text-sm font-bold">Your order is empty.</p>
+                <p className="text-fg/70 text-xs mt-1 max-w-xs leading-snug">
+                  Go back and tap <span className="font-black text-brand-text">+</span> on a product to add it. It will appear here, where you choose how to pay and send it.
+                </p>
+                <button onClick={() => setCartOpen(false)}
+                  className="mt-4 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider bg-brand text-on-brand hover:bg-brand-dark transition">
+                  Browse products
+                </button>
               </div>
             )}
             {cart.map(item => (

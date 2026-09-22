@@ -24,6 +24,9 @@ export default function JustQr({ apiUrl, businessType, bizName, onClose }) {
   const [state, setState] = useState(isLog ? 'ready' : 'loading'); // loading | ready | notEnabled | error
   const [note, setNote] = useState('');
   const sessionRef = useRef(null);
+  const [mgr, setMgr] = useState({ name: '', password: '', label: 'Counter tablet' });
+  const [enabling, setEnabling] = useState(false);
+  const [enableError, setEnableError] = useState('');
 
   const headers = useCallback(() => ({ 'x-qr-device': readDeviceKey() }), []);
 
@@ -43,6 +46,26 @@ export default function JustQr({ apiUrl, businessType, bizName, onClose }) {
       setState('error'); setNote('No connection to the server. Retrying…');
     }
   }, [apiUrl, headers]);
+
+  // A manager turns this device on right here - no session is left behind.
+  const enableHere = async (e) => {
+    e.preventDefault();
+    setEnabling(true); setEnableError('');
+    try {
+      const res = await fetch(`${apiUrl}/api/qr-devices/enable-here`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mgr),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!d.success) { setEnableError(d.error || 'Could not turn this device on.'); return; }
+      writeDeviceKey(d.key);
+      try { localStorage.setItem('semivra_qr_device_id', d.device._id); } catch { /* private mode */ }
+      setMgr({ name: '', password: '', label: mgr.label });
+      setState('loading'); setNote('');
+      fresh();
+    } catch {
+      setEnableError('No connection to the server.');
+    } finally { setEnabling(false); }
+  };
 
   // Café: the first code, then keep it current.
   useEffect(() => {
@@ -94,14 +117,25 @@ export default function JustQr({ apiUrl, businessType, bizName, onClose }) {
       )}
       {state === 'loading' && <p className="text-fg/70 flex items-center gap-2"><RefreshCw size={16} className="animate-spin" /> Making a code…</p>}
       {state === 'notEnabled' && (
-        <div className="max-w-md bg-surface border border-white/10 rounded-2xl p-5 text-left">
-          <p className="text-fg font-bold mb-2">This device is not set up to show the QR yet.</p>
+        <form onSubmit={enableHere} className="w-full max-w-sm bg-surface border border-white/10 rounded-2xl p-5 text-left space-y-3">
+          <p className="text-fg font-bold">Turn this device on for Just QR</p>
           <p className="text-fg/75 text-sm">
-            A QR code here lets anyone who scans it send orders to the kitchen, so it only works on a device a manager
-            has turned on. Sign in as a manager, open <b>Settings → QR display</b>, and press
-            <b> Let this device show the QR</b>. You only do it once per tablet.
+            Anyone who scans this code can send orders to the kitchen, so a manager turns each tablet on once. Nobody stays signed in.
           </p>
-        </div>
+          {note && <p className="text-warning text-sm">{note}</p>}
+          <input value={mgr.name} onChange={e => setMgr(m => ({ ...m, name: e.target.value }))} placeholder="Manager name" aria-label="Manager name" autoComplete="off"
+            className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg outline-none focus:border-brand" />
+          <input type="password" value={mgr.password} onChange={e => setMgr(m => ({ ...m, password: e.target.value }))} placeholder="Password" aria-label="Manager password" autoComplete="off"
+            className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg outline-none focus:border-brand" />
+          <input value={mgr.label} onChange={e => setMgr(m => ({ ...m, label: e.target.value }))} placeholder="Name for this tablet" aria-label="Name for this tablet" maxLength={60}
+            className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg outline-none focus:border-brand" />
+          {enableError && <p className="text-danger text-sm" role="alert">{enableError}</p>}
+          <button type="submit" disabled={enabling || !mgr.name.trim() || !mgr.password}
+            className="w-full bg-brand hover:bg-brand-dark text-on-brand font-black py-3 rounded-xl uppercase tracking-widest text-sm disabled:opacity-50">
+            {enabling ? 'Turning on…' : 'Turn on and show the QR'}
+          </button>
+          <p className="text-fg/70 text-xs">It can be switched off any time in Settings → QR display.</p>
+        </form>
       )}
       {state === 'error' && <p className="text-danger">{note}</p>}
 

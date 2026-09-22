@@ -2,6 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
+import { requirePermission as permit } from '../lib/authz.js';
 
 export default function registerAddons(ctx) {
   const {
@@ -223,6 +224,65 @@ app.delete('/api/addons/:id', verifyToken, requireSuperAdmin, async (req, res) =
     await AddOn.findByIdAndDelete(req.params.id);
     emitToAll('menuUpdated');
     res.json({ success: true });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+// ── LINK ADD-ONS TO PRODUCTS, IN BULK ─────────────────────────────────────
+// Attaching an extra used to mean opening every drink and ticking it there -
+// forty drinks, forty edits, and the one that got missed sells without its
+// Extra Shot option. This attaches (or detaches) any set of add-ons across
+// all products, some categories, or a chosen list, in one request.
+//
+// It writes exactly what the product editor writes when an add-on is ticked:
+// { name, price, recipe: [] }. The empty recipe is deliberate - at the till it
+// falls back to the add-on's own recipe (see resolveAddOnRecipe in orders.js).
+// A product that already has the add-on is left alone, so a price or recipe
+// set on that one product is never overwritten by a bulk attach.
+app.post('/api/addons/link', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
+  try {
+    const { addOnIds, target = {}, action } = req.body || {};
+    if (action !== 'attach' && action !== 'detach') return res.status(400).json({ success: false, error: 'Choose attach or detach.' });
+
+    const ids = Array.isArray(addOnIds) ? addOnIds.filter((id) => mongoose.Types.ObjectId.isValid(String(id))) : [];
+    const addOns = addOnIds === 'all' ? await AddOn.find({}).lean() : await AddOn.find({ _id: { $in: ids } }).lean();
+    if (!addOns.length) return res.status(400).json({ success: false, error: 'Pick at least one add-on.' });
+
+    const filter = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+    if (target.all === true) {
+      // every product
+    } else if (Array.isArray(target.categories) && target.categories.length) {
+      filter.category = { $in: target.categories.map(String) };
+    } else if (Array.isArray(target.productIds) && target.productIds.length) {
+      filter._id = { $in: target.productIds.filter((id) => mongoose.Types.ObjectId.isValid(String(id))) };
+    } else {
+      return res.status(400).json({ success: false, error: 'Pick which products: all, some categories, or specific ones.' });
+    }
+    const inScope = await Product.countDocuments(filter);
+    if (!inScope) return res.status(400).json({ success: false, error: 'No products match that choice.' });
+
+    const perAddOn = [];
+    if (action === 'attach') {
+      for (const a of addOns) {
+        const r = await Product.updateMany(
+          { ...filter, 'addOns.name': { $ne: a.name } },
+          { $push: { addOns: { name: a.name, price: Number(a.price) || 0, recipe: [] } } },
+        );
+        perAddOn.push({ name: a.name, changed: r.modifiedCount || 0 });
+      }
+    } else {
+      for (const a of addOns) {
+        const r = await Product.updateMany({ ...filter, 'addOns.name': a.name }, { $pull: { addOns: { name: a.name } } });
+        perAddOn.push({ name: a.name, changed: r.modifiedCount || 0 });
+      }
+    }
+
+    await logAudit(req, {
+      action: 'update', entity: 'Product', entityId: 'bulk-addon-link',
+      after: { action, addOns: addOns.map((a) => a.name), target, products: inScope, perAddOn },
+    });
+    emitToAll('menuUpdated');
+    res.json({ success: true, action, products: inScope, perAddOn });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

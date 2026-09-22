@@ -4,6 +4,7 @@ import { io } from 'socket.io-client';
 import { Coffee, ShoppingCart, Plus, Minus, X, Clock, CheckCircle, Package, AlertCircle, Users, Lock, RefreshCw, ChevronLeft, Search } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { loadDraft, saveDraft, clearDraft } from '../../shared/draft';
+import LegalLinks from '../../shared/LegalLinks';
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
@@ -800,6 +801,7 @@ export default function CustomerMenu() {
           >
             Browse Menu →
           </button>
+          <LegalLinks lead="By ordering you agree to our" className="mt-5" />
         </div>
       </div>
     );

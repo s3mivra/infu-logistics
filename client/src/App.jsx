@@ -34,6 +34,7 @@ const QRCodeComponent = lazy(() => import('./features/qr/QRCode'));
 const ClientLogin = lazy(() => import('./features/client-portal/ClientLogin'));
 const ClientOrderPage = lazy(() => import('./features/client-portal/ClientOrderPage'));
 const ClientOnboarding = lazy(() => import('./features/client-portal/ClientOnboarding'));
+const LegalPage = lazy(() => import('./features/legal/LegalPage'));
 //fix
 class ErrorBoundary extends Component {
   state = { error: null };
@@ -104,6 +105,8 @@ function App() {
             <Route path="/client/portal" element={<ClientLogin />} />
             <Route path="/client/portal/:userid" element={<ClientOrderPage />} />
             <Route path="/client-onboard/:token" element={<ClientOnboarding />} />
+            <Route path="/privacy" element={<LegalPage doc="privacy" />} />
+            <Route path="/terms" element={<LegalPage doc="terms" />} />
           </Routes>
         </Suspense>
       </Router>

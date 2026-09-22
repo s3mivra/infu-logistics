@@ -7,6 +7,7 @@ import { useDashboard } from '../dashboard/DashboardContext';
 import * as ui from '../../shared/ui';
 
 import { todayStr } from '../../shared/businessDay.js';
+import { useRefreshTick } from '../../shared/refreshBus';
 // Fixed assets - what the business owns, what it has worn off, what it is
 // still worth.
 //
@@ -72,7 +73,8 @@ export default function FixedAssetsTab() {
     finally { setLoading(false); }
   }, [apiFetch, status, classFilter]);
 
-  useEffect(() => { load(); }, [load]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { load(); }, [load, refreshTick]);
 
   useEffect(() => {
     (async () => {

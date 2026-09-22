@@ -6,6 +6,7 @@ import { reconcileUnitOptions as reconcileUnitsFor, plannedUnitChoice as planned
 import { todayStr } from '../../shared/businessDay.js';
 import { PACK_UNIT } from '../../shared/packUnit.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
+import { useRefreshTick } from '../../shared/refreshBus';
 
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 // Approval decision - Pending -> Approved/Rejected.
@@ -281,7 +282,8 @@ export default function ProductionTab({ ctx }) {
     finally { setLoading(false); }
   }, [apiFetch]);
 
-  useEffect(() => { fetchOrders(statusFilter); }, [fetchOrders, statusFilter]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { fetchOrders(statusFilter); }, [fetchOrders, statusFilter, refreshTick]);
 
   const resetForm = () => {
     setMaterials([]); setMatPick(''); setMatQty(''); setMatUnit(''); setOutputQtyUnit('');

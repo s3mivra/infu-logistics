@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Package, Eye, EyeOff, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
+import LegalLinks from '../../shared/LegalLinks';
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
@@ -133,6 +134,7 @@ export default function ClientOnboarding() {
             <button type="submit" disabled={submitting} className="w-full bg-brand hover:bg-brand/90 disabled:opacity-50 text-on-brand font-bold py-3 rounded-xl transition flex items-center justify-center gap-2 mt-2">
               {submitting ? <Loader2 size={16} className="animate-spin" /> : null} Finish Setup
             </button>
+            <LegalLinks lead="By finishing setup you agree to our" />
           </form>
         )}
       </div>
