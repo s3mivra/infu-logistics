@@ -224,7 +224,7 @@ export default function InventoryTab({ ctx }) {
 
   // Linked Google Sheet - superadmin only, like the stock import it feeds.
   const [sheet, setSheet, reloadSheet] = useInventorySheet(apiFetch, !!isSuperAdmin);
-  const [pullSheet, pullingSheet] = usePull(apiFetch, parseImportFile, reloadSheet);
+  const [pullSheet, pullingSheet] = usePull(apiFetch, parseImportFile, reloadSheet, sheet?.tabs);
   const [sheetOpen, setSheetOpen] = useState(false);
 
   return (

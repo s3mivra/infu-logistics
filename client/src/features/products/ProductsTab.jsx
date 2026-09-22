@@ -505,9 +505,11 @@ export default function ProductsTab({ ctx }) {
           <div className="flex-1 bg-surface border border-white/10 shadow-md rounded-xl p-4 sm:p-6 overflow-y-auto custom-scrollbar min-h-[500px] lg:min-h-0">
 
             {/* 1. Menu Items List */}
-            <div className="flex items-baseline justify-between gap-3 mb-4 border-b border-white/10 pb-2">
-              <h3 className="text-xl font-bold text-fg">Menu Items</h3>
-              <div className="flex items-center gap-3 shrink-0">
+            {/* Wraps on a phone: with shrink-0 on the actions, "New product"
+                was pushed off the right edge and cut to "NEW PROD". */}
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mb-4 border-b border-white/10 pb-2">
+              <h3 className="text-xl font-bold text-fg whitespace-nowrap">Menu Items</h3>
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                 <span className="text-xs font-bold text-fg/70">
                   {prodFiltersActive ? `${filteredProducts.length} of ${products.length}` : `${products.length} item${products.length === 1 ? '' : 's'}`}
                 </span>
@@ -986,77 +988,87 @@ export default function ProductsTab({ ctx }) {
                   </>)}
                 </div>
               )}
-              {currentProducts.map(p => (
-                <div key={p._id} className="flex flex-col sm:flex-row gap-4 p-4 border border-white/10 rounded-xl bg-surface-2 items-start sm:items-center">
-                  
-                  {/* Top section on mobile: Image + Text */}
-                  <div className="flex gap-4 flex-1 w-full">
+              {currentProducts.map(p => {
+                const est = getEstimatedStock(p.baseRecipe);
+                const price = Number(p.basePrice || p.price || 0);
+                const chip = 'text-[11px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap';
+                return (
+                <div key={p._id} className="flex flex-col sm:flex-row gap-3 sm:gap-4 p-3 sm:p-4 border border-white/10 rounded-xl bg-surface-2 sm:items-center">
+                  <div className="flex gap-3 flex-1 min-w-0">
                     {p.image && ctx.systemSettings?.imagesEnabled !== false ? (
-                      <img src={p.image} alt={p.name} className="w-16 h-16 object-cover rounded-lg shadow-sm border border-white/10 shrink-0" />
+                      <img src={p.image} alt="" className="w-12 h-12 object-cover rounded-lg border border-white/10 shrink-0" />
                     ) : (
-                      <div className="w-16 h-16 bg-white/5 rounded-lg border border-white/10 flex items-center justify-center text-xs text-fg/65 font-bold shrink-0">No Img</div>
+                      // The name's first letter reads better than a grey "No Img" box.
+                      <div aria-hidden="true" className="w-12 h-12 rounded-lg bg-brand/15 border border-brand/25 flex items-center justify-center text-brand-text text-lg font-black shrink-0">
+                        {(p.name || '?').trim().charAt(0).toUpperCase()}
+                      </div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {/* No fixed/auto width and no truncate - a longer name just
-                            wraps onto its own line within the flex-wrap row instead
-                            of overflowing past the card or getting clipped. */}
-                        <h4 className="font-bold text-fg break-words min-w-0">{p.name} <span className="text-xs text-brand-text ml-1 whitespace-nowrap">({p.category})</span></h4>
-                        {(() => {
-                          const est = getEstimatedStock(p.baseRecipe);
-                          if (est === null) return null;
-                          return (
-                            <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${est <= 0 ? 'bg-red-500/15 text-danger' : est <= 5 ? 'bg-yellow-500/15 text-warning' : 'bg-green-500/15 text-success'}`}>
-                              {est <= 0 ? 'Out of Stock' : `Est: ${est} left`}
-                            </span>
-                          );
-                        })()}
-                        {/* The server decides what the CUSTOMER menu shows, and
-                            it can disagree with the estimate above (different
-                            data, a dangling ingredient link, an unlinked
-                            recipe). When it does, say so here rather than
-                            leaving staff to wonder why the item is hidden. */}
+                      <div className="flex items-center gap-x-2 gap-y-1 flex-wrap">
+                        <h4 className="font-bold text-fg break-words min-w-0">{p.name}</h4>
+                        {est !== null && (
+                          <span className={`${chip} ${est <= 0 ? 'bg-red-500/15 text-danger' : est <= 5 ? 'bg-yellow-500/15 text-warning' : 'bg-green-500/15 text-success'}`}>
+                            {est <= 0 ? 'Out of stock' : `${est} left`}
+                          </span>
+                        )}
+                        {/* The server decides what the customer menu shows, and it can
+                            disagree with the estimate above (a dangling ingredient
+                            link, an unlinked recipe). The reason is spelled out below. */}
                         {p.stockAvailable === false && (
-                          <span title={p.stockReason || 'Hidden from the customer menu.'}
-                            className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider bg-red-500/15 text-danger">
-                            Hidden on menu
+                          <span title={p.stockReason || 'Not shown to customers.'} className={`${chip} bg-red-500/15 text-danger`}>
+                            Can't be made
+                          </span>
+                        )}
+                        {BUSINESS_TYPE !== 'log' && p.showOnQr === false && (
+                          <span title="Sold at the POS only - not on the table QR menu" className={`${chip} bg-white/10 text-fg/80`}>
+                            Counter only
                           </span>
                         )}
                       </div>
+                      <p className="text-xs text-fg/70 mt-0.5">
+                        {[p.category, p.baseSize, p.sizes?.length > 0 ? `+${p.sizes.length} size${p.sizes.length === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ')}
+                      </p>
+                      {p.description && <p className="text-xs text-fg/70 mt-1 line-clamp-2">{p.description}</p>}
                       {p.stockAvailable === false && p.stockReason && (
-                        <p className="text-[11px] text-danger mt-1">{p.stockReason}</p>
+                        <p className="text-[11px] text-danger mt-1 flex items-start gap-1"><AlertCircle size={12} className="mt-px shrink-0" />{p.stockReason}</p>
                       )}
                       {/* A priced size with no materials sells for money while
                           deducting nothing - not fatal, but it should not go
                           unnoticed. */}
                       {p.sizesWithoutRecipe?.length > 0 && (
-                        <p className="text-[11px] text-warning mt-1">
-                          No materials set for {p.sizesWithoutRecipe.length === 1 ? 'size' : 'sizes'}{' '}
-                          {p.sizesWithoutRecipe.map(n => `"${n}"`).join(', ')} - selling {p.sizesWithoutRecipe.length === 1 ? 'it' : 'them'} deducts no stock.
+                        <p className="text-[11px] text-warning mt-1 flex items-start gap-1">
+                          <AlertTriangle size={12} className="mt-px shrink-0" />
+                          <span>
+                            No materials set for {p.sizesWithoutRecipe.length === 1 ? 'size' : 'sizes'}{' '}
+                            {p.sizesWithoutRecipe.map(n => `"${n}"`).join(', ')} - selling {p.sizesWithoutRecipe.length === 1 ? 'it' : 'them'} deducts no stock.
+                          </span>
                         </p>
                       )}
-                      {p.description && <p className="text-xs text-fg/70 mt-1 line-clamp-2">{p.description}</p>}
-                      <p className="text-sm text-fg/70 font-bold mt-1">P{Number(p.basePrice || p.price || 0).toFixed(2)} {p.baseSize && <span className="text-xs text-fg/65 font-normal">({p.baseSize})</span>} {p.sizes?.length > 0 && <span className="text-brand-text text-xs ml-1">(+ {p.sizes.length} sizes)</span>}</p>
                     </div>
                   </div>
 
-                  {/* Edit button: Full width on mobile, auto width on desktop */}
-                  <div className="w-full sm:w-auto mt-2 sm:mt-0 shrink-0">
-                    <button 
-                      onClick={() => openEdit(p)} 
-                      className="w-full sm:w-auto px-4 py-3 sm:py-2 bg-white/10 text-fg rounded-lg text-sm font-bold hover:bg-brand hover:text-on-brand transition flex items-center justify-center gap-2"
-                    >
-                      <Edit size={14} /> Edit
-                    </button>
-                    {/* A new product that starts as this one: the sizes, recipe and
-                        options come across, and only the name is left to type. */}
-                    <button type="button" onClick={() => openLike(p)}
-                      className="w-full sm:w-auto mt-2 sm:mt-0 sm:ml-2 px-4 py-3 sm:py-2 bg-white/5 text-fg/80 rounded-lg text-sm font-bold hover:bg-white/10 hover:text-fg transition flex items-center justify-center gap-2">
-                      <Copy size={14} /> New like this
-                    </button>
+                  <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 shrink-0 sm:pl-2">
+                    <p className="text-fg font-black tabular-nums mr-auto sm:mr-0 sm:min-w-[6.5rem] sm:text-right">
+                      ₱{price.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                    {/* The two buttons are one group, so a narrow screen moves them
+                        together instead of splitting them across lines. */}
+                    <div className="flex items-center gap-2 ml-auto">
+                      <button onClick={() => openEdit(p)}
+                        className="h-9 px-3.5 bg-white/10 text-fg rounded-lg text-xs font-bold hover:bg-brand hover:text-on-brand transition inline-flex items-center gap-1.5 whitespace-nowrap">
+                        <Edit size={13} /> Edit
+                      </button>
+                      {/* A new product that starts as this one: the sizes, recipe and
+                          options come across, and only the name is left to type. */}
+                      <button type="button" onClick={() => openLike(p)} title="Start a new product from this one"
+                        className="h-9 px-3.5 border border-white/10 text-fg/80 rounded-lg text-xs font-bold hover:bg-white/10 hover:text-fg transition inline-flex items-center gap-1.5 whitespace-nowrap">
+                        <Copy size={13} /> New like this
+                      </button>
+                    </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
               {/* --- PAGINATION CONTROLS --- */}
             {totalPages > 1 && (
               <div className="flex justify-between items-center bg-page-bg p-4 rounded-xl border border-white/10 mt-6 shrink-0">

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { X, RefreshCw, Download, AlertTriangle, Link2 } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { useRefreshTick } from '../../shared/refreshBus';
+import { mergeStockTabs } from '../../shared/mergeSheetTabs';
 
 // A Google Sheet linked to Inventory (server: features/inventory-sheet.js).
 //
@@ -27,16 +28,39 @@ export function useInventorySheet(apiFetch, enabled) {
   return [sheet, setSheet, reload];
 }
 
-// Fetches the workbook and hands it to the same preview a file upload uses.
-export async function pullSheet(apiFetch, parseImportFile) {
+// Fetches the workbook, keeps the chosen tabs (merged into one), and hands the
+// result to the same preview a file upload uses.
+export async function pullSheet(apiFetch, parseImportFile, tabs = 'all') {
   const r = await apiFetch('/api/inventory-sheet/pull', { method: 'POST' });
   if (!r.ok) {
     let msg = 'Could not pull the sheet.';
     try { msg = (await r.json()).error || msg; } catch { /* not json */ }
     throw new Error(msg);
   }
-  const blob = await r.blob();
-  await parseImportFile(new File([blob], 'google-sheet.xlsx', { type: blob.type }));
+  const XLSX = await import('xlsx');
+  const wb = XLSX.read(await r.arrayBuffer(), { type: 'array', cellDates: true, cellNF: true });
+  const { workbook, used, skipped, duplicates } = mergeStockTabs(XLSX, wb, tabs);
+  if (!workbook) {
+    throw new Error(tabs === 'all'
+      ? 'None of the tabs has stock columns (Product, and Qty Unit or Unit Cost). Use the columns from the import template.'
+      : `None of the chosen tabs can be imported: ${skipped.map(x => `${x.name} (${x.reason})`).join('; ')}.`);
+  }
+  // Say what is about to be read when it is not simply "the tabs you chose".
+  const notes = [];
+  if (tabs !== 'all' && skipped.length) notes.push(`Skipped: ${skipped.map(x => `${x.name} (${x.reason})`).join('; ')}.`);
+  if (duplicates.length) {
+    notes.push(`Listed on more than one tab: ${duplicates.slice(0, 8).join(', ')}${duplicates.length > 8 ? ` and ${duplicates.length - 8} more` : ''}. `
+      + 'The import adds these together as separate lots - fix the sheet first if they should be counted once.');
+  }
+  if (notes.length) {
+    const ok = await ui.confirm({
+      title: `Read ${used.length} tab${used.length === 1 ? '' : 's'}: ${used.join(', ')}?`,
+      message: notes.join(' '), confirmLabel: 'Open the preview',
+    });
+    if (!ok) return;
+  }
+  const out = XLSX.write(workbook, { type: 'array', bookType: 'xlsx', cellDates: true });
+  await parseImportFile(new File([out], 'google-sheet.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
 }
 
 export function SheetChangedBanner({ sheet, onPull, busy }) {
@@ -65,18 +89,37 @@ export function SheetChangedBanner({ sheet, onPull, busy }) {
 export default function GoogleSheetModal({ apiFetch, sheet, setSheet, onPull, pulling, onClose }) {
   const [url, setUrl] = useState(sheet?.url || '');
   const [checkTime, setCheckTime] = useState(sheet?.checkTime || '');
+  // 'all', or the names ticked. availableTabs is what the sheet had when last read.
+  const [tabs, setTabs] = useState(sheet?.tabs || 'all');
+  const [available, setAvailable] = useState(sheet?.availableTabs || []);
+  const [loadingTabs, setLoadingTabs] = useState(false);
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
   const [msg, setMsg] = useState(null);
 
-  const dirty = url.trim() !== (sheet?.url || '') || checkTime !== (sheet?.checkTime || '');
+  const dirty = url.trim() !== (sheet?.url || '') || checkTime !== (sheet?.checkTime || '')
+    || JSON.stringify(tabs) !== JSON.stringify(sheet?.tabs || 'all');
+  const noneTicked = Array.isArray(tabs) && tabs.length === 0;
+
+  // Reads the tab names of the link in the box - works before it is saved.
+  const loadTabs = async () => {
+    setLoadingTabs(true); setMsg(null);
+    try {
+      const r = await apiFetch('/api/inventory-sheet/tabs', { method: 'POST', body: JSON.stringify({ url: url.trim() }) });
+      const d = await r.json();
+      if (!d.success) { setMsg({ tone: 'err', text: d.error || 'Could not read the tabs.' }); return; }
+      setAvailable(d.tabs);
+    } catch { setMsg({ tone: 'err', text: 'Could not read the tabs. Check the connection.' }); }
+    finally { setLoadingTabs(false); }
+  };
+  const toggleTab = (name) => setTabs(t => (Array.isArray(t) ? (t.includes(name) ? t.filter(x => x !== name) : [...t, name]) : [name]));
 
   const save = async () => {
     setSaving(true); setMsg(null);
     try {
-      const r = await apiFetch('/api/inventory-sheet', { method: 'PUT', body: JSON.stringify({ url: url.trim(), checkTime }) });
+      const r = await apiFetch('/api/inventory-sheet', { method: 'PUT', body: JSON.stringify({ url: url.trim(), checkTime, tabs }) });
       const d = await r.json();
-      if (d.success) { setSheet(d.sheet); setMsg({ tone: 'ok', text: url.trim() ? 'Saved. The sheet was read successfully.' : 'Sheet unlinked.' }); }
+      if (d.success) { setSheet(d.sheet); setAvailable(d.sheet.availableTabs || []); setTabs(d.sheet.tabs || 'all'); setMsg({ tone: 'ok', text: url.trim() ? 'Saved. The sheet was read successfully.' : 'Sheet unlinked.' }); }
       else setMsg({ tone: 'err', text: d.error || 'Could not save.' });
     } catch { setMsg({ tone: 'err', text: 'Could not save. Check the connection.' }); }
     finally { setSaving(false); }
@@ -122,6 +165,55 @@ export default function GoogleSheetModal({ apiFetch, sheet, setSheet, onPull, pu
               placeholder="https://docs.google.com/spreadsheets/d/…" inputMode="url" autoComplete="off" />
           </div>
 
+          <fieldset>
+            <legend className="text-[10px] font-bold text-fg/70 uppercase tracking-widest mb-1.5">Tabs to read</legend>
+            <div className="flex flex-wrap gap-2 mb-2">
+              {[{ v: 'all', label: 'All tabs' }, { v: 'some', label: 'Only the tabs I choose' }].map(o => {
+                const on = o.v === 'all' ? tabs === 'all' : Array.isArray(tabs);
+                return (
+                  <button key={o.v} type="button" aria-pressed={on}
+                    onClick={() => {
+                      setTabs(o.v === 'all' ? 'all' : (Array.isArray(tabs) ? tabs : []));
+                      if (o.v === 'some' && !available.length && url.trim()) loadTabs();
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${on ? 'bg-brand text-on-brand border-brand' : 'bg-white/5 text-fg/80 border-white/10 hover:text-fg'}`}>
+                    {o.label}
+                  </button>
+                );
+              })}
+            </div>
+            {Array.isArray(tabs) && (
+              <div className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-2">
+                {available.length === 0 ? (
+                  <p className="text-xs text-fg/70">{loadingTabs ? 'Reading the tabs…' : 'Read the sheet to list its tabs.'}</p>
+                ) : (
+                  <div className="flex flex-wrap gap-x-4 gap-y-2">
+                    {available.map(name => (
+                      <label key={name} className="flex items-center gap-2 text-sm text-fg cursor-pointer">
+                        <input type="checkbox" className="w-4 h-4 accent-brand" checked={tabs.includes(name)} onChange={() => toggleTab(name)} />
+                        {name}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {/* A ticked tab the sheet no longer has - renamed or deleted. */}
+                {available.length > 0 && tabs.filter(t => !available.includes(t)).map(t => (
+                  <p key={t} className="text-xs text-danger flex items-center gap-2">
+                    "{t}" is not in the sheet any more.
+                    <button type="button" onClick={() => toggleTab(t)} className="underline font-bold">Untick it</button>
+                  </p>
+                ))}
+                <button type="button" onClick={loadTabs} disabled={loadingTabs || !url.trim()}
+                  className="text-xs font-bold text-brand-text underline disabled:opacity-50">
+                  {loadingTabs ? 'Reading…' : available.length ? 'Refresh the list' : 'Read the tabs'}
+                </button>
+              </div>
+            )}
+            <p className="text-[10px] text-fg/70 mt-1 leading-snug">
+              Only these tabs are checked for changes and brought into the import. With "All tabs", a tab without stock columns (like notes) is skipped when you pull.
+            </p>
+          </fieldset>
+
           <div>
             <label htmlFor="gsheet-time" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Check for changes every day at</label>
             <div className="flex items-center gap-2">
@@ -134,7 +226,7 @@ export default function GoogleSheetModal({ apiFetch, sheet, setSheet, onPull, pu
           </div>
 
           <div className="flex justify-end">
-            <button onClick={save} disabled={!dirty || saving}
+            <button onClick={save} disabled={!dirty || saving || noneTicked}
               className="px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider bg-brand text-on-brand hover:bg-brand-dark transition disabled:opacity-50">
               {saving ? 'Reading sheet…' : url.trim() || !linked ? 'Save link' : 'Unlink sheet'}
             </button>
@@ -145,6 +237,7 @@ export default function GoogleSheetModal({ apiFetch, sheet, setSheet, onPull, pu
           {linked && (
             <div className="border-t border-white/10 pt-4 space-y-3">
               <dl className="grid grid-cols-2 gap-y-1 text-xs">
+                <dt className="text-fg/70">Tabs</dt><dd className="text-fg break-words">{sheet.tabs === 'all' || !sheet.tabs ? 'All tabs' : sheet.tabs.join(', ')}</dd>
                 <dt className="text-fg/70">Last pulled</dt><dd className="text-fg">{when(sheet.lastPulledAt)}</dd>
                 <dt className="text-fg/70">Last checked</dt><dd className="text-fg">{when(sheet.lastCheckedAt)}</dd>
                 <dt className="text-fg/70">Status</dt>
@@ -175,11 +268,11 @@ export default function GoogleSheetModal({ apiFetch, sheet, setSheet, onPull, pu
 }
 
 // Keeps the pull's busy state and error handling in one place for the panel and the banner.
-export function usePull(apiFetch, parseImportFile, reload) {
+export function usePull(apiFetch, parseImportFile, reload, tabs) {
   const [pulling, setPulling] = useState(false);
   const pull = async () => {
     setPulling(true);
-    try { await pullSheet(apiFetch, parseImportFile); }
+    try { await pullSheet(apiFetch, parseImportFile, tabs || 'all'); }
     catch (e) { ui.alert(e.message); }
     finally { setPulling(false); reload(); }
   };

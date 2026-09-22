@@ -1,4 +1,5 @@
-// A Google Sheet linked to Inventory: saved, checked for changes, pulled.
+// A Google Sheet linked to Inventory: saved, checked for changes, pulled -
+// all of its tabs, or only the ones chosen.
 //
 // The check must only ever LOOK - flag a change in the bell - and never touch
 // stock, because an import is a stock count and a timed one would undo every
@@ -8,23 +9,33 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { makeXlsx } from './helpers/makeXlsx.js';
 import { parseSheetLink, exportUrl, localTime, isCheckDue } from '../lib/googleSheet.js';
+import { workbookTabs, XlsxError } from '../lib/xlsxTabs.js';
+import { cleanTabs } from '../features/inventory-sheet.js';
 
 const ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
 const LINK = `https://docs.google.com/spreadsheets/d/${ID}/edit#gid=42`;
-const XLSX_BYTES = Buffer.from('PK pretend workbook');
+const XLSX_URL = `https://docs.google.com/spreadsheets/d/${ID}/export?format=xlsx`;
+
+// The sheet as the business keeps it: two stock tabs and a notes tab.
+const baseBook = () => ({
+  Beans: [['Product', 'Qty Unit', 'Unit Cost'], ['Espresso Beans 1kg', 10, 900]],
+  Milk: [['Product', 'Qty Unit', 'Unit Cost'], ['Fresh Milk 1L', 24, 95]],
+  Notes: [['Reminder'], ['Order cups on Friday']],
+});
 
 let ctx, app, owner, manager, sheet, calls;
 const as = (tok) => (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
 const save = (body, tok = owner) => as(tok)('put', '/api/inventory-sheet').send(body);
+const check = () => as(owner)('post', '/api/inventory-sheet/check');
 const bell = async () => (await as(owner)('get', '/api/notifications')).body.items.filter((i) => i.id.startsWith('sheet:'));
 
-// Google, as far as this server can tell: csv for the tab, xlsx for the book.
+// Google, as far as this server can tell.
 const google = (url) => {
   calls.push(url);
   if (sheet.respond) return sheet.respond(url);
-  if (url.includes('format=xlsx')) return new Response(XLSX_BYTES, { headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' } });
-  return new Response(sheet.csv, { headers: { 'content-type': 'text/csv' } });
+  return new Response(makeXlsx(sheet.book), { headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' } });
 };
 
 beforeAll(async () => {
@@ -38,19 +49,24 @@ beforeAll(async () => {
 afterAll(async () => { await ctx.stop(); });
 beforeEach(async () => {
   await mongoose.model('Settings').deleteMany({ key: 'inventorySheet' });
-  sheet = { csv: 'Product,Qty\nBeans,10\n' };
+  sheet = { book: baseBook() };
   calls = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => google(String(url)));
 });
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe('the link', () => {
-  it('reads the sheet once on save and reports it unchanged', async () => {
+  it('reads the sheet once on save, watching all tabs unless told otherwise', async () => {
     const res = await save({ url: LINK, checkTime: '06:00' });
     expect(res.body.success).toBe(true);
-    expect(res.body.sheet).toMatchObject({ url: LINK, checkTime: '06:00', changedAt: null });
-    expect(calls).toEqual([`https://docs.google.com/spreadsheets/d/${ID}/export?format=csv&gid=42`]);
+    expect(res.body.sheet).toMatchObject({ url: LINK, checkTime: '06:00', tabs: 'all', availableTabs: ['Beans', 'Milk', 'Notes'], changedAt: null });
+    expect(calls).toEqual([XLSX_URL]);
     expect(res.body.sheet).not.toHaveProperty('seenHash');
+  });
+
+  it('lists the tabs of a link before it is saved', async () => {
+    const res = await as(owner)('post', '/api/inventory-sheet/tabs').send({ url: LINK });
+    expect(res.body).toMatchObject({ success: true, tabs: ['Beans', 'Milk', 'Notes'] });
   });
 
   it('says plainly when the sheet is not shared', async () => {
@@ -81,37 +97,95 @@ describe('the link', () => {
     expect(calls).toEqual([]);
   });
 
-  it('rejects a check time that is not a time of day', async () => {
+  it('says so when Google sends something that is not a spreadsheet', async () => {
+    sheet.respond = () => new Response('Product,Qty\nBeans,1\n', { headers: { 'content-type': 'application/octet-stream' } });
+    const res = await save({ url: LINK });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/could not be read as a spreadsheet/i);
+  });
+
+  it('rejects a check time that is not a time of day, and a malformed tab choice', async () => {
     expect((await save({ url: LINK, checkTime: '25:00' })).status).toBe(400);
+    expect((await save({ url: LINK, tabs: [] })).status).toBe(400);
+    expect((await save({ url: LINK, tabs: 'Beans' })).status).toBe(400);
   });
 
   it('is superadmin-only, like the stock import itself', async () => {
     expect((await save({ url: LINK }, manager)).status).toBe(403);
     expect((await as(manager)('post', '/api/inventory-sheet/pull')).status).toBe(403);
+    expect((await as(manager)('post', '/api/inventory-sheet/tabs').send({ url: LINK })).status).toBe(403);
+  });
+});
+
+describe('choosing tabs', () => {
+  it('watches only the chosen tabs: a notes tab changing is not a stock change', async () => {
+    await save({ url: LINK, tabs: ['Beans', 'Milk'] });
+    sheet.book.Notes[1][0] = 'Order lids too';
+    expect((await check()).body.changed).toBe(false);
+
+    sheet.book.Milk[1][1] = 18;
+    expect((await check()).body.changed).toBe(true);
+    expect((await bell()).map((i) => i.id)).toEqual(['sheet:changed']);
+  });
+
+  it('notices a changed word, not only a changed number', async () => {
+    await save({ url: LINK, tabs: ['Beans'] });
+    sheet.book.Beans[1][0] = 'Espresso Beans 500g';
+    expect((await check()).body.changed).toBe(true);
+  });
+
+  it('with all tabs, any tab changing counts', async () => {
+    await save({ url: LINK });
+    sheet.book.Notes[1][0] = 'Order lids too';
+    expect((await check()).body.changed).toBe(true);
+  });
+
+  it('refuses to save a tab that is not in the sheet', async () => {
+    const res = await save({ url: LINK, tabs: ['Beans', 'Dairy'] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/"Dairy" is not in the sheet/);
+  });
+
+  it('reports a chosen tab that was renamed, instead of calling it unchanged', async () => {
+    await save({ url: LINK, tabs: ['Milk'] });
+    sheet.book = { Beans: sheet.book.Beans, Dairy: sheet.book.Milk, Notes: sheet.book.Notes };
+    const res = await check();
+    expect(res.body.error).toMatch(/"Milk" is not in the sheet any more/);
+    expect((await bell()).map((i) => i.id)).toEqual(['sheet:error']);
+    // Choosing again fixes it.
+    expect((await save({ url: LINK, tabs: ['Dairy'] })).body.sheet.tabs).toEqual(['Dairy']);
+    expect((await check()).body.error).toBeUndefined();
+  });
+
+  it('re-bases quietly when the tab choice changes', async () => {
+    await save({ url: LINK, tabs: ['Beans'] });
+    sheet.book.Milk[1][1] = 1;
+    await save({ url: LINK, tabs: ['Beans', 'Milk'] });
+    expect((await check()).body.changed).toBe(false);
+  });
+
+  it('re-bases a link saved before tabs existed, rather than calling it a change', async () => {
+    await mongoose.model('Settings').create({ key: 'inventorySheet', value: { url: LINK, seenHash: 'an-old-csv-fingerprint', checkTime: '06:00' } });
+    expect((await check()).body.changed).toBe(false);
+    expect(await bell()).toEqual([]);
+    sheet.book.Beans[1][1] = 3;
+    expect((await check()).body.changed).toBe(true);
   });
 });
 
 describe('the check', () => {
-  it('flags a change in the bell, and applies nothing', async () => {
+  it('applies nothing', async () => {
     await save({ url: LINK });
-    const inventoryBefore = await mongoose.model('Inventory').countDocuments();
-
-    let res = await as(owner)('post', '/api/inventory-sheet/check');
-    expect(res.body.changed).toBe(false);
-    expect(await bell()).toEqual([]);
-
-    sheet.csv = 'Product,Qty\nBeans,4\n';
-    res = await as(owner)('post', '/api/inventory-sheet/check');
-    expect(res.body.changed).toBe(true);
-    expect(res.body.sheet.changedAt).toBeTruthy();
-    expect((await bell()).map((i) => i.id)).toEqual(['sheet:changed']);
-    expect(await mongoose.model('Inventory').countDocuments()).toBe(inventoryBefore);
+    const before = await mongoose.model('Inventory').countDocuments();
+    sheet.book.Beans[1][1] = 4;
+    expect((await check()).body.changed).toBe(true);
+    expect(await mongoose.model('Inventory').countDocuments()).toBe(before);
   });
 
   it('shows in the bell why a check failed', async () => {
     await save({ url: LINK });
     sheet.respond = () => new Response('gone', { status: 404 });
-    await as(owner)('post', '/api/inventory-sheet/check');
+    await check();
     const items = await bell();
     expect(items.map((i) => i.id)).toEqual(['sheet:error']);
     expect(items[0].detail).toMatch(/not found/i);
@@ -119,8 +193,8 @@ describe('the check', () => {
 
   it('is not shown to anyone who cannot import stock', async () => {
     await save({ url: LINK });
-    sheet.csv = 'changed';
-    await as(owner)('post', '/api/inventory-sheet/check');
+    sheet.book.Beans[1][1] = 4;
+    await check();
     const mgrItems = (await as(manager)('get', '/api/notifications')).body.items || [];
     expect(mgrItems.filter((i) => i.id.startsWith('sheet:'))).toEqual([]);
   });
@@ -128,21 +202,19 @@ describe('the check', () => {
 
 describe('pulling', () => {
   it('hands the workbook to the browser and clears the change', async () => {
-    await save({ url: LINK });
-    sheet.csv = 'Product,Qty\nBeans,4\n';
-    await as(owner)('post', '/api/inventory-sheet/check');
+    await save({ url: LINK, tabs: ['Beans'] });
+    sheet.book.Beans[1][1] = 4;
+    await check();
 
     const res = await as(owner)('post', '/api/inventory-sheet/pull').buffer(true).parse((r, cb) => {
       const chunks = []; r.on('data', (c) => chunks.push(c)); r.on('end', () => cb(null, Buffer.concat(chunks)));
     });
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toMatch(/spreadsheetml/);
-    expect(Buffer.compare(res.body, XLSX_BYTES)).toBe(0);
-    expect(calls).toContain(`https://docs.google.com/spreadsheets/d/${ID}/export?format=xlsx`);
+    expect(workbookTabs(res.body).map((t) => t.name)).toEqual(['Beans', 'Milk', 'Notes']);
 
     expect(await bell()).toEqual([]);
-    const again = await as(owner)('post', '/api/inventory-sheet/check');
-    expect(again.body.changed).toBe(false);
+    expect((await check()).body.changed).toBe(false);
     expect((await as(owner)('get', '/api/inventory-sheet')).body.sheet.lastPulledAt).toBeTruthy();
   });
 
@@ -153,11 +225,35 @@ describe('pulling', () => {
   });
 });
 
+describe('reading a workbook', () => {
+  it('lists tabs in order, and fingerprints each on its own', () => {
+    const a = workbookTabs(makeXlsx(baseBook()));
+    const book = baseBook(); book.Notes[1][0] = 'changed';
+    const b = workbookTabs(makeXlsx(book));
+    expect(a.map((t) => t.name)).toEqual(['Beans', 'Milk', 'Notes']);
+    expect(b[0].fingerprint).toBe(a[0].fingerprint);
+    expect(b[2].fingerprint).not.toBe(a[2].fingerprint);
+  });
+
+  it('refuses what is not an .xlsx', () => {
+    expect(() => workbookTabs(Buffer.from('not a zip at all, just text'))).toThrow(XlsxError);
+  });
+
+  it('keeps a tab choice to real names', () => {
+    expect(cleanTabs(undefined)).toBe('all');
+    expect(cleanTabs('all')).toBe('all');
+    expect(cleanTabs([' Beans ', 'Beans', 'Milk'])).toEqual(['Beans', 'Milk']);
+    expect(cleanTabs([])).toBeNull();
+    expect(cleanTabs('Beans')).toBeNull();
+    expect(cleanTabs(Array.from({ length: 51 }, (_, i) => `T${i}`))).toBeNull();
+  });
+});
+
 describe('link parsing', () => {
   it('understands shared and published links', () => {
     expect(parseSheetLink(`https://docs.google.com/spreadsheets/d/${ID}/edit?gid=7#gid=7`)).toEqual({ kind: 'id', id: ID, gid: '7' });
     expect(parseSheetLink(`https://docs.google.com/spreadsheets/d/e/2PACX-${ID}/pubhtml`)).toEqual({ kind: 'pub', id: `2PACX-${ID}`, gid: '' });
-    expect(exportUrl({ kind: 'pub', id: 'P', gid: '3' }, 'csv')).toBe('https://docs.google.com/spreadsheets/d/e/P/pub?output=csv&gid=3&single=true');
+    expect(exportUrl({ kind: 'pub', id: 'P', gid: '3' }, 'xlsx')).toBe('https://docs.google.com/spreadsheets/d/e/P/pub?output=xlsx');
     expect(parseSheetLink('not a link')).toBeNull();
   });
 
