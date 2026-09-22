@@ -385,7 +385,7 @@ export default function ProductsTab({ ctx }) {
   const productToForm = (p) => ({ 
                           name: p.name || '', category: p.category || '', description: p.description || '',
                           basePrice: Number(p.basePrice || p.price || 0), discountPercent: Number(p.discountPercent || 0),
-                          vatExempt: p.vatExempt === true, isBulk: p.isBulk === true,
+                          vatExempt: p.vatExempt === true, isBulk: p.isBulk === true, showOnQr: p.showOnQr !== false,
                           clientDiscounts: (p.clientDiscounts || []).map(d => ({ clientId: String(d.clientId), percent: Number(d.percent || 0) })),
                           segmentDiscounts: (p.segmentDiscounts || []).map(d => ({ segment: String(d.segment || ''), percent: Number(d.percent || 0) })),
                           bulkBreaks: (p.bulkBreaks || []).map(b => ({ minQty: Number(b.minQty || 0), percent: Number(b.percent || 0) })),
@@ -1373,6 +1373,23 @@ export default function ProductsTab({ ctx }) {
                   <p className="text-[10px] text-fg/65 mb-3">
                     Shows this product under a dedicated <span className="font-bold">Bulk</span> tab in the register and client portal - for sack/wholesale quantities sold apart from the regular menu.
                   </p>
+                  {BUSINESS_TYPE !== 'log' && (
+                    <>
+                      {/* Café: counter-only products are sold at the POS but never offered on the table QR. */}
+                      <label className="flex items-start gap-2.5 mb-1 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={formData.showOnQr !== false}
+                          onChange={e => setFormData({ ...formData, showOnQr: e.target.checked })}
+                          className="mt-0.5 w-4 h-4 accent-brand shrink-0"
+                        />
+                        <span className="text-xs font-bold text-fg">Show on the QR menu</span>
+                      </label>
+                      <p className="text-[10px] text-fg/65 mb-3">
+                        Untick to make it counter-only: staff can still sell it at the POS, but customers ordering from a table QR will not see or order it.
+                      </p>
+                    </>
+                  )}
 
                           </div>
                         </div>

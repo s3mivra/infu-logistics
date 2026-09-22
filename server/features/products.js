@@ -320,6 +320,9 @@ app.get('/api/products', async (req, res) => {
     // they can find it and give it a real price), customer-facing menu/portal never do.
     const productQuery = { isArchived: { $ne: true }, businessType: BUSINESS_TYPE };
     if (!isAdminCaller) { productQuery.isAvailable = { $ne: false }; productQuery.basePrice = { $gt: 0 }; }
+    // Café: nobody signed in is the table QR menu, which never lists a
+    // counter-only product. Staff still see everything for the POS.
+    if (BUSINESS_TYPE === 'fb' && !isAdminCaller && !buyerClientId) productQuery.showOnQr = { $ne: false };
     const products = await Product.find(productQuery).populate('modifierGroups').lean();
     // Product images can be globally disabled via the superadmin "Product Images" setting.
     // Customers then receive no image (the menu shows a placeholder); staff/admin keep the
@@ -659,6 +662,7 @@ app.get('/api/products/menu-backup', verifyToken, requireStaff, requirePermissio
         bulkBreaks: p.bulkBreaks, clientBulkBreaks: p.clientBulkBreaks,
         clientDiscounts: p.clientDiscounts, segmentDiscounts: p.segmentDiscounts,
         image: p.image, isAvailable: p.isAvailable, isOutOfStock: p.isOutOfStock,
+        showOnQr: p.showOnQr !== false,
         isArchived: p.isArchived,
         baseRecipe: exportRecipe(p.baseRecipe),
         sizes: (p.sizes || []).map(s => ({
@@ -868,6 +872,7 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, require
           clientDiscounts: p.clientDiscounts || [], segmentDiscounts: p.segmentDiscounts || [],
           image: p.image || '',
           isAvailable: p.isAvailable !== false, isOutOfStock: !!p.isOutOfStock,
+          showOnQr: p.showOnQr !== false,
           baseRecipe: resolveRecipe(p.baseRecipe),
           sizes: (p.sizes || []).map(s => ({
             sizeCode: s.sizeCode, name: s.name, price: s.price,
@@ -1466,6 +1471,29 @@ app.patch('/api/products/:id/availability', verifyToken, requireSuperAdmin, asyn
     res.json({ success: true, product });
   } catch (err) {
     log.error({ err }, 'PATCH /api/products/:id/availability failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// PATCH /api/products/:id/qr - show on / hide from the table QR menu (café).
+// Hidden products are counter-only: still sold at the POS.
+app.patch('/api/products/:id/qr', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
+  try {
+    const { showOnQr } = req.body;
+    if (typeof showOnQr !== 'boolean')
+      return res.status(400).json({ success: false, error: 'showOnQr must be true or false.' });
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Product not found.' });
+    const product = await Product.findOneAndUpdate({ _id: req.params.id, businessType: BUSINESS_TYPE }, { showOnQr }, { returnDocument: 'after' });
+    if (!product) return res.status(404).json({ success: false, error: 'Product not found.' });
+    await AuditLog.create({
+      userId: req.user?.name || 'System',
+      action: showOnQr ? 'PRODUCT_SHOWN_ON_QR' : 'PRODUCT_HIDDEN_FROM_QR',
+      targetReference: product.productCode || req.params.id,
+      details: { name: product.name, showOnQr, changedBy: req.user?.name },
+    });
+    emitToAll('menuUpdated');
+    res.json({ success: true, product });
+  } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });

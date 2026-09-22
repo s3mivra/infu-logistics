@@ -449,7 +449,7 @@ const productSchema = z.object({
   baseSize: z.string().max(40).optional(), baseRecipe: zRecipe,
   sizes: z.array(z.object({ sizeCode: z.string().optional(), name: z.string().optional(), price: zMoney.optional(), recipe: zRecipe })).optional(),
   addOns: z.array(z.object({ name: z.string(), price: zMoney.optional(), recipe: zRecipe })).optional(),
-  image: z.string().optional(), isAvailable: z.boolean().optional(),
+  image: z.string().optional(), isAvailable: z.boolean().optional(), showOnQr: z.boolean().optional(),
   vatExempt: z.boolean().optional(),
   barcode: z.string().max(120).optional(),
   isBulk: z.boolean().optional(),
@@ -1212,6 +1212,9 @@ const ProductSchema = new mongoose.Schema({
   // badge) and STILL appear in every report. Separate from isAvailable so a
   // temporary stockout doesn't get conflated with a permanent removal.
   isOutOfStock:   { type: Boolean, default: false },
+  // Café: whether customers see it on the table QR menu. Off = counter-only -
+  // still sold at the POS, never offered to (or orderable from) a QR code.
+  showOnQr:       { type: Boolean, default: true },
   isArchived:     { type: Boolean, default: false },   // soft-delete; hidden from menu + POS
   modifierGroups: [{ type: mongoose.Schema.Types.ObjectId, ref: 'ModifierGroup' }]  // required/optional selection prompts
 }, { timestamps: true });

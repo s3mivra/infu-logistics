@@ -858,6 +858,18 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // FIX 1: Safely default to Takeout if the table is null or empty
     if (!table) table = 'Takeout';
 
+    // A counter-only product is not on the QR menu, and a QR order cannot carry
+    // one either - a saved page or an edited request must not get around it.
+    // Checked BEFORE the session is burned below, so a refused order leaves
+    // the customer's session alive to fix their cart and send again.
+    if (req.qrSession && Array.isArray(items)) {
+      const ids = items.map(i => i?.productId).filter(id => mongoose.Types.ObjectId.isValid(id));
+      const hidden = ids.length ? await Product.find({ _id: { $in: ids }, showOnQr: false }, { name: 1 }).lean() : [];
+      if (hidden.length) {
+        return res.status(400).json({ success: false, error: `${hidden.map(h => h.name).join(', ')} can only be ordered at the counter.` });
+      }
+    }
+
     // Kill QR session - already validated by verifyOrderAuth; burn it before processing to prevent replay
     if (req.qrSession) {
       req.qrSession.isActive = false;

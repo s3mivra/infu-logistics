@@ -7564,6 +7564,19 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     } catch (err) { console.error('toggleProductAvailability', err); }
   };
 
+  // Café: show on / hide from the table QR menu. Hidden = counter-only, still
+  // sold at the POS.
+  const toggleProductQr = async (product) => {
+    try {
+      const res = await apiFetch(`/api/products/${product._id}/qr`, {
+        method: 'PATCH',
+        body: JSON.stringify({ showOnQr: product.showOnQr === false }),
+      });
+      if (res.ok) fetchData();
+      else ui.alert((await res.json().catch(() => ({}))).error || 'Failed to update the QR menu setting.');
+    } catch (err) { console.error('toggleProductQr', err); }
+  };
+
   // Toggle Out-Of-Stock flag. Stays on the menu (with a badge), still in reports.
   const toggleProductOOS = async (product) => {
     try {
@@ -8846,7 +8859,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     exportPricingMasterlistPDF, exportPriceTiersPDF, exportShiftHistoryPDF, exportTimesheetsPDF,
     exportPriceTiersExcel, priceTierImportPreview, setPriceTierImportPreview, parsePriceTierExcel, submitPriceTierImport, priceTierImporting,
     exportInventoryToPDF, exportLedgerToPDF, exportAllToPDF,
-    handleSaveProduct, handleSaveCategory, toggleProductAvailability, toggleProductOOS,
+    handleSaveProduct, handleSaveCategory, toggleProductAvailability, toggleProductOOS, toggleProductQr,
     // ── Change Password ──────────────────────────────────────────────────────
     changePwModal, setChangePwModal, setChangePwError, changePwForm, setChangePwForm, changePwLoading, changePwError, handleChangePassword,
     // ── Modifier Groups ──────────────────────────────────────────────────────

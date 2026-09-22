@@ -78,13 +78,15 @@ export default function PricingTab({ ctx }) {
     settleForm, settleModal, settleSubmitting, shiftFilter, shiftHistory,
     shiftHistoryPage, shiftHistoryTotal, spoilageForm, spoilageLoading, spoilageModal,
     standardAccounts, stockHistory, submitManualOrder, submitPhysicalCounts, submitRfDisb,
-    toggleProductAvailability, toggleProductOOS,
+    toggleProductAvailability, toggleProductOOS, toggleProductQr, can,
     submitRfNew, submitRfRepl, toggleDay, toggleOrderList,
     totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
     users, varianceNoteMode, varianceReasons,
   } = ctx;
 
+  // Café only: which products the table QR menu shows.
+  const showQrCol = BUSINESS_TYPE !== 'log' && (isSuperAdmin || can?.('products.manage'));
   const [pricingSort, setPricingSort] = useState('az');
   const [pricingCatFilter, setPricingCatFilter] = useState('');
   const [pricingSearch, setPricingSearch] = useState('');
@@ -305,6 +307,7 @@ export default function PricingTab({ ctx }) {
                     <th className="pb-3 text-right uppercase tracking-wider text-xs">Margin</th>
                     {isSuperAdmin && <th className="pb-3 text-center uppercase tracking-wider text-xs">Removed</th>}
                     {isSuperAdmin && <th className="pb-3 text-center uppercase tracking-wider text-xs">OOS</th>}
+                    {showQrCol && <th className="pb-3 text-center uppercase tracking-wider text-xs" title="Shown on the table QR menu, or counter-only">QR</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -468,6 +471,26 @@ export default function PricingTab({ ctx }) {
                               }`}
                             >
                               {row.product.isOutOfStock ? 'OOS' : 'OK'}
+                            </button>
+                          ) : <span />}
+                        </td>
+                      )}
+                      {/* QR menu toggle (café). Off = counter-only: still sold at the POS, never on the table QR. */}
+                      {showQrCol && (
+                        <td className={`py-2 text-center ${row.name !== '' ? 'pt-4' : ''}`}>
+                          {row.isBase ? (
+                            <button
+                              onClick={() => toggleProductQr && toggleProductQr(row.product)}
+                              aria-pressed={row.product.showOnQr !== false}
+                              aria-label={`${row.product.name}: ${row.product.showOnQr === false ? 'counter only, not on the QR menu' : 'shown on the QR menu'}`}
+                              title={row.product.showOnQr === false ? 'Counter only. Click to show on the QR menu' : 'On the QR menu. Click to make it counter-only'}
+                              className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition border ${
+                                row.product.showOnQr === false
+                                  ? 'bg-transparent text-fg/70 border-white/20 hover:bg-emerald-500 hover:text-white hover:border-emerald-500'
+                                  : 'bg-emerald-700 text-white border-emerald-700 hover:bg-transparent hover:text-fg hover:border-white/30'
+                              }`}
+                            >
+                              {row.product.showOnQr === false ? 'Counter' : 'On QR'}
                             </button>
                           ) : <span />}
                         </td>
