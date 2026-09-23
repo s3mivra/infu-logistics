@@ -307,6 +307,7 @@ export default function InventoryTab({ ctx }) {
                     style={{ top: menuPosition.top, right: menuPosition.right }}
                     className="fixed z-[9999] bg-sidebar-bg border border-white/15 rounded-xl shadow-2xl min-w-[190px] py-1 animate-scale-in origin-top-right"
                   >
+                    <p className="px-4 pt-2 pb-1 text-[9px] font-black uppercase tracking-widest text-fg/65">Counting</p>
                     {/* Direct stock import - posts straight to inventory (distinct from the
                         Procurement "Import Excel", which creates a PO record instead). */}
                     <label className="w-full flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition cursor-pointer">
@@ -315,17 +316,20 @@ export default function InventoryTab({ ctx }) {
                         onChange={e => { parseImportFile(e.target.files?.[0]); e.target.value = ''; setOpenActionMenu(null); }}
                         className="hidden" />
                     </label>
+                    <button onClick={() => { downloadImportTemplate(); setOpenActionMenu(null); }}
+                      className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition">
+                      Count sheet template
+                    </button>
+                    <div className="border-t border-white/8 mx-2 my-1" />
+                    <p className="px-4 pt-1 pb-1 text-[9px] font-black uppercase tracking-widest text-fg/65">Linked sheet</p>
                     {isSuperAdmin && (
                       <button onClick={() => { setSheetOpen(true); setOpenActionMenu(null); }}
                         className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition">
                         Google Sheet{sheet?.url ? (sheet.changedAt ? ' · changed' : ' · linked') : '…'}
                       </button>
                     )}
-                    <button onClick={() => { downloadImportTemplate(); setOpenActionMenu(null); }}
-                      className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition">
-                      Count sheet template
-                    </button>
                     <div className="border-t border-white/8 mx-2 my-1" />
+                    <p className="px-4 pt-1 pb-1 text-[9px] font-black uppercase tracking-widest text-fg/65">Exports</p>
                     {/* PDF is for printing and signing; the spreadsheet is for
                         working with. Both, because they are not the same job. */}
                     <button onClick={() => { downloadDataset?.('inventory'); setOpenActionMenu(null); }}

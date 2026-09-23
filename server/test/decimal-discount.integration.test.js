@@ -51,6 +51,34 @@ describe('a percentage with decimals', () => {
     }
   });
 
+  it('keeps a finer rate than two decimals, wherever a rate is set', async () => {
+    // A negotiated rate is whatever was agreed - the forms no longer round it,
+    // so nothing between the keyboard and the database may either.
+    const preset = await as('post', '/api/discounts').send({ name: 'Negotiated', percentage: 7.125 });
+    expect((await M('Discount').findById(preset.body.discount._id).lean()).percentage).toBe(7.125);
+
+    const rule = await as('post', '/api/discount-rules').send({ name: 'Bulk day', percent: 3.755 });
+    expect((await M('DiscountRule').findById(rule.body.rule._id).lean()).percent).toBe(3.755);
+
+    const tier = await as('post', '/api/price-tiers').send({ name: 'Wholesale', percent: 12.625 });
+    expect((await M('PriceTier').findById(tier.body.tier._id).lean()).percent).toBe(12.625);
+
+    const product = await as('post', '/api/products').send({
+      name: 'Beans 1kg', category: 'Coffee', basePrice: 900, discountPercent: 6.875,
+      bulkBreaks: [{ minQty: 10, percent: 9.125 }],
+    });
+    const stored = await M('Product').findById(product.body.product._id).lean();
+    expect([stored.discountPercent, stored.bulkBreaks[0].percent]).toEqual([6.875, 9.125]);
+  });
+
+  it('prices a sale on a finer rate, to the centavo', async () => {
+    const { body } = await sell(7.125);
+    // 130 x 7.125% is 9.2625 - a centavo and a bit, rounded once.
+    expect(body.order.discount).toBe(9.26);
+    expect(body.order.total).toBe(120.74);
+    expect(body.order.discountPercent).toBe(7.125);
+  });
+
   it('still refuses a percentage that is not one', async () => {
     expect((await as('post', '/api/discounts').send({ name: 'Too much', percentage: 120 })).status).toBe(422);
     expect((await as('post', '/api/discounts').send({ name: 'Negative', percentage: -5 })).status).toBe(422);

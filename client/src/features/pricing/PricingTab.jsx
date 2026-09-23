@@ -586,7 +586,7 @@ export default function PricingTab({ ctx }) {
                 </div>
                 <div>
                   <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Percentage (%)</label>
-                  <input type="number" placeholder="e.g., 12.5" max="100" min="0" step="0.01" value={discountForm.percentage} onChange={(e) => setDiscountForm({...discountForm, percentage: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" required />
+                  <input type="number" placeholder="e.g., 12.5" max="100" min="0" step="any" value={discountForm.percentage} onChange={(e) => setDiscountForm({...discountForm, percentage: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" required />
                 </div>
                 <button type="submit" disabled={discountSaving}
                   className="w-full bg-accent text-on-brand font-black py-3 rounded hover:bg-brand-dark transition shadow-lg shadow-accent/20 uppercase tracking-wider text-xs disabled:opacity-50">
@@ -675,7 +675,7 @@ export default function PricingTab({ ctx }) {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Discount (%)</label>
-                    <input type="number" required min="1" max="100" value={autoRuleForm.percent} placeholder="10"
+                    <input type="number" required min="0" max="100" step="any" value={autoRuleForm.percent} placeholder="12.5"
                       onChange={e => setAutoRuleForm(f => ({ ...f, percent: e.target.value }))}
                       className="w-full bg-surface border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" />
                   </div>

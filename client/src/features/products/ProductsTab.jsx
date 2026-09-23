@@ -192,12 +192,12 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
                   <input type="number" min="0" step="0.01" className={`w-full ${inputCls} text-xs`} placeholder="Sale price ₱" value={ruleForm.salePrice} onChange={e => setRuleForm(r => ({ ...r, salePrice: e.target.value }))} />
                 )}
                 {ruleForm.ruleType === 'percent_off' && (
-                  <input type="number" min="0" max="100" step="0.01" className={`w-full ${inputCls} text-xs`} placeholder="Discount % (e.g. 12.5)" value={ruleForm.discountPercent} onChange={e => setRuleForm(r => ({ ...r, discountPercent: e.target.value }))} />
+                  <input type="number" min="0" max="100" step="any" className={`w-full ${inputCls} text-xs`} placeholder="Discount % (e.g. 12.5)" value={ruleForm.discountPercent} onChange={e => setRuleForm(r => ({ ...r, discountPercent: e.target.value }))} />
                 )}
                 {ruleForm.ruleType === 'threshold' && (
                   <div className="grid grid-cols-2 gap-2">
                     <input type="number" min="0" step="0.01" className={`${inputCls} text-xs`} placeholder="Min order ₱" value={ruleForm.thresholdAmount} onChange={e => setRuleForm(r => ({ ...r, thresholdAmount: e.target.value }))} />
-                    <input type="number" min="0" max="100" step="0.01" className={`${inputCls} text-xs`} placeholder="Discount %" value={ruleForm.discountPercent} onChange={e => setRuleForm(r => ({ ...r, discountPercent: e.target.value }))} />
+                    <input type="number" min="0" max="100" step="any" className={`${inputCls} text-xs`} placeholder="Discount %" value={ruleForm.discountPercent} onChange={e => setRuleForm(r => ({ ...r, discountPercent: e.target.value }))} />
                   </div>
                 )}
 
@@ -1491,7 +1491,7 @@ export default function ProductsTab({ ctx }) {
                   {/* Per-product discount - applies only to this product's line, not the whole order. */}
                   <div className="flex items-center gap-2 mb-1">
                     <div className="relative w-1/2">
-                      <input type="number" min="0" max="100" step="0.01" placeholder="Discount" value={formData.discountPercent || ''} onChange={e => setFormData({...formData, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pr-7 text-fg outline-none focus:border-brand font-bold placeholder-fg/70" />
+                      <input type="number" min="0" max="100" step="any" placeholder="Discount" value={formData.discountPercent || ''} onChange={e => setFormData({...formData, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))})} className="w-full bg-white/5 border border-white/10 rounded-lg p-2.5 pr-7 text-fg outline-none focus:border-brand font-bold placeholder-fg/70" />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/70 font-bold">%</span>
                     </div>
                     {formData.discountPercent > 0 && (
@@ -1529,7 +1529,7 @@ export default function ProductsTab({ ctx }) {
                           placeholder="Type to find a client"
                           options={(clientAccounts || []).map(c => ({ value: c._id, label: c.name || c.username, hint: c.clientCode || '' }))} />
                         <div className="relative w-28">
-                          <input type="number" min="0" max="100" step="0.01" value={cd.percent}
+                          <input type="number" min="0" max="100" step="any" value={cd.percent}
                             onChange={e => {
                               const list = [...(formData.clientDiscounts || [])];
                               list[idx] = { ...list[idx], percent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) };
@@ -1650,7 +1650,7 @@ export default function ProductsTab({ ctx }) {
                           )}
                         </select>
                         <div className="relative w-28">
-                          <input type="number" min="0" max="100" step="0.01" value={sd.percent}
+                          <input type="number" min="0" max="100" step="any" value={sd.percent}
                             onChange={e => {
                               const list = [...(formData.segmentDiscounts || [])];
                               list[idx] = { ...list[idx], percent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) };
@@ -1693,7 +1693,7 @@ export default function ProductsTab({ ctx }) {
                             className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-fg text-xs font-bold outline-none focus:border-brand" />
                         </div>
                         <div className="relative w-28">
-                          <input type="number" min="0" max="100" step="0.01" value={b.percent}
+                          <input type="number" min="0" max="100" step="any" value={b.percent}
                             onChange={e => {
                               const list = [...(formData.bulkBreaks || [])];
                               list[idx] = { ...list[idx], percent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) };

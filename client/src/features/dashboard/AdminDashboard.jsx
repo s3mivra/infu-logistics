@@ -8503,6 +8503,20 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           meant the half you were not using pushed the half you were below the
           fold; folding the other one gives that space back. Nothing starts
           folded, so this looks unchanged until someone chooses otherwise. */}
+      {/* Search, where search is looked for: the top of the sidebar, before the
+          list. The quick jump existed only behind Ctrl+K and a folded Quick
+          Tools section, so on a desktop nothing on screen said the app could
+          be searched at all - and it is the fastest way to any of the fifty
+          pages, sub-pages included ("Export All · Ledger → Setup"). */}
+      <div className="px-3 pt-3">
+        <button onClick={() => setPaletteOpen(true)} aria-label="Search screens (Ctrl+K)"
+          className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-fg/70 hover:text-fg hover:border-white/25 transition">
+          <Search size={14} className="shrink-0" />
+          <span className="text-sm font-bold">Go to…</span>
+          <span className="ml-auto text-[9px] font-black tracking-widest text-fg/65 border border-white/10 rounded px-1.5 py-0.5">CTRL K</span>
+        </button>
+      </div>
+
       <nav className="p-3 space-y-0.5 md:flex-1 md:min-h-0 md:overflow-y-auto custom-scrollbar">
         {visibleNavGroups({ can, isSuperAdmin, moduleOn, businessType: BUSINESS_TYPE })
           .filter(g => g.key !== 'system')
