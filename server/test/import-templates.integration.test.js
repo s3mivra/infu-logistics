@@ -18,6 +18,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { normaliseInventoryRow, inventoryImportPayload } from '../../client/src/shared/importSheets.js';
 import { DATASETS } from '../lib/dataSets.js';
 
 let ctx, app, tok;
@@ -118,10 +119,18 @@ describe('the template round-trips through its own importer', () => {
 
   it('inventory', async () => {
     const { body } = await template('inventory');
+    // Stock is the one template whose columns are SHEET headers: the Inventory
+    // tab reads them (pack, unit, prices per pack) and posts what it worked
+    // out. Posting the row raw would prove the template against an API nobody
+    // fills in by hand, so it goes through the reader the app itself uses.
     const row = exampleRow(body);
-    const res = await auth('post', '/api/inventory/import').send({ items: [row] });
+    const items = inventoryImportPayload([normaliseInventoryRow(row)]).items;
+    const res = await auth('post', '/api/inventory/import').send({ items });
     expect(res.body.success).toBe(true);
     expect(await M('Inventory').countDocuments({})).toBe(1);
+    const stored = await M('Inventory').findOne({}).lean();
+    // The example says a 1 L pack at 82: one litre held, 82 a litre.
+    expect({ qty: stored.stockQty, unit: stored.unit, cost: stored.unitCost }).toEqual({ qty: 20000, unit: 'ml', cost: 0.082 });
   }, 30000);
 });
 

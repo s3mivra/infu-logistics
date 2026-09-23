@@ -14,32 +14,60 @@ export default function ImportModal() {
         <div className="bg-surface border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-4xl shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden animate-scale-in">
           <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
             <div>
-              <h2 className="text-fg font-black text-lg">Bulk Import - Stock Take</h2>
-              <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-0.5">Replaces current quantities · audited via journal entries</p>
+              <h2 className="text-fg font-black text-lg">Stock count</h2>
+              <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-0.5">From a sheet · replaces quantities · audited via journal entries</p>
             </div>
             <button onClick={() => setImportModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/75 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
           </div>
 
+          {/* What this document is, before any number is read. Counting and
+              receiving are different things, and confusing them is what wipes
+              a day's sales. */}
+          <div className="px-5 pt-3 shrink-0">
+            <div className="rounded-xl border border-amber-500/40 bg-sidebar-bg px-4 py-2.5">
+              <p className="text-xs text-fg/85 leading-snug">
+                <span className="font-black">This is a count, not a delivery.</span> The quantities below <b>replace</b> what the system holds, and each
+                difference is booked as a stock gain or loss. Receiving goods you bought? Use <b>Procurement</b> instead.
+              </p>
+              {(() => {
+                const m = importRows.find(r => r._columns)?._columns;
+                if (!m) return null;
+                return (
+                  <p className="text-[11px] text-fg/70 leading-snug mt-1.5">
+                    {m.explicit
+                      ? 'Read from the Pack and Unit columns'
+                      : 'Read the pack size from the product name (this sheet has no Pack / Unit columns)'}
+                    {m.columns.length > 0 && <> · {m.columns.join(' · ')}</>}
+                  </p>
+                );
+              })()}
+            </div>
+          </div>
+
           {/* Summary chips */}
           {(() => {
-            const valid = importRows.filter(r => !r._error && !r._isCategory);
+            const valid = importRows.filter(r => !r._error && !r._isCategory && !r._skipped);
             const newCount = valid.filter(r => r._newItem).length;
             const batchCount = valid.filter(r => !r._newItem && r._newBatch).length;
             const upCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff > 0).length;
             const downCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff < 0).length;
             const sameCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff === 0).length;
             const errCount = importRows.filter(r => r._error).length;
+            const skippedCount = importRows.filter(r => r._skipped).length;
+            const noteCount = importRows.filter(r => r._notes?.length).length;
             const dateWarnRows = importRows.filter(r => r._dateFormatWarn);
             const dateFixedCount = dateWarnRows.filter(r => r._dateFormatWarn.corrected).length;
             const dateUnfixedCount = dateWarnRows.length - dateFixedCount;
             return (
               <div className="px-5 py-3 flex flex-wrap gap-2 border-b border-white/10 shrink-0">
                 <span className="text-[10px] font-black uppercase tracking-widest bg-blue-500 text-white px-2.5 py-1.5 rounded">NEW · {newCount}</span>
-                {batchCount > 0 && <span className="text-[10px] font-black uppercase tracking-widest bg-purple-500 text-white px-2.5 py-1.5 rounded">NEW BATCH · {batchCount}</span>}
+                {batchCount > 0 && <span title="Rows for an item that is already listed above - each is another lot and is added to it." className="text-[10px] font-black uppercase tracking-widest bg-purple-500 text-white px-2.5 py-1.5 rounded">+ ANOTHER LOT · {batchCount}</span>}
                 <span className="text-[10px] font-black uppercase tracking-widest bg-green-500 text-white px-2.5 py-1.5 rounded">↑ INCREASE · {upCount}</span>
                 <span className="text-[10px] font-black uppercase tracking-widest bg-red-500 text-white px-2.5 py-1.5 rounded">↓ DECREASE · {downCount}</span>
                 <span className="text-[10px] font-black uppercase tracking-widest bg-white/5 text-fg/65 px-2.5 py-1.5 rounded">UNCHANGED · {sameCount}</span>
                 {errCount > 0 && <span className="text-[10px] font-black uppercase tracking-widest bg-red-500/40 text-danger px-2.5 py-1.5 rounded">ERRORS · {errCount}</span>}
+                {skippedCount > 0 && <span title="These rows have no quantity, so they are not counted. Type 0 to count zero." className="text-[10px] font-black uppercase tracking-widest bg-white/10 text-fg/75 px-2.5 py-1.5 rounded">NOT COUNTED · {skippedCount}</span>}
+                {noteCount > 0 && <span title="Rows where the sheet had to be interpreted - open each one to read why." className="text-[10px] font-black uppercase tracking-widest bg-amber-500/30 text-warning px-2.5 py-1.5 rounded">WORTH CHECKING · {noteCount}</span>}
                 {dateFixedCount > 0 && <span title="These date cells were formatted day-first (d/m/yyyy) in the source file instead of MM/DD/YYYY - the date has been auto-corrected for this import. Fix the cell's format in the source file so it stops happening." className="text-[10px] font-black uppercase tracking-widest bg-amber-500 text-black px-2.5 py-1.5 rounded">✓ DATE AUTO-FIXED · {dateFixedCount}</span>}
                 {dateUnfixedCount > 0 && <span title="These date cells were formatted day-first (d/m/yyyy) but couldn't be safely auto-corrected (the day value is over 12, so it can't also be a valid month). Verify these dates manually." className="text-[10px] font-black uppercase tracking-widest bg-red-500/40 text-danger px-2.5 py-1.5 rounded">⚠ CHECK DATE · {dateUnfixedCount}</span>}
               </div>
@@ -67,6 +95,7 @@ export default function ImportModal() {
                     </tr>
                   );
                   const isErr = !!r._error;
+                  const isSkipped = !!r._skipped;
                   const isNew = r._newItem;
                   const isBatch = !isNew && !!r._newBatch;
                   const diff = Number(r._diff || 0);
@@ -78,8 +107,15 @@ export default function ImportModal() {
                   // converted to internally, so it reads like what was actually typed.
                   const packSize = Number(r.packSize) || 0;
                   const isPacked = packSize > 0;
+                  // What one pack is, written the way the sheet says it: 0.25 kg
+                  // is a 250g pack. "4 pcs" for four bags of coffee read as four
+                  // pieces of something.
+                  const packLabel = !isPacked ? ''
+                    : r.displayUnit === 'kg' && packSize < 1 ? `${+(packSize * 1000).toFixed(3)}g`
+                    : r.displayUnit === 'L' && packSize < 1 ? `${+(packSize * 1000).toFixed(3)}ml`
+                    : `${+packSize.toFixed(3)}${r.displayUnit}`;
                   const fmtQty = (qtyDisplay) => isPacked
-                    ? `${(qtyDisplay / packSize).toLocaleString(undefined, { maximumFractionDigits: 2 })} pcs`
+                    ? `${(qtyDisplay / packSize).toLocaleString(undefined, { maximumFractionDigits: 2 })} × ${packLabel}`
                     : `${qtyDisplay.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${r.displayUnit}`;
 
                   // Multi-batch groups (repeated code/name, one row per lot) get a
@@ -98,7 +134,7 @@ export default function ImportModal() {
 
                   return (
                     <Fragment key={i}>
-                    <tr className={`border-b border-white/5 ${isErr ? 'bg-red-500/10' : isBatch ? 'bg-purple-500/5' : ''}`}>
+                    <tr className={`border-b border-white/5 ${isErr ? 'bg-red-500/10' : isSkipped ? 'opacity-60' : isBatch ? 'bg-purple-500/5' : ''}`}>
                       <td className="px-4 py-2.5 text-fg font-bold">
                         {r.itemCode && <span className="text-fg/65 font-mono text-[10px] mr-1.5">{r.itemCode}</span>}
                         {r.itemName || <span className="text-danger">(missing)</span>}
@@ -111,24 +147,28 @@ export default function ImportModal() {
                         {r._dateFormatWarn && !r._dateFormatWarn.corrected && (
                           <span title={`This cell's Excel format is day-first (d/m/yyyy) and displayed as "${r._dateFormatWarn.display}" - it couldn't be safely auto-corrected (its day is over 12, so it can't also be read as a month). Verify this date manually and fix the cell's format in the source file.`} className="ml-1.5 text-[9px] font-black bg-red-500 text-white border border-red-600/40 px-1.5 py-0.5 rounded uppercase align-middle">⚠ Check date</span>
                         )}
+                        {r._notes?.length > 0 && (
+                          <p className="text-warning text-[10px] font-normal normal-case mt-1 leading-snug">{r._notes.join(' ')}</p>
+                        )}
                         {isBatch && r.expiryDate && <span className="ml-1.5 text-special text-[10px]">exp {r.expiryDate}</span>}
                         {isBatch && !r.expiryDate && r.productionDate && <span className="ml-1.5 text-special text-[10px]">prod {r.productionDate}</span>}
                       </td>
                       <td className="px-2 py-2.5">
                         {isErr && <span className="text-[10px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">{r._error}</span>}
-                        {!isErr && isNew && <span className="text-[10px] font-black bg-blue-500 text-white px-1.5 py-0.5 rounded uppercase">NEW</span>}
-                        {!isErr && isBatch && <span className="text-[10px] font-black bg-purple-500 text-white px-1.5 py-0.5 rounded uppercase">NEW BATCH</span>}
-                        {!isErr && !isNew && !isBatch && diff > 0 && <span className="text-[10px] font-black bg-green-500 text-white px-1.5 py-0.5 rounded uppercase">↑ INC</span>}
-                        {!isErr && !isNew && !isBatch && diff < 0 && <span className="text-[10px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">↓ DEC</span>}
-                        {!isErr && !isNew && !isBatch && diff === 0 && <span className="text-[10px] font-black bg-white/10 text-fg/65 px-1.5 py-0.5 rounded uppercase">SAME</span>}
+                        {isSkipped && <span title="A count sheet leaves a line blank when it was not counted, so this row changes nothing. Type 0 to count zero." className="text-[10px] font-black bg-white/10 text-fg/75 px-1.5 py-0.5 rounded uppercase">{r._skipped}</span>}
+                        {!isErr && !isSkipped && isNew && <span className="text-[10px] font-black bg-blue-500 text-white px-1.5 py-0.5 rounded uppercase">NEW</span>}
+                        {!isErr && !isSkipped && isBatch && <span title="Another lot of an item already counted above - its quantity is ADDED to that one, so each expiry date keeps its own count." className="text-[10px] font-black bg-purple-500 text-white px-1.5 py-0.5 rounded uppercase">+ ANOTHER LOT</span>}
+                        {!isErr && !isSkipped && !isNew && !isBatch && diff > 0 && <span className="text-[10px] font-black bg-green-500 text-white px-1.5 py-0.5 rounded uppercase">↑ INC</span>}
+                        {!isErr && !isSkipped && !isNew && !isBatch && diff < 0 && <span className="text-[10px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">↓ DEC</span>}
+                        {!isErr && !isSkipped && !isNew && !isBatch && diff === 0 && <span className="text-[10px] font-black bg-white/10 text-fg/65 px-1.5 py-0.5 rounded uppercase">SAME</span>}
                       </td>
-                      <td className="px-2 py-2.5 text-right text-fg/65 tabular-nums">{isNew || isErr ? '-' : fmtQty(r._oldDisplay.qty)}</td>
-                      <td className="px-2 py-2.5 text-right text-fg font-bold tabular-nums">{isErr ? '-' : fmtQty(Number(r.qty))}</td>
+                      <td className="px-2 py-2.5 text-right text-fg/65 tabular-nums">{isNew || isErr || isSkipped ? '-' : fmtQty(r._oldDisplay.qty)}</td>
+                      <td className="px-2 py-2.5 text-right text-fg font-bold tabular-nums">{isErr || isSkipped ? '-' : fmtQty(Number(r.qty))}</td>
                       <td className={`px-2 py-2.5 text-right tabular-nums font-bold ${diff > 0 ? 'text-success' : diff < 0 ? 'text-danger' : 'text-fg/70'}`}>
-                        {isErr || isNew ? '-' : (diff > 0 ? '+' : '') + (isPacked ? (diff / packSize).toLocaleString(undefined, { maximumFractionDigits: 2 }) : diff.toLocaleString(undefined, { maximumFractionDigits: 3 }))}
+                        {isErr || isNew || isSkipped ? '-' : (diff > 0 ? '+' : '') + (isPacked ? (diff / packSize).toLocaleString(undefined, { maximumFractionDigits: 2 }) : diff.toLocaleString(undefined, { maximumFractionDigits: 3 }))}
                       </td>
-                      <td className="px-2 py-2.5 text-right text-fg/70 tabular-nums">{isErr || r.unitCost === '' ? '-' : peso(r.unitCost)}</td>
-                      <td className={`px-4 py-2.5 text-right tabular-nums font-bold ${valueDiff > 0 ? 'text-success' : valueDiff < 0 ? 'text-danger' : 'text-fg/70'}`}>{isErr ? '-' : peso(Math.abs(valueDiff)) + (valueDiff < 0 ? ' loss' : valueDiff > 0 ? ' gain' : '')}</td>
+                      <td className="px-2 py-2.5 text-right text-fg/70 tabular-nums">{isErr || isSkipped || r.unitCost === '' ? '-' : peso(r.unitCost)}</td>
+                      <td className={`px-4 py-2.5 text-right tabular-nums font-bold ${valueDiff > 0 ? 'text-success' : valueDiff < 0 ? 'text-danger' : 'text-fg/70'}`}>{isErr || isSkipped ? '-' : peso(Math.abs(valueDiff)) + (valueDiff < 0 ? ' loss' : valueDiff > 0 ? ' gain' : '')}</td>
                     </tr>
                     {showTotal && (
                       <tr className="border-b border-white/10 bg-brand/10">

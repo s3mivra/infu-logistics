@@ -42,37 +42,40 @@ const exportSheet = async () => {
 describe('inventory export, in the import sheet shape', () => {
   it('leads with exactly the columns the importer reads', async () => {
     const { columns } = await exportSheet();
-    expect(columns.slice(0, 7)).toEqual(['Code', 'Product', 'Qty Unit', 'SRP', 'Unit Cost', 'Expiry date', 'Production date']);
+    expect(columns.slice(0, 9)).toEqual(['Code', 'Product', 'Pack', 'Unit', 'Qty', 'Cost / pack', 'SRP / unit', 'Expiry date', 'Production date']);
   });
 
-  it('writes the pack size into the name and costs per pack', async () => {
+  it('says the pack in its own columns and leaves the name alone', async () => {
     const { byCode, col } = await exportSheet();
-    expect(byCode.G10001[col('Product')]).toBe('BEANS PROFILE(2) 1kg');
-    expect(byCode.G10001[col('Unit Cost')]).toBe(386);
-    expect(byCode.G10001[col('SRP')]).toBe(386);
-    expect(byCode.G40005[col('Product')]).toBe('ALASKA CONDENSED 377g');
-    expect(byCode.G40005[col('Unit Cost')]).toBe(66);
-    // A piece size says "/pack": the importer reads a bare "100pcs" as the
-    // size of a sleeve with the number beside it counting PIECES (a cafe's
-    // "12oz ICED CUPS 50pcs | 104" is 104 cups). This row counts packs - 2.5
-    // below - so without the qualifier it would come back as 2.5 straws.
-    expect(byCode.G40007[col('Product')]).toBe('STRAW SMALL 100pcs/pack');
-    expect(byCode.G40007[col('Unit Cost')]).toBe(45);
+    expect(byCode.G10001[col('Product')]).toBe('BEANS PROFILE(2)');
+    expect([byCode.G10001[col('Pack')], byCode.G10001[col('Unit')]]).toEqual([1, 'kg']);
+    // 377 g stays 377 g rather than becoming 0.377 kg - it is how the tin is sold.
+    expect([byCode.G40005[col('Pack')], byCode.G40005[col('Unit')]]).toEqual([377, 'g']);
+    expect([byCode.G40007[col('Pack')], byCode.G40007[col('Unit')]]).toEqual([100, 'pcs']);
   });
 
-  it('counts a packed item in packs, as a plain number', async () => {
+  it('costs per pack, as it is bought, and prices per unit, as it is sold', async () => {
     const { byCode, col } = await exportSheet();
-    // A plain number is how the importer knows to multiply by the pack size.
-    expect(byCode.G10001[col('Qty Unit')]).toBe(3);
-    expect(byCode.G40005[col('Qty Unit')]).toBe(2);
-    expect(byCode.G40007[col('Qty Unit')]).toBe(2.5);
+    expect(byCode.G10001[col('Cost / pack')]).toBe(386);
+    expect(byCode.G10001[col('SRP / unit')]).toBe(386);   // per kg, and the pack is 1 kg
+    expect(byCode.G40005[col('Cost / pack')]).toBe(66);
+    expect(byCode.G40007[col('Cost / pack')]).toBe(45);
   });
 
-  it('writes the unit into Qty Unit when there is no pack size', async () => {
+  it('counts packs, as a plain number', async () => {
+    const { byCode, col } = await exportSheet();
+    expect(byCode.G10001[col('Qty')]).toBe(3);
+    expect(byCode.G40005[col('Qty')]).toBe(2);
+    expect(byCode.G40007[col('Qty')]).toBe(2.5);
+  });
+
+  it('leaves Pack blank for an item that has no pack, so it stays unpacked', async () => {
     const { byCode, col } = await exportSheet();
     expect(byCode.G80004[col('Product')]).toBe('DRIED STRAWBERRY');
-    expect(byCode.G80004[col('Qty Unit')]).toBe('0 pcs');
-    expect(byCode.G80004[col('Unit Cost')]).toBe(369);
+    expect(byCode.G80004[col('Pack')]).toBe('');
+    expect(byCode.G80004[col('Unit')]).toBe('pcs');
+    expect(byCode.G80004[col('Qty')]).toBe(0);
+    expect(byCode.G80004[col('Cost / pack')]).toBe(369);
   });
 
   it('keeps the storage figures, at full precision, as reference columns', async () => {

@@ -75,10 +75,10 @@ const yes = (b) => (b ? 'Yes' : 'No');
 // export-only on purpose. Importing posted ledger rows would let someone
 // rewrite history through a spreadsheet, so those are deliberately one-way.
 // ── Inventory export, in the import sheet's own shape ──────────────────────
-export const INVENTORY_IMPORT_COLUMNS = ['Code', 'Product', 'Qty Unit', 'SRP', 'Unit Cost', 'Expiry date', 'Production date'];
+export const INVENTORY_IMPORT_COLUMNS = ['Code', 'Product', 'Pack', 'Unit', 'Qty', 'Cost / pack', 'SRP / unit', 'Expiry date', 'Production date'];
 const CATEGORY_INFO_COLUMNS = ['Category', 'Category Source'];
 const INVENTORY_INFO_COLUMNS = [
-  'Category', 'Category Source', 'Pack', 'Display Unit', 'Qty (display unit)', 'Cost per Display Unit',
+  'Category', 'Category Source', 'Display Unit', 'Qty (display unit)', 'Cost per Display Unit',
   'Total Value', 'Low Stock At', 'Location', 'Base Unit', 'Qty (base)', 'Cost per Base Unit',
 ];
 // The same trailing-size pattern the importer uses (PACK_SIZE_RE in
@@ -95,6 +95,19 @@ const isoDay = (d) => {
 // parses back identically however the item was set up: 1000 g -> "1kg",
 // 377 g -> "377g", 2500 ml -> "2.5L", 100 pcs -> "100pcs". The importer turns
 // "377g" into 0.377 kg, and kg is always 1000 g, so the pack round-trips.
+// One pack as a number and a unit, from BASE units, so it means the same
+// however the item was set up: 1000 g -> 1 kg, 377 g -> 377 g, 2500 ml -> 2.5 L,
+// 100 pcs -> 100 pcs. An item with no pack is simply 1 of its own unit.
+const packColumns = (packBase, base) => {
+  const t = (x) => Math.round(x * 1e6) / 1e6;
+  const canon = base === 'g' ? 'kg' : base === 'ml' ? 'L' : 'pcs';
+  // Blank, not 1: an item with no pack must not come back from an import as a
+  // packed item. Its quantity is simply an amount in its own unit.
+  if (!(packBase > 0)) return { pack: '', unit: canon };
+  if (base === 'g') return packBase >= 1000 ? { pack: t(packBase / 1000), unit: 'kg' } : { pack: t(packBase), unit: 'g' };
+  if (base === 'ml') return packBase >= 1000 ? { pack: t(packBase / 1000), unit: 'L' } : { pack: t(packBase), unit: 'ml' };
+  return { pack: t(packBase), unit: 'pcs' };
+};
 const basePackLabel = (packBase, base) => {
   const t = (x) => String(Math.round(x * 1000) / 1000);
   if (base === 'g') return packBase >= 1000 ? `${t(packBase / 1000)}kg` : `${t(packBase)}g`;
@@ -120,17 +133,11 @@ const inventorySheetRows = (i, category, categorySource) => {
   const packBase = pack ? pack * mult : null;
   const perBase = Number(i.unitCost) || 0;
   const qtyBase = Number(i.stockQty) || 0;
-  const name = String(i.itemName || '');
-  const label = packBase ? basePackLabel(packBase, base) : '';
-  // A name that already ends in a size keeps it - unless this is a packed
-  // piece item, whose size must carry "/pack" to be read back as packs. An
-  // older name like "STRAW SMALL 100PCS" is given the qualified size instead.
-  const nameSize = name.match(IMPORT_PACK_RE);
-  const packedPieces = packBase && base === 'pcs';
-  const product = !label ? name
-    : !nameSize ? `${name} ${label}`
-    : (packedPieces && !nameSize[3]) ? `${name.slice(0, nameSize.index).trim()} ${label}${nameSize[4] ? ` ${nameSize[4].trim()}` : ''}`
-    : name;
+  // The size has its own Pack and Unit columns now, so the name is written as
+  // the name. A name that still ends in a size (typed that way long ago) keeps
+  // it: the columns are what the importer reads, and it strips the size from
+  // the name when they are present.
+  const product = String(i.itemName || '');
 
   const batches = (i.expiryBatches || []).filter(b => Number(b.qty) > 0);
   const batchTotal = batches.reduce((sum, b) => sum + Number(b.qty), 0);
@@ -150,24 +157,27 @@ const inventorySheetRows = (i, category, categorySource) => {
         cost: perBase,
       }];
 
+  // Everything on the row is per pack, so the quantity, the cost and the
+  // price can never end up in different units - which is exactly what the
+  // old "size hidden in the name" sheet allowed.
+  const { pack: packCol, unit: unitCol } = packColumns(packBase, base);
   return lots.map(lot => {
     const expiry = isoDay(lot.expiry);
     return [
       i.itemCode || '',
       product,
-      // With a pack in the name, Qty Unit is a plain count of packs and Unit
-      // Cost is per pack - the importer multiplies and divides by the pack
-      // size itself. Without one, the unit is written in and cost is per unit.
-      packBase ? round9(lot.qty / packBase) : `${round9(lot.qty / canonFactor)} ${canonUnit}`,
-      Number(i.srp) > 0 ? money(i.srp) : '',
+      packCol,
+      unitCol,
+      round9(lot.qty / (packBase || canonFactor)),
       // Six decimals, not two: a cost blended across deliveries (P65.8734 a
       // can) must re-import to the same stored cost, not a rounded one.
-      packBase ? round6(lot.cost * packBase) : round6(lot.cost * canonFactor),
+      round6(lot.cost * (packBase || canonFactor)),
+      Number(i.srp) > 0 ? round6(i.srp) : '',
       expiry,
       // The importer only uses a production date when there is no expiry.
       expiry ? '' : isoDay(lot.production),
       // ── reference only; not read on import ──
-      category, categorySource, label, i.displayUnit || canonUnit,
+      category, categorySource, i.displayUnit || canonUnit,
       round4(lot.qty / mult), money(perBase * mult),
       money(lot.qty * lot.cost), money(i.lowStockThreshold), i.stockLocation || '',
       base, round4(lot.qty), round6(perBase),
@@ -182,16 +192,19 @@ export const DATASETS = {
     sort: { itemName: 1 },
     importSpec: {
       endpoint: '/api/inventory/import',
-      intro: 'One row per stock item. Cost matters as much as quantity: an item at zero cost posts zero cost of sale, and every drink built on it reads as 100% margin.',
+      intro: 'One row per stock item, and everything on it is per pack: Pack and Unit say what one pack is, Qty counts packs, and both prices are the price of one pack. Cost matters as much as quantity: an item at zero cost posts zero cost of sale, and every drink built on it reads as 100% margin.',
       columns: [
-        { name: 'itemName', required: true, note: 'Stored in capitals, however you type it.', example: 'Full Milk' },
-        { name: 'itemCode', note: 'Yours, if you use one. Left blank, the system assigns one.', example: 'RM-MILK' },
-        { name: 'unit', required: true, note: 'kg, L or pcs. Grams and millilitres are promoted to kg / L.', example: 'L' },
-        { name: 'qty', required: true, note: 'How much you hold now, in the unit above.', example: '20' },
-        { name: 'unitCost', required: true, note: 'Cost of ONE unit. Zero here means zero cost of sale later.', example: '82' },
-        { name: 'lowStockThreshold', note: 'Warn below this. Blank for no warning.', example: '5' },
-        { name: 'expiryDate', note: 'YYYY-MM-DD.', example: '2026-12-31' },
-        { name: 'stockLocation', note: 'Where it is kept.', example: 'Main bar' },
+        { name: 'Code', note: 'Yours, if you use one. Left blank, the system assigns one.', example: 'RM-MILK' },
+        { name: 'Product', required: true, note: 'The name only - the size goes in Pack and Unit. Stored in capitals, however you type it.', example: 'Full Milk' },
+        { name: 'Pack', note: 'What ONE pack holds, as a number. Blank if it is not sold in packs.', example: '1' },
+        { name: 'Unit', required: true, note: 'The unit of the Pack: kg, g, L, ml or pcs. Grams and millilitres are stored as kg / L.', example: 'L' },
+        { name: 'Qty', required: true, note: 'How many packs you counted. With no Pack, how much you hold in the unit above. Leave blank if you did not count it; type 0 to count zero.', example: '20' },
+        { name: 'Cost / pack', required: true, note: 'What ONE pack costs you, as the invoice says it. Zero here means zero cost of sale later.', example: '82' },
+        { name: 'SRP / unit', note: 'What you sell ONE unit for - per kg, L or piece. Selling by the pack instead? Rename this column to "SRP / pack".', example: '110' },
+        { name: 'Expiry date', note: 'YYYY-MM-DD.', example: '2026-12-31' },
+        { name: 'Production date', note: 'For goods with no real expiry (roasted beans). Only read when Expiry date is blank.', example: '' },
+        { name: 'Low Stock At', note: 'Warn below this, counted in the unit above. Blank for no warning.', example: '5' },
+        { name: 'Location', note: 'Where it is kept.', example: 'Main bar' },
       ],
     },
     // Written in the SAME shape the Inventory tab's Import reads, so an export

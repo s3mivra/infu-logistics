@@ -192,12 +192,12 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
                   <input type="number" min="0" step="0.01" className={`w-full ${inputCls} text-xs`} placeholder="Sale price ₱" value={ruleForm.salePrice} onChange={e => setRuleForm(r => ({ ...r, salePrice: e.target.value }))} />
                 )}
                 {ruleForm.ruleType === 'percent_off' && (
-                  <input type="number" min="1" max="100" className={`w-full ${inputCls} text-xs`} placeholder="Discount % (e.g. 20)" value={ruleForm.discountPercent} onChange={e => setRuleForm(r => ({ ...r, discountPercent: e.target.value }))} />
+                  <input type="number" min="0" max="100" step="0.01" className={`w-full ${inputCls} text-xs`} placeholder="Discount % (e.g. 12.5)" value={ruleForm.discountPercent} onChange={e => setRuleForm(r => ({ ...r, discountPercent: e.target.value }))} />
                 )}
                 {ruleForm.ruleType === 'threshold' && (
                   <div className="grid grid-cols-2 gap-2">
                     <input type="number" min="0" step="0.01" className={`${inputCls} text-xs`} placeholder="Min order ₱" value={ruleForm.thresholdAmount} onChange={e => setRuleForm(r => ({ ...r, thresholdAmount: e.target.value }))} />
-                    <input type="number" min="1" max="100" className={`${inputCls} text-xs`} placeholder="Discount %" value={ruleForm.discountPercent} onChange={e => setRuleForm(r => ({ ...r, discountPercent: e.target.value }))} />
+                    <input type="number" min="0" max="100" step="0.01" className={`${inputCls} text-xs`} placeholder="Discount %" value={ruleForm.discountPercent} onChange={e => setRuleForm(r => ({ ...r, discountPercent: e.target.value }))} />
                   </div>
                 )}
 

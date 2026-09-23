@@ -5413,7 +5413,7 @@ export default function LedgerTab({ ctx }) {
                       </div>
                       <div>
                         <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Discount %</label>
-                        <input type="number" min="0" max="100" step="0.5" value={bd.discountPercent} disabled={bd.isComplimentary}
+                        <input type="number" min="0" max="100" step="0.01" value={bd.discountPercent} disabled={bd.isComplimentary}
                           onChange={e => setBd({ ...bd, discountPercent: e.target.value })}
                           className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold tabular-nums outline-none focus:border-brand/60 disabled:opacity-40" />
                       </div>

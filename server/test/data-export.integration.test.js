@@ -68,10 +68,10 @@ describe('the template is the sheet to fill in, not an empty export', () => {
 
     // These are the two lists, and they are deliberately different. The export
     // carries Total Value, which is derived and cannot be typed in; the
-    // template asks for unitCost, which is what someone actually has to know.
+    // template asks what one pack costs, which is what someone actually knows.
     expect(withData.body.columns).toContain('Total Value');
     expect(template.body.columns).not.toContain('Total Value');
-    expect(template.body.columns).toContain('unitCost');
+    expect(template.body.columns).toContain('Cost / pack');
 
     // And it says which are required, so nothing is guessed at.
     expect(template.body.fields.some(f => f.required)).toBe(true);

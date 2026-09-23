@@ -10,6 +10,7 @@
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
 import { withArBalance } from '../lib/credit.js';
+import { SHEET_KINDS } from './inventory-sheet.js';
 
 export default function registerNotifications(ctx) {
   const {
@@ -186,22 +187,25 @@ export default function registerNotifications(ctx) {
       // Only the superadmin can import stock, so only they are told the sheet
       // changed (see features/inventory-sheet.js - the check never applies it).
       if (req.user?.role === 'superadmin') {
-        const sheet = (await Settings.findOne({ key: 'inventorySheet' }).lean())?.value;
-        if (sheet?.url && sheet.changedAt) {
-          items.push({
-            id: 'sheet:changed', kind: 'sheet_changed', severity: WARN,
-            title: 'Your stock sheet changed',
-            detail: 'Changed since your last pull. Open Inventory and pull it to review before anything is applied.',
-            tab: 'inventory',
-          });
-        }
-        if (sheet?.url && sheet.lastCheckError) {
-          items.push({
-            id: 'sheet:error', kind: 'sheet_error', severity: WARN,
-            title: "Couldn't read your stock sheet",
-            detail: sheet.lastCheckError,
-            tab: 'inventory',
-          });
+        for (const s of SHEET_KINDS) {
+          const sheet = (await Settings.findOne({ key: s.key }).lean())?.value;
+          if (!sheet?.url) continue;
+          if (sheet.changedAt) {
+            items.push({
+              id: `sheet:changed:${s.kind}`, kind: 'sheet_changed', severity: WARN,
+              title: `Your ${s.label} changed`,
+              detail: 'Changed since your last pull. Pull it to review before anything is applied.',
+              tab: s.tab,
+            });
+          }
+          if (sheet.lastCheckError) {
+            items.push({
+              id: `sheet:error:${s.kind}`, kind: 'sheet_error', severity: WARN,
+              title: `Couldn't read your ${s.label}`,
+              detail: sheet.lastCheckError,
+              tab: s.tab,
+            });
+          }
         }
       }
 

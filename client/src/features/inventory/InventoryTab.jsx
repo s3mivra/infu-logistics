@@ -310,7 +310,7 @@ export default function InventoryTab({ ctx }) {
                     {/* Direct stock import - posts straight to inventory (distinct from the
                         Procurement "Import Excel", which creates a PO record instead). */}
                     <label className="w-full flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition cursor-pointer">
-                      <Download size={12} className="rotate-180" /> Import stock file
+                      <Download size={12} className="rotate-180" /> Stock count from a sheet
                       <input type="file" accept=".xlsx,.xls,.csv"
                         onChange={e => { parseImportFile(e.target.files?.[0]); e.target.value = ''; setOpenActionMenu(null); }}
                         className="hidden" />
@@ -323,7 +323,7 @@ export default function InventoryTab({ ctx }) {
                     )}
                     <button onClick={() => { downloadImportTemplate(); setOpenActionMenu(null); }}
                       className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition">
-                      Import template
+                      Count sheet template
                     </button>
                     <div className="border-t border-white/8 mx-2 my-1" />
                     {/* PDF is for printing and signing; the spreadsheet is for

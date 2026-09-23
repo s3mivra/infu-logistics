@@ -4,6 +4,7 @@ import { readPrinterMode, writePrinterMode } from '../../shared/escpos';
 import * as ui from '../../shared/ui';
 import { readDeviceKey, writeDeviceKey } from '../qr/JustQr';
 import PrivacyContactCard from './PrivacyContactCard';
+import SetupSheetCard from './SetupSheetCard';
 
 // ── SettingsTab - system preferences & account controls ───────────────────────
 // Houses the toggles that used to live crammed in the sidebar's "Tools" dropdown
@@ -347,6 +348,12 @@ export default function SettingsTab({ ctx }) {
       <div className="space-y-6">
         {/* QR display first: it is what a counter tablet is set up for. */}
         {BUSINESS_TYPE !== 'log' && (isSuperAdmin || ctx.can?.('settings.manage')) && <QrDevicesCard apiFetch={apiFetch} />}
+
+        {/* Everything the business has to type in, kept in one linked sheet. */}
+        {isSuperAdmin && (
+          <SetupSheetCard apiFetch={apiFetch} can={ctx.can} isSuperAdmin={isSuperAdmin} businessType={BUSINESS_TYPE}
+            parseImportFile={ctx.parseImportFile} onImported={ctx.fetchData} />
+        )}
 
         {(isSuperAdmin || ctx.can?.('settings.manage')) && (
           <PrivacyContactCard value={systemSettings.privacyContact} onSave={v => saveSetting?.('privacyContact', v)} />

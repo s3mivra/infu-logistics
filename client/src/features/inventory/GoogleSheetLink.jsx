@@ -4,7 +4,12 @@ import * as ui from '../../shared/ui';
 import { useRefreshTick } from '../../shared/refreshBus';
 import { mergeStockTabs } from '../../shared/mergeSheetTabs';
 
-// A Google Sheet linked to Inventory (server: features/inventory-sheet.js).
+// A Google Sheet linked to the app (server: features/inventory-sheet.js).
+//
+// `base` says which one: /api/inventory-sheet for the stock count sheet,
+// /api/setup-sheet for the setup workbook linked in Settings. The linking,
+// the tab choice and the daily check are the same either way; only what the
+// caller does with the pulled workbook differs.
 //
 // "Pull" opens the sheet in the ordinary import preview - nothing changes until
 // the preview is confirmed. The daily check only tells you the sheet changed;
@@ -13,32 +18,37 @@ import { mergeStockTabs } from '../../shared/mergeSheetTabs';
 
 const when = (iso) => (iso ? new Date(iso).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : 'never');
 
-export function useInventorySheet(apiFetch, enabled) {
+export function useInventorySheet(apiFetch, enabled, base = '/api/inventory-sheet') {
   const [sheet, setSheet] = useState(null);
   const tick = useRefreshTick();
   const reload = useCallback(async () => {
     if (!enabled) return;
     try {
-      const r = await apiFetch('/api/inventory-sheet');
+      const r = await apiFetch(base);
       const d = await r.json();
       if (d.success) setSheet(d.sheet);
     } catch { /* the panel says so when opened */ }
-  }, [apiFetch, enabled]);
+  }, [apiFetch, enabled, base]);
   useEffect(() => { reload(); }, [reload, tick]);
   return [sheet, setSheet, reload];
 }
 
 // Fetches the workbook, keeps the chosen tabs (merged into one), and hands the
 // result to the same preview a file upload uses.
-export async function pullSheet(apiFetch, parseImportFile, tabs = 'all') {
-  const r = await apiFetch('/api/inventory-sheet/pull', { method: 'POST' });
+export async function pullWorkbook(apiFetch, base = '/api/inventory-sheet') {
+  const r = await apiFetch(`${base}/pull`, { method: 'POST' });
   if (!r.ok) {
     let msg = 'Could not pull the sheet.';
     try { msg = (await r.json()).error || msg; } catch { /* not json */ }
     throw new Error(msg);
   }
   const XLSX = await import('xlsx');
-  const wb = XLSX.read(await r.arrayBuffer(), { type: 'array', cellDates: true, cellNF: true });
+  return { XLSX, wb: XLSX.read(await r.arrayBuffer(), { type: 'array', cellDates: true, cellNF: true }) };
+}
+
+// The stock sheet: the chosen tabs, merged, into the count preview.
+export async function pullSheet(apiFetch, parseImportFile, tabs = 'all') {
+  const { XLSX, wb } = await pullWorkbook(apiFetch);
   const { workbook, used, skipped, duplicates } = mergeStockTabs(XLSX, wb, tabs);
   if (!workbook) {
     throw new Error(tabs === 'all'
@@ -86,7 +96,14 @@ export function SheetChangedBanner({ sheet, onPull, busy }) {
   );
 }
 
-export default function GoogleSheetModal({ apiFetch, sheet, setSheet, onPull, pulling, onClose }) {
+export default function GoogleSheetModal({
+  apiFetch, sheet, setSheet, onPull, pulling, onClose,
+  base = '/api/inventory-sheet',
+  title = 'Google Sheet',
+  intro = 'Link the Google Sheet you keep your stock in.',
+  pullLabel = 'Pull now',
+  pullNote = 'Pull now opens the sheet in the import preview, the same as uploading a file. The quantities in the sheet replace the counts in the system, so pull right after you count - not after sales you have not counted.',
+}) {
   const [url, setUrl] = useState(sheet?.url || '');
   const [checkTime, setCheckTime] = useState(sheet?.checkTime || '');
   // 'all', or the names ticked. availableTabs is what the sheet had when last read.
@@ -105,7 +122,7 @@ export default function GoogleSheetModal({ apiFetch, sheet, setSheet, onPull, pu
   const loadTabs = async () => {
     setLoadingTabs(true); setMsg(null);
     try {
-      const r = await apiFetch('/api/inventory-sheet/tabs', { method: 'POST', body: JSON.stringify({ url: url.trim() }) });
+      const r = await apiFetch(`${base}/tabs`, { method: 'POST', body: JSON.stringify({ url: url.trim() }) });
       const d = await r.json();
       if (!d.success) { setMsg({ tone: 'err', text: d.error || 'Could not read the tabs.' }); return; }
       setAvailable(d.tabs);
@@ -117,7 +134,7 @@ export default function GoogleSheetModal({ apiFetch, sheet, setSheet, onPull, pu
   const save = async () => {
     setSaving(true); setMsg(null);
     try {
-      const r = await apiFetch('/api/inventory-sheet', { method: 'PUT', body: JSON.stringify({ url: url.trim(), checkTime, tabs }) });
+      const r = await apiFetch(base, { method: 'PUT', body: JSON.stringify({ url: url.trim(), checkTime, tabs }) });
       const d = await r.json();
       if (d.success) { setSheet(d.sheet); setAvailable(d.sheet.availableTabs || []); setTabs(d.sheet.tabs || 'all'); setMsg({ tone: 'ok', text: url.trim() ? 'Saved. The sheet was read successfully.' : 'Sheet unlinked.' }); }
       else setMsg({ tone: 'err', text: d.error || 'Could not save.' });
@@ -128,7 +145,7 @@ export default function GoogleSheetModal({ apiFetch, sheet, setSheet, onPull, pu
   const check = async () => {
     setChecking(true); setMsg(null);
     try {
-      const r = await apiFetch('/api/inventory-sheet/check', { method: 'POST' });
+      const r = await apiFetch(`${base}/check`, { method: 'POST' });
       const d = await r.json();
       if (!d.success) { setMsg({ tone: 'err', text: d.error || 'Could not check.' }); return; }
       setSheet(d.sheet);
@@ -149,14 +166,13 @@ export default function GoogleSheetModal({ apiFetch, sheet, setSheet, onPull, pu
         className="w-full max-w-lg bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center gap-2 px-5 py-4 border-b border-white/10">
           <Link2 size={16} className="text-brand-text" />
-          <h2 id="gsheet-title" className="flex-1 text-fg font-black text-sm uppercase tracking-widest">Google Sheet</h2>
+          <h2 id="gsheet-title" className="flex-1 text-fg font-black text-sm uppercase tracking-widest">{title}</h2>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-fg/70 hover:text-fg hover:bg-white/10"><X size={16} /></button>
         </div>
 
         <div className="p-5 space-y-4">
           <p className="text-xs text-fg/75 leading-relaxed">
-            Link the Google Sheet you keep your stock in. In Google Sheets, click <b>Share</b> and set
-            "Anyone with the link" to <b>Viewer</b>, then paste the link here. The sheet uses the same columns as the import template.
+            {intro} In Google Sheets, click <b>Share</b> and set "Anyone with the link" to <b>Viewer</b>, then paste the link here.
           </p>
 
           <div>
@@ -248,17 +264,14 @@ export default function GoogleSheetModal({ apiFetch, sheet, setSheet, onPull, pu
               <div className="flex flex-wrap gap-2">
                 <button onClick={onPull} disabled={pulling || dirty}
                   className="flex-1 min-w-[10rem] flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider bg-brand text-on-brand hover:bg-brand-dark transition disabled:opacity-50">
-                  <Download size={14} className="rotate-180" /> {pulling ? 'Pulling…' : 'Pull now'}
+                  <Download size={14} className="rotate-180" /> {pulling ? 'Pulling…' : pullLabel}
                 </button>
                 <button onClick={check} disabled={checking || dirty}
                   className="flex-1 min-w-[10rem] flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider bg-white/5 border border-white/10 text-fg/85 hover:text-fg hover:border-white/30 transition disabled:opacity-50">
                   <RefreshCw size={14} className={checking ? 'animate-spin' : ''} /> {checking ? 'Checking…' : 'Check now'}
                 </button>
               </div>
-              <p className="text-[10px] text-fg/70 leading-snug">
-                Pull now opens the sheet in the import preview, the same as uploading a file. The quantities in the sheet replace the counts in the
-                system, so pull right after you count - not after sales you have not counted.
-              </p>
+              <p className="text-[10px] text-fg/70 leading-snug">{pullNote}</p>
             </div>
           )}
         </div>
@@ -268,7 +281,7 @@ export default function GoogleSheetModal({ apiFetch, sheet, setSheet, onPull, pu
 }
 
 // Keeps the pull's busy state and error handling in one place for the panel and the banner.
-export function usePull(apiFetch, parseImportFile, reload, tabs) {
+export function usePull(apiFetch, parseImportFile, reload, tabs) {   // the stock sheet
   const [pulling, setPulling] = useState(false);
   const pull = async () => {
     setPulling(true);

@@ -194,8 +194,11 @@ describe('the app\'s own export, imported back', () => {
     const exp = await request(app).get('/api/export/inventory').set({ Authorization: `Bearer ${tok}` });
     const col = (n) => exp.body.columns.indexOf(n);
     const row = exp.body.rows.find(r => r[col('Code')] === 'G40007');
-    expect(row[col('Product')]).toBe('STRAW SMALL 100pcs/pack');
-    expect(row[col('Qty Unit')]).toBe(5);
+    // The pack is stated in its own columns, so the name needs no "/pack"
+    // qualifier to be read back as packs.
+    expect(row[col('Product')]).toBe('STRAW SMALL');
+    expect([row[col('Pack')], row[col('Unit')]]).toEqual([100, 'pcs']);
+    expect(row[col('Qty')]).toBe(5);
 
     await M('Inventory').deleteMany({});
     const asObject = Object.fromEntries(exp.body.columns.map((c, i) => [c, row[i]]));

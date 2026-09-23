@@ -42,7 +42,7 @@ import CashDrawerModal from './modals/CashDrawerModal';
 import {
   normaliseInventoryRow, isCategoryHeaderCode, inventoryImportPayload,
   groupMenuRows, menuImportPayload, isStockSheetHeader, isMenuSheetHeader,
-  parseSheetNumber, SHEET_PACK_SIZE_RE,
+  parseSheetNumber, SHEET_PACK_SIZE_RE, isSectionRow, describeSheetColumns,
 } from '../../shared/importSheets';
 import { LEDGER_REPORT_SPEC, ledgerReportTable } from '../../shared/ledgerReport';
 import * as ui from '../../shared/ui';
@@ -4621,25 +4621,25 @@ const updateStatus = async (orderId, newStatus) => {
   // BULK EXCEL/CSV IMPORT - Stock-take semantics
   // ============================================================
   const downloadImportTemplate = () => {
-    // LOG: each row is a packaged SKU. Put the pack size in the Product name
-    //   (…377G / …1L / …250G), Qty = number of packages (pure count, no unit),
-    //   Unit Cost = price per package. The importer multiplies the count by the
-    //   pack size and stores cost per base unit automatically.
-    // FB: Qty carries a unit (kg/L/pcs); Unit Cost = cost per display unit.
-    // Production date: for goods with no real expiry (roasted beans, etc.) -
-    // only fill this in when Expiry date is left blank on that row; the importer
-    // ignores it otherwise, same rule as receiving/import elsewhere in the app.
-    const csv = BUSINESS_TYPE === 'log'
-      ? 'Code,Product,Qty Unit,SRP,Unit Cost,Expiry date,Production date\n' +
-        ',ALASKA CONDENSED MILK 377G,100,77,50,2027-03-15,\n' +
-        ',ALASKA BARISTA MILK 1L,100,89,50,,\n' +
-        ',COMMERCIAL BLEND 1KG,100,950,200,,2026-08-01\n' +
-        ',FILTER ETHIOPIA - LIMU G2 250G,100,900,200,2026-12-31,\n'
-      : 'Code,Product,Qty Unit,Unit Cost,Expiry date,Production date\n' +
-        ',Milk 1L,10 L,70,2026-12-31,\n' +
-        ',Sugar 1kg,5 kg,100,,\n' +
-        ',Coffee Beans 1kg,1 kg,800,,2026-08-01\n' +
-        ',Cups (12oz),200 pcs,8,,\n';
+    // Everything on a row is per pack: Pack + Unit say what one pack is, Qty
+    // counts packs, and both prices are the price of one pack. Nothing has to
+    // be read out of the product name, which is where the old sheet's silent
+    // mistakes came from ("1 kilo" unreadable, "100pcs" a hundredfold out).
+    // An item sold loose has a blank Pack and its own unit.
+    // Production date: for goods with no real expiry (roasted beans) - only
+    // read when Expiry date is blank on that row.
+    const head = 'Code,Product,Pack,Unit,Qty (packs),Cost / pack,SRP / pack,Expiry date,Production date\n';
+    const csv = head + (BUSINESS_TYPE === 'log'
+      ? ',ALASKA CONDENSED MILK,377,g,100,50,77,2027-03-15,\n' +
+        ',ALASKA BARISTA MILK,1,L,100,50,89,,\n' +
+        ',COMMERCIAL BLEND,1,kg,100,200,950,,2026-08-01\n' +
+        ',FILTER ETHIOPIA - LIMU G2,250,g,100,200,900,2026-12-31,\n' +
+        ',PACKING TAPE,,pcs,40,35,60,,\n'
+      : ',Milk,1,L,10,70,,2026-12-31,\n' +
+        ',Sugar,1,kg,5,100,,,\n' +
+        ',Coffee Beans,1,kg,1,800,,,2026-08-01\n' +
+        ',Straw Small,100,pcs,5,150,,,\n' +
+        ',Cups 12oz,,pcs,200,8,,,\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -4763,8 +4763,12 @@ const updateStatus = async (orderId, newStatus) => {
       // so the preview's numbers match what actually gets posted. `qty` here is
       // the running projected total (base units) after each row for that item.
       const projected = new Map(); // importKey -> { existing: itemOrNull, qty }
+      // Which columns fed which field, from the sheet's own header. Shown in
+      // the preview so nobody has to guess how a row was read.
+      const columnsRead = describeSheetColumns(rows[0] || {});
       const previewed = rows.map((raw, rowIdx) => {
         const r = normalise(raw);
+        r._columns = columnsRead;
         // Apply the recovered MM/DD date in place of a day-first-corrupted one
         // BEFORE anything below diffs r.expiryDate against the existing item -
         // doing this after that comparison (as a later .map pass) would let the
@@ -4774,7 +4778,9 @@ const updateStatus = async (orderId, newStatus) => {
           if (dateWarn.corrected) r[dateWarn.field] = dateWarn.corrected;
           r._dateFormatWarn = dateWarn;
         }
-        // Category header row: no itemName but code column has a plain word (not a product code)
+        // Section row: a name with nothing else on the line. Written in the
+        // Code column ("COFFEE & TEA" with no Product), or - as people
+        // naturally type it - in the Product column with the rest blank.
         if (!r.itemName) {
           const looksLikeCategoryHeader = isCategoryHeaderCode(r.itemCode);
           if (looksLikeCategoryHeader) {
@@ -4783,6 +4789,14 @@ const updateStatus = async (orderId, newStatus) => {
           }
           return { ...r, _error: 'Missing itemName' };
         }
+        if (isSectionRow(r)) {
+          currentCategory = r.itemName;
+          return { ...r, _isCategory: true, category: r.itemName };
+        }
+        // No quantity at all: a count sheet leaves a line blank when it was not
+        // counted. Skipped rather than counted as zero - which would book the
+        // whole item as a loss. Typing 0 counts zero.
+        if (r._noQty) return { ...r, _skipped: 'no quantity - not counted' };
         r.category = currentCategory;
         const resolved = resolveUnitFE(r.displayUnit);
         const newBaseQty = r.qty * resolved.mult;
@@ -4828,7 +4842,7 @@ const updateStatus = async (orderId, newStatus) => {
 
   const submitImport = async () => {
     if (importSubmitting) return;
-    const validRows = importRows.filter(r => !r._error && !r._isCategory && r.itemName && r.displayUnit);
+    const validRows = importRows.filter(r => !r._error && !r._isCategory && !r._skipped && r.itemName && r.displayUnit);
     if (validRows.length === 0) return ui.alert('No valid rows to import.');
     if (!(await ui.confirm({
       title: 'Replace stock from import?',

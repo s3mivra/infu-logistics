@@ -48,7 +48,7 @@ beforeAll(async () => {
 }, 120000);
 afterAll(async () => { await ctx.stop(); });
 beforeEach(async () => {
-  await mongoose.model('Settings').deleteMany({ key: 'inventorySheet' });
+  await mongoose.model('Settings').deleteMany({ key: { $in: ['inventorySheet', 'setupSheet'] } });
   sheet = { book: baseBook() };
   calls = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => google(String(url)));
@@ -125,7 +125,7 @@ describe('choosing tabs', () => {
 
     sheet.book.Milk[1][1] = 18;
     expect((await check()).body.changed).toBe(true);
-    expect((await bell()).map((i) => i.id)).toEqual(['sheet:changed']);
+    expect((await bell()).map((i) => i.id)).toEqual(['sheet:changed:inventory']);
   });
 
   it('notices a changed word, not only a changed number', async () => {
@@ -151,7 +151,7 @@ describe('choosing tabs', () => {
     sheet.book = { Beans: sheet.book.Beans, Dairy: sheet.book.Milk, Notes: sheet.book.Notes };
     const res = await check();
     expect(res.body.error).toMatch(/"Milk" is not in the sheet any more/);
-    expect((await bell()).map((i) => i.id)).toEqual(['sheet:error']);
+    expect((await bell()).map((i) => i.id)).toEqual(['sheet:error:inventory']);
     // Choosing again fixes it.
     expect((await save({ url: LINK, tabs: ['Dairy'] })).body.sheet.tabs).toEqual(['Dairy']);
     expect((await check()).body.error).toBeUndefined();
@@ -187,7 +187,7 @@ describe('the check', () => {
     sheet.respond = () => new Response('gone', { status: 404 });
     await check();
     const items = await bell();
-    expect(items.map((i) => i.id)).toEqual(['sheet:error']);
+    expect(items.map((i) => i.id)).toEqual(['sheet:error:inventory']);
     expect(items[0].detail).toMatch(/not found/i);
   });
 
@@ -221,7 +221,38 @@ describe('pulling', () => {
   it('explains when no sheet is linked', async () => {
     const res = await as(owner)('post', '/api/inventory-sheet/pull');
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/no sheet/i);
+    expect(res.body.error).toMatch(/no stock sheet is linked/i);
+  });
+});
+
+describe('the setup workbook, linked from Settings', () => {
+  const SETUP = '/api/setup-sheet';
+
+  it('is linked and checked the same way, and kept apart from the stock sheet', async () => {
+    await save({ url: LINK, tabs: ['Beans'] });
+    const setup = await as(owner)('put', SETUP).send({ url: LINK, tabs: ['Milk'] });
+    expect(setup.body.sheet).toMatchObject({ url: LINK, tabs: ['Milk'] });
+
+    // A change in Milk is the setup workbook's business, not the stock sheet's.
+    sheet.book.Milk[1][1] = 18;
+    expect((await as(owner)('post', `${SETUP}/check`)).body.changed).toBe(true);
+    expect((await check()).body.changed).toBe(false);
+    expect((await bell()).map((i) => i.id)).toEqual(['sheet:changed:setup']);
+
+    // Unlinking one leaves the other alone.
+    await as(owner)('put', SETUP).send({ url: '' });
+    expect((await as(owner)('get', SETUP)).body.sheet.url).toBe('');
+    expect((await as(owner)('get', '/api/inventory-sheet')).body.sheet.url).toBe(LINK);
+  });
+
+  it('hands over the workbook to import, and is superadmin-only', async () => {
+    await as(owner)('put', SETUP).send({ url: LINK });
+    const res = await as(owner)('post', `${SETUP}/pull`).buffer(true).parse((r, cb) => {
+      const chunks = []; r.on('data', (c) => chunks.push(c)); r.on('end', () => cb(null, Buffer.concat(chunks)));
+    });
+    expect(res.status).toBe(200);
+    expect(workbookTabs(res.body).map((t) => t.name)).toEqual(['Beans', 'Milk', 'Notes']);
+    expect((await as(manager)('post', `${SETUP}/pull`)).status).toBe(403);
   });
 });
 
