@@ -162,7 +162,7 @@ const playReadyChime = () => {
   }
 };
 
-function MidnightCountdown() {
+function MidnightCountdown({ className, short = false } = {}) {
   const calc = () => {
     const now = new Date();
     const midnight = new Date();
@@ -171,14 +171,14 @@ function MidnightCountdown() {
     const h = Math.floor(d / 3600000).toString().padStart(2, '0');
     const m = Math.floor((d % 3600000) / 60000).toString().padStart(2, '0');
     const s = Math.floor((d % 60000) / 1000).toString().padStart(2, '0');
-    return `${h}h ${m}m ${s}s`;
+    return short ? `${h}h ${m}m` : `${h}h ${m}m ${s}s`;
   };
   const [t, setT] = useState(calc);
   useEffect(() => {
-    const id = setInterval(() => setT(calc()), 1000);
+    const id = setInterval(() => setT(calc()), short ? 30000 : 1000);
     return () => clearInterval(id);
   }, []);
-  return <span className="text-brand-text font-black text-xs">{t}</span>;
+  return <span className={className || 'text-brand-text font-black text-xs'}>{t}</span>;
 }
 
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Kasa Lokal').toUpperCase();
@@ -729,6 +729,7 @@ export default function AdminDashboard() {
   // Command palette. Ctrl/Cmd+K is the accelerator; the header button is the
   // discoverable route for touchscreen users, who are most of the staff here.
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   useEffect(() => {
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPaletteOpen(o => !o); }
@@ -736,17 +737,6 @@ export default function AdminDashboard() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
-
-  // Collapse the sidebar's utility tools (Fullscreen/QR/Password/toggles/Install)
-  // to reclaim space. Persisted so the choice sticks across reloads.
-  const [opsToolsOpen, setOpsToolsOpen] = useState(() => {
-    try { return localStorage.getItem('semivra_ops_tools_open') === '1'; } catch { return false; }
-  });
-  const toggleOpsTools = () => setOpsToolsOpen(v => {
-    const next = !v;
-    try { localStorage.setItem('semivra_ops_tools_open', next ? '1' : '0'); } catch { /* ignore */ }
-    return next;
-  });
 
   // Which sidebar groups are folded shut. The nav carries up to eighteen
   // destinations in one scrolling column, so the half you are not working in
@@ -8458,38 +8448,31 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   // Sidebar nav content (inlined twice: desktop + mobile)
   const renderSidebarNav = (closeFn) => (
     <>
-      {/* Brand header */}
-      <div className="px-4 pt-4 pb-3 border-b border-white/5">
-        {/* Row 1: logo + business name */}
-        <div className="flex items-start gap-2.5 mb-1.5">
-          <div className="shrink-0 mt-0.5">
+      {/* Brand header. Two slim rows, not four: on a laptop screen the
+          header and the footer between them took two thirds of the sidebar,
+          leaving a window of four tabs to scroll through. A long business name
+          takes a second line rather than being cut; the full name is its tooltip. */}
+      <div className="px-3 pt-3 pb-2 border-b border-white/5">
+        <div className="flex items-center gap-2.5">
+          <div className="shrink-0">
             {systemSettings.businessLogo
-              ? <img src={systemSettings.businessLogo} alt="" className="w-12 h-12 object-cover" style={{ borderRadius: systemSettings.logoRadius || '10px', ...(systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor } : {}) }} />
+              ? <img src={systemSettings.businessLogo} alt="" className="w-9 h-9 object-cover" style={{ borderRadius: systemSettings.logoRadius || '10px', ...(systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor } : {}) }} />
               : <div
-                  className={`w-12 h-12 flex items-center justify-center font-black text-sm select-none ${systemSettings.logoColor ? '' : 'bg-brand/20 text-brand-text'}`}
+                  className={`w-9 h-9 flex items-center justify-center font-black text-sm select-none ${systemSettings.logoColor ? '' : 'bg-brand/20 text-brand-text'}`}
                   style={{ borderRadius: systemSettings.logoRadius || '10px', ...(systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor, color: '#fff' } : {}) }}
                 >{BIZ_NAME.charAt(0)}</div>
             }
           </div>
-          <p className="text-[22px] font-black text-brand-text tracking-tight leading-[1.1] break-words drop-shadow-sm min-w-0 flex-1">{BIZ_NAME}</p>
-        </div>
-
-        {/* Row 2: SEMIVRA NEGOTIUM · */}
-        <p className="text-[9px] text-fg/75 font-bold uppercase tracking-[0.2em]">
-          SEMIVRA <span className="text-brand-text">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span> ·
-        </p>
-
-        {/* Row 3: Operations / Management */}
-        <p className="text-[9px] text-fg/70 font-semibold mt-0.5">
-          {navMode === 'libellus' ? 'Operations' : 'Management'}
-        </p>
-
-        {/* Row 4: VAT pill + bell */}
-        <div className="flex items-center justify-between mt-2">
-          <span className="text-[8px] font-black bg-brand/10 border border-brand/30 text-brand-text px-2 py-0.5 rounded-full uppercase tracking-widest">{vatRegLabel}</span>
-          <div className="hidden md:block">
+          <p title={BIZ_NAME} className="text-base font-black text-brand-text tracking-tight leading-tight line-clamp-2 break-words min-w-0 flex-1">{BIZ_NAME}</p>
+          <div className="hidden md:block shrink-0">
             <NotificationBell align="left" />
           </div>
+        </div>
+        <div className="flex items-center justify-between gap-2 mt-1.5">
+          <p className="text-[9px] text-fg/75 font-bold uppercase tracking-[0.15em] truncate">
+            <span className="text-brand-text">{navMode === 'libellus' ? 'Libellus' : 'Negotium'}</span> · {navMode === 'libellus' ? 'Operations' : 'Management'}
+          </p>
+          <span title={vatRegLabel} className="shrink-0 text-[8px] font-black bg-brand/10 border border-brand/30 text-brand-text px-2 py-0.5 rounded-full uppercase tracking-widest">{vatRegistered ? 'VAT' : 'Non-VAT'}</span>
         </div>
       </div>
 
@@ -8508,9 +8491,9 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           Tools section, so on a desktop nothing on screen said the app could
           be searched at all - and it is the fastest way to any of the fifty
           pages, sub-pages included ("Export All · Ledger → Setup"). */}
-      <div className="px-3 pt-3">
-        <button onClick={() => setPaletteOpen(true)} aria-label="Search screens (Ctrl+K)"
-          className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-fg/70 hover:text-fg hover:border-white/25 transition">
+      <div className="px-3 pt-2.5">
+        <button onClick={() => { setPaletteOpen(true); closeFn?.(); }} aria-label="Search screens (Ctrl+K)"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-fg/70 hover:text-fg hover:border-white/25 transition">
           <Search size={14} className="shrink-0" />
           <span className="text-sm font-bold">Go to…</span>
           <span className="ml-auto text-[9px] font-black tracking-widest text-fg/65 border border-white/10 rounded px-1.5 py-0.5">CTRL K</span>
@@ -8583,35 +8566,24 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         )}
       </nav>
 
-      {/* Bottom */}
-      <div className="p-3 border-t border-white/5 space-y-0.5">
-        <div className="flex items-center justify-between px-4 py-2">
-          <span className="text-[10px] text-fg/65 font-bold uppercase tracking-wider">Auto-Close</span>
-          <MidnightCountdown />
-        </div>
-        {/* Clock In/Out/Break - always visible for staff (frequent, critical
-            action). Hidden for superadmin: they're already exempt from the
-            clock-in gate below (owners aren't tracked for attendance), so
-            this button was just nagging someone the app never blocks. */}
-        {/* Only where the shop runs one shared till. Its own button because
-            closing the drawer is a decision, not a side effect of logging out. */}
+      {/* Bottom. Only what is used all shift stays in view - clocking in and
+          the shared drawer. Everything occasional (switching user, settings,
+          fullscreen, the QR, logging out) sits behind the account button, the
+          way every workspace app does it, so the tabs above get the height. */}
+      <div className="p-2.5 border-t border-white/5 space-y-1 relative">
         {sharedDrawer && (
           <button onClick={openCashDrawer}
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm text-fg/70 hover:text-fg hover:bg-white/5 transition">
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-xl font-bold text-sm text-fg/70 hover:text-fg hover:bg-white/5 transition">
             <Banknote size={15} />
             Cash Drawer
           </button>
         )}
-        {/* Handing the terminal over. Beside Clock In because they are the two
-            things a person does when they arrive at the bar. */}
-        <button onClick={openSwitch}
-          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm text-fg/70 hover:text-fg hover:bg-white/5 transition">
-          <Users size={15} />
-          Switch User
-        </button>
+        {/* Clock In/Out/Break - always visible for staff (frequent, critical
+            action). Hidden for superadmin: they're already exempt from the
+            clock-in gate below (owners aren't tracked for attendance). */}
         {!isSuperAdmin && (
           <button onClick={handleClockButton}
-            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${clockStatus.onBreak ? 'text-white bg-amber-500 hover:bg-amber-600' : clockStatus.isClockedIn ? 'text-white bg-accent hover:bg-accent/80' : 'text-fg/70 hover:text-fg hover:bg-white/5'}`}>
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl font-bold text-sm transition ${clockStatus.onBreak ? 'text-white bg-amber-500 hover:bg-amber-600' : clockStatus.isClockedIn ? 'text-white bg-accent hover:bg-accent/80' : 'text-fg/70 hover:text-fg hover:bg-white/5'}`}>
             <Clock size={15} />
             {clockStatus.onBreak
               ? `On Break - tap to resume`
@@ -8621,73 +8593,64 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           </button>
         )}
 
-        {/* Settings - system preferences & account. The QR-Orders / Auto-Close /
-            Product-Images toggles and Change Password now live on this page
-            instead of being crammed into the sidebar dropdown. */}
-        <button onClick={() => { setActiveTab('settings'); setNavMode('negotium'); closeFn?.(); }}
-          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${activeTab === 'settings' ? 'bg-brand text-on-brand shadow-sm' : 'text-fg/70 hover:text-fg hover:bg-white/5'}`}>
-          <Settings size={15} />
-          Settings
-          {activeTab === 'settings' && <ChevronRight size={13} className="ml-auto" />}
-        </button>
-
-        {/* Collapsible quick tools - Fullscreen / QR / Install (frequent, low-stakes) */}
-        <button onClick={toggleOpsTools}
-          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/70 hover:text-fg hover:bg-white/5 transition font-bold text-[11px] uppercase tracking-wider">
-          {opsToolsOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-          Quick Tools
-        </button>
-        {opsToolsOpen && (
-          <div className="space-y-0.5">
-            {/* Quick jump lives here too - the top bar that used to host it is
-                hidden once the persistent sidebar appears (md+), and a touch-only
-                tablet has no Ctrl+K. */}
-            <button onClick={() => { setPaletteOpen(true); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/70 hover:text-fg hover:bg-white/5 transition font-bold text-sm">
-              <Search size={15} />
-              Quick Jump
-              <span className="ml-auto text-[9px] font-black text-fg/65 tracking-widest">CTRL K</span>
-            </button>
-            <button onClick={toggleFullScreen} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/70 hover:text-fg hover:bg-white/5 transition font-bold text-sm">
-              {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
-              {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-            </button>
-            <button onClick={e => { e.preventDefault(); (BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR()); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand-text hover:bg-brand/10 transition font-bold text-sm">
-              <QrCode size={15} />
-              {BUSINESS_TYPE === 'log' ? 'Portal' : 'Show QR'}
-            </button>
-            {/* Logistics: a guest walk-in QR (below Portal) - a customer with no
-                account scans it to order on the spot, same guest menu flow as fb. */}
-            {BUSINESS_TYPE === 'log' && (
-              <button onClick={e => { e.preventDefault(); handleShowQR(); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand-text hover:bg-brand/10 transition font-bold text-sm">
-                <QrCode size={15} />
-                Guest QR
-              </button>
-            )}
-            {/* Install as app (only when the browser offers it) */}
-            {installable && (
-              <button onClick={() => { install(); closeFn?.(); }}
-                className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand-text hover:bg-brand/10 transition font-bold text-sm">
-                <Download size={15} />
-                Install App
-              </button>
-            )}
-          </div>
+        {accountMenuOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setAccountMenuOpen(false)} aria-hidden="true" />
+            <div role="menu" aria-label="Account"
+              className="absolute left-2.5 right-2.5 bottom-full mb-1 z-50 bg-sidebar-bg border border-white/15 rounded-xl shadow-2xl p-1.5 space-y-0.5 animate-scale-in origin-bottom">
+              <p className="px-3 pt-1.5 pb-1 text-[10px] text-fg/65 truncate">
+                Signed in as <span className="text-fg font-bold">{activeAdmin?.name}</span> · <span className="uppercase tracking-widest">{activeAdmin?.role}</span>
+              </p>
+              {(() => {
+                const item = 'w-full flex items-center gap-3 px-3 py-2 rounded-lg font-bold text-sm transition';
+                const plain = `${item} text-fg/80 hover:text-fg hover:bg-white/5`;
+                const done = (fn) => () => { setAccountMenuOpen(false); fn(); };
+                return (
+                  <>
+                    <button role="menuitem" onClick={done(openSwitch)} className={plain}><Users size={15} /> Switch User</button>
+                    <button role="menuitem" onClick={done(() => { setActiveTab('settings'); setNavMode('negotium'); closeFn?.(); })}
+                      className={`${item} ${activeTab === 'settings' ? 'bg-brand text-on-brand' : 'text-fg/80 hover:text-fg hover:bg-white/5'}`}>
+                      <Settings size={15} /> Settings
+                    </button>
+                    <button role="menuitem" onClick={done(toggleFullScreen)} className={plain}>
+                      {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+                      {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                    </button>
+                    <button role="menuitem" onClick={done(() => { (BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR()); closeFn?.(); })} className={plain}>
+                      <QrCode size={15} /> {BUSINESS_TYPE === 'log' ? 'Portal link' : 'Show QR'}
+                    </button>
+                    {/* Logistics: a guest walk-in QR - a customer with no account
+                        scans it to order on the spot, same guest menu flow as fb. */}
+                    {BUSINESS_TYPE === 'log' && (
+                      <button role="menuitem" onClick={done(() => { handleShowQR(); closeFn?.(); })} className={plain}><QrCode size={15} /> Guest QR</button>
+                    )}
+                    {installable && (
+                      <button role="menuitem" onClick={done(() => { install(); closeFn?.(); })} className={plain}><Download size={15} /> Install App</button>
+                    )}
+                    <div className="border-t border-white/10 my-1" />
+                    <button role="menuitem" onClick={done(handleLogout)} className={`${item} text-danger hover:bg-red-500/10`}>
+                      <LogOut size={15} /> {isSuperAdmin ? 'Log Out' : 'End Shift'}
+                    </button>
+                  </>
+                );
+              })()}
+            </div>
+          </>
         )}
-        <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-danger hover:bg-red-500/10 transition font-bold text-sm">
-          <LogOut size={15} />
-          {isSuperAdmin ? 'Log Out' : 'End Shift'}
-        </button>
-        <div className="px-3 py-2 border-t border-white/5 mt-1">
-          <div className="flex items-center gap-3 p-2 rounded-xl bg-white/5">
-            <div className="w-8 h-8 rounded-lg bg-brand/20 border border-brand/30 flex items-center justify-center flex-shrink-0">
-              <span className="text-brand-text font-black text-xs">{activeAdmin?.name?.charAt(0)?.toUpperCase()}</span>
-            </div>
-            <div className="min-w-0">
-              <p className="text-fg/65 text-xs font-bold truncate">{activeAdmin?.name}</p>
-              <p className="text-fg/65 text-[10px] uppercase tracking-widest">{activeAdmin?.role}</p>
-            </div>
+
+        <button onClick={() => setAccountMenuOpen(o => !o)} aria-haspopup="menu" aria-expanded={accountMenuOpen}
+          className={`w-full flex items-center gap-2.5 p-2 rounded-xl transition text-left ${accountMenuOpen ? 'bg-white/10' : 'bg-white/5 hover:bg-white/10'}`}>
+          <div className="w-8 h-8 rounded-lg bg-brand/20 border border-brand/30 flex items-center justify-center flex-shrink-0">
+            <span className="text-fg font-black text-xs">{activeAdmin?.name?.charAt(0)?.toUpperCase()}</span>
           </div>
-        </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-fg text-xs font-bold truncate">{activeAdmin?.name}</p>
+            <p className="text-fg/65 text-[10px] truncate" title={`${activeAdmin?.role || ''} · time until the automatic end-of-day close`}>
+              Day closes in <MidnightCountdown short className="text-brand-text font-bold" />
+            </p>
+          </div>
+          {accountMenuOpen ? <ChevronDown size={14} className="text-fg/65 shrink-0" /> : <ChevronUp size={14} className="text-fg/65 shrink-0" />}
+        </button>
       </div>
     </>
   );
