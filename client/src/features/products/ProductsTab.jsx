@@ -508,7 +508,7 @@ export default function ProductsTab({ ctx }) {
             {/* Wraps on a phone: with shrink-0 on the actions, "New product"
                 was pushed off the right edge and cut to "NEW PROD". */}
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mb-4 border-b border-white/10 pb-2">
-              <h3 className="text-xl font-bold text-fg whitespace-nowrap">Menu Items</h3>
+              <h3 className="text-xl font-bold text-fg whitespace-nowrap">{BUSINESS_TYPE === 'log' ? 'Catalog Items' : 'Menu Items'}</h3>
               <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                 <span className="text-xs font-bold text-fg/70">
                   {prodFiltersActive ? `${filteredProducts.length} of ${products.length}` : `${products.length} item${products.length === 1 ? '' : 's'}`}
@@ -983,8 +983,8 @@ export default function ProductsTab({ ctx }) {
                     <p className="text-fg/70 text-xs">No product matches your search and filters. Try clearing them.</p>
                   </>) : (<>
                     <Coffee size={26} className="mx-auto mb-3 text-brand-text" />
-                    <p className="text-fg/70 font-black uppercase tracking-widest text-xs mb-1">No menu items yet</p>
-                    <p className="text-fg/70 text-xs">Add your first product with the form on the right; it goes live on the menu instantly.</p>
+                    <p className="text-fg/70 font-black uppercase tracking-widest text-xs mb-1">{BUSINESS_TYPE === 'log' ? 'No catalog items yet' : 'No menu items yet'}</p>
+                    <p className="text-fg/70 text-xs">Add your first product with New product above; it goes live {BUSINESS_TYPE === 'log' ? 'in the catalog and client portal' : 'on the menu'} instantly.</p>
                   </>)}
                 </div>
               )}

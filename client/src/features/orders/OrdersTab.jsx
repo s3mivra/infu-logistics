@@ -471,6 +471,22 @@ export default function OrdersTab({ ctx }) {
                         </div>
                       </div>
                     )}
+                    {/* The order note and the head count were sent to the server
+                        with every sale and printed on the ticket, but there was
+                        no box to type either into - so a counter order could
+                        never carry "birthday, bring candle" or a party size. */}
+                    {BUSINESS_TYPE === 'fb' && posTable === 'Dine-In' && (
+                      <label className="flex items-center gap-2 text-xs font-bold text-fg/75">
+                        Guests
+                        <input type="number" min="1" step="1" inputMode="numeric" aria-label="Number of guests"
+                          value={posGuestCount} onChange={e => setPosGuestCount(e.target.value)}
+                          className="w-20 bg-page-bg border border-white/10 rounded-lg px-2.5 py-1.5 text-fg text-xs font-bold outline-none focus:border-brand/50" />
+                      </label>
+                    )}
+                    <textarea rows={2} maxLength={300} aria-label="Order note"
+                      placeholder={BUSINESS_TYPE === 'log' ? 'Order note (optional) - delivery window, gate, who receives' : 'Order note (optional) - e.g. birthday, serve together'}
+                      value={posNotes} onChange={e => setPosNotes(e.target.value)}
+                      className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg text-xs placeholder-fg/70 outline-none focus:border-brand/60 resize-none transition" />
                   </div>
 
                   {/* Threshold sale banners */}
