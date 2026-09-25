@@ -8006,7 +8006,12 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     return [...byId.values()];
   })();
   const filteredOrders = (orderFilter === 'Parked' ? parkedOrders : orderFilter === 'All' ? allOrdersSource : orders).filter(o => {
-    const statusOk = (orderFilter === 'All' || orderFilter === 'Parked') ? true : o.status === orderFilter;
+    // "All" is the working queue. A cancelled ticket - one deleted as entered
+    // by mistake - leaves it at once instead of lingering until the day
+    // closes; it is still there under the Cancelled filter, and in the audit.
+    const statusOk = orderFilter === 'Parked' ? true
+      : orderFilter === 'All' ? o.status !== 'Cancelled'
+      : o.status === orderFilter;
     if (!statusOk) return false;
     if (!orderSearch.trim()) return true;
     const q = orderSearch.trim().toLowerCase();

@@ -173,6 +173,33 @@ export default function OrdersTab({ ctx }) {
     && !['Completed', 'Cancelled', 'Voided', 'Refunded', 'Partially Fulfilled'].includes(order.status)
     && !(order.items || []).some(i => (i.fulfilledQty || 0) > 0)
     && !((order.payments || []).length > 0);
+  // Deleting an order rung up by mistake. Until an order is completed nothing
+  // from it is on the books and no stock has left, so "delete" cancels it: off
+  // the queue and the kitchen screen, kept in the audit log with who did it.
+  // A completed order is an issued receipt and a posted sale - it cannot be
+  // made to disappear, only voided, which reverses the books and the stock.
+  const OPEN_STATUSES = ['Pending', 'Preparing', 'Ready', 'Parked', 'Out for Delivery', 'Awaiting Pickup'];
+  const canDelete = (order) => order.status === 'Completed'
+    ? !!canVoidRefund
+    : OPEN_STATUSES.includes(order.status) || order.isParked;
+  const deleteOrder = async (order) => {
+    if (order.status === 'Completed') { handleVoidOrder(order._id); return; }
+    // Paid already: the drawer counts that cash from the moment it is taken,
+    // so once the order is gone the money has to go back to the customer.
+    const paid = (order.amountTendered > 0) || (order.payments || []).length > 0
+      || (['Preparing', 'Ready'].includes(order.status) && order.paymentMethod && order.paymentMethod !== 'Credit');
+    const ok = await ui.confirm({
+      title: `Delete ${order.orderNumber}?`,
+      message: paid
+        ? `This order was already paid (${peso(order.total || 0)}, ${order.paymentMethod || 'paid'}). Give that back to the customer - the cash drawer stops expecting it once the order is deleted.`
+        : 'For an order entered by mistake. It leaves the queue and the kitchen screen, and nothing is booked.',
+      detail: 'It is kept in the audit log as cancelled, with your name, so it can always be traced.',
+      confirmLabel: 'Delete order',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    updateStatus(order._id, 'Cancelled');
+  };
   // Holding an open order's stock keeps it off everyone else's orders until
   // this one completes - the promise a client has usually paid a deposit on.
   const holdStock = async (order) => {
@@ -889,6 +916,14 @@ export default function OrdersTab({ ctx }) {
                                     <Truck size={14} />
                                   </button>
                                 </>
+                              )}
+                              {departmentFilter === 'All' && canDelete(order) && (
+                                <button onClick={() => deleteOrder(order)}
+                                  className="p-1.5 rounded-md hover:bg-red-500/15 hover:text-danger transition"
+                                  title={order.status === 'Completed' ? 'Void order (completed - it is on the books)' : 'Delete order (entered by mistake)'}
+                                  aria-label={order.status === 'Completed' ? 'Void order' : 'Delete order'}>
+                                  <Trash2 size={14} />
+                                </button>
                               )}
                               <button
                                 onClick={() => setCollapsedOrders(prev => ({ ...prev, [order._id]: !prev[order._id] }))}
@@ -1663,7 +1698,7 @@ export default function OrdersTab({ ctx }) {
                                     </div>
                                   )}
                                   {departmentFilter === 'All' && !allDelivered && (
-                                    <button onClick={() => updateStatus(order._id, 'Cancelled')} className="w-full border border-red-500/30 text-danger py-2 rounded-lg hover:bg-red-500/10 font-bold text-[11px] transition">Drop order</button>
+                                    <button onClick={() => deleteOrder(order)} className="w-full border border-red-500/30 text-danger py-2 rounded-lg hover:bg-red-500/10 font-bold text-[11px] transition">Drop order</button>
                                   )}
                                 </div>
                               )}
