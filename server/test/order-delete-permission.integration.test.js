@@ -114,6 +114,46 @@ describe('a paid order', () => {
   });
 });
 
+describe('voiding a completed order', () => {
+  // The owner hands voids to a role by giving it "Void / delete orders". That
+  // used to do nothing for a completed order: the void was wired to the
+  // superadmin alone, whatever the permission list said.
+  let headTok;
+  beforeAll(async () => {
+    await makeUser({ name: 'VoidOwner', role: 'superadmin' });
+    const ownerTok = await loginStaff(app, 'VoidOwner');
+    const role = await as(ownerTok)('post', '/api/roles').send({ name: 'Head Barista', permissions: ['pos.use', 'orders.view', 'orders.delete'] });
+    expect(role.body.success).toBe(true);
+    await makeUser({ name: 'Hana Head', role: 'Head Barista' });
+    headTok = await loginStaff(app, 'Hana Head');
+  });
+  const completed = async () => {
+    const order = await ring();
+    await as(staffTok)('put', `/api/orders/${order._id}`).send({ status: 'Completed', paymentMethod: 'Cash' });
+    return order;
+  };
+
+  it('is allowed to a custom role given "Void / delete orders"', async () => {
+    const order = await completed();
+    const res = await as(headTok)('post', `/api/orders/${order._id}/void`).send({ reason: 'Restock' });
+    expect(res.body.success, JSON.stringify(res.body)).toBe(true);
+    const stored = await M('Order').findById(order._id).lean();
+    expect(stored).toMatchObject({ status: 'Voided', voidedBy: 'Hana Head' });
+  });
+
+  it('is refused to staff without it', async () => {
+    const order = await completed();
+    expect((await as(staffTok)('post', `/api/orders/${order._id}/void`).send({ reason: 'Restock' })).status).toBe(403);
+    expect((await M('Order').findById(order._id).lean()).status).toBe('Completed');
+  });
+
+  it('still cannot be undone except by the superadmin', async () => {
+    const order = await completed();
+    await as(headTok)('post', `/api/orders/${order._id}/void`).send({ reason: 'Restock' });
+    expect((await as(headTok)('post', `/api/orders/${order._id}/unvoid`).send({})).status).toBe(403);
+  });
+});
+
 describe('closing the day by hand', () => {
   it('needs the same permission, because it cancels paid orders too', async () => {
     expect((await as(staffTok)('post', '/api/orders/archive').send({})).status).toBe(403);

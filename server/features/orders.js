@@ -2182,7 +2182,12 @@ app.post('/api/orders/:id/unvoid', verifyToken, requireSuperAdmin, async (req, r
 // bare 500 on a VOID - a money action they then had to guess about. Mirrors the
 // retry the restock route already does. Only retried when nothing has been sent
 // yet, so a validation response is never re-sent.
-app.post('/api/orders/:id/void', verifyToken, requireSuperAdmin, async (req, res) => {
+// Voiding a completed sale reverses its books and its stock. It belongs to
+// whoever holds "Void / delete orders" - the permission says so, and it is how
+// an owner hands voids to a head barista or a manager. It used to be hard-wired
+// to the superadmin, so granting that permission did nothing for a completed
+// order. Un-voiding stays superadmin-only: it re-posts a sale someone reversed.
+app.post('/api/orders/:id/void', verifyToken, requireStaff, permit('orders.delete'), async (req, res) => {
   await runWithStatsRetry(voidOrderOnce, req, res);
 });
 

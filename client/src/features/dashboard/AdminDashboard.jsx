@@ -2283,6 +2283,13 @@ export default function AdminDashboard() {
       if (typeof document !== 'undefined' && document.hidden) notify('Accounting alert', a?.message || '');
     };
 
+    // A role's permissions were changed. Permissions travel inside the session
+    // token, so re-mint it now: what the owner just granted (or took away)
+    // applies on this screen at once rather than at the next refresh.
+    const handlePermissionsChanged = () => {
+      auth.refreshSession(API_URL).then((d) => { if (d?.user) setActiveAdmin(prev => ({ ...(prev || {}), ...d.user })); });
+    };
+    socket.on('permissionsChanged', handlePermissionsChanged);
     socket.on('newOrder',       handleNewOrder);
     socket.on('orderUpdated',   handleOrderUpdate);
     socket.on('menuUpdated',    handleMenuUpdate);
@@ -2291,6 +2298,7 @@ export default function AdminDashboard() {
     socket.on('mgrAlert',       handleMgrAlert);
 
     return () => {
+      socket.off('permissionsChanged', handlePermissionsChanged);
       socket.off('newOrder',       handleNewOrder);
       socket.off('orderUpdated',   handleOrderUpdate);
       socket.off('menuUpdated',    handleMenuUpdate);
@@ -8428,7 +8436,9 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   const can = (perm) => isSuperAdmin || auth.can(perm);
   // Void / refund are allowed for superadmin OR admin (case-insensitive).
   const canVoidRefund = ['superadmin', 'admin'].includes(String(activeAdmin?.role || '').toLowerCase());
-  const canVoid = String(activeAdmin?.role || '').toLowerCase() === 'superadmin';
+  // Voiding follows the "Void / delete orders" permission, as the server does,
+  // so granting it to a role (a head barista, say) is all it takes.
+  const canVoid = can('orders.delete');
 
   // CLOCK-IN GATE: every non-superadmin must clock in before using the POS.
   // (Superadmin/owner is exempt.) Shown once the clock status is known so we

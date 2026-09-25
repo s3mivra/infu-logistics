@@ -210,7 +210,8 @@ app.post('/api/roles', verifyToken, requireSuperAdmin, validate(roleSchema), asy
     const permissions = Array.isArray(req.body.permissions)
       ? req.body.permissions.filter((k) => PERMISSION_KEYS.has(k)) : [];
     const newRole = await Role.create({ name: req.body.name, permissions });
-    await refreshCustomRolePerms?.(); // new grants take effect on next login/refresh
+    await refreshCustomRolePerms?.();
+    emitToAll('permissionsChanged', { role: newRole.name });
     res.json({ success: true, role: newRole });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -226,6 +227,11 @@ app.patch('/api/roles/:id', verifyToken, requireSuperAdmin, async (req, res) => 
     const role = await Role.findByIdAndUpdate(req.params.id, updates, { returnDocument: 'after' });
     if (!role) return res.status(404).json({ success: false, error: 'Role not found.' });
     await refreshCustomRolePerms?.();
+    // Everyone signed in re-reads their permissions at once - an owner who
+    // grants a head barista voids expects it to work now, not at the next
+    // session refresh up to 15 minutes later. (Changing one PERSON's role or
+    // permissions already ends their sessions - see PATCH /api/users/:id.)
+    emitToAll('permissionsChanged', { role: role.name });
     res.json({ success: true, role });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -236,6 +242,7 @@ app.delete('/api/roles/:id', verifyToken, requireSuperAdmin, async (req, res) =>
   try {
     await Role.findByIdAndDelete(req.params.id);
     await refreshCustomRolePerms?.();
+    emitToAll('permissionsChanged', {});
     res.json({ success: true });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));

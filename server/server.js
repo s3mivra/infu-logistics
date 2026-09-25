@@ -1031,7 +1031,8 @@ mongoose.connect(process.env.MONGO_URI, {
   };
 
   // Allows superadmin OR admin (e.g. for refund). Role match is case-insensitive.
-  // NOTE: voids are superadmin-only (requireSuperAdmin) - do not add void here.
+  // NOTE: voids are governed by the orders.delete permission (see the void
+  // route in features/orders.js), not by this role check.
   const requireSuperOrAdmin = (req, res, next) => {
     const role = String(req.user?.role || '').toLowerCase();
     if (role === 'superadmin' || role === 'admin') return next();

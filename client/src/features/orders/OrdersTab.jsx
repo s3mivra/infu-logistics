@@ -1791,16 +1791,20 @@ export default function OrdersTab({ ctx }) {
                                 </div>
                               )}
 
-                              {order.status === 'Completed' && departmentFilter === 'All' && canVoidRefund && (
+                              {/* Void and Refund are separate powers: void follows the
+                                  "Void / delete orders" permission, refund the admin role. */}
+                              {order.status === 'Completed' && departmentFilter === 'All' && (canVoid || canVoidRefund) && (
                                 <div className="flex gap-2">
                                   {canVoid && (
                                     <button onClick={() => handleVoidOrder(order._id)} className="flex-1 bg-red-600 border border-red-600 text-white py-2 rounded-lg hover:bg-red-700 font-bold text-xs uppercase tracking-widest transition">
                                       Void
                                     </button>
                                   )}
-                                  <button onClick={() => { setRefundModal(order); }} className="flex-1 bg-orange-700 border border-orange-700 text-white py-2 rounded-lg hover:bg-orange-800 font-bold text-xs uppercase tracking-widest transition">
-                                    Refund
-                                  </button>
+                                  {canVoidRefund && (
+                                    <button onClick={() => { setRefundModal(order); }} className="flex-1 bg-orange-700 border border-orange-700 text-white py-2 rounded-lg hover:bg-orange-800 font-bold text-xs uppercase tracking-widest transition">
+                                      Refund
+                                    </button>
+                                  )}
                                 </div>
                               )}
                             </div>

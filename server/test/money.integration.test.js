@@ -53,13 +53,16 @@ afterAll(async () => {
   if (repl) await repl.stop();
 });
 
-describe('Batch 2 - voids are superadmin-only', () => {
-  it('admin token → 403 on void (no longer admin-allowed)', async () => {
+// Voids follow the "Void / delete orders" permission (orders.delete), which the
+// admin role has by default; staff without it are refused - see
+// order-delete-permission.integration.test.js.
+describe('Batch 2 - voids follow orders.delete', () => {
+  it('admin token → not 403 on void (admins hold orders.delete)', async () => {
     const res = await request(app)
       .post('/api/orders/000000000000000000000000/void')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ reason: 'Restock' });
-    expect(res.status).toBe(403);
+    expect(res.status).not.toBe(403);
   });
 
   it('superadmin token → not 403 on void (passes the role gate)', async () => {
