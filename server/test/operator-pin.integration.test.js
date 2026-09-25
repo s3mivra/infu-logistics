@@ -117,7 +117,8 @@ describe('handing the terminal to someone else', () => {
 
   it('refuses a PIN nobody has', async () => {
     const res = await as(baristaTok)('post', '/api/users/switch').send({ pin: '9999' });
-    expect(res.status).toBe(401);
+    // Refused, not "signed out": the barista's own session is still good.
+    expect(res.status).toBe(403);
     expect(res.body.error).toMatch(/not recognised/i);
   });
 
@@ -169,7 +170,7 @@ describe('a manager approving something at the counter', () => {
 
   it('refuses a PIN nobody has', async () => {
     const res = await as(baristaTok)('post', '/api/users/authorize').send({ pin: '5555' });
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
   });
 
   it('records who approved it', async () => {

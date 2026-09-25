@@ -1453,6 +1453,9 @@ items: [{
   orderNotes: { type: String, default: '' },
   // Guest/cover count (for analytics - how many people at the table)
   guestCount: { type: Number, default: 1 },
+  // Who allowed a paid order to be cancelled (a manager, by PIN, or the
+  // canceller themselves when they hold orders.delete).
+  cancelApprovedBy: { type: String, default: null },
   // Split-payment breakdown: [{ method, amount }]
   payments: [{ method: String, amount: Number }],
   // External reference the CUSTOMER supplies for their own payment - the GCash

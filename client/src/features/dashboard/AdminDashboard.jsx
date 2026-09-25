@@ -2517,14 +2517,14 @@ export default function AdminDashboard() {
     }
   };
 
-const updateStatus = async (orderId, newStatus) => {
+const updateStatus = async (orderId, newStatus, extra = {}) => {
     if (updatingOrders[orderId]) return; // double-tap guard
     setUpdatingOrders(prev => ({ ...prev, [orderId]: true }));
 
     // 1. Grab the order so we can check if it's a delivery
     const order = orders.find(o => o._id === orderId);
 
-    const payload = { status: newStatus };
+    const payload = { status: newStatus, ...extra };
 
     if (newStatus === 'Preparing') {
       // Payment is always operator-changeable. Use the dropdown selection if made,
@@ -2552,7 +2552,8 @@ const updateStatus = async (orderId, newStatus) => {
     if (newStatus === 'Ready') playReadyChime();
 
     // Optimistic UI update
-    setOrders(prev => prev.map(o => o._id === orderId ? { ...o, ...payload } : o));
+    const { approval: _approval, ...visible } = payload;   // the approval is for the server, not the order
+    setOrders(prev => prev.map(o => o._id === orderId ? { ...o, ...visible } : o));
     socket.emit('updateOrderStatus', { orderId, status: newStatus });
 
     // Backend Sync
@@ -8427,6 +8428,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   const can = (perm) => isSuperAdmin || auth.can(perm);
   // Void / refund are allowed for superadmin OR admin (case-insensitive).
   const canVoidRefund = ['superadmin', 'admin'].includes(String(activeAdmin?.role || '').toLowerCase());
+  const canVoid = String(activeAdmin?.role || '').toLowerCase() === 'superadmin';
 
   // CLOCK-IN GATE: every non-superadmin must clock in before using the POS.
   // (Superadmin/owner is exempt.) Shown once the clock status is known so we
@@ -8671,7 +8673,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   const ctx = {
     // ── Shared data ─────────────────────────────────────────────────────────
     orders, archivedOrders, products, categories, inventory, discounts, globalAddOns,
-    users, activeAdmin, isSuperAdmin, canVoidRefund, can,
+    users, activeAdmin, isSuperAdmin, canVoidRefund, canVoid, can,
     // Needed by the command palette: module-gated screens must not be offered
     // when the module is off, and the Admin Panel is a route, not a tab.
     moduleOn, navigate,

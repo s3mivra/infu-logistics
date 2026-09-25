@@ -20,7 +20,8 @@ import { isAnonymousCustomerName } from '../lib/customerName.js';
 // .manage key (see lib/authz.js PERMISSIONS). `permit` is the same
 // requirePermission the context hands out, imported under a short name so
 // it reads the same in every file.
-import { requirePermission as permit, requireAnyPermission as permitAny } from '../lib/authz.js';
+import { requirePermission as permit, requireAnyPermission as permitAny, hasPermission } from '../lib/authz.js';
+import { checkApproval, orderIsPaid } from '../lib/approval.js';
 
 export default function registerOrders(ctx) {
   const {
@@ -1554,6 +1555,29 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       return res.status(400).json({ success: false, error: 'Completed orders are immutable. Use the void workflow for cancellations.' });
     }
 
+    // Deleting (cancelling) a PAID order. An unpaid ticket is a typo anyone at
+    // the till may fix. Once money has been taken, cancelling it takes that
+    // sale out of the drawer's expected cash - the oldest way to pocket a sale
+    // - so it needs someone allowed to void orders, or a manager's approval
+    // for this very order (lib/approval.js).
+    let cancelApprovedBy = null;
+    if (status === 'Cancelled' && previousStatus !== 'Cancelled' && orderIsPaid(order)) {
+      if (hasPermission(req.user, 'orders.delete')) {
+        cancelApprovedBy = req.user?.name || null;
+      } else {
+        const ok = checkApproval(req.body?.approval, { permission: 'orders.delete', requestedBy: req.user?._id, target: String(order._id) });
+        if (!ok) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(403).json({
+            success: false, needsApproval: 'orders.delete',
+            error: 'This order was already paid. Deleting it needs a manager - enter a manager PIN.',
+          });
+        }
+        cancelApprovedBy = ok.approverName;
+      }
+    }
+
     if (status) {
       order.status = status;
       // Attribution: when an order moves to Cancelled, stamp who did it from
@@ -1562,7 +1586,11 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       if (status === 'Cancelled' && previousStatus !== 'Cancelled') {
         order.cancelledBy = req.user?.name || 'system';
         order.cancelledAt = new Date();
-        await logAudit(req, { action: 'cancel', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, cancelledBy: order.cancelledBy } });
+        if (cancelApprovedBy) order.cancelApprovedBy = cancelApprovedBy;
+        await logAudit(req, { action: 'cancel', entity: 'Order', entityId: order._id, after: {
+          orderNumber: order.orderNumber, cancelledBy: order.cancelledBy,
+          paid: orderIsPaid(order), ...(cancelApprovedBy ? { approvedBy: cancelApprovedBy } : {}),
+        } });
       }
     }
     if (paymentMethod && !order.isComplimentary) order.paymentMethod = paymentMethod;
@@ -2371,7 +2399,11 @@ const voidOrderOnce = async (req, res, mayRetry) => {
   return false;
 };
 
-app.post('/api/orders/archive', verifyToken, requireStaff, permit('orders.manage'), async (req, res) => {
+// Needs orders.delete, not orders.manage: closing the day cancels every
+// unfinished order, paid ones included - the same power as deleting a paid
+// order, so it takes the same permission. (The midnight auto-close runs on the
+// server and is unaffected; the button for this is on a superadmin-only screen.)
+app.post('/api/orders/archive', verifyToken, requireStaff, permit('orders.delete'), async (req, res) => {
   try {
     // 1. Force any hanging order to Cancelled - includes Ready (made but never
     //    handed over) and Parked (held unpaid tabs). Parked orders also lose the

@@ -2,6 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
+import { signApproval } from '../lib/approval.js';
 
 export default function registerUsers(ctx) {
   const {
@@ -312,7 +313,11 @@ app.post('/api/users/switch', pinLimiter, verifyToken, requireStaff, async (req,
           return res.status(429).json({ success: false, error: `Too many wrong PINs. Try again in ${PIN_LOCK_MINUTES} minutes, or sign in with a password.` });
         }
       }
-      return res.status(401).json({ success: false, error: 'That PIN was not recognised.' });
+      // 403, not 401: the person at the till is still signed in - only the PIN
+      // was wrong. The app treats any 401 as an expired session and signs the
+      // terminal out, so a single mistyped PIN used to lock out whoever was
+      // already working.
+      return res.status(403).json({ success: false, error: 'That PIN was not recognised.' });
     }
 
     matched.pinFailedCount = 0;
@@ -347,7 +352,9 @@ app.post('/api/users/authorize', pinLimiter, verifyToken, requireStaff, async (r
       if (u.pinLockedUntil && u.pinLockedUntil > new Date()) continue;
       if (await bcrypt.compare(pin, u.pinHash)) { approver = u; break; }
     }
-    if (!approver) return res.status(401).json({ success: false, error: 'That PIN was not recognised.' });
+    // 403 for the same reason as the switch above: a wrong manager PIN must not
+    // sign out the cashier who asked for approval.
+    if (!approver) return res.status(403).json({ success: false, error: 'That PIN was not recognised.' });
 
     // The PIN proves who they are; the role decides whether they may approve.
     const allowed = approver.role === 'superadmin'
@@ -357,8 +364,17 @@ app.post('/api/users/authorize', pinLimiter, verifyToken, requireStaff, async (r
       return res.status(403).json({ success: false, error: `${approver.name} is not allowed to approve that.` });
     }
 
-    await logAudit(req, { action: 'authorize', entity: 'User', entityId: approver._id, after: { approver: approver.name, permission, requestedBy: req.user?.name || '' } });
-    res.json({ success: true, approver: { _id: approver._id, name: approver.name, role: approver.role } });
+    // The record being approved, when there is one (an order id). The signed
+    // approval is bound to it, so it cannot be spent on a different record.
+    const target = String(req.body?.target || '').trim().slice(0, 64);
+    await logAudit(req, { action: 'authorize', entity: 'User', entityId: approver._id, after: { approver: approver.name, permission, target, requestedBy: req.user?.name || '' } });
+    res.json({
+      success: true,
+      approver: { _id: approver._id, name: approver.name, role: approver.role },
+      // What the action checks - see lib/approval.js. Only issued for a named
+      // permission: a blanket "a manager said yes" approves nothing.
+      ...(permission ? { approval: signApproval({ approver, permission, requestedBy: req.user?._id, target }) } : {}),
+    });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

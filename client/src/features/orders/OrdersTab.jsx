@@ -87,7 +87,7 @@ export default function OrdersTab({ ctx }) {
     handleSaveCategory, handleSaveProduct, handleVoidOrder, historyItemName, historyModalOpen,
     historyPage, historySubTab, importModal, importRows, importSubmitting,
     invBadgeCount, invForm, invItemsPerPage, invPage, invSubTab,
-    inventory, isPosOpen, isStatusMenuOpen, isSuperAdmin, canVoidRefund, itemDisplay,
+    inventory, isPosOpen, isStatusMenuOpen, isSuperAdmin, canVoidRefund, canVoid, itemDisplay,
     itemsPerPage, jeForm, journalEntries, ledgerSubTab, navMode,
     newDiscount, openEditInventory, openProductModal, orderFilter, orders,
     ordersItemsPerPage, ordersPage, parseImportFile, paymentSelections, peso,
@@ -178,27 +178,53 @@ export default function OrdersTab({ ctx }) {
   // the queue and the kitchen screen, kept in the audit log with who did it.
   // A completed order is an issued receipt and a posted sale - it cannot be
   // made to disappear, only voided, which reverses the books and the stock.
+  //
+  // Who may: an UNPAID ticket, anyone at the till - it is a typo. A PAID one is
+  // a sale, and cancelling it takes it out of the drawer's expected cash, so it
+  // takes someone allowed to void orders, or a manager's PIN for that order.
+  // The server enforces the same rule (lib/approval.js); this only asks first.
   const OPEN_STATUSES = ['Pending', 'Preparing', 'Ready', 'Parked', 'Out for Delivery', 'Awaiting Pickup'];
+  const isPaid = (order) => (Number(order.amountTendered) || 0) > 0 || (order.payments || []).length > 0
+    || !['Pending', 'Parked', 'Reserved'].includes(order.status);
+  const mayDeletePaid = isSuperAdmin || !!can?.('orders.delete');
   const canDelete = (order) => order.status === 'Completed'
-    ? !!canVoidRefund
+    ? !!canVoid
     : OPEN_STATUSES.includes(order.status) || order.isParked;
+  const [pinAsk, setPinAsk] = React.useState(null);   // { order, pin, busy, error }
   const deleteOrder = async (order) => {
     if (order.status === 'Completed') { handleVoidOrder(order._id); return; }
-    // Paid already: the drawer counts that cash from the moment it is taken,
-    // so once the order is gone the money has to go back to the customer.
-    const paid = (order.amountTendered > 0) || (order.payments || []).length > 0
-      || (['Preparing', 'Ready'].includes(order.status) && order.paymentMethod && order.paymentMethod !== 'Credit');
+    const paid = isPaid(order);
     const ok = await ui.confirm({
       title: `Delete ${order.orderNumber}?`,
       message: paid
         ? `This order was already paid (${peso(order.total || 0)}, ${order.paymentMethod || 'paid'}). Give that back to the customer - the cash drawer stops expecting it once the order is deleted.`
         : 'For an order entered by mistake. It leaves the queue and the kitchen screen, and nothing is booked.',
-      detail: 'It is kept in the audit log as cancelled, with your name, so it can always be traced.',
-      confirmLabel: 'Delete order',
+      detail: paid && !mayDeletePaid
+        ? 'Because it was paid, a manager needs to approve this with their PIN next.'
+        : 'It is kept in the audit log as cancelled, with your name, so it can always be traced.',
+      confirmLabel: paid && !mayDeletePaid ? 'Continue' : 'Delete order',
       tone: 'danger',
     });
     if (!ok) return;
+    if (paid && !mayDeletePaid) { setPinAsk({ order, pin: '', busy: false, error: '' }); return; }
     updateStatus(order._id, 'Cancelled');
+  };
+  // The manager types their PIN on this screen; the cashier stays signed in.
+  // The approval that comes back is good for this one order, for two minutes.
+  const submitPin = async (e) => {
+    e?.preventDefault?.();
+    const { order, pin } = pinAsk;
+    setPinAsk(a => ({ ...a, busy: true, error: '' }));
+    try {
+      const r = await apiFetch('/api/users/authorize', { method: 'POST', body: JSON.stringify({ pin, permission: 'orders.delete', target: order._id }) });
+      const d = await r.json();
+      if (!d.success || !d.approval) { setPinAsk(a => ({ ...a, busy: false, pin: '', error: d.error || 'That PIN was not accepted.' })); return; }
+      setPinAsk(null);
+      await updateStatus(order._id, 'Cancelled', { approval: d.approval });
+      ui.alert(`${order.orderNumber} deleted - approved by ${d.approver?.name}.`, { tone: 'success' });
+    } catch {
+      setPinAsk(a => ({ ...a, busy: false, error: 'No connection to the server.' }));
+    }
   };
   // Holding an open order's stock keeps it off everyone else's orders until
   // this one completes - the promise a client has usually paid a deposit on.
@@ -242,6 +268,29 @@ export default function OrdersTab({ ctx }) {
 
   return (
           <div className="w-full">
+      {pinAsk && (
+        <div className="fixed inset-0 z-[10000] bg-black/70 flex items-center justify-center p-4" onClick={() => !pinAsk.busy && setPinAsk(null)}>
+          <form role="dialog" aria-modal="true" aria-labelledby="pin-ask-title" onSubmit={submitPin} onClick={e => e.stopPropagation()}
+            className="w-full max-w-xs bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl p-5 space-y-3">
+            <h2 id="pin-ask-title" className="text-fg font-black text-base">Manager approval</h2>
+            <p className="text-fg/75 text-xs leading-snug">
+              Deleting paid order <b className="text-fg">{pinAsk.order.orderNumber}</b> ({peso(pinAsk.order.total || 0)}). A manager enters their PIN - you stay signed in.
+            </p>
+            <input type="password" inputMode="numeric" autoComplete="off" autoFocus aria-label="Manager PIN" maxLength={8}
+              value={pinAsk.pin} onChange={e => setPinAsk(a => ({ ...a, pin: e.target.value.replace(/\D/g, ''), error: '' }))}
+              className="w-full text-center tracking-[0.5em] text-lg font-black bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand" />
+            {pinAsk.error && <p role="alert" className="text-danger text-xs font-bold">{pinAsk.error}</p>}
+            <div className="flex gap-2 pt-1">
+              <button type="button" disabled={pinAsk.busy} onClick={() => setPinAsk(null)}
+                className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider bg-white/5 border border-white/10 text-fg/80 hover:text-fg">Cancel</button>
+              <button type="submit" disabled={pinAsk.busy || pinAsk.pin.length < 4}
+                className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
+                {pinAsk.busy ? 'Checking…' : 'Approve & delete'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
             {isPosOpen ? (
               /* ========================================== */
               /* 🛒 INLINE MANUAL CASHIER POS 🛒            */
@@ -1744,9 +1793,11 @@ export default function OrdersTab({ ctx }) {
 
                               {order.status === 'Completed' && departmentFilter === 'All' && canVoidRefund && (
                                 <div className="flex gap-2">
-                                  <button onClick={() => handleVoidOrder(order._id)} className="flex-1 bg-red-600 border border-red-600 text-white py-2 rounded-lg hover:bg-red-700 font-bold text-xs uppercase tracking-widest transition">
-                                    Void
-                                  </button>
+                                  {canVoid && (
+                                    <button onClick={() => handleVoidOrder(order._id)} className="flex-1 bg-red-600 border border-red-600 text-white py-2 rounded-lg hover:bg-red-700 font-bold text-xs uppercase tracking-widest transition">
+                                      Void
+                                    </button>
+                                  )}
                                   <button onClick={() => { setRefundModal(order); }} className="flex-1 bg-orange-700 border border-orange-700 text-white py-2 rounded-lg hover:bg-orange-800 font-bold text-xs uppercase tracking-widest transition">
                                     Refund
                                   </button>
