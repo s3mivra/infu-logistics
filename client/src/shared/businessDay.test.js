@@ -7,7 +7,7 @@
 // expense typed in at that hour was filed under the previous day.
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  dateStr, todayStr, monthStartStr, yearStartStr, daysAgoStr,
+  dateStr, todayStr, monthStartStr, yearStartStr, daysAgoStr, presetRange, matchPreset,
   setClientBusinessTz, clientBusinessTz,
 } from './businessDay.js';
 
@@ -75,5 +75,30 @@ describe('the ranges a report screen offers', () => {
     for (const s of [todayStr(), monthStartStr(), yearStartStr(), daysAgoStr(30)]) {
       expect(s).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     }
+  });
+});
+
+describe('report range presets', () => {
+  const at = (key, today) => presetRange(key, today);
+  it('covers a single day', () => {
+    expect(at('today', '2026-03-01')).toEqual({ start: '2026-03-01', end: '2026-03-01' });
+    expect(at('yesterday', '2026-03-01')).toEqual({ start: '2026-02-28', end: '2026-02-28' });
+  });
+  it('counts rolling windows including today', () => {
+    expect(at('7d', '2026-03-03')).toEqual({ start: '2026-02-25', end: '2026-03-03' });
+    expect(at('30d', '2026-01-15')).toEqual({ start: '2025-12-17', end: '2026-01-15' });
+  });
+  it('knows where months, quarters and years start and end', () => {
+    expect(at('thisMonth', '2026-09-25')).toEqual({ start: '2026-09-01', end: '2026-09-25' });
+    expect(at('lastMonth', '2026-03-10')).toEqual({ start: '2026-02-01', end: '2026-02-28' });
+    expect(at('lastMonth', '2024-03-10')).toEqual({ start: '2024-02-01', end: '2024-02-29' });
+    expect(at('lastMonth', '2026-01-05')).toEqual({ start: '2025-12-01', end: '2025-12-31' });
+    expect(at('thisQuarter', '2026-09-25')).toEqual({ start: '2026-07-01', end: '2026-09-25' });
+    expect(at('thisYear', '2026-09-25')).toEqual({ start: '2026-01-01', end: '2026-09-25' });
+    expect(at('lastYear', '2026-09-25')).toEqual({ start: '2025-01-01', end: '2025-12-31' });
+  });
+  it('recognises a range that is a preset', () => {
+    expect(matchPreset({ start: '2026-09-01', end: '2026-09-25' }, '2026-09-25')).toBe('thisMonth');
+    expect(matchPreset({ start: '2026-09-02', end: '2026-09-25' }, '2026-09-25')).toBe(null);
   });
 });

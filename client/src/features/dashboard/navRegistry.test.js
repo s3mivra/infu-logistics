@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
-import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { NAV_GROUPS, LEDGER_TAB_GROUPS, REPORT_TAB_GROUPS, paletteDestinations, visibleNavGroups } from './navRegistry';
 
 // Can you get to every screen, and does every screen exist?
@@ -10,7 +10,7 @@ import { NAV_GROUPS, LEDGER_TAB_GROUPS, REPORT_TAB_GROUPS, paletteDestinations, 
 // branches in the tab components. Nothing but this test keeps the two in step:
 // a page registered with no branch is a dead menu entry, and a branch with no
 // entry is a screen nobody can click to.
-const src = (rel) => fs.readFileSync(path.join(__dirname, rel), 'utf8');
+const src = (rel) => fs.readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const dash = src('AdminDashboard.jsx');
 const ledgerSrc = src('../ledger/LedgerTab.jsx');
 

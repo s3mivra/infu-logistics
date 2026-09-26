@@ -1,7 +1,7 @@
 ﻿// orders routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { resolveCreditLimit, checkCreditAvailable, arBalance, isFullySettled } from '../lib/credit.js';
+import { resolveCreditLimit, checkCreditAvailable, arBalance, isFullySettled, isReceivableStatus } from '../lib/credit.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { title } from '../lib/normalize.js';
 import { withOptionalTransaction } from '../lib/txn.js';
@@ -1466,25 +1466,8 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
     // Growing an on-account order spends more credit - the same gate as creation.
     const totalAfter = Number(order.total) || 0;
     if (totalAfter > totalBefore + 0.005 && buyerClientId && order.paymentMethod !== 'Cash' && !order.isComplimentary) {
-      const [modeRow, globalRow, client] = await Promise.all([
-        Settings.findOne({ key: 'creditLimitMode' }).lean(),
-        Settings.findOne({ key: 'globalCreditLimit' }).lean(),
-        ClientAccount.findById(buyerClientId).lean(),
-      ]);
-      const limit = resolveCreditLimit({ mode: modeRow?.value, globalLimit: globalRow?.value, clientLimit: client?.creditLimit });
-      if (limit !== null) {
-        const openRows = await Order.find({
-          businessType: BUSINESS_TYPE, _id: { $ne: order._id },
-          $or: [{ clientAccountId: buyerClientId }, { clientId: buyerClientId }],
-          status: { $nin: ['Cancelled', 'Voided', 'Refunded', 'Parked'] },
-          isParked: { $ne: true }, paymentMethod: { $ne: 'Cash' }, isComplimentary: { $ne: true }, arSettled: { $ne: true },
-        }, { total: 1, arPaidAmount: 1, refundedAmount: 1 }).lean();
-        const outstanding = openRows.reduce((sum, r) => sum + arBalance(r), 0);
-        const credit = checkCreditAvailable({ limit, outstanding, orderTotal: totalAfter });
-        if (!credit.allowed) {
-          return res.status(409).json({ success: false, error: `Credit limit reached. Limit ₱${credit.limit.toFixed(2)}, other orders owing ₱${credit.outstanding.toFixed(2)}, this order would be ₱${totalAfter.toFixed(2)}.` });
-        }
-      }
+      const refusal = await creditRefusal({ buyerClientId, excludeId: order._id, orderTotal: totalAfter });
+      if (refusal) return res.status(409).json({ success: false, error: refusal });
     }
 
     // Cash already tendered at Preparing: the change due follows the new total.
@@ -1509,6 +1492,31 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
     res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
 });
+
+// Would this order put its client over their credit limit? -> an error message,
+// or null when it fits (or the client has no limit). Exposure is every other
+// committed, non-cash, unsettled order of theirs - the A/R report's definition,
+// the same one order creation uses.
+async function creditRefusal({ buyerClientId, excludeId, orderTotal }) {
+  if (!buyerClientId) return null;
+  const [modeRow, globalRow, client] = await Promise.all([
+    Settings.findOne({ key: 'creditLimitMode' }).lean(),
+    Settings.findOne({ key: 'globalCreditLimit' }).lean(),
+    mongoose.Types.ObjectId.isValid(buyerClientId) ? ClientAccount.findById(buyerClientId).lean() : null,
+  ]);
+  const limit = resolveCreditLimit({ mode: modeRow?.value, globalLimit: globalRow?.value, clientLimit: client?.creditLimit });
+  if (limit === null) return null;
+  const openRows = await Order.find({
+    businessType: BUSINESS_TYPE, _id: { $ne: excludeId },
+    $or: [{ clientAccountId: buyerClientId }, { clientId: buyerClientId }],
+    status: { $nin: ['Cancelled', 'Voided', 'Refunded', 'Parked'] },
+    isParked: { $ne: true }, paymentMethod: { $ne: 'Cash' }, isComplimentary: { $ne: true }, arSettled: { $ne: true },
+  }, { total: 1, arPaidAmount: 1, refundedAmount: 1 }).lean();
+  const outstanding = openRows.reduce((sum, r) => sum + arBalance(r), 0);
+  const credit = checkCreditAvailable({ limit, outstanding, orderTotal });
+  if (credit.allowed) return null;
+  return `Credit limit reached. Limit ₱${credit.limit.toFixed(2)}, other orders owing ₱${credit.outstanding.toFixed(2)}, this order would be ₱${Number(orderTotal).toFixed(2)}.`;
+}
 
 app.put('/api/orders/:id', verifyToken, requireStaff, permitAny('pos.use', 'orders.manage'), async (req, res) => {
   await runWithStatsRetry(completeOrderOnce, req, res);
@@ -1593,6 +1601,19 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         } });
       }
     }
+    // Moving an order off cash at payment time - "not paid yet", or any tender
+    // that is collected later - is where it starts to count against the
+    // client's credit. Created as cash, it was never checked, so check now.
+    const buyerClientId = String(order.clientId || order.clientAccountId || '');
+    if (paymentMethod && paymentMethod !== 'Cash' && (order.paymentMethod || 'Cash') === 'Cash'
+        && buyerClientId && !order.isComplimentary && status !== 'Cancelled') {
+      const refusal = await creditRefusal({ buyerClientId, excludeId: order._id, orderTotal: Number(order.total) || 0 });
+      if (refusal) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(409).json({ success: false, error: refusal });
+      }
+    }
     if (paymentMethod && !order.isComplimentary) order.paymentMethod = paymentMethod;
 
     // Same rule as order creation: a check or a QR payment is unreconcilable
@@ -1603,6 +1624,10 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       const putTender = String(paymentMethod || order.paymentMethod || '').trim().toUpperCase();
       const existingRef = putPaymentReference || order.paymentReference || '';
       if ((putTender === 'CHECK' || putTender === 'QR') && !existingRef) {
+        // Every refusal in here closes the transaction it opened; a bare return
+        // left the session open, holding its connection until it timed out.
+        await session.abortTransaction();
+        session.endSession();
         return res.status(400).json({
           success: false,
           error: putTender === 'CHECK'
@@ -1613,7 +1638,11 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       if (putPaymentReference) order.paymentReference = putPaymentReference;
       if (req.body.paymentCheckDate) {
         const d = new Date(req.body.paymentCheckDate);
-        if (Number.isNaN(d.getTime())) return res.status(400).json({ success: false, error: 'Invalid check date.' });
+        if (Number.isNaN(d.getTime())) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({ success: false, error: 'Invalid check date.' });
+        }
         order.paymentCheckDate = d;
       }
     }
@@ -2459,7 +2488,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
     if (order.paymentMethod === 'Cash')
       return res.status(400).json({ success: false, error: 'Cash sales do not require A/R settlement (already booked to Cash on Hand).' });
     if (order.arSettled) return res.status(400).json({ success: false, error: 'Order already settled.' });
-    if (order.status !== 'Completed') return res.status(400).json({ success: false, error: 'Order must be Completed before settlement.' });
+    if (!isReceivableStatus(order.status)) return res.status(400).json({ success: false, error: 'Order must be Completed before settlement.' });
 
     const amt = Math.round((parseFloat(amount) || 0) * 100) / 100;
     if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Settlement amount must be > 0.' });

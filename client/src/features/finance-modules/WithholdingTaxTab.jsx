@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Receipt, RefreshCw, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react';
 import { useDashboard } from '../dashboard/DashboardContext';
+import RangePresets from '../../shared/RangePresets';
 import * as ui from '../../shared/ui';
 import { useRefreshTick } from '../../shared/refreshBus';
 
@@ -50,6 +51,7 @@ export default function WithholdingTaxTab() {
         <h1 className="flex items-center gap-2 font-black text-fg text-lg mr-auto">
           <Receipt size={18} /> Withholding Tax
         </h1>
+        <RangePresets value={range} onChange={setRange} />
         <input type="date" value={range.start} onChange={e => setRange(r => ({ ...r, start: e.target.value }))}
           className="bg-sidebar-bg border border-white/10 rounded-lg px-3 py-2 text-xs text-fg focus:border-brand/50 focus:outline-none" />
         <span className="text-fg/65 text-xs">to</span>

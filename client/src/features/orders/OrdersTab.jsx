@@ -191,6 +191,29 @@ export default function OrdersTab({ ctx }) {
     ? !!canVoid
     : OPEN_STATUSES.includes(order.status) || order.isParked;
   const [pinAsk, setPinAsk] = React.useState(null);   // { order, pin, busy, error }
+
+  // Delivering now, collecting later (logistics). The order goes out on
+  // "Credit": the sale is booked to Accounts Receivable, the drawer does not
+  // expect the money, and it is settled later in Ledger → AR & AP - the same
+  // path a bank transfer waiting to clear already takes. Someone has to owe it,
+  // so it needs a customer name; with a client account the credit limit applies.
+  const isUnpaidOnAccount = (order) => BUSINESS_TYPE === 'log' && order.paymentMethod === 'Credit'
+    && !order.arSettled && !['Pending', 'Reserved', 'Parked', 'Cancelled', 'Voided'].includes(order.status);
+  const sendUnpaid = async (order, total) => {
+    const who = String(order.customerName || '').trim();
+    if (!who || /^(walk-?in|guest)$/i.test(who)) {
+      ui.alert("Who owes this? Put the customer's name (or their client account) on the order first, so the balance can be collected later.");
+      return;
+    }
+    const ok = await ui.confirm({
+      title: `Send ${order.orderNumber} without payment?`,
+      message: `${peso(total)} is recorded as owed by ${who}. Nothing is expected in the cash drawer for it.`,
+      detail: 'When they pay, tell the owner - it is recorded in Ledger → AR & AP, and the tag comes off.',
+      confirmLabel: 'Send - not paid yet',
+    });
+    if (!ok) return;
+    updateStatus(order._id, 'Preparing', { paymentMethod: 'Credit' });
+  };
   const deleteOrder = async (order) => {
     if (order.status === 'Completed') { handleVoidOrder(order._id); return; }
     const paid = isPaid(order);
@@ -992,6 +1015,12 @@ export default function OrdersTab({ ctx }) {
                           )}
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${ORDER_STATUS_TONE[order.status] || 'bg-white/10 text-fg/70'}`}>{order.status}</span>
+                            {isUnpaidOnAccount(order) && (
+                              <span title="Sent without payment - the owner records it in Ledger → AR & AP when it is paid"
+                                className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-warning">
+                                Not paid yet
+                              </span>
+                            )}
                             {order.revision > 0 && (
                               <span title={(order.amendments || []).map(a => `Rev ${a.revision} · ${a.by}: ${a.reason}`).join('\n')}
                                 className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/15 text-info">
@@ -1671,6 +1700,13 @@ export default function OrdersTab({ ctx }) {
                                       >
                                         {missingRef ? `${isCheck ? 'Check No.' : 'Ref No.'} Required` : `Pay & send to ${SEND_TARGET}`}
                                       </button>
+                                      {BUSINESS_TYPE === 'log' && (
+                                        <button onClick={() => sendUnpaid(order, displayTotal)}
+                                          title="Deliver now and collect the payment later - booked as a receivable"
+                                          className="w-full py-2 rounded-lg border border-white/15 text-fg/80 hover:text-fg hover:bg-white/5 font-bold text-xs uppercase tracking-wider transition">
+                                          Not paid yet - send &amp; collect later
+                                        </button>
+                                      )}
                                       <div className="flex gap-2">
                                         {BUSINESS_TYPE === 'log' && (order.items?.length > 0) && (
                                           <button onClick={() => openPartial(order)} className="flex-1 border border-amber-500/30 text-warning py-2 rounded-lg hover:bg-amber-500/10 font-bold text-[11px] transition">

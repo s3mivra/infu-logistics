@@ -3,6 +3,7 @@ import { FileSpreadsheet, Download, Link2, AlertTriangle } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import GoogleSheetModal, { useInventorySheet, pullWorkbook } from '../inventory/GoogleSheetLink';
 import { availableTemplates, buildSetupWorkbook, readSetupWorkbook, runSetupImport } from '../../shared/setupWorkbook';
+import SetupImportReport from '../../shared/SetupImportReport';
 
 // The setup workbook, kept in Google Sheets.
 //
@@ -126,24 +127,7 @@ export default function SetupSheetCard({ apiFetch, can, isSuperAdmin, businessTy
           </div>
         )}
 
-        {report && (
-          <div className="border border-white/10 rounded-xl p-4 space-y-2 text-sm">
-            <p className="font-bold text-fg">Import finished</p>
-            {report.results.map((r) => (
-              <div key={r.sheet}>
-                <p className={r.ok ? 'text-fg' : 'text-danger'}>
-                  <b>{r.sheet}:</b> {r.ok ? `${r.created} added` : r.error}{r.ok && r.skipped.length ? `, ${r.skipped.length} not added` : ''}
-                </p>
-                {r.skipped.length > 0 && (
-                  <ul className="mt-1 ml-4 list-disc text-xs text-fg/75 space-y-0.5">{r.skipped.slice(0, 20).map((x, i) => <li key={i}>{x}</li>)}</ul>
-                )}
-              </div>
-            ))}
-            {report.inventory > 0 && (
-              <p className="text-fg"><b>Inventory:</b> {report.inventory} row(s) opened in the stock count preview - confirm them there.</p>
-            )}
-          </div>
-        )}
+        <SetupImportReport report={report} />
       </div>
 
       {open && (

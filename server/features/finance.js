@@ -1,7 +1,8 @@
 ﻿// finance routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { ageingBuckets, ageingByClient, resolveCreditLimit, resolveClientKey, arBalance, withArBalance, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
+import { buildOpeningEntry } from '../lib/setupBooks.js';
+import { ageingBuckets, ageingByClient, resolveCreditLimit, resolveClientKey, arBalance, withArBalance, DEFAULT_CREDIT_MODE, RECEIVABLE_STATUSES } from '../lib/credit.js';
 import { businessDateStr } from '../lib/businessTime.js';
 import { INPUT_VAT } from '../lib/vatPosting.js';
 import { loadVatConfig } from '../lib/vatSettings.js';
@@ -291,40 +292,14 @@ app.post('/api/finance/opening-balances', verifyToken, ...canPostAcct, async (re
     const lock = await periodLockFor(requestedDate || new Date());
     if (lock) return res.status(423).json({ success: false, error: `Period ${lock.year}-${String(lock.month).padStart(2, '0')} is closed. Reopen the period first.` });
 
-    const jeLines = [];
-    let totalDebit = 0, totalCredit = 0;
-    for (const raw of lines) {
-      const code = String(raw.accountCode || '').trim();
-      const amount = Math.round((Number(raw.amount) || 0) * 100) / 100;
-      if (!amount) continue; // a blank row is not an error, just nothing to carry
-      const meta = acctMeta(code);
-      if (!meta) return res.status(400).json({ success: false, error: `Unknown account code: ${code}.` });
-      if (!['asset', 'liability', 'equity'].includes(meta.type)) {
-        return res.status(400).json({ success: false, error: `${code} ${meta.name} is a ${meta.type} account. Opening balances carry the balance sheet only - accumulated results belong in equity.` });
-      }
-      // Natural side: assets are debit-balance, liabilities and equity credit.
-      // A negative amount flips the side, which is how a contra balance
-      // (e.g. accumulated depreciation) is carried in.
-      const debit = meta.type === 'asset' ? Math.max(0, amount) : Math.max(0, -amount);
-      const credit = meta.type === 'asset' ? Math.max(0, -amount) : Math.max(0, amount);
-      jeLines.push({ accountCode: code, accountName: meta.name, debit, credit });
-      totalDebit += debit; totalCredit += credit;
-    }
-    if (jeLines.length === 0) return res.status(400).json({ success: false, error: 'Every line was zero - nothing to carry in.' });
-
-    // Whatever does not balance is, by definition, the owner's stake in what
-    // was carried in. Plugging it to Owner's Capital is what makes this usable
-    // without the user pre-computing equity themselves.
-    const diff = Math.round((totalDebit - totalCredit) * 100) / 100;
-    if (Math.abs(diff) > 0.01) {
-      const plugMeta = acctMeta('310000');
-      jeLines.push({
-        accountCode: '310000', accountName: plugMeta?.name || "Owner's Capital",
-        debit: diff < 0 ? Math.abs(diff) : 0,
-        credit: diff > 0 ? diff : 0,
-      });
-      if (diff > 0) totalCredit += diff; else totalDebit += Math.abs(diff);
-    }
+    // Each account's NATURAL balance as a positive number (a negative flips it,
+    // which is how a contra balance like accumulated depreciation comes in);
+    // whatever does not balance is, by definition, the owner's stake in what
+    // was carried in, and is plugged to Owner's Capital - see lib/setupBooks.js.
+    const built = buildOpeningEntry(lines, acctMeta);
+    if (built.error) return res.status(400).json({ success: false, error: built.error });
+    const { jeLines, totalDebit, totalCredit } = built;
+    const diff = built.plug;
 
     const reference = await mkSeqRef('OPEN');
     assertBalanced(jeLines, reference);
@@ -718,7 +693,7 @@ app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, 
   try {
     const rows = await Order.find({
       businessType: BUSINESS_TYPE,
-      status: 'Completed',
+      status: { $in: RECEIVABLE_STATUSES },
       paymentMethod: { $ne: 'Cash' },
       isComplimentary: { $ne: true }, // comps collect no money - never an A/R
       arSettled: { $ne: true }
@@ -774,7 +749,7 @@ app.get('/api/finance/ar-ageing', verifyToken, ...canViewAcct, async (req, res) 
   try {
     const rows = await Order.find({
       businessType: BUSINESS_TYPE,
-      status: 'Completed',
+      status: { $in: RECEIVABLE_STATUSES },
       paymentMethod: { $ne: 'Cash' },
       isComplimentary: { $ne: true },
       arSettled: { $ne: true },
@@ -1193,7 +1168,7 @@ app.get('/api/coa', verifyToken, requireStaff, async (req, res) => {
     const customMapped = custom.map(a => ({
       _id: a._id, code: a.code, name: a.name, type: a.type,
       parent: a.parent || null, isParent: false, custom: true,
-      isActive: a.isActive !== false,
+      isActive: a.isActive !== false, externalCode: a.externalCode || null,
     }));
     res.json({ success: true, accounts: [...canonical, ...customMapped] });
   } catch (err) {

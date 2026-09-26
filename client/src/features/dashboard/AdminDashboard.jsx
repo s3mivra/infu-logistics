@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { socket, reconnectSocket } from '../../shared/staffSocket.js';
 import { broadcastRefresh } from '../../shared/refreshBus';
 import JustQr from '../qr/JustQr';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network, Factory, Landmark, Receipt } from 'lucide-react';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network, Factory, Landmark, Receipt , BookOpen } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 import { usePwa } from '../../shared/usePwa';
 import { usePaymentMethods } from '../../shared/usePaymentMethods';
@@ -28,6 +28,8 @@ import RevolvingFundReplenishModal from '../ledger/modals/RevolvingFundReplenish
 import RefundModal from '../orders/modals/RefundModal';
 import NotificationBell from '../notifications/NotificationBell';
 import CommandPalette from './CommandPalette';
+import StaffGuide from './StaffGuide';
+import { GUIDE_SEEN_KEY, showsGuide } from '../../shared/staffGuide.js';
 import { visibleNavGroups, navLabel } from './navRegistry';
 import ShiftEndModal from '../shifts/modals/ShiftEndModal';
 import StockHistoryModal from '../inventory/modals/StockHistoryModal';
@@ -729,6 +731,19 @@ export default function AdminDashboard() {
   // Command palette. Ctrl/Cmd+K is the accelerator; the header button is the
   // discoverable route for touchscreen users, who are most of the staff here.
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // The quick guide: opens by itself the first time each person signs in on
+  // this device (not the owner - see shared/staffGuide.js), then lives in the
+  // account menu.
+  const [guideOpen, setGuideOpen] = useState(false);
+  useEffect(() => {
+    if (!showsGuide(activeAdmin) || !activeAdmin?._id) return;
+    const key = GUIDE_SEEN_KEY(activeAdmin._id);
+    let seen = true;
+    try { seen = localStorage.getItem(key) === '1'; } catch { /* storage blocked: never nag */ }
+    if (seen) return;
+    try { localStorage.setItem(key, '1'); } catch { /* private mode */ }
+    setGuideOpen(true);
+  }, [activeAdmin?._id, activeAdmin?.role]);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   useEffect(() => {
     const onKey = (e) => {
@@ -2538,7 +2553,9 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
       // Payment is always operator-changeable. Use the dropdown selection if made,
       // else default to the delivery channel (for delivery orders) or the order's method.
       const isDeliveryTable = order && ['Grab Delivery', 'Foodpanda', 'Manual Delivery', 'Lalamove'].includes(order.table);
-      payload.paymentMethod = paymentSelections[orderId]
+      // A button that decides the tender itself ("Not paid yet") passes it in `extra`.
+      payload.paymentMethod = extra.paymentMethod
+        || paymentSelections[orderId]
         || (isDeliveryTable ? order.table : null)
         || (order ? order.paymentMethod : 'Cash') || 'Cash';
       // Include cash tendered for cash payments
@@ -3450,7 +3467,10 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
     } catch { ui.alert('Network error.'); }
   };
   const fetchArOutstanding = async () => {
-    if (activeAdmin?.role !== 'superadmin') return;
+    // Anyone the server lets read the books (accounting.view) sees who owes -
+    // an admin chasing a "not paid yet" delivery needs the list. Recording the
+    // payment stays the owner's; the Settle button is only shown to them.
+    if (activeAdmin?.role !== 'superadmin' && !auth.can('accounting.view')) return;
     try {
       const res = await apiFetch(`/api/finance/ar-outstanding`);
       const data = await res.json();
@@ -3568,7 +3588,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
     fetchStockTransfers(); if (action === 'release') fetchERPData();
   };
   const fetchArAgeing = async () => {
-    if (activeAdmin?.role !== 'superadmin') return;
+    if (activeAdmin?.role !== 'superadmin' && !auth.can('accounting.view')) return;
     try {
       const res = await apiFetch('/api/finance/ar-ageing');
       const data = await res.json();
@@ -4647,8 +4667,13 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
     URL.revokeObjectURL(a.href);
   };
 
-  const parseImportFile = async (file) => {
+  // Set when the setup workbook hands its Inventory sheet over alongside an
+  // opening balance sheet: the stock is registered without posting, because
+  // its value is already on that balance sheet. Any other import resets it.
+  const importOpeningRef = useRef(false);
+  const parseImportFile = async (file, { opening = false } = {}) => {
     if (!file) return;
+    importOpeningRef.current = opening === true;
     try {
       const XLSX = await import('xlsx');
       const buf = await file.arrayBuffer();
@@ -4859,7 +4884,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
       setImportProgress(Math.round(prog));
     }, 120);
     try {
-      const payload = inventoryImportPayload(validRows);
+      const payload = { ...inventoryImportPayload(validRows), ...(importOpeningRef.current ? { opening: true } : {}) };
       const res = await apiFetch('/api/inventory/import', {
         method: 'POST',
         body: JSON.stringify(payload)
@@ -8629,6 +8654,9 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
                       className={`${item} ${activeTab === 'settings' ? 'bg-brand text-on-brand' : 'text-fg/80 hover:text-fg hover:bg-white/5'}`}>
                       <Settings size={15} /> Settings
                     </button>
+                    {showsGuide(activeAdmin) && (
+                      <button role="menuitem" onClick={done(() => setGuideOpen(true))} className={plain}><BookOpen size={15} /> Quick guide</button>
+                    )}
                     <button role="menuitem" onClick={done(toggleFullScreen)} className={plain}>
                       {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
                       {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
@@ -9345,6 +9373,8 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
       {/* ── CLOCK OUT / BREAK CHOICE MODAL ───────────────────────────────── */}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <StaffGuide open={guideOpen && showsGuide(activeAdmin)} onClose={() => setGuideOpen(false)}
+        user={activeAdmin} businessType={BUSINESS_TYPE} can={can} />
       <ClockModal />
 
       {/* ── CHANGE PASSWORD MODAL ─────────────────────────────────────────── */}

@@ -4,6 +4,7 @@ import * as ui from '../../shared/ui';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import { socket } from '../../shared/staffSocket.js';
 import { useDashboard } from '../dashboard/DashboardContext';
+import RangePresets from '../../shared/RangePresets';
 import { useRefreshTick } from '../../shared/refreshBus';
 
 // Order changes arrive on the dashboard's signed-in connection. This tab used
@@ -410,6 +411,7 @@ export default function ClientsTab() {
                 <p className="text-fg/65 text-xs font-bold truncate">{soaFor.name}{soaFor.clientCode ? ` · ${soaFor.clientCode}` : ''}</p>
               </div>
               <div className="flex items-center gap-2">
+                <RangePresets value={soaRange} onChange={r => { setSoaRange(r); loadStatement(soaFor, r); }} />
                 <input type="date" value={soaRange.start}
                   onChange={e => { const r = { ...soaRange, start: e.target.value }; setSoaRange(r); loadStatement(soaFor, r); }}
                   className="bg-white/5 border border-white/10 focus:border-brand rounded-lg px-2 py-1.5 text-xs text-fg outline-none" />

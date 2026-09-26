@@ -3,22 +3,36 @@
 // the Settings card that pulls the same workbook from a linked Google Sheet, so
 // both do exactly the same thing with it.
 
-// Dependency order: a bill names a supplier, so suppliers come first.
+// Dependency order: a bill names a supplier, so suppliers come first; every
+// accounting sheet can use the old books' own account codes, so the chart of
+// accounts comes before all of them; the P&L goes before the balance sheet,
+// which needs to know whether it posted.
 // `perm` is what the importer itself requires; a sheet the person cannot import
 // is left out of the workbook rather than failing after they have filled it.
+const books = (can) => can('accounting.manage');
 export const TEMPLATES = [
+  { key: 'accounts', sheet: 'Chart of Accounts', perm: books },
   { key: 'suppliers', sheet: 'Suppliers', perm: (can) => can('procurement.manage') },
   { key: 'clients', sheet: 'Clients', perm: (can, su) => su, logOnly: true },
   { key: 'inventory', sheet: 'Inventory', perm: (can, su) => su, preview: true },
-  { key: 'bills', sheet: 'Bills', perm: (can) => can('accounting.manage') },
-  { key: 'expenses', sheet: 'Expenses', perm: (can) => can('accounting.manage') },
-  { key: 'fixedAssets', sheet: 'Fixed Assets', perm: (can) => can('accounting.manage') },
+  { key: 'pnlHistory', sheet: 'P&L History', perm: books },
+  { key: 'openingBalances', sheet: 'Opening Balances', perm: books },
+  { key: 'openReceivables', sheet: 'Open Receivables', perm: books },
+  { key: 'openPayables', sheet: 'Open Payables', perm: books },
+  { key: 'bills', sheet: 'Bills', perm: books },
+  { key: 'expenses', sheet: 'Expenses', perm: books },
+  { key: 'fixedAssets', sheet: 'Fixed Assets', perm: books },
 ];
 
 export const availableTemplates = (can, isSuperAdmin, businessType) =>
   TEMPLATES.filter((t) => (!t.logOnly || businessType === 'log') && t.perm(can, isSuperAdmin));
 
 export const endpointFor = (key) => ({
+  accounts: 'setup/accounts/import',
+  pnlHistory: 'setup/pnl-history/import',
+  openingBalances: 'setup/opening-balances/import',
+  openReceivables: 'setup/open-receivables/import',
+  openPayables: 'setup/open-payables/import',
   suppliers: 'suppliers/import',
   clients: 'client-accounts/import',
   bills: 'bills/import',
@@ -64,8 +78,15 @@ export async function readSetupWorkbook(XLSX, wb, available, apiFetch) {
 // Runs the steps in order, each through the same importer its own screen uses.
 // Stock is left to last and handed to the Inventory preview instead - units,
 // pack sizes and categories are worth a look before they land.
+//
+// With an Opening Balances sheet in the workbook, that sheet is the only thing
+// that posts balances: stock and fixed assets are registered without posting
+// (their value is already on it), as are the open invoices and bills. The
+// checks at the end compare each register with the balance it should equal.
 export async function runSetupImport(steps, { apiFetch, parseImportFile, onProgress = () => {} }) {
   const results = [];
+  const hasOpening = steps.some((s) => s.key === 'openingBalances');
+  const outcome = {};                       // key -> the importer's response, when it succeeded
   let inventoryStep = null;
   for (const s of steps) {
     if (s.preview) { inventoryStep = s; continue; }
@@ -74,17 +95,29 @@ export async function runSetupImport(steps, { apiFetch, parseImportFile, onProgr
       const v = row[i];
       return [h, v instanceof Date ? localDate(v) : v];
     })));
+    const extra = {
+      // The net income line is left out of the balance sheet only when the
+      // P&L months really posted - otherwise it would be lost altogether.
+      openingBalances: { pnlHistory: !!outcome.pnlHistory },
+      fixedAssets: { opening: hasOpening },
+    }[s.key] || {};
+    // "Row 3" from the server counts the rows it was sent; say the sheet's row.
+    const sheetRow = (n) => s.sheetRows[(Number(n) || 1) - 1] ?? n;
     try {
-      const d = await (await apiFetch(`/api/${endpointFor(s.key)}`, { method: 'POST', body: JSON.stringify({ rows }) })).json();
+      const d = await (await apiFetch(`/api/${endpointFor(s.key)}`, { method: 'POST', body: JSON.stringify({ rows, ...extra }) })).json();
+      if (d.success) outcome[s.key] = d;
       results.push({
-        sheet: s.sheet, ok: !!d.success,
+        key: s.key, sheet: s.sheet, ok: !!d.success,
         created: d.created ?? d.imported ?? (d.success ? rows.length - (d.skipped || []).length : 0),
-        skipped: (d.skipped || []).map((x) => `Row ${s.sheetRows[(Number(x.row) || 1) - 1] ?? x.row}: ${x.error || x.reason || 'not added'}`),
+        skipped: [
+          ...(d.skipped || []).map((x) => `Row ${sheetRow(x.row)}: ${x.error || x.reason || 'not added'}`),
+          ...(d.problems || []).map((p) => String(p).replace(/^Row (\d+):/, (_, n) => `Row ${sheetRow(n)}:`)),
+        ],
         error: d.success ? '' : (d.error || 'Import failed.'),
         extra: d.note || '',
       });
     } catch {
-      results.push({ sheet: s.sheet, ok: false, created: 0, skipped: [], error: 'No connection to the server.' });
+      results.push({ key: s.key, sheet: s.sheet, ok: false, created: 0, skipped: [], error: 'No connection to the server.' });
     }
   }
   onProgress('');
@@ -95,9 +128,40 @@ export async function runSetupImport(steps, { apiFetch, parseImportFile, onProgr
     XLSX.utils.book_append_sheet(out, XLSX.utils.aoa_to_sheet(inventoryStep.grid), 'Inventory');
     const bytes = XLSX.write(out, { type: 'array', bookType: 'xlsx' });
     const f = new File([bytes], 'Inventory.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    await parseImportFile(f);
+    await parseImportFile(f, { opening: hasOpening });
   }
-  return { results, inventory: inventoryStep ? inventoryStep.count : 0 };
+  return { results, inventory: inventoryStep ? inventoryStep.count : 0, checks: bookChecks(outcome, { stock: !!inventoryStep }) };
+}
+
+const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const near = (a, b) => Math.abs((Number(a) || 0) - (Number(b) || 0)) < 0.01;
+
+// Does what was carried in agree with itself? -> [{ ok: true | false | null, text }]
+// (null: nothing to judge yet - it happens after this, somewhere else.)
+export function bookChecks(outcome, { stock = false } = {}) {
+  const checks = [];
+  const ob = outcome.openingBalances;
+  const pnl = outcome.pnlHistory;
+  if (ob && pnl) {
+    const left = (Number(ob.balancingToCapital) || 0) - (Number(pnl.netIncome) || 0);
+    checks.push(near(left, 0)
+      ? { ok: true, text: `The balance sheet and the P&L agree: net income ${peso(pnl.netIncome)}.` }
+      : { ok: false, text: `The balance sheet and the P&L are ${peso(Math.abs(left))} apart - that amount is sitting in Owner's Capital. Usually a P&L amount with the wrong sign, a missing account, or a balance-sheet line left out.` });
+  } else if (ob) {
+    checks.push(near(ob.balancingToCapital, 0)
+      ? { ok: true, text: 'The balance sheet balances by itself.' }
+      : { ok: false, text: `The balance sheet was ${peso(Math.abs(ob.balancingToCapital))} out of balance - that went to Owner's Capital. Check for a missing account or a wrong sign.` });
+  }
+  if (ob) {
+    const c = ob.controls || {};
+    const compare = (label, registerTotal, control, fix) => checks.push(near(registerTotal, control)
+      ? { ok: true, text: `${label} add up to the balance sheet: ${peso(control)}.` }
+      : { ok: false, text: `${label} total ${peso(registerTotal)}, but the balance sheet says ${peso(control)} - ${peso(Math.abs(registerTotal - control))} apart. ${fix}` });
+    if (outcome.openReceivables || c.receivables) compare('Open invoices', outcome.openReceivables?.total || 0, c.receivables || 0, 'Add the missing invoices, or correct Accounts Receivable - Trade.');
+    if (outcome.openPayables || c.payables) compare('Open bills', outcome.openPayables?.total || 0, c.payables || 0, 'Add the missing bills, or correct Accounts Payable - Trade.');
+    if (stock) checks.push({ ok: null, text: `Stock opens in a preview - confirm it there. Its value should come to the Inventory on the balance sheet (${peso(c.inventory)}); Reports → Books Health compares the two.` });
+  }
+  return checks;
 }
 
 // The workbook itself: one sheet per template, a read-me, the column guide and
@@ -117,6 +181,9 @@ export async function buildSetupWorkbook(XLSX, available, apiFetch) {
     ['Fill in the sheets you need and leave the rest empty - an empty sheet is skipped.'],
     ['Row 2 of every sheet is an example. Overwrite it, or leave it exactly as it is and it will be ignored.'],
     ['Then bring the whole file back: Ledger → Export All → Import all.'],
+    [],
+    ['Moving over from books you already keep? Fill Chart of Accounts (only if your books use their own codes), P&L History, Opening Balances, Open Receivables and Open Payables.'],
+    ['Opening Balances is your balance sheet on the switch-over day, and it is the only sheet that posts balances. Stock, fixed assets and the open invoices and bills are then registered without posting - they are the detail behind that balance sheet - and the result checks that each one adds up to it.'],
     ['Or keep it in Google Sheets and link it: Settings → Setup workbook from Google Sheets.'],
     [],
     ['Sheet', 'What it adds', 'Done in this order because'],

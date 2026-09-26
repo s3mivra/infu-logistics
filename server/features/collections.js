@@ -1,7 +1,7 @@
 ﻿// collections routes - AR collection reminders (contact log + follow-up
 // worklist over the existing aging data). See the CollectionReminderSchema
 // comment in server.js: this logs manual contact, it never sends anything.
-import { ageingByClient, resolveClientKey, withArBalance, arBalance, isFullySettled } from '../lib/credit.js';
+import { ageingByClient, resolveClientKey, withArBalance, arBalance, isFullySettled, RECEIVABLE_STATUSES } from '../lib/credit.js';
 import { businessDateStr } from '../lib/businessTime.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
@@ -48,7 +48,7 @@ export default function registerCollections(ctx) {
   async function overdueRows(req) {
     return Order.find({
       businessType: BUSINESS_TYPE, ...tenantScope(req),
-      status: 'Completed', paymentMethod: { $ne: 'Cash' },
+      status: { $in: RECEIVABLE_STATUSES }, paymentMethod: { $ne: 'Cash' },
       isComplimentary: { $ne: true }, arSettled: { $ne: true },
       // withArBalance restates `total` as the unpaid remainder, so a client who
       // has partly paid an aged invoice is chased for what is actually left.

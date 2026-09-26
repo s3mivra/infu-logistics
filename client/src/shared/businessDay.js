@@ -79,3 +79,51 @@ export function yearStartStr() {
 export function daysAgoStr(days) {
   return dateStr(new Date(Date.now() - (Number(days) || 0) * 86400000));
 }
+
+// One-click report ranges ("Today", "Last 7 days", "Last month"...). Worked out
+// on the business's own calendar date as plain Y-M-D arithmetic - no local
+// Date objects - for the same reason as monthStartStr above.
+const ymd = (s) => s.split('-').map(Number);
+const fmt = (d) => d.toISOString().slice(0, 10);          // a UTC-midnight Date back to Y-M-D
+const shift = (s, days) => { const [y, m, d] = ymd(s); return fmt(new Date(Date.UTC(y, m - 1, d + days))); };
+
+export const RANGE_PRESETS = [
+  { key: 'today', label: 'Today' },
+  { key: 'yesterday', label: 'Yesterday' },
+  { key: '7d', label: 'Last 7 days' },
+  { key: 'thisMonth', label: 'This month' },
+  { key: 'lastMonth', label: 'Last month' },
+  { key: '30d', label: 'Last 30 days' },
+  { key: 'thisQuarter', label: 'This quarter' },
+  { key: 'thisYear', label: 'This year' },
+  { key: 'lastYear', label: 'Last year' },
+];
+
+// -> { start, end } for a preset key, as of `today` (defaults to the business's today).
+export function presetRange(key, today = todayStr()) {
+  const [y, m] = ymd(today);
+  const pad = (n) => String(n).padStart(2, '0');
+  switch (key) {
+    case 'today': return { start: today, end: today };
+    case 'yesterday': { const d = shift(today, -1); return { start: d, end: d }; }
+    case '7d': return { start: shift(today, -6), end: today };
+    case '30d': return { start: shift(today, -29), end: today };
+    case 'thisMonth': return { start: `${y}-${pad(m)}-01`, end: today };
+    case 'lastMonth': {
+      const firstThis = `${y}-${pad(m)}-01`;
+      const end = shift(firstThis, -1);
+      return { start: `${end.slice(0, 7)}-01`, end };
+    }
+    case 'thisQuarter': return { start: `${y}-${pad(Math.floor((m - 1) / 3) * 3 + 1)}-01`, end: today };
+    case 'thisYear': return { start: `${y}-01-01`, end: today };
+    case 'lastYear': return { start: `${y - 1}-01-01`, end: `${y - 1}-12-31` };
+    default: return null;
+  }
+}
+
+// Which preset a range is, if any - so the matching button shows as selected.
+export function matchPreset(range, today = todayStr()) {
+  if (!range?.start || !range?.end) return null;
+  const hit = RANGE_PRESETS.find(p => { const r = presetRange(p.key, today); return r.start === range.start && r.end === range.end; });
+  return hit ? hit.key : null;
+}

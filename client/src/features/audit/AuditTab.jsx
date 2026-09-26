@@ -1,4 +1,5 @@
 ﻿import React from 'react';
+import RangePresets from '../../shared/RangePresets';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 
 // ── AuditTab - extracted from AdminDashboard.jsx ──
@@ -369,6 +370,7 @@ export default function AuditTab({ ctx }) {
                   placeholder="Filter by user" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60 w-32" />
                 <input type="text" value={auditLogFilters.action} onChange={e => setAuditLogFilters(f => ({ ...f, action: e.target.value }))}
                   placeholder="Filter by action" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60 w-36" />
+                <RangePresets value={auditLogFilters} onChange={r => setAuditLogFilters(f => ({ ...f, ...r }))} onRun={() => fetchAuditLogs(1)} />
                 <input type="date" value={auditLogFilters.start} onChange={e => setAuditLogFilters(f => ({ ...f, start: e.target.value }))}
                   className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg focus:outline-none focus:border-brand/60" />
                 <input type="date" value={auditLogFilters.end} onChange={e => setAuditLogFilters(f => ({ ...f, end: e.target.value }))}

@@ -204,7 +204,8 @@ export const normaliseInventoryRow = (r) => {
   const qtyPacksCell = pick('qty', 'qty (packs)', 'qty(packs)', 'qty packs', 'qty in packs', 'quantity');
   const explicit = !!unitColumn && (packCell !== '' || qtyPacksCell !== '');
 
-  let qty = 0, unit = '', unitCost = '', srp = '', packSize = null, needsSize = false, noQty = false;
+  // unit, unitCost and packSize are set on every path below.
+  let qty = 0, unit, unitCost, srp = '', packSize, needsSize = false, noQty = false;
   const expRaw = pick('expiry date', 'expiry', 'expirydate');
   const prodRaw = pick('production date', 'production', 'prod date', 'proddate', 'roast date', 'roastdate');
 

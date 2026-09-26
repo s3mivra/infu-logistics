@@ -11,6 +11,7 @@ import { LEDGER_TAB_GROUPS, REPORT_TAB_GROUPS } from '../dashboard/navRegistry';
 import { monthStartStr, todayStr } from '../../shared/businessDay.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import TemplatesCard from './TemplatesCard';
+import RangePresets from '../../shared/RangePresets';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 // ── LedgerTab - extracted from AdminDashboard.jsx ──
@@ -1351,6 +1352,7 @@ export default function LedgerTab({ ctx }) {
                   <p className="text-fg/65 text-xs">Completed sales broken down by payment channel.</p>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
+                  <RangePresets value={sssRange} onChange={r => setSssRange(p => ({ ...p, ...r }))} onRun={fetchSalesSummary} />
                   <input type="date" value={sssRange.start} max={sssRange.end || undefined}
                     onChange={e => setSssRange(r => ({ ...r, start: e.target.value }))}
                     className="bg-white/5 border border-white/10 rounded-xl px-2.5 py-2 text-fg text-xs font-bold outline-none focus:border-brand" />
@@ -1421,6 +1423,7 @@ export default function LedgerTab({ ctx }) {
                   <p className="text-fg/65 text-xs">One row per item ordered - item code, item, quantity, per line.</p>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
+                  <RangePresets value={sliRange} onChange={r => setSliRange(p => ({ ...p, ...r }))} onRun={fetchSalesLineItems} />
                   <input type="date" value={sliRange.start} onChange={e => setSliRange(p => ({ ...p, start: e.target.value }))}
                     className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
                   <span className="text-fg/65 font-bold text-sm">→</span>
@@ -1482,6 +1485,7 @@ export default function LedgerTab({ ctx }) {
               <h3 className="text-lg font-black text-fg mb-1">Percentage Tax</h3>
               <p className="text-fg/65 text-xs mb-4">Non-VAT percentage tax on net collected sales for a period.</p>
               <div className="flex items-end gap-2 mb-4 flex-wrap">
+                <RangePresets value={ptaxRange} onChange={r => setPtaxRange(p => ({ ...p, ...r }))} onRun={loadPtax} />
                 <label className="text-xs font-bold text-fg/70">Start
                   <input type="date" value={ptaxRange.start} onChange={(e) => setPtaxRange((r) => ({ ...r, start: e.target.value }))} className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
                 </label>
@@ -1517,6 +1521,7 @@ export default function LedgerTab({ ctx }) {
               <h3 className="text-lg font-black text-fg mb-1">VAT Return</h3>
               <p className="text-fg/65 text-xs mb-4">Output VAT collected on sales, less creditable input VAT on purchases.</p>
               <div className="flex items-end gap-2 mb-4 flex-wrap">
+                <RangePresets value={vatRange} onChange={r => setVatRange(p => ({ ...p, ...r }))} onRun={loadVatReturn} />
                 <label className="text-xs font-bold text-fg/70" htmlFor="vat-start">Start
                   <input id="vat-start" type="date" value={vatRange.start} onChange={(e) => setVatRange((r) => ({ ...r, start: e.target.value }))} className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
                 </label>
@@ -1726,7 +1731,11 @@ export default function LedgerTab({ ctx }) {
                             </>
                           ) : (
                             <>
-                              <span className="flex-1 text-sm font-bold text-fg">{c.name}</span>
+                              <span className="flex-1 text-sm font-bold text-fg">
+                                {c.name}
+                                {/* Its code in the books kept before - what the setup workbook's sheets use. */}
+                                {c.externalCode && <span className="ml-2 font-mono text-[11px] font-normal text-fg/65" title="Your code from the previous books">{c.externalCode}</span>}
+                              </span>
                               <button onClick={() => { setCoaEditId(c._id); setCoaEditName(c.name); }} title="Rename"
                                 className="text-info p-1"><Edit size={13} /></button>
                               <button onClick={() => deleteCoaChild(c._id)} title="Delete"
@@ -1915,6 +1924,7 @@ export default function LedgerTab({ ctx }) {
                   <p className="text-fg/65 text-xs font-bold uppercase tracking-widest mt-1">Non-VAT Registered</p>
                 </div>
                 <div className="flex flex-wrap gap-2 items-end">
+                  <RangePresets value={pnlRange} onChange={r => setPnlRange(p => ({ ...p, ...r }))} onRun={fetchPnl} />
                   <div>
                     <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Start</label>
                     <input type="date" value={pnlRange.start} onChange={e => setPnlRange({...pnlRange, start: e.target.value})} className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm font-bold outline-none focus:border-brand/60" />
@@ -2051,6 +2061,7 @@ export default function LedgerTab({ ctx }) {
             return (
             <div className="space-y-4 animate-fade-in">
               <div className="flex flex-wrap gap-3 items-center">
+                <RangePresets value={pnlmRange} onChange={r => setPnlmRange(p => ({ ...p, ...r }))} onRun={fetchPnlMonthly} />
                 <input type="date" value={pnlmRange.start} onChange={e => setPnlmRange(p => ({ ...p, start: e.target.value }))} className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
                 <span className="text-fg/65 font-bold text-sm">→</span>
                 <input type="date" value={pnlmRange.end} onChange={e => setPnlmRange(p => ({ ...p, end: e.target.value }))} className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
@@ -2221,6 +2232,7 @@ export default function LedgerTab({ ctx }) {
             return (
             <div className="space-y-4 animate-fade-in">
               <div className="flex flex-wrap gap-3 items-center">
+                <RangePresets value={bsmRange} onChange={r => setBsmRange(p => ({ ...p, ...r }))} onRun={fetchBsMonthly} />
                 <input type="date" value={bsmRange.start} onChange={e => setBsmRange(p => ({ ...p, start: e.target.value }))} className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
                 <span className="text-fg/65 font-bold text-sm">→</span>
                 <input type="date" value={bsmRange.end} onChange={e => setBsmRange(p => ({ ...p, end: e.target.value }))} className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
@@ -2356,7 +2368,8 @@ export default function LedgerTab({ ctx }) {
                     <h3 className="text-2xl font-black text-fg">Price Change Log</h3>
                     <p className="text-fg/65 text-xs font-bold uppercase tracking-widest mt-1">Every price &amp; cost change, and who signed it off</p>
                   </div>
-                  <div className="flex items-end gap-2">
+                  <div className="flex flex-wrap items-end gap-2">
+                    <RangePresets value={priceLogRange} onChange={r => setPriceLogRange(p => ({ ...p, ...r }))} onRun={fetchPriceChangeLog} />
                     <div>
                       <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">From</label>
                       <input type="date" value={priceLogRange.start} onChange={e => setPriceLogRange({ ...priceLogRange, start: e.target.value })}
@@ -2748,6 +2761,7 @@ export default function LedgerTab({ ctx }) {
                   <p className="text-fg/65 text-xs font-bold uppercase tracking-widest mt-1">Payments received against receivables</p>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
+                  <RangePresets value={collRange} onChange={r => setCollRange(p => ({ ...p, ...r }))} onRun={fetchCollectionReport} />
                   <div>
                     <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">From</label>
                     <input type="date" value={collRange.start} onChange={e => setCollRange({ ...collRange, start: e.target.value })}
@@ -3025,6 +3039,7 @@ export default function LedgerTab({ ctx }) {
                   <p className="text-fg/65 text-xs font-bold uppercase tracking-widest mt-1">What we actually paid out, and from which account</p>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
+                  <RangePresets value={supPayRange} onChange={r => setSupPayRange(p => ({ ...p, ...r }))} onRun={fetchSupplierPayments} />
                   <div>
                     <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">From</label>
                     <input type="date" value={supPayRange.start} onChange={e => setSupPayRange({ ...supPayRange, start: e.target.value })}
@@ -3157,6 +3172,7 @@ export default function LedgerTab({ ctx }) {
                     <option value="Voided">Voided</option>
                   </select>
                 </div>
+                <RangePresets value={cvFilter} onChange={r => setCvFilter(p => ({ ...p, ...r }))} onRun={fetchCheckVouchers} />
                 <div>
                   <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">From</label>
                   <input type="date" value={cvFilter.start} onChange={e => setCvFilter(f => ({ ...f, start: e.target.value }))}
@@ -3333,6 +3349,7 @@ export default function LedgerTab({ ctx }) {
                     <option value="Cancelled">Cancelled</option>
                   </select>
                 </div>
+                <RangePresets value={advFilter} onChange={r => setAdvFilter(p => ({ ...p, ...r }))} onRun={fetchAdvances} />
                 <div>
                   <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">From</label>
                   <input type="date" value={advFilter.start} onChange={e => setAdvFilter(f => ({ ...f, start: e.target.value }))}
@@ -3861,6 +3878,10 @@ export default function LedgerTab({ ctx }) {
                             </td>
                             <td className="py-3 text-right text-fg tabular-nums font-black">₱{(o.balance ?? o.total).toFixed(2)}</td>
                             <td className="py-3 text-right">
+                              {/* Recording a collection, or spending a client's credit on it,
+                                  is the owner's (the server allows only the superadmin), so
+                                  nobody else is shown buttons that can only be refused. */}
+                              {isSuperAdmin ? (<>
                               <button onClick={() => {
                                 let defaultMethod = 'Cash on Hand';
                                 if (o.paymentMethod === 'Bank Transfer') defaultMethod = 'Bank Transfer';
@@ -3901,6 +3922,9 @@ export default function LedgerTab({ ctx }) {
                                   className="block w-full mt-1 border border-emerald-500/40 text-success px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-emerald-500/10 transition">
                                   Use ₱{Math.min(o.clientCredit, o.balance ?? o.total).toFixed(2)} Credit
                                 </button>
+                              )}
+                              </>) : (
+                                <span className="text-fg/65 text-[10px]" title="The owner records payments received">Owner records</span>
                               )}
                             </td>
                           </tr>
@@ -4232,6 +4256,7 @@ export default function LedgerTab({ ctx }) {
             <div className="space-y-4 animate-fade-in">
               {/* Date range picker */}
               <div className="flex flex-wrap gap-3 items-center">
+                <RangePresets value={sbpRange} onChange={r => setSbpRange(p => ({ ...p, ...r }))} onRun={fetchSalesByPayment} />
                 <input type="date" value={sbpRange.start} onChange={e => setSbpRange(p=>({...p,start:e.target.value}))}
                   className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
                 <span className="text-fg/65 font-bold text-sm">→</span>
@@ -6126,6 +6151,7 @@ export default function LedgerTab({ ctx }) {
               <div className="bg-page-bg border border-white/10 rounded-xl p-4 space-y-3">
                 <p className="text-[10px] uppercase tracking-widest text-fg/70 font-bold">Date range</p>
                 <div className="flex flex-wrap items-center gap-2">
+                  <RangePresets value={exportAllRange} onChange={r => setExportAllRange(p => ({ ...p, ...r }))} />
                   <input type="date" value={exportAllRange.start}
                     onChange={e => setExportAllRange(r => ({ ...r, start: e.target.value }))}
                     className="bg-surface border border-white/15 text-fg rounded-lg px-3 py-2 text-sm" />

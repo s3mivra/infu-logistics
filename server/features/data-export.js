@@ -46,7 +46,9 @@ export default function registerDataExport(ctx) {
   app.get('/api/export/datasets', verifyToken, ...canExport, async (req, res) => {
     res.json({
       success: true,
-      datasets: Object.entries(DATASETS).map(([key, d]) => ({
+      // Template-only sets (the setup workbook's accounting sheets) carry data
+      // in; there is nothing of theirs to export on its own.
+      datasets: Object.entries(DATASETS).filter(([, d]) => !d.templateOnly).map(([key, d]) => ({
         key, label: d.label, importable: !!d.importable, dateFiltered: !!d.dateField,
         columns: d.columns,
       })),

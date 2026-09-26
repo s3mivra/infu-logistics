@@ -3,7 +3,7 @@
 /* eslint-disable no-unused-vars */
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
-import { bucketFor, resolveClientKey } from '../lib/credit.js';
+import { bucketFor, resolveClientKey, RECEIVABLE_STATUSES, isReceivableStatus } from '../lib/credit.js';
 import { captureError } from '../lib/errorLog.js';
 import { sectionAncestor } from '../lib/chartOfAccounts.js';
 import { buildBalanceSheet } from '../lib/consolidate.js';
@@ -1565,7 +1565,7 @@ app.get('/api/reports/books-health', verifyToken, ...canViewReports, async (req,
 
     // A/R: what completed, unsettled, non-cash sales still owe.
     const arDocs = r2(orders
-      .filter(o => o.status === 'Completed' && o.paymentMethod !== 'Cash' && !o.isComplimentary && o.arSettled !== true && o.isParked !== true)
+      .filter(o => isReceivableStatus(o.status) && o.paymentMethod !== 'Cash' && !o.isComplimentary && o.arSettled !== true && o.isParked !== true)
       // Netting the refund is what keeps this agreeing with the ledger: a
       // partial refund credits 120000 there, so a subledger still counting the
       // face value reports a divergence that does not exist.
@@ -1667,7 +1667,7 @@ app.get('/api/reports/ar-aging', verifyToken, ...canViewReports, requirePermissi
     // report date two weeks ago.
     const rows = await Order.find({
       businessType: BUSINESS_TYPE, ...tenantScope(req),
-      status: 'Completed',
+      status: { $in: RECEIVABLE_STATUSES },
       paymentMethod: { $ne: 'Cash' },
       isComplimentary: { $ne: true },
       createdAt: { $lte: asOf },

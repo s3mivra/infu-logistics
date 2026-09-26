@@ -51,6 +51,7 @@ import registerAudit from './features/audit.js';
 import registerSettings from './features/settings.js';
 import registerPurchaseOrders from './features/purchase-orders.js';
 import registerBills from './features/bills.js';
+import registerSetupImport from './features/setup-import.js';
 import registerCheckVouchers from './features/check-vouchers.js';
 import registerAdvances from './features/advances.js';
 import registerReservations from './features/reservations.js';
@@ -2315,6 +2316,10 @@ const AccountSchema = new mongoose.Schema({
   normalBalance: String, // 'Debit' | 'Credit'
   parent:        String,            // parent account code (for custom child accounts)
   custom:        { type: Boolean, default: false }, // user-created child account
+  // The code this account had in the books the business kept before (e.g.
+  // "B-101501"), when it was carried in through the setup workbook. Their own
+  // sheets keep using it; the system code stays the one everything posts to.
+  externalCode:  { type: String, default: null, index: true },
   // Lets a custom sub-account be pulled out of the payment-method list (POS,
   // client portal, QR menu) WITHOUT deleting it - deleting is blocked once a
   // journal entry has posted to the code, so this is the only way to retire a
@@ -2892,10 +2897,14 @@ const BillSchema = new mongoose.Schema({
   billNumber:        { type: String, index: true },              // BILL-2026-000001
   supplierId:        { type: mongoose.Schema.Types.ObjectId, ref: 'Supplier', required: true },
   supplierName:      { type: String, default: '' },               // snapshot at creation time
-  source:            { type: String, enum: ['PO', 'Manual'], required: true },
+  // 'Opening': a bill still unpaid when the business moved onto the system,
+  // carried in by the setup workbook. It arrives Approved and never posts - the
+  // opening balance sheet already holds it in Accounts Payable.
+  source:            { type: String, enum: ['PO', 'Manual', 'Opening'], required: true },
   purchaseOrderId:   { type: mongoose.Schema.Types.ObjectId, ref: 'PurchaseOrder', default: null },
   poNumber:          { type: String, default: '' },
   description:       { type: String, default: '' },               // required context for Manual bills
+  supplierInvoiceNo: { type: String, default: '' },               // the supplier's own number for it
   amount:            { type: Number, required: true },
   expenseAccountCode:{ type: String, default: '' },               // Manual bills only - which account to debit on approval
   // VAT charged by a VAT-registered supplier, inside `amount`. Creditable
@@ -4370,6 +4379,7 @@ registerAudit(ctx);
 registerSettings(ctx);
 registerPurchaseOrders(ctx);
 registerBills(ctx);
+registerSetupImport(ctx);
 registerCheckVouchers(ctx);
 registerAdvances(ctx);
 registerReservations(ctx);

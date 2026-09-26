@@ -6,7 +6,7 @@
 // meant matching rows by NAME, which breaks the moment two clients share one.
 // Here everything is keyed by account id.
 /* eslint-disable no-unused-vars */
-import { ageingBuckets, resolveCreditLimit, withArBalance, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
+import { ageingBuckets, resolveCreditLimit, withArBalance, DEFAULT_CREDIT_MODE, isReceivableStatus } from '../lib/credit.js';
 
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
@@ -103,7 +103,7 @@ export default function registerClients(ctx) {
         // credit gate and the ageing report already make.
         // withArBalance restates each order's `total` as its unpaid remainder, so
         // a partly collected invoice ages on what is left rather than face value.
-        const aged = ageingBuckets(withArBalance(list.filter(o => o.status === 'Completed' && isReceivable(o))));
+        const aged = ageingBuckets(withArBalance(list.filter(o => isReceivableStatus(o.status) && isReceivable(o))));
         const exposure = +list
           .filter(o => isLive(o) && isReceivable(o))
           .reduce((s, o) => s + Math.max(0, (Number(o.total) || 0) - (Number(o.refundedAmount) || 0)), 0)
@@ -273,7 +273,7 @@ export default function registerClients(ctx) {
       // Ageing of what is still open as of the statement date, so the client can
       // see which of it is overdue rather than just the total.
       const openCharges = orders
-        .filter(o => isCharge(o) && o.status === 'Completed' && o.arSettled !== true)
+        .filter(o => isCharge(o) && isReceivableStatus(o.status) && o.arSettled !== true)
         .map(o => ({ createdAt: o.createdAt, total: r2((Number(o.total) || 0) - (Number(o.refundedAmount) || 0) - (Number(o.arPaidAmount) || 0)) }))
         .filter(o => o.total > 0.005);
       const aged = ageingBuckets(openCharges, end);

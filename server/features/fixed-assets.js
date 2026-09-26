@@ -307,6 +307,11 @@ export default function registerFixedAssets(ctx) {
       if (rows.length === 0) return res.status(400).json({ success: false, error: 'No rows to import.' });
 
       const byName = new Map(Object.entries(FIXED_ASSET_CLASSES).map(([code, c]) => [c.name.toLowerCase(), code]));
+      // Carried in by the setup workbook with an opening balance sheet: the
+      // assets are registered (so they depreciate from here on) but their cost
+      // and wear are already on that balance sheet - posting them against cash
+      // again would count them twice and take the cash with it.
+      const opening = req.body?.opening === true;
       const created = [];
       const skipped = [];
 
@@ -330,7 +335,8 @@ export default function registerFixedAssets(ctx) {
 
           const acqDate = r.acquisitionDate ? dayStart(r.acquisitionDate) : new Date();
           if (Number.isNaN(acqDate.getTime())) throw new Error('Invalid acquisition date.');
-          const rowLocked = await closedPeriod(acqDate);
+          // Nothing posts in opening mode, so an old acquisition date is fine.
+          const rowLocked = opening ? null : await closedPeriod(acqDate);
           if (rowLocked) throw new Error(rowLocked);
 
           const assetCode = await mkSeqRef('FA');
@@ -341,11 +347,13 @@ export default function registerFixedAssets(ctx) {
             { accountCode: credCode, accountName: nameOf(credCode), debit: 0, credit: cost },
           ];
           assertBalanced(lines, reference);
-          await JournalEntry.create({
-            date: acqDate, reference,
-            description: `Acquired fixed asset ${assetCode} - ${String(r.name).trim()} (imported)`,
-            lines, totalDebit: cost, totalCredit: cost,
-          });
+          if (!opening) {
+            await JournalEntry.create({
+              date: acqDate, reference,
+              description: `Acquired fixed asset ${assetCode} - ${String(r.name).trim()} (imported)`,
+              lines, totalDebit: cost, totalCredit: cost,
+            });
+          }
 
           const asset = await FixedAsset.create({
             businessType: BUSINESS_TYPE, ...tenantScope(req),
@@ -359,7 +367,7 @@ export default function registerFixedAssets(ctx) {
             accumulatedDepreciation: Math.min(money(r.accumulatedDepreciation ?? 0), Math.max(0, cost - salvage)),
             serialNumber: r.serialNumber || '', location: r.location || '',
             supplierName: r.supplierName || '', referenceNumber: r.referenceNumber || '',
-            journalEntryRef: reference, createdBy: req.user?.name || '',
+            journalEntryRef: opening ? '' : reference, createdBy: req.user?.name || '',
           });
           created.push({ row: i + 1, assetCode, name: asset.name });
         } catch (e) {

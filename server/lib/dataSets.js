@@ -516,6 +516,82 @@ export const DATASETS = {
     ],
   },
 
+  // ── Moving over from books kept elsewhere (features/setup-import.js). ──
+  //    Template-only: they carry balances IN; what they become is exported by
+  //    the journal, the chart of accounts, AR and bills.
+  accounts: {
+    label: 'Chart of Accounts', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/accounts/import',
+      intro: 'Only if your old books use their own account codes. One row per account: it is added under one of the system’s accounts, keeps your name, and remembers your code - so the other sheets can use your codes. Accounts under cash, bank, receivables or payables are not offered at the till until you switch them on.',
+      columns: [
+        { name: 'code', required: true, note: 'Your account code, exactly as your books write it.', example: 'B-101501' },
+        { name: 'name', required: true, note: 'Your account name.', example: 'Cash in bank - MBTC 425 7 425 911' },
+        { name: 'goesUnder', required: true, note: 'The system account it belongs under - the code or the name from the Accounts sheet.', example: '112000' },
+        { name: 'keepSeparate', note: 'Yes (the default): its own account under that one, with your name. No: your code IS that system account - use No for your Sales, Cost of Sales and Discounts so old and new figures share one line. Accounts Receivable - Trade, Inventory and Accounts Payable - Trade are always No: the system’s sales, collections, stock and bills post straight to them.', example: 'Yes' },
+      ],
+    },
+  },
+
+  pnlHistory: {
+    label: 'P&L History', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/pnl-history/import',
+      intro: 'This year’s income statement, one row per account and one column per month, so the monthly reports start with real figures. Every amount as a positive number the way the statement shows it - sales, costs and expenses alike. An income line shown in brackets under expenses (like "Misc. non-operating income (200,752)") goes in as a positive number on an income account. Leave out the subtotal rows (Gross profit, Total expenses, Net income). Each month posts on its last day.',
+      columns: [
+        { name: 'code', required: true, note: 'Your code (from the Chart of Accounts sheet) or the system’s. Revenue, discount, cost and expense accounts only.', example: 'B-410101' },
+        { name: 'name', note: 'For your reading only.', example: 'Gross Sales Revenue - Cash Sales' },
+        { name: 'year', required: true, example: '2026' },
+        { name: 'jan', example: '4347550' }, { name: 'feb', example: '4798965' }, { name: 'mar', example: '3456713' }, { name: 'apr', example: '4730605' }, { name: 'may', example: '4589468' }, { name: 'jun', example: '5917057' }, { name: 'jul', example: '6507860' }, { name: 'aug', example: '3622476' }, { name: 'sep', example: '' }, { name: 'oct', example: '' }, { name: 'nov', example: '' }, { name: 'dec', example: '' },
+      ],
+    },
+  },
+
+  openingBalances: {
+    label: 'Opening Balances', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/opening-balances/import',
+      intro: 'Your balance sheet on the day you switch over - one row per account, each balance as the balance sheet shows it. Contra accounts such as accumulated depreciation go in as negatives, e.g. (29,762). Include every account: cash, receivables, inventory, equipment, payables, retained earnings. If you also fill P&L History, your "Net Income" line is left out automatically (the P&L months produce it) and the result says whether the two agree. The open invoice and bill sheets are the detail behind Accounts Receivable and Payable here - they do not post a second time.',
+      columns: [
+        { name: 'code', required: true, note: 'Your code (from the Chart of Accounts sheet) or the system’s. Balance-sheet accounts only.', example: 'B-101501' },
+        { name: 'name', note: 'For your reading only.', example: 'Cash in bank - MBTC' },
+        { name: 'balance', required: true, note: 'As the balance sheet shows it. Brackets or a minus sign for a contra balance.', example: '1061821' },
+        { name: 'asOf', required: true, note: 'YYYY-MM-DD - the date of the balance sheet. The same date on every row (one row is enough).', example: '2026-08-31' },
+      ],
+    },
+  },
+
+  openReceivables: {
+    label: 'Open Receivables', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/open-receivables/import',
+      intro: 'Every customer invoice still unpaid on the switch-over day - what makes up Accounts Receivable on your balance sheet. They appear in Ledger → AR & AP, aged from their invoice date, ready to collect. They do not post: the opening balance already holds them, so the total here should equal your Accounts Receivable - Trade.',
+      columns: [
+        { name: 'customer', required: true, note: 'A name matching a client account links the debt to them (credit limit, statement).', example: 'Reyes Hardware' },
+        { name: 'invoiceNo', required: true, note: 'Your invoice number - it becomes the receivable’s number.', example: 'SI-004512' },
+        { name: 'invoiceDate', required: true, note: 'YYYY-MM-DD. Ages the debt.', example: '2026-08-12' },
+        { name: 'dueDate', note: 'YYYY-MM-DD. When it falls overdue.', example: '2026-09-11' },
+        { name: 'amountOwed', required: true, note: 'What is STILL owed - after any part payment.', example: '38500' },
+      ],
+    },
+  },
+
+  openPayables: {
+    label: 'Open Payables', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/open-payables/import',
+      intro: 'Every supplier bill still unpaid on the switch-over day - what makes up Accounts Payable on your balance sheet. They arrive Approved in Bills (AP), ready to pay. They do not post: the opening balance already holds them, so the total here should equal your Accounts Payable - Trade. (The Bills sheet is for NEW bills, which do post when approved.)',
+      columns: [
+        { name: 'supplier', required: true, note: 'Must match a supplier - add them on the Suppliers sheet first.', example: 'Metro Packaging Corp' },
+        { name: 'invoiceNo', required: true, note: 'The supplier’s invoice number.', example: 'INV-88120' },
+        { name: 'invoiceDate', note: 'YYYY-MM-DD.', example: '2026-08-05' },
+        { name: 'dueDate', note: 'YYYY-MM-DD.', example: '2026-09-04' },
+        { name: 'amountOwed', required: true, note: 'What is STILL owed.', example: '125000' },
+        { name: 'description', note: 'What it was for.', example: 'Cartons, August delivery' },
+      ],
+    },
+  },
+
   // ── Ledger. Export only: importing posted rows would let a spreadsheet
   //    rewrite history, and the balanced-entry guard exists precisely to stop
   //    that happening by accident.

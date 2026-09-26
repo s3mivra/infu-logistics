@@ -2,6 +2,7 @@
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
+import RangePresets from '../../shared/RangePresets';
 import * as ui from '../../shared/ui';
 
 import { todayStr } from '../../shared/businessDay.js';
@@ -206,6 +207,7 @@ export default function HistoryTab({ ctx }) {
           {historySubTab === 'sales' && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex flex-wrap gap-3 items-center">
+                <RangePresets value={sssRange} onChange={r => setSssRange(p => ({ ...p, ...r }))} onRun={fetchSalesSummary} />
                 <input type="date" value={sssRange.start} onChange={e => setSssRange(p => ({ ...p, start: e.target.value }))}
                   className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
                 <span className="text-fg/65 font-bold text-sm">→</span>
@@ -445,6 +447,7 @@ export default function HistoryTab({ ctx }) {
                   className="w-full pl-8 pr-3 py-2 bg-page-bg border border-white/10 rounded-xl text-fg text-xs font-bold placeholder-fg/70 outline-none focus:border-brand/50"
                 />
               </div>
+              <RangePresets value={archiveDateRange} onChange={setArchiveDateRange} onRun={fetchOrders} />
               <input type="date" value={archiveDateRange.start}
                 onChange={e => setArchiveDateRange(p => ({...p, start: e.target.value}))}
                 className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg text-xs font-bold outline-none focus:border-brand/50"

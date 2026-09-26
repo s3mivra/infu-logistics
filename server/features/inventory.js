@@ -1727,6 +1727,12 @@ async function runInventoryImport(req, res, attempt) {
   session.startTransaction();
   try {
     const { items } = req.body;
+    // Carried in by the setup workbook alongside an opening balance sheet: the
+    // stock is registered item by item, but its value is already on that
+    // balance sheet as Inventory, so nothing posts - it would count twice.
+    // Books Health then compares the two. Superadmin only, like the route.
+    const opening = req.body?.opening === true;
+    const postEntry = opening ? async () => [] : (docs, opts) => JournalEntry.create(docs, opts);
     if (!Array.isArray(items) || items.length === 0) {
       await session.abortTransaction(); session.endSession();
       return res.status(400).json({ success: false, error: 'No rows in import payload.' });
@@ -1961,7 +1967,7 @@ async function runInventoryImport(req, res, attempt) {
             { accountCode: '310000', accountName: "Owner's Capital", debit: 0, credit: valueImpact }
           ];
           assertBalanced(lines, `IMPORT-BATCH-${existing.itemName}`);
-          await JournalEntry.create([{
+          await postEntry([{
             reference: impRef,
             description: `Stock take import (new batch): ${existing.itemName} (+${newBaseQty.toFixed(2)} ${baseUnit} @ P${unitCostForThisLot.toFixed(4)})`,
             lines, totalDebit: valueImpact, totalCredit: valueImpact
@@ -2095,7 +2101,7 @@ async function runInventoryImport(req, res, attempt) {
                 { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: valueImpact }
               ];
           assertBalanced(lines, `IMPORT-${existing.itemName}`);
-          await JournalEntry.create([{
+          await postEntry([{
             reference: impRef,
             description: `Stock take import: ${existing.itemName} (${diff >= 0 ? '+' : ''}${diff.toFixed(2)} ${baseUnit} @ P${unitCostForValuation.toFixed(4)})`,
             lines, totalDebit: valueImpact, totalCredit: valueImpact
@@ -2124,7 +2130,7 @@ async function runInventoryImport(req, res, attempt) {
                 { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: -revaluation },
               ];
           assertBalanced(lines, `IMPORT-REVAL-${existing.itemName}`);
-          await JournalEntry.create([{
+          await postEntry([{
             reference: impRef,
             description: `Stock take import: ${existing.itemName} revalued to P${(existing.unitCost || 0).toFixed(4)} per ${baseUnit} (was P${oldCost.toFixed(4)})`,
             lines, totalDebit: Math.abs(revaluation), totalCredit: Math.abs(revaluation),
@@ -2226,7 +2232,7 @@ async function runInventoryImport(req, res, attempt) {
             { accountCode: '310000', accountName: "Owner's Capital", debit: 0, credit: valueImpact }
           ];
           assertBalanced(lines, `IMPORT-NEW-${item.itemName}`);
-          await JournalEntry.create([{
+          await postEntry([{
             reference: impRef,
             description: `Stock take import (new item): ${item.itemName} (${newBaseQty.toFixed(2)} ${baseUnit} @ P${item.unitCost.toFixed(4)})`,
             lines, totalDebit: valueImpact, totalCredit: valueImpact

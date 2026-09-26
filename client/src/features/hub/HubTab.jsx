@@ -3,6 +3,7 @@ import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus,
 
 import { todayStr } from '../../shared/businessDay.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
+import RangePresets from '../../shared/RangePresets';
 import { useRefreshTick } from '../../shared/refreshBus';
 const statusColor = {
   // Awaiting our own approval before the partner is even told about it.
@@ -763,6 +764,7 @@ export default function HubTab({ ctx }) {
               {networkView === 'books' && (
                 <div className="space-y-4">
                   <div className="flex items-end gap-2 flex-wrap">
+                    <RangePresets value={{ start: finStart, end: finEnd }} onChange={r => { setFinStart(r.start); setFinEnd(r.end); }} onRun={loadFinancials} />
                     <div>
                       <label className="text-[10px] text-fg/70 uppercase tracking-widest font-black block mb-1">From</label>
                       <input type="date" value={finStart} onChange={e => setFinStart(e.target.value)} className={input} />

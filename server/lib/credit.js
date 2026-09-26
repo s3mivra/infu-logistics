@@ -11,6 +11,15 @@
 //   'per_client' - only clients with their own creditLimit are restricted
 //   'global'     - one limit applies to every client; per-client values ignored
 //   'both'       - global default, overridden by a client's own value when set
+// What a receivable can be. A sale on account becomes one when it is Completed.
+// An invoice carried in from the books the business kept before (the setup
+// workbook's Open Receivables sheet) is one from the start - it was never a
+// sale in this system, so it must not show in sales reports, which read
+// 'Completed'; only the receivable views read this list.
+export const OPENING_AR_STATUS = 'Opening Balance';
+export const RECEIVABLE_STATUSES = ['Completed', OPENING_AR_STATUS];
+export const isReceivableStatus = (status) => RECEIVABLE_STATUSES.includes(status);
+
 export const CREDIT_MODES = ['off', 'per_client', 'global', 'both'];
 export const DEFAULT_CREDIT_MODE = 'off';
 
