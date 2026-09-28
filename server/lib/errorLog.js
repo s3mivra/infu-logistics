@@ -65,6 +65,10 @@ const sign = (route, message) =>
  * Never throws and never awaits - the response should not wait on logging.
  */
 export function captureError(req, err, { status = 500, kind = 'request' } = {}) {
+  // Remember the real error on the request: a route wrapped by atomic()
+  // (lib/atomicRoute.js) answers 500 after catching it, and the wrapper needs
+  // to know whether that 500 was a transient transaction error worth retrying.
+  if (req && typeof req === 'object') req.__lastError = err;
   try {
     if (!ready || !Model) return;
     const message = String(err?.message || err || 'Unknown error').slice(0, 500);

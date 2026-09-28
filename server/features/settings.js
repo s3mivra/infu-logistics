@@ -8,6 +8,7 @@ import { isValidTimeZone, setBusinessTimeZone, businessTimeZone } from '../lib/b
 import { moduleStates, MODULE_KEYS, truthy } from '../lib/optionalModules.js';
 import { cleanPrivacyContact } from '../lib/privacyContact.js';
 
+import { lineBases } from '../lib/orderLines.js';
 export default function registerSettings(ctx) {
   const {
     app,
@@ -185,6 +186,17 @@ export default function registerSettings(ctx) {
     verifyOrderAuth,
     requirePermission,
   } = ctx;
+
+// A settings change goes to every connected device only when a logged-out
+// page (client portal, QR menu) uses it; everything else - TIN, OR series,
+// thresholds, bank details - reaches signed-in staff only. It used to be
+// broadcast to all, anonymous QR screens included.
+const PUBLIC_LIVE_KEYS = new Set(['paymentQrImage', 'businessLogo', 'logoColor', 'logoRadius', 'isAcceptingQROrders', 'currency']);
+const emitSetting = (payload) => {
+  const key = String(payload?.key || '');
+  if (key.startsWith('portal') || PUBLIC_LIVE_KEYS.has(key)) emitToAll('settingsUpdated', payload);
+  else io.to('cashier').emit('settingsUpdated', payload);
+};
 
 // Client-portal branding/copy. These are the ONLY settings readable without a
 // staff token - the portal is served to logged-out clients, so anything listed
@@ -383,21 +395,7 @@ async function restampOpenOrdersVat() {
 
   let updated = 0;
   for (const order of open) {
-    let baseAfterLineDisc = 0;
-    let discountableBase = 0;
-    let exemptBase = 0;
-    let lineDiscTotal = 0;
-
-    for (const item of order.items || []) {
-      const addOnTotal = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
-      const itemBase = ((item.price || 0) + addOnTotal) * (item.quantity || 1);
-      const linePct = Math.max(Number(item.productDiscountPercent || 0), Number(item.discountPercent || 0));
-      const lineDisc = +(itemBase * linePct / 100).toFixed(2);
-      lineDiscTotal += lineDisc;
-      baseAfterLineDisc += itemBase - lineDisc;
-      if (linePct === 0 && item.hasDiscount !== false) discountableBase += itemBase;
-      if (item.vatExempt === true) exemptBase += itemBase - lineDisc;
-    }
+    const { baseAfterLineDisc, discountableBase, exemptBase, lineDiscTotal } = lineBases(order.items || []);
 
     // Derive the exemption from the discount actually applied, not from the
     // stored boolean: every order written before VAT went live inherited
@@ -463,7 +461,7 @@ app.patch('/api/settings/currency', verifyToken, requireStaff, requirePermission
     if (!/^[A-Z]{3}$/.test(code)) return res.status(400).json({ success: false, error: 'code must be a 3-letter ISO currency code (e.g. PHP, USD).' });
     const value = { symbol, code };
     await Settings.findOneAndUpdate({ key: 'currency' }, { value }, { upsert: true });
-    emitToAll('settingsUpdated', { key: 'currency', value });
+    emitSetting({ key: 'currency', value });
     res.json({ success: true, currency: value });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
@@ -487,7 +485,7 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
       }
       const saved = await Settings.findOneAndUpdate({ key: 'branchCode' }, { value: code }, { upsert: true, returnDocument: 'after' });
       invalidateBranchCodeCache();
-      emitToAll('settingsUpdated', { key: 'branchCode', value: code });
+      emitSetting({ key: 'branchCode', value: code });
       return res.json({ success: true, setting: saved });
     }
 
@@ -499,7 +497,7 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
       if (clean.error) return res.status(400).json({ success: false, error: clean.error });
       const saved = await Settings.findOneAndUpdate({ key: 'privacyContact' }, { value: clean.value }, { upsert: true, returnDocument: 'after' });
       try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: 'privacyContact', after: clean.value }); } catch { /* audit is best-effort */ }
-      emitToAll('settingsUpdated', { key: 'privacyContact', value: clean.value });
+      emitSetting({ key: 'privacyContact', value: clean.value });
       return res.json({ success: true, setting: saved, privacy: clean.value });
     }
 
@@ -516,7 +514,7 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
       const saved = await Settings.findOneAndUpdate({ key: 'businessTimeZone' }, { value: zone }, { upsert: true, returnDocument: 'after' });
       setBusinessTimeZone(zone);
       try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: 'businessTimeZone', after: { timeZone: zone } }); } catch { /* audit is best-effort */ }
-      emitToAll('settingsUpdated', { key: 'businessTimeZone', value: zone });
+      emitSetting({ key: 'businessTimeZone', value: zone });
       return res.json({ success: true, setting: saved, timeZone: businessTimeZone() });
     }
 
@@ -530,7 +528,7 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
       const saved = await Settings.findOneAndUpdate({ key: req.params.key }, { value: prefix }, { upsert: true, returnDocument: 'after' });
       invalidateSeriesCache();
       try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: req.params.key, after: { prefix } }); } catch { /* audit is best-effort */ }
-      emitToAll('settingsUpdated', { key: req.params.key, value: prefix });
+      emitSetting({ key: req.params.key, value: prefix });
       return res.json({ success: true, setting: saved, series: describeSeries(await loadSeriesPrefixes(Settings)) });
     }
 
@@ -552,7 +550,7 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
       }
       const saved = await Settings.findOneAndUpdate({ key: 'orStartNumber' }, { value: n }, { upsert: true, returnDocument: 'after' });
       try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: 'orStartNumber', after: { start: n } }); } catch { /* audit is best-effort */ }
-      emitToAll('settingsUpdated', { key: 'orStartNumber', value: n });
+      emitSetting({ key: 'orStartNumber', value: n });
       return res.json({ success: true, setting: saved });
     }
 
@@ -566,13 +564,13 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
       const flag = truthy(value, false);
       const saved = await Settings.findOneAndUpdate({ key: 'askOperatorEachSale' }, { value: flag }, { upsert: true, returnDocument: 'after' });
       try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: 'askOperatorEachSale', after: { value: flag } }); } catch { /* audit is best-effort */ }
-      emitToAll('settingsUpdated', { key: 'askOperatorEachSale', value: flag });
+      emitSetting({ key: 'askOperatorEachSale', value: flag });
       return res.json({ success: true, setting: saved });
     }
     if (req.params.key === 'sharedDrawer' || req.params.key === 'blindClose') {
       const flag = truthy(value, false);
       const saved = await Settings.findOneAndUpdate({ key: req.params.key }, { value: flag }, { upsert: true, returnDocument: 'after' });
-      emitToAll('settingsUpdated', { key: req.params.key, value: flag });
+      emitSetting({ key: req.params.key, value: flag });
       return res.json({ success: true, setting: saved });
     }
     // Maximum hours a drawer session may stay open; 0 disables the boundary.
@@ -584,7 +582,7 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
         return res.status(400).json({ success: false, error: 'Session limit must be between 0 hours (off) and 168 (one week).' });
       }
       const saved = await Settings.findOneAndUpdate({ key: 'drawerMaxHours' }, { value: n }, { upsert: true, returnDocument: 'after' });
-      emitToAll('settingsUpdated', { key: 'drawerMaxHours', value: n });
+      emitSetting({ key: 'drawerMaxHours', value: n });
       return res.json({ success: true, setting: saved });
     }
     if (req.params.key === 'varianceThreshold') {
@@ -593,7 +591,7 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
         return res.status(400).json({ success: false, error: 'The variance threshold must be zero or a positive amount.' });
       }
       const saved = await Settings.findOneAndUpdate({ key: 'varianceThreshold' }, { value: n }, { upsert: true, returnDocument: 'after' });
-      emitToAll('settingsUpdated', { key: 'varianceThreshold', value: n });
+      emitSetting({ key: 'varianceThreshold', value: n });
       return res.json({ success: true, setting: saved });
     }
 
@@ -602,7 +600,7 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
     // "false" means.
     const stored = MODULE_KEYS.has(req.params.key) ? truthy(value, false) : value;
     const setting = await Settings.findOneAndUpdate({ key: req.params.key }, { value: stored }, { upsert: true, returnDocument: 'after' });
-    emitToAll('settingsUpdated', { key: req.params.key, value: stored });
+    emitSetting({ key: req.params.key, value: stored });
 
     if (MODULE_KEYS.has(req.params.key)) {
       await logAudit(req, { action: 'update', entity: 'Settings', entityId: req.params.key, after: { enabled: stored } });

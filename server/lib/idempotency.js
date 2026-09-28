@@ -52,7 +52,7 @@ const SKIP = [
   '/api/clients/refresh',
 ];
 
-export function createIdempotencyMiddleware({ log } = {}) {
+export function createIdempotencyMiddleware({ log, identify } = {}) {
   /** fingerprint -> { done: bool, waiters: [], status, body, isJson, timer } */
   const inFlight = new Map();
 
@@ -61,8 +61,11 @@ export function createIdempotencyMiddleware({ log } = {}) {
     // The caller's identity comes from the bearer token: this middleware runs
     // before any route's verifyToken, so req.user does not exist yet. Hashing
     // keeps the token out of the map's keys.
+    // Who is asking: the verified user when there is one (identify), so a
+    // retry after the 15-minute token refresh still finds its first attempt.
+    // Keyed on the raw header, it did not - a new token was a new person.
     const who = crypto.createHash('sha256')
-      .update(String(req.get('Authorization') || req.ip || ''))
+      .update(String((identify && identify(req)) || req.get('Authorization') || req.ip || ''))
       .digest('hex').slice(0, 16);
     if (explicit) return { key: `k:${who}:${String(explicit).slice(0, 200)}`, explicit: true };
     const body = (() => { try { return JSON.stringify(req.body ?? {}); } catch { return ''; } })();

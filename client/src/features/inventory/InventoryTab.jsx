@@ -1,5 +1,7 @@
 ﻿import React, { useState, useEffect } from 'react';
+import { dateStr } from '../../shared/businessDay.js';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, MoreVertical } from 'lucide-react';
+import * as auth from '../auth/auth';
 import * as ui from '../../shared/ui';
 import StockTaxonomyPanel from './StockTaxonomyPanel';
 import StockTransferPanel from './StockTransferPanel';
@@ -34,7 +36,7 @@ export default function InventoryTab({ ctx }) {
   const {
     API_URL, AUDIT_PAGE_SIZE, BIZ_NAME, COMP_REASON_LABELS, FRONTEND_URL,
     HIST_PAGE_SIZE, POS_PER_PAGE, SHIFT_HIST_PAGE_SIZE, accountingItemsPerPage, accountingPage,
-    activeAdmin, activeInventoryItem, activeTab, addInventory, addMaterialToRecipe,
+    activeAdmin, activeInventoryItem, activeTab, addInventory, addMaterialToRecipe, busyForms,
     addOnForm, addSize, analyticsData, analyticsLoading, apiFetch,
     applyComplimentary, applyDiscount, applyItemDiscount, arOutstanding, archiveDay,
     archivedOrders, auditCancelPage, auditCompPage, auditDiscPage, auditFilter,
@@ -105,6 +107,11 @@ export default function InventoryTab({ ctx }) {
     systemSettings = {},
     clientAccounts = [], can,
   } = ctx;
+
+  // Seeing stock needs inventory.view; changing it needs inventory.manage,
+  // which the server enforces. The controls follow the same line so nobody is
+  // handed a form whose every save is refused.
+  const canInv = auth.can('inventory.manage');
 
   // Which row's action menu is open (by item._id), null = all closed
   const [openActionMenu, setOpenActionMenu] = useState(null);
@@ -238,11 +245,11 @@ export default function InventoryTab({ ctx }) {
               <h3 className="text-xl font-bold text-on-brand">Inventory Hub</h3>
               
               {/* --- NEW: THE SUB-TAB TOGGLE --- */}
-              <div className="flex bg-page-bg p-1 rounded-lg shadow-inner">
+              <div className="flex bg-page-bg p-1 rounded-lg shadow-inner max-w-full overflow-x-auto scrollbar-hide">
                 {can('screen.inventory.live') && (
                 <button 
                   onClick={() => setInvSubTab('live')}
-                  className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${invSubTab === 'live' ? 'bg-accent text-on-brand shadow-md' : 'text-fg/70 hover:text-brand-text'}`}
+                  className={`shrink-0 whitespace-nowrap px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${invSubTab === 'live' ? 'bg-accent text-on-brand shadow-md' : 'text-fg/70 hover:text-brand-text'}`}
                 >
                   Live Stock
                 </button>
@@ -250,7 +257,7 @@ export default function InventoryTab({ ctx }) {
                 {can('screen.inventory.eod') && can('inventory.count') && (
                 <button 
                   onClick={() => { setInvSubTab('eod'); fetchEODData(); }}
-                  className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition flex items-center gap-2 ${invSubTab === 'eod' ? 'bg-red-600 text-on-brand shadow-md shadow-red-500/20' : 'text-fg/70 hover:text-danger'}`}
+                  className={`shrink-0 whitespace-nowrap px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition flex items-center gap-2 ${invSubTab === 'eod' ? 'bg-red-600 text-on-brand shadow-md shadow-red-500/20' : 'text-fg/70 hover:text-danger'}`}
                 >
                   <span className={`w-2 h-2 rounded-full ${invSubTab === 'eod' ? 'bg-white animate-pulse' : 'bg-red-500'}`}></span>
                   EOD Audit
@@ -259,7 +266,7 @@ export default function InventoryTab({ ctx }) {
                 {can('screen.inventory.places') && (
                 <button
                   onClick={() => setInvSubTab('places')}
-                  className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${invSubTab === 'places' ? 'bg-accent text-on-brand shadow-md' : 'text-fg/70 hover:text-brand-text'}`}
+                  className={`shrink-0 whitespace-nowrap px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${invSubTab === 'places' ? 'bg-accent text-on-brand shadow-md' : 'text-fg/70 hover:text-brand-text'}`}
                 >
                   Places &amp; Categories
                 </button>
@@ -275,7 +282,7 @@ export default function InventoryTab({ ctx }) {
                 {can('screen.inventory.transfers') && (
                 <button
                   onClick={() => { setInvSubTab('transfers'); fetchStockTransfers(); }}
-                  className={`px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${invSubTab === 'transfers' ? 'bg-accent text-on-brand shadow-md' : 'text-fg/70 hover:text-brand-text'}`}
+                  className={`shrink-0 whitespace-nowrap px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${invSubTab === 'transfers' ? 'bg-accent text-on-brand shadow-md' : 'text-fg/70 hover:text-brand-text'}`}
                 >
                   Transfers
                 </button>
@@ -425,7 +432,7 @@ export default function InventoryTab({ ctx }) {
                     <select
                       value={invCategoryFilter}
                       onChange={e => { setInvCategoryFilter(e.target.value); }}
-                      className="bg-white/5 border border-white rounded-lg px-3 py-2 text-xs text-on-brand focus:outline-none focus:border-brand"
+                      className="bg-white/5 border border-on-brand rounded-lg px-3 py-2 text-xs text-on-brand focus:outline-none focus:border-brand"
                     >
                       <option value="">All Categories</option>
                       {invCategories.map(c => <option key={c} value={c}>{c}</option>)}
@@ -436,7 +443,7 @@ export default function InventoryTab({ ctx }) {
                   <select
                     value={invSort}
                     onChange={e => { setInvSort(e.target.value); }}
-                    className="bg-white/5 border border-white rounded-lg px-3 py-2 text-xs text-on-brand focus:outline-none focus:border-brand"
+                    className="bg-white/5 border border-on-brand rounded-lg px-3 py-2 text-xs text-on-brand focus:outline-none focus:border-brand"
                   >
                     <option value="name-asc">Name A → Z</option>
                     <option value="name-desc">Name Z → A</option>
@@ -462,7 +469,9 @@ export default function InventoryTab({ ctx }) {
             {/* --- TAB 1: LIVE STOCK (Clean & Read-Only) --- */}
             {invSubTab === 'live' && (
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
+                {/* A floor width, so a phone scrolls the table instead of
+                    crushing its columns into each other. */}
+                <table className="w-full min-w-[720px] text-left text-sm">
                   <thead>
                     <tr className="text-on-brand border-b border-white/20">
                       <th className="pb-3">Item Name</th>
@@ -524,7 +533,7 @@ export default function InventoryTab({ ctx }) {
                       <tr data-notif-id={item._id} className={`border-b border-white/30 hover:bg-page-bg/30 transition ${rowExpiredTint || (isLow ? 'bg-red-900/10' : '')}`}>
                         <td className="py-3 font-bold text-on-brand uppercase">
                           {item.itemName}
-                          {isLow && <span className="ml-2 text-[9px] font-black bg-red-600 text-white px-1.5 py-0.5 rounded uppercase animate-pulse">LOW</span>}
+                          {isLow && <span className="ml-2 text-[9px] font-black bg-red-700 text-white px-1.5 py-0.5 rounded uppercase animate-pulse">LOW</span>}
                           {isPhaseOut && <span title="Out of stock and costs more than its SRP - not worth restocking" className="ml-2 text-[9px] font-black bg-gray-700 text-white px-1.5 py-0.5 rounded uppercase">PHASE OUT</span>}
                           {/* A finished good: made here, from its own recipe in Production. */}
                           {(item.productionRecipe || []).length > 0 && (
@@ -724,7 +733,7 @@ export default function InventoryTab({ ctx }) {
                                             <button onClick={() => setEditingBatch({
                                               itemId: item._id, batchIdx: b._originalIdx,
                                               mode: prod ? 'production' : 'expiry',
-                                              value: (exp || prod) ? (exp || prod).toISOString().slice(0, 10) : '',
+                                              value: (exp || prod) ? dateStr(exp || prod) : '',
                                             })} title="Correct this batch's expiry/production date"
                                               className="text-info hover:bg-blue-500/10 px-2 py-0.5 rounded transition text-[10px] font-black uppercase tracking-wider mr-1">
                                               Edit
@@ -1168,7 +1177,7 @@ export default function InventoryTab({ ctx }) {
                   </div>
 
                   <div>
-                    <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider block mb-1">Item Name</label>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider block mb-1">Item Name *</label>
                     <input
                       type="text"
                       list="inventory-names"
@@ -1423,8 +1432,8 @@ export default function InventoryTab({ ctx }) {
                 return (
                   <button
                     onClick={addInventory}
-                    disabled={blocked}
-                    className={`w-full font-black py-4 rounded-xl transition-all text-sm tracking-widest uppercase ${blocked ? 'bg-white/5 text-fg/65 cursor-not-allowed border border-white/8' : 'bg-accent text-on-brand hover:brightness-110 active:scale-[0.99] shadow-xl shadow-accent/25'}`}
+                    disabled={blocked || !!busyForms?.inventory}
+                    className={`w-full disabled:opacity-60 font-black py-4 rounded-xl transition-all text-sm tracking-widest uppercase ${blocked ? 'bg-white/5 text-fg/65 cursor-not-allowed border border-white/8' : 'bg-accent text-on-brand hover:brightness-110 active:scale-[0.99] shadow-xl shadow-accent/25'}`}
                   >
                     {blocked ? 'Insufficient Funds' : 'Add to Stock'}
                   </button>

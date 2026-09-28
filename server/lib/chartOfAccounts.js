@@ -45,6 +45,17 @@ export const ACCOUNTS = {
   // supplier's payable and receivable balances are never netted against each
   // other without someone deciding to do that explicitly.
   '160100': { name: 'Supplier Credit Balance (Overpayments)', type: 'asset', parent: '160000' },
+  // Stock moving between two of the owner's own businesses over the Hub. The
+  // sender debits it when goods leave, the receiver credits it when they
+  // arrive, so across the group it nets to zero and the transfer disappears
+  // from the consolidated books - correct, since nothing was sold.
+  //
+  // On one branch alone, a debit balance is stock sent but not yet received;
+  // a credit balance is stock received from a sibling. Transfers used to post
+  // to 540900, a code never declared in this chart, so every statement skipped
+  // it and a sender's balance sheet stopped balancing. Those historical lines
+  // are moved here by a boot migration (see migrateHubClearingAccount).
+  '160200': { name: 'Hub Transfer Clearing (Inter-branch)', type: 'asset', parent: '160000' },
 
   // ===== NON-TRADE RECEIVABLES =====
   // 120000 Accounts Receivable is the TRADE control account - it only ever
@@ -90,6 +101,12 @@ export const ACCOUNTS = {
   // and it is remitted. Booking it into revenue would overstate both sales and
   // profit by the VAT, and leave nothing on the balance sheet to remit from.
   '230300': { name: 'Output VAT Payable',         type: 'liability', parent: '230000' },
+  // The 3% percentage tax a NON-VAT business owes on its gross receipts
+  // (NIRC §116). It used to exist only in the report, never in the books, so
+  // net income was overstated by 3% of sales and the balance sheet left out a
+  // real debt to the BIR. Accrued monthly - see /api/reports/percentage-tax/accrue.
+  // (A VAT business owes Output VAT, 230300, instead - never both.)
+  '230400': { name: 'Percentage Tax Payable',     type: 'liability', parent: '230000' },
   '240000': { name: 'Payroll Liabilities',        type: 'liability', isParent: true, parent: '200000' },
   // Each statutory deduction is held separately: they are remitted to three
   // different agencies on three different schedules, and one pooled balance
@@ -132,6 +149,9 @@ export const ACCOUNTS = {
   '500000': { name: 'Cost of Sales',              type: 'expense', cogs: true, isParent: true },
   '510000': { name: 'Cost of Goods Sold',         type: 'expense', cogs: true, parent: '500000' },
   '520000': { name: 'Freight-In / Purchase Costs',type: 'expense', cogs: true, parent: '500000' },
+  // A supplier invoice that differs from what receiving booked, accepted in
+  // the three-way match: the difference is a cost of buying, not of the stock.
+  '525000': { name: 'Purchase Price Variance',    type: 'expense', cogs: true, parent: '500000' },
   '530000': { name: 'Inventory Adjustments',      type: 'expense', cogs: true, parent: '500000' },
   '535000': { name: 'Spoilage, Variance & Waste', type: 'expense', cogs: true, parent: '530000' },
   '540000': { name: 'Complimentary Expense',      type: 'expense', cogs: true, parent: '500000' },
@@ -154,6 +174,7 @@ export const ACCOUNTS = {
   '720000': { name: 'Bank Charges',               type: 'expense', parent: '700000' },
   '730000': { name: 'Insurance Expense',          type: 'expense', parent: '700000' },
   '740000': { name: 'Licenses & Permits',         type: 'expense', parent: '700000' },
+  '745000': { name: 'Percentage Tax Expense',     type: 'expense', parent: '700000' },
   '750000': { name: 'Communication Expense',      type: 'expense', parent: '700000' },
   '760000': { name: 'Miscellaneous Expense',      type: 'expense', parent: '700000' },
 

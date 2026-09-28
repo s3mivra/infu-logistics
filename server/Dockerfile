@@ -5,7 +5,11 @@ RUN npm ci --omit=dev
 
 FROM node:20-alpine
 WORKDIR /app
-ENV NODE_ENV=production
+# The business clock. lib/timezone.js also pins it in code; tzdata makes the
+# zone resolvable at the OS level too, and the server refuses to start in
+# production if its local time does not match the business zone.
+RUN apk add --no-cache tzdata
+ENV NODE_ENV=production TZ=Asia/Manila
 COPY --from=deps /app/node_modules ./node_modules
 COPY package*.json ./
 COPY server.js ./

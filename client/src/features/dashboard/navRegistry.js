@@ -15,6 +15,7 @@ import {
   ShoppingCart, Package, Network, Factory, Truck, Users, FileText, ChefHat,
   BarChart3, BarChart2, DollarSign, Clock, ShieldCheck, Building2, Landmark,
   Receipt, Settings, TrendingUp, RefreshCw, Banknote, HandCoins, Download,
+  CalendarCheck, AlertTriangle, Target, CalendarDays,
 } from 'lucide-react';
 
 // `mode` is the sidebar's own highlight state (libellus = Operations,
@@ -64,6 +65,8 @@ export const NAV_GROUPS = [
       { id: 'bankrec', label: 'Bank Reconciliation', icon: Landmark, perm: 'accounting.view', module: 'bankReconciliation', hint: 'Match the statement' },
       { id: 'wht', label: 'Withholding Tax', icon: Receipt, perm: 'accounting.view', module: 'withholdingTax', hint: 'Held for the BIR' },
       { id: 'payroll', label: 'Payroll', icon: Users, perm: 'accounting.view', module: 'payroll', hint: 'Runs and payslips' },
+      // Every staff member files their own; roster managers decide.
+      { id: 'timeoff', label: 'Leave & Overtime', icon: CalendarDays, hint: 'File and approve time off' },
     ],
   },
   {
@@ -99,6 +102,8 @@ export const LEDGER_TAB_GROUPS = [
   ]],
   ['Setup', [
     ['accperiods', 'Accounts & Periods', Settings],
+    // The month-end checklist, and the Close button behind it.
+    ['closing', 'Month-End Close', CalendarCheck],
     ['backdate', 'Backdate Sale', Clock],
     // Always visible to any staff - the server itself scopes what comes back:
     // without requisitions.view you only ever see your OWN filed slips, not
@@ -120,7 +125,8 @@ export const LEDGER_TAB_GROUPS = [
 export const REPORT_TAB_GROUPS = [
   ['Sales', [
     ['salessummary', 'Sales Summary', BarChart3],
-    ['salesline', 'Sales Line Items', FileText],
+    ['salesline', 'Daily Sales Report', FileText],
+    ['saleschannel', 'Sales by Channel', BarChart2],
     ['payments', 'By Payment', Banknote],
     ['profitcat', 'By Category', BarChart2],
     ['menueng', 'Menu Engineering', TrendingUp],
@@ -138,6 +144,8 @@ export const REPORT_TAB_GROUPS = [
   ['Financials', [
     ['pnlmonthly', 'Monthly P&L', BarChart3],
     ['bsmonthly', 'Monthly Balance Sheet', BarChart3],
+    ['cashflow', 'Cash Flow', Banknote],
+    ['budget', 'Budget vs Actual', Target],
     ['percentagetax', 'Percentage Tax', FileText],
     // Only one of these two ever applies: a VAT-registered business files VAT,
     // everyone else files the 3% percentage tax. Each report says so when it is
@@ -148,6 +156,7 @@ export const REPORT_TAB_GROUPS = [
     ['pricelog', 'Price Changes', TrendingUp],
     ['variance', 'Cashier Variance', Users],
     ['commissions', 'Commissions', Users],
+    ['exceptions', 'Exceptions', AlertTriangle],
   ]],
 ];
 

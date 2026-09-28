@@ -814,6 +814,42 @@ export default function HubTab({ ctx }) {
                         </div>
                       )}
 
+                      {/* Group position, before the statements. An owner opens
+                          this to answer three questions - how much money is
+                          there, who owes us, who do we owe - and should not
+                          have to read a balance sheet to get them. Computed on
+                          the merged rows server-side, so these always agree
+                          with the consolidated balance sheet below. */}
+                      {Math.abs(fin.interBranch?.unmatched || 0) >= 0.01 && (
+                        <div className="flex items-start gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-xs">
+                          <AlertTriangle size={15} className="text-warning mt-0.5 shrink-0" />
+                          <div>
+                            <p className="text-warning font-black uppercase tracking-wider">Transfers not yet matched</p>
+                            <p className="text-fg/60 mt-1">
+                              {peso(fin.interBranch.unmatched)} of stock moved between your businesses has not been received on the other side yet,
+                              or was valued differently on each side. It is included in the group's assets until it is.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {fin.position && (
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                          {[
+                            ['Cash on hand & in bank', fin.position.cash, 'text-brand-text'],
+                            ['Owed to us (A/R)', fin.position.receivables, 'text-fg'],
+                            ['We owe (A/P)', fin.position.payables, 'text-warning'],
+                            ['Net income, period', fin.position.netIncome,
+                              fin.position.netIncome < 0 ? 'text-danger' : 'text-brand-text'],
+                          ].map(([label, value, tone]) => (
+                            <div key={label} className="bg-page-bg border border-white/8 rounded-xl p-3">
+                              <p className="text-[10px] font-black text-fg/70 uppercase tracking-widest">{label}</p>
+                              <p className={`text-xl font-black tabular-nums mt-1 ${tone}`}>{peso(value)}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
                       {/* Per-branch contribution, grouped by LOCATION.
                           Two inventories can sit at one address (AC-A001 and
                           AC-A002), so the location subtotal answers "how did
@@ -827,6 +863,9 @@ export default function HubTab({ ctx }) {
                             <tr className="text-fg/70 text-[10px] uppercase tracking-widest border-b border-white/10">
                               <th className="text-left py-2">Branch</th>
                               <th className="text-left py-2 pl-3">Code</th>
+                              <th className="text-right py-2 pl-3">Cash</th>
+                              <th className="text-right py-2 pl-3">A/R</th>
+                              <th className="text-right py-2 pl-3">A/P</th>
                               <th className="text-right py-2 pl-3">Net Income</th>
                               <th className="text-right py-2 pl-3">Total Assets</th>
                             </tr>
@@ -835,7 +874,7 @@ export default function HubTab({ ctx }) {
                             {(fin.byLocation || []).map(group => (
                               <Fragment key={group.locationKey}>
                                 <tr className="bg-white/[0.03]">
-                                  <td colSpan={2} className="py-1.5 text-[10px] font-black uppercase tracking-widest text-fg/75">
+                                  <td colSpan={2} className="py-1.5 text-[10px] font-black uppercase tracking-widest text-fg/75 whitespace-nowrap">
                                     {group.locationKey === 'Unassigned'
                                       ? 'No branch code set'
                                       : `Location ${group.location}`}
@@ -843,6 +882,9 @@ export default function HubTab({ ctx }) {
                                       {group.branchCount} {group.branchCount === 1 ? 'inventory' : 'inventories'}
                                     </span>
                                   </td>
+                                  <td className="py-1.5 pl-3 text-right tabular-nums font-black text-fg/70">{peso(group.totals.cash)}</td>
+                                  <td className="py-1.5 pl-3 text-right tabular-nums font-black text-fg/70">{peso(group.totals.receivables)}</td>
+                                  <td className="py-1.5 pl-3 text-right tabular-nums font-black text-fg/70">{peso(group.totals.payables)}</td>
                                   <td className="py-1.5 pl-3 text-right tabular-nums font-black text-fg/70">{peso(group.totals.netIncome)}</td>
                                   <td className="py-1.5 pl-3 text-right tabular-nums font-black text-fg/70">{peso(group.totals.totalAssets)}</td>
                                 </tr>
@@ -857,6 +899,9 @@ export default function HubTab({ ctx }) {
                                         ? <span className="font-mono text-fg/75">{b.branchCode}</span>
                                         : <span className="text-warning text-[10px]">not set</span>}
                                     </td>
+                                    <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{peso(b.cash)}</td>
+                                    <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{peso(b.receivables)}</td>
+                                    <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{peso(b.payables)}</td>
                                     <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{peso(b.netIncome)}</td>
                                     <td className="py-2 pl-3 text-right tabular-nums text-fg/70">{peso(b.totalAssets)}</td>
                                   </tr>
@@ -1366,7 +1411,7 @@ export default function HubTab({ ctx }) {
                 <ul className="mt-2 space-y-1">
                   {slip.lines.map(l => (
                     <li key={l._id} className="text-xs text-fg/65 flex justify-between gap-3 border-t border-white/5 pt-1">
-                      <span className="text-fg/80 font-bold truncate">{l.itemName}</span>
+                      <span className="text-fg/80 font-bold truncate" title={String((l.itemName) ?? '')}>{l.itemName}</span>
                       <span className="tabular-nums shrink-0">{l.qtyBase} {l.unit}</span>
                     </li>
                   ))}
@@ -1520,7 +1565,7 @@ export default function HubTab({ ctx }) {
               {counterLines.map((l, i) => (
                 <div key={i} className="flex items-center gap-2 bg-page-bg border border-white/8 rounded-xl p-2.5">
                   <div className="flex-1 min-w-0">
-                    <p className="text-fg font-bold text-sm truncate">{l.itemName}</p>
+                    <p className="text-fg font-bold text-sm truncate" title={String((l.itemName) ?? '')}>{l.itemName}</p>
                     {l.note && <p className="text-fg/65 text-[10px] italic truncate">{l.note}</p>}
                   </div>
                   <input

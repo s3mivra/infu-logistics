@@ -156,6 +156,8 @@
           <button id="updateAllBtn">Update all apps</button>
         </div>
 
+        <div id="backupHealth"></div>
+
         <div class="card">
           <h2>All clients</h2>
           <div id="tenantList"><p class="muted">Loading&hellip;</p></div>
@@ -431,6 +433,28 @@
     </div>
   </div>
 
+  <div id="offsiteModal" class="modal-overlay hide">
+    <div class="modal">
+      <h2>Offsite backup</h2>
+      <p class="muted" style="margin:0 0 14px">A copy of every backup, encrypted on this server, in a bucket you own. Create the bucket and an access key at your provider, then paste them here.</p>
+      <label for="os_provider">Provider</label>
+      <select id="os_provider"><option value="Cloudflare">Cloudflare R2</option><option value="Backblaze">Backblaze B2</option></select>
+      <label for="os_endpoint" style="margin-top:10px">Endpoint (https://…)</label>
+      <input id="os_endpoint" placeholder="https://<account-id>.r2.cloudflarestorage.com" autocomplete="off">
+      <label for="os_bucket" style="margin-top:10px">Bucket</label>
+      <input id="os_bucket" placeholder="semivra-backups" autocomplete="off">
+      <label for="os_key" style="margin-top:10px">Access key ID</label>
+      <input id="os_key" autocomplete="off">
+      <label for="os_secret" style="margin-top:10px">Secret access key</label>
+      <input id="os_secret" type="password" autocomplete="off">
+      <p class="err" id="os_err"></p>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end;gap:8px">
+        <button class="ghost" id="os_cancel">Cancel</button>
+        <button id="os_save">Save &amp; start</button>
+      </div>
+    </div>
+  </div>
+
   <div id="pwModal" class="modal-overlay hide">
     <div class="modal">
       <h2 id="pw_title">Superadmin password</h2>
@@ -440,7 +464,7 @@
         <button class="ghost small" id="pw_toggle">Show</button>
         <button class="small" id="pw_copy">Copy</button>
       </div>
-      <p class="muted" style="margin:12px 0 0">This is the login you gave the client's owner/manager for their app. It's shown here so you can re-share it &mdash; nothing is reset.</p>
+      <p class="muted" id="pw_note" style="margin:12px 0 0">This is the login you gave the client's owner/manager for their app. It's shown here so you can re-share it &mdash; nothing is reset.</p>
       <div style="margin-top:16px;display:flex;justify-content:flex-end">
         <button class="ghost" id="pw_close">Close</button>
       </div>
@@ -537,10 +561,12 @@ function renderPw() {
   $('pw_value').textContent = pwShown ? (pwCurrent || '(not set)') : '••••••••';
   $('pw_toggle').textContent = pwShown ? 'Hide' : 'Show';
 }
-function openPasswordModal(name, pass) {
+const PW_NOTE_DEFAULT = "This is the login you gave the client's owner/manager for their app. It's shown here so you can re-share it \u2014 nothing is reset.";
+function openPasswordModal(name, pass, { title = 'Superadmin password', note = PW_NOTE_DEFAULT } = {}) {
   pwCurrent = pass;
   pwShown = false;
-  $('pw_title').textContent = 'Superadmin password';
+  $('pw_title').textContent = title;
+  $('pw_note').textContent = note;
   $('pw_sub').textContent = name;
   renderPw();
   $('pwModal').classList.remove('hide');
@@ -583,7 +609,69 @@ function fmtBytes(n) {
 
 let LAST_TENANTS = [];
 
+const HEALTH_ACTIONS = {
+  offsite: () => '<button class="ghost small" data-health="offsite">Set up offsite backup</button>',
+  drill: () => '<button class="ghost small" data-health="drill">Run restore drill now</button>',
+  rotate: (p) => `<button class="ghost small" data-health="rotate" data-slug="${esc(p.slug)}">Rotate secret</button>`,
+};
+async function refreshBackupHealth() {
+  const el = $('backupHealth');
+  try {
+    const h = await api('/api/backup-health');
+    const when = (ms) => (ms ? new Date(ms).toLocaleString() : 'never');
+    el.innerHTML = '<div class="card"><h2>Platform health ' + (h.ok ? '<span class="pill ok">OK</span>' : '<span class="pill">ATTENTION</span>') + '</h2>'
+      + (h.problems.length ? '<ul style="padding-left:18px">' + h.problems.map((p) => '<li style="margin:6px 0"><span class="err">' + esc(p.text) + '</span> '
+          + (p.action && HEALTH_ACTIONS[p.action] ? HEALTH_ACTIONS[p.action](p) : '') + '</li>').join('') + '</ul>' : '')
+      + '<div class="muted">last backup ' + when(h.lastSuccess) + ' · offsite ' + (h.offsiteConfigured ? when(h.lastOffsite) : 'not set up') + ' · restore drill ' + (h.drillRunning ? 'running…' : when(h.lastDrill))
+      + (h.offsiteConfigured ? ' · <a href="#" data-health="key">recovery key</a> · <a href="#" data-health="offsite">change offsite</a>' : '') + '</div></div>';
+  } catch { el.innerHTML = ''; }
+}
+function openOffsite() {
+  $('os_err').textContent = '';
+  $('offsiteModal').classList.remove('hide');
+}
+$('os_cancel').addEventListener('click', () => $('offsiteModal').classList.add('hide'));
+$('os_save').addEventListener('click', async () => {
+  const btn = $('os_save'); btn.disabled = true; $('os_err').textContent = '';
+  try {
+    const d = await api('/api/backup/offsite', { method: 'POST', body: JSON.stringify({
+      provider: $('os_provider').value, endpoint: $('os_endpoint').value, bucket: $('os_bucket').value,
+      accessKeyId: $('os_key').value, secretAccessKey: $('os_secret').value,
+    }) });
+    $('offsiteModal').classList.add('hide'); $('os_secret').value = '';
+    if (d.firstTime) openPasswordModal('Save this somewhere other than this server', d.recoveryKey, { title: 'Offsite recovery key',
+      note: 'The offsite copies are encrypted with this key. If this server is ever lost, you need it to read them back. Store it in your password manager now.' });
+    refreshBackupHealth();
+  } catch (e) { $('os_err').textContent = e.message; }
+  finally { btn.disabled = false; }
+});
+document.addEventListener('click', async (ev) => {
+  const t = ev.target.closest('[data-health]');
+  if (!t) return;
+  ev.preventDefault();
+  const what = t.dataset.health;
+  if (what === 'offsite') return openOffsite();
+  if (what === 'key') {
+    try { const d = await api('/api/backup/offsite-key'); openPasswordModal('Offsite backups', d.recoveryKey, { title: 'Offsite recovery key', note: 'Needed to read the offsite copies back. Keep it off this server.' }); }
+    catch (e) { alert(e.message); }
+    return;
+  }
+  if (what === 'drill') {
+    t.disabled = true; t.textContent = 'Starting…';
+    try { await api('/api/backup/drill', { method: 'POST', body: '{}' }); } catch (e) { alert(e.message); }
+    return refreshBackupHealth();
+  }
+  if (what === 'rotate') {
+    const slug = t.dataset.slug;
+    if (!confirm(`Give ${slug} a new login secret? Everyone signed in to it is signed out once. No data changes.`)) return;
+    t.disabled = true; t.textContent = 'Rotating…';
+    try { await api(`/api/tenants/${encodeURIComponent(slug)}/rotate-secret`, { method: 'POST', body: '{}' }); } catch (e) { alert(e.message); }
+    return refreshBackupHealth();
+  }
+});
+
 async function refresh() {
+  refreshBackupHealth();
   try {
     // Usage is best-effort: a failure there must not blank the tenant list,
     // which is the part you need to actually operate the platform.
@@ -1009,7 +1097,8 @@ async function runUpdateAll() {
     });
     $('um_status').textContent = 'Update complete.';
     $('um_detail').classList.remove('hide');
-    $('um_detail').textContent = (gitNote ? gitNote + '\n' : '') + lines.join('\n');
+    const cpNote = applied.controlPlane?.updated ? '\nThis control panel is updating itself too - it will be back in about a minute; reload then.' : '';
+    $('um_detail').textContent = (gitNote ? gitNote + '\n' : '') + lines.join('\n') + cpNote;
     $('um_start').textContent = 'Update again';
     $('um_start').disabled = false;
     $('um_close').disabled = false;

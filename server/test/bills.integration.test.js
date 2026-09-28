@@ -162,6 +162,13 @@ describe('PO receipt auto-creates a Bill', () => {
     const afterJe = await JournalEntry.countDocuments({});
     expect(afterJe).toBe(beforeJe + 1);
 
+    // A PO bill is released only once the supplier's invoice matches.
+    const early = await auth('post', `/api/bills/${recvRes.body.bill._id}/approve`, tok);
+    expect(early.status).toBe(409);
+    expect(early.body.needsInvoice).toBe(true);
+    const invRes = await auth('post', `/api/bills/${recvRes.body.bill._id}/invoice`, tok).send({ supplierInvoiceNo: 'ACME-001', invoiceAmount: 50 });
+    expect(invRes.body.match.status).toBe('Matched');
+
     // Approving a PO-sourced bill must NOT post a second journal entry.
     const approve = await auth('post', `/api/bills/${recvRes.body.bill._id}/approve`, tok);
     expect(approve.status).toBe(200);

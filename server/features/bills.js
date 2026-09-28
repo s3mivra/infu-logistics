@@ -6,6 +6,9 @@ import { captureError } from '../lib/errorLog.js';
 import { INPUT_VAT } from '../lib/vatPosting.js';
 import { loadVatConfig } from '../lib/vatSettings.js';
 
+import { atomic } from '../lib/atomicRoute.js';
+import { threeWayMatch, normalizeInvoiceNo } from '../lib/threeWayMatch.js';
+import { hasPermission } from '../lib/authz.js';
 export default function registerBills(ctx) {
   const {
     app,
@@ -21,6 +24,7 @@ export default function registerBills(ctx) {
     BUSINESS_TYPE,
     Bill,
     BILL_STATUSES,
+    PurchaseOrder,
     Settings,
     Supplier,
     JournalEntry,
@@ -39,6 +43,19 @@ export default function registerBills(ctx) {
   const canPostAcct = [requireStaff, requirePermission('accounting.manage')];
 
   const money = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+  // Has this supplier already billed us under this invoice number? A rejected
+  // bill does not count - it was never going to be paid. Returns the bill.
+  const duplicateInvoice = async (supplierId, invoiceNo, exceptId = null) => {
+    const key = normalizeInvoiceNo(invoiceNo);
+    if (!key) return null;
+    return Bill.findOne({
+      supplierId, supplierInvoiceKey: key, status: { $ne: 'Rejected' },
+      ...(exceptId ? { _id: { $ne: exceptId } } : {}),
+    }, { billNumber: 1, status: 1 }).lean();
+  };
+  const duplicateMessage = (dupe, invoiceNo) =>
+    `The supplier's invoice ${invoiceNo} is already on bill ${dupe.billNumber} (${dupe.status}). The same invoice cannot be paid twice.`;
   // Cash, bank and e-wallet: the accounts money can actually be paid out of or
   // received into. Shared by bill payment and the supplier-credit refund, so
   // the two cannot disagree about what counts as a real account.
@@ -88,7 +105,7 @@ export default function registerBills(ctx) {
   // POST /api/bills { supplierId, description, amount, dueDate, expenseAccountCode }
   app.post('/api/bills', verifyToken, ...canPostAcct, async (req, res) => {
     try {
-      const { supplierId, description, amount, dueDate, expenseAccountCode, claimInputVat } = req.body || {};
+      const { supplierId, description, amount, dueDate, expenseAccountCode, claimInputVat, supplierInvoiceNo } = req.body || {};
       if (!supplierId || !mongoose.Types.ObjectId.isValid(supplierId)) {
         return res.status(400).json({ success: false, error: 'A valid supplier is required.' });
       }
@@ -103,6 +120,11 @@ export default function registerBills(ctx) {
 
       const supplier = await Supplier.findOne({ _id: supplierId, ...tenantScope(req) }).lean();
       if (!supplier) return res.status(404).json({ success: false, error: 'Supplier not found.' });
+      const invoiceNo = String(supplierInvoiceNo || '').trim().slice(0, 60);
+      if (invoiceNo) {
+        const dupe = await duplicateInvoice(supplier._id, invoiceNo);
+        if (dupe) return res.status(409).json({ success: false, error: duplicateMessage(dupe, invoiceNo), duplicateOf: dupe.billNumber });
+      }
 
       const billNumber = await mkSeqRef('BILL');
       const bill = await Bill.create({
@@ -117,10 +139,11 @@ export default function registerBills(ctx) {
         expenseAccountCode,
         dueDate: dueDate ? new Date(dueDate) : null,
         claimInputVat: claimInputVat === true,
+        ...(invoiceNo ? { supplierInvoiceNo: invoiceNo, supplierInvoiceKey: normalizeInvoiceNo(invoiceNo) } : {}),
         createdBy: req.user?.name || '',
       });
 
-      await logAudit(req, { action: 'create', entity: 'Bill', entityId: bill._id, after: { billNumber, supplierId, amount: amt } });
+      await logAudit(req, { action: 'create', entity: 'Bill', entityId: bill._id, after: { billNumber, supplierId, amount: amt, supplierInvoiceNo: invoiceNo } });
       res.json({ success: true, bill });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
@@ -174,6 +197,12 @@ export default function registerBills(ctx) {
             throw new Error(`"${accountCode || '(blank)'}" is not an account. Give the expense or asset account this bill should be charged to.`);
           }
 
+          const invoiceNo = String(r.supplierInvoiceNo ?? r['Invoice No'] ?? '').trim().slice(0, 60);
+          if (invoiceNo) {
+            const dupe = await duplicateInvoice(supplier._id, invoiceNo);
+            if (dupe) throw new Error(duplicateMessage(dupe, invoiceNo));
+          }
+
           const rawDue = r.dueDate ?? r['Due Date'] ?? r.due;
           const dueDate = rawDue ? new Date(rawDue) : null;
           if (dueDate && Number.isNaN(dueDate.getTime())) throw new Error('Invalid due date.');
@@ -184,6 +213,7 @@ export default function registerBills(ctx) {
             billNumber, supplierId: supplier._id, supplierName: supplier.name,
             source: 'Manual', description: description.slice(0, 500), amount: amt,
             expenseAccountCode: accountCode, dueDate,
+            ...(invoiceNo ? { supplierInvoiceNo: invoiceNo, supplierInvoiceKey: normalizeInvoiceNo(invoiceNo) } : {}),
             createdBy: req.user?.name || '',
           });
           created.push({ row: i + 1, billNumber, supplier: supplier.name, amount: amt });
@@ -207,12 +237,89 @@ export default function registerBills(ctx) {
   // (DR expenseAccountCode / CR 220000 Accounts Payable) - see the BillSchema
   // comment in server.js. For source:'PO' bills the JE already posted at
   // receipt; this is a pure sign-off with no new posting.
-  app.post('/api/bills/:id/approve', verifyToken, ...canPostAcct, async (req, res) => {
+  // ── RECORD THE SUPPLIER'S INVOICE (three-way match) ──────────────────────
+  // Received goods post their payable at receipt; this is where the supplier's
+  // own invoice meets it. For a PO bill the invoice is compared with the PO
+  // price of what arrived and with what receiving booked; for a manual bill,
+  // with the bill's amount. Re-recording replaces the previous attempt, so a
+  // corrected invoice can be entered after an exception.
+  app.post('/api/bills/:id/invoice', verifyToken, ...canPostAcct, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const bill = await Bill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+      if (!bill) return res.status(404).json({ success: false, error: 'Not found' });
+      if (bill.status !== 'Pending') return res.status(409).json({ success: false, error: `The invoice is matched before approval; this bill is already ${bill.status}.` });
+      const invoiceNo = String(req.body?.supplierInvoiceNo || '').trim().slice(0, 60);
+      if (!invoiceNo) return res.status(400).json({ success: false, error: "Enter the supplier's invoice number." });
+      const invoiceAmount = money(req.body?.invoiceAmount);
+      if (!(invoiceAmount > 0) || invoiceAmount > 999_999_999.99) return res.status(400).json({ success: false, error: 'Enter the invoice total.' });
+      const invoiceDate = req.body?.invoiceDate ? new Date(req.body.invoiceDate) : null;
+      if (invoiceDate && Number.isNaN(invoiceDate.getTime())) return res.status(400).json({ success: false, error: 'Invalid invoice date.' });
+      const dupe = await duplicateInvoice(bill.supplierId, invoiceNo, bill._id);
+      if (dupe) return res.status(409).json({ success: false, error: duplicateMessage(dupe, invoiceNo), duplicateOf: dupe.billNumber });
+
+      const po = bill.purchaseOrderId ? await PurchaseOrder.findById(bill.purchaseOrderId).lean() : null;
+      const result = threeWayMatch({ po, receivedValue: bill.amount, invoiceAmount });
+      bill.supplierInvoiceNo = invoiceNo;
+      bill.supplierInvoiceKey = normalizeInvoiceNo(invoiceNo);
+      bill.supplierInvoiceAmount = invoiceAmount;
+      bill.supplierInvoiceDate = invoiceDate;
+      bill.match = { ...result, checkedBy: req.user?.name || '', checkedAt: new Date(), acceptedBy: '', acceptReason: '', varianceJournalRef: '' };
+      await bill.save();
+      await logAudit(req, { action: 'match', entity: 'Bill', entityId: bill._id, after: { billNumber: bill.billNumber, invoiceNo, invoiceAmount, status: result.status, issues: result.issues.map(i => i.code) } });
+      res.json({ success: true, bill, match: bill.match });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  app.post('/api/bills/:id/approve', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const bill = await Bill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
       if (!bill) return res.status(404).json({ success: false, error: 'Not found' });
       if (bill.status !== 'Pending') return res.status(409).json({ success: false, error: `Only a Pending bill can be approved (this one is ${bill.status}).` });
+
+      // Three-way match gate: a bill for received goods is released for
+      // payment only once the supplier's invoice agrees with the PO and the
+      // receipt. An exception is accepted only by someone who may approve
+      // price changes, with a reason - and the difference is booked.
+      if (bill.source === 'PO') {
+        const m = bill.match || {};
+        if (!m.status || m.status === 'Unmatched') {
+          return res.status(409).json({ success: false, error: "Record the supplier's invoice first - a bill for received goods is paid only once the invoice matches the PO and the receipt.", needsInvoice: true });
+        }
+        if (m.status === 'Exception') {
+          const reason = String(req.body?.acceptReason || '').trim();
+          if (req.body?.acceptVariance !== true) {
+            return res.status(409).json({ success: false, error: `The invoice does not match: ${(m.issues || []).map(i => i.text).join(' ')} Return it to procurement, or accept the difference.`, matchException: true });
+          }
+          if (!hasPermission(req.user, 'pricing.approve')) return res.status(403).json({ success: false, error: 'Accepting a price difference needs the "Approve price, cost & credit-limit changes" permission.' });
+          if (!reason) return res.status(400).json({ success: false, error: 'Say why the difference is accepted.' });
+          const variance = money(m.variance);
+          if (Math.abs(variance) >= 0.01) {
+            // The payable becomes what the supplier actually invoiced.
+            const reference = await mkSeqRef('PPV');
+            const amt = Math.abs(variance);
+            const lines = variance > 0
+              ? [{ accountCode: '525000', accountName: 'Purchase Price Variance', debit: amt, credit: 0 },
+                 { accountCode: '220000', accountName: 'Accounts Payable', debit: 0, credit: amt }]
+              : [{ accountCode: '220000', accountName: 'Accounts Payable', debit: amt, credit: 0 },
+                 { accountCode: '525000', accountName: 'Purchase Price Variance', debit: 0, credit: amt }];
+            assertBalanced(lines, reference);
+            await JournalEntry.create({
+              date: new Date(), reference,
+              description: `Invoice ${bill.supplierInvoiceNo} vs receipt on ${bill.billNumber} (${bill.poNumber || 'PO'}): ${variance > 0 ? 'over' : 'under'} by ₱${amt.toFixed(2)} - accepted by ${req.user?.name || ''}: ${reason}`,
+              lines, totalDebit: amt, totalCredit: amt,
+              supplierId: String(bill.supplierId), supplierName: bill.supplierName,
+            });
+            bill.amount = money(bill.amount + variance);
+            bill.match.varianceJournalRef = reference;
+            emitToMgr('erpUpdated');
+          }
+          bill.match.status = 'Accepted';
+          bill.match.acceptedBy = req.user?.name || '';
+          bill.match.acceptReason = reason.slice(0, 500);
+        }
+      }
 
       if (bill.source === 'Manual') {
         const expMeta = acctMeta(bill.expenseAccountCode);
@@ -251,7 +358,7 @@ export default function registerBills(ctx) {
       await logAudit(req, { action: 'approve', entity: 'Bill', entityId: bill._id, after: { billNumber: bill.billNumber, approvedBy: bill.approvedBy } });
       res.json({ success: true, bill });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
-  });
+  }));
 
   // ── REJECT ───────────────────────────────────────────────────────────────────
   // Note: for source:'PO' bills, rejecting does NOT reverse the receipt's
@@ -313,7 +420,7 @@ export default function registerBills(ctx) {
   //
   // Every payment - full, partial, or with an overpay split - issues a
   // Check Voucher, the actual paper trail for the disbursement.
-  app.post('/api/bills/:id/pay', verifyToken, ...canPostAcct, async (req, res) => {
+  app.post('/api/bills/:id/pay', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const bill = await Bill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
@@ -386,13 +493,13 @@ export default function registerBills(ctx) {
       log.error({ err }, 'POST /api/bills/:id/pay failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 
   // ── SUPPLIER CREDIT: apply to a bill ────────────────────────────────────────
   // Reclassifies stored supplier credit (160100, an asset - they owe it to
   // us) directly against a bill's outstanding balance. No cash moves; this is
   // purely "use what they already owe us instead of paying more cash out."
-  app.post('/api/suppliers/:id/credit/apply', verifyToken, ...canPostAcct, async (req, res) => {
+  app.post('/api/suppliers/:id/credit/apply', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Supplier not found.' });
       const supplier = await Supplier.findOne({ _id: req.params.id, ...tenantScope(req) });
@@ -446,7 +553,7 @@ export default function registerBills(ctx) {
       log.error({ err }, 'POST /api/suppliers/:id/credit/apply failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 
   // ── SUPPLIER CREDIT: take it back in cash ───────────────────────────────────
   // The other way a supplier credit ends. Applying it to the next bill was the
@@ -456,7 +563,7 @@ export default function registerBills(ctx) {
   // This is money coming IN - they are returning what we overpaid - so it is a
   // receipt, not a disbursement. It deliberately issues no check voucher: a
   // voucher documents money leaving a cash account, and nothing leaves here.
-  app.post('/api/suppliers/:id/credit/refund', verifyToken, ...canPostAcct, async (req, res) => {
+  app.post('/api/suppliers/:id/credit/refund', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const supplier = await Supplier.findOne({ _id: req.params.id, ...tenantScope(req) });
@@ -507,5 +614,5 @@ export default function registerBills(ctx) {
       log.error({ err }, 'POST /api/suppliers/:id/credit/refund failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 }

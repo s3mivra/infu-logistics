@@ -135,7 +135,7 @@ export default function SettingsTab({ ctx }) {
     toggleRequireCashShift, toggleSharedDrawer, toggleBlindClose, saveVarianceThreshold, saveDrawerMaxHours,
     toggleAskOperatorEachSale,
     isSuperAdmin, setChangePwModal, setChangePwError, BIZ_NAME, activeAdmin,
-    saveSetting, apiFetch,
+    saveSetting, apiFetch, reloadModules,
   } = ctx;
 
   // Optional accounting modules. VAT already worked as a switch; these follow
@@ -213,7 +213,13 @@ export default function SettingsTab({ ctx }) {
         method: 'PATCH', body: JSON.stringify({ value: !mod.enabled }),
       });
       const d = await res.json();
-      if (d.success && d.modules) setModules(d.modules);
+      if (d.success && d.modules) {
+        setModules(d.modules);
+        // The sidebar keeps its own copy of the module list to decide which
+        // tabs exist. Updating only the switch here left the tab missing (or
+        // stranded) until the operator reloaded the page by hand.
+        reloadModules?.();
+      }
     } catch { /* leave the switch where it was */ }
     finally { setModuleBusy(''); }
   };

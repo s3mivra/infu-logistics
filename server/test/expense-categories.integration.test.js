@@ -15,6 +15,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -32,7 +33,8 @@ const M = (n) => mongoose.model(n);
 const categories = async () => (await auth('get', '/api/expenses/categories')).body.categories;
 
 beforeEach(async () => {
-  await M('JournalEntry').deleteMany({});
+  // Resetting the fixture is ledger maintenance; the ledger is otherwise append-only.
+  await withLedgerMaintenance(() => M('JournalEntry').deleteMany({}));
   await M('Account').deleteMany({ custom: true });
 });
 

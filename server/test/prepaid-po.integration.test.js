@@ -9,6 +9,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok, supplier, item;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -47,7 +48,7 @@ afterAll(async () => { await ctx.stop(); });
 beforeEach(async () => {
   await Promise.all([
     M('PurchaseOrder').deleteMany({}), M('Bill').deleteMany({}), M('Advance').deleteMany({}),
-    M('JournalEntry').deleteMany({}), M('StockCard').deleteMany({}),
+    withLedgerMaintenance(() => M('JournalEntry').deleteMany({})), M('StockCard').deleteMany({}),
     M('Supplier').deleteMany({}), M('Inventory').deleteMany({}),
   ]);
   supplier = await M('Supplier').create({ name: 'Acme Supply' });

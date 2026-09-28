@@ -19,6 +19,8 @@ export const TEMPLATES = [
   { key: 'openingBalances', sheet: 'Opening Balances', perm: books },
   { key: 'openReceivables', sheet: 'Open Receivables', perm: books },
   { key: 'openPayables', sheet: 'Open Payables', perm: books },
+  // After Clients and Suppliers: a credit balance lives on one of them.
+  { key: 'openDeposits', sheet: 'Open Deposits & Advances', perm: books },
   { key: 'bills', sheet: 'Bills', perm: books },
   { key: 'expenses', sheet: 'Expenses', perm: books },
   { key: 'fixedAssets', sheet: 'Fixed Assets', perm: books },
@@ -33,6 +35,7 @@ export const endpointFor = (key) => ({
   openingBalances: 'setup/opening-balances/import',
   openReceivables: 'setup/open-receivables/import',
   openPayables: 'setup/open-payables/import',
+  openDeposits: 'setup/open-deposits/import',
   suppliers: 'suppliers/import',
   clients: 'client-accounts/import',
   bills: 'bills/import',
@@ -133,6 +136,15 @@ export async function runSetupImport(steps, { apiFetch, parseImportFile, onProgr
   return { results, inventory: inventoryStep ? inventoryStep.count : 0, checks: bookChecks(outcome, { stock: !!inventoryStep }) };
 }
 
+// [kind key, how the check names it, the account it must equal]
+const OPEN_DEPOSIT_CHECKS = [
+  ['customerDeposit', 'Customer deposits', 'Customer Advances / Deposits'],
+  ['customerCredit', 'Customer credit balances', 'Client Credit Balance'],
+  ['supplierAdvance', 'Supplier advances', 'Advances to Suppliers'],
+  ['supplierCredit', 'Supplier credit balances', 'Supplier Credit Balance'],
+  ['employeeAdvance', 'Employee advances', 'Advances to Employees'],
+];
+
 const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const near = (a, b) => Math.abs((Number(a) || 0) - (Number(b) || 0)) < 0.01;
 
@@ -159,6 +171,11 @@ export function bookChecks(outcome, { stock = false } = {}) {
       : { ok: false, text: `${label} total ${peso(registerTotal)}, but the balance sheet says ${peso(control)} - ${peso(Math.abs(registerTotal - control))} apart. ${fix}` });
     if (outcome.openReceivables || c.receivables) compare('Open invoices', outcome.openReceivables?.total || 0, c.receivables || 0, 'Add the missing invoices, or correct Accounts Receivable - Trade.');
     if (outcome.openPayables || c.payables) compare('Open bills', outcome.openPayables?.total || 0, c.payables || 0, 'Add the missing bills, or correct Accounts Payable - Trade.');
+    // Each kind of prepaid money against its own account on the balance sheet.
+    for (const [key, label, account] of OPEN_DEPOSIT_CHECKS) {
+      const got = outcome.openDeposits?.totals?.[key] || 0;
+      if (got || c[key]) compare(label, got, c[key] || 0, `Add the missing rows on Open Deposits & Advances, or correct ${account}.`);
+    }
     if (stock) checks.push({ ok: null, text: `Stock opens in a preview - confirm it there. Its value should come to the Inventory on the balance sheet (${peso(c.inventory)}); Reports → Books Health compares the two.` });
   }
   return checks;
@@ -166,7 +183,7 @@ export function bookChecks(outcome, { stock = false } = {}) {
 
 // The workbook itself: one sheet per template, a read-me, the column guide and
 // the reference lists. Returned as a workbook for the caller to save.
-export async function buildSetupWorkbook(XLSX, available, apiFetch) {
+export async function buildSetupWorkbook(XLSX, available, apiFetch, { businessType = 'fb' } = {}) {
   const specs = [];
   for (const t of available) {
     const d = await (await apiFetch(`/api/export/${t.key}?template=1`)).json();
@@ -182,14 +199,16 @@ export async function buildSetupWorkbook(XLSX, available, apiFetch) {
     ['Row 2 of every sheet is an example. Overwrite it, or leave it exactly as it is and it will be ignored.'],
     ['Then bring the whole file back: Ledger → Export All → Import all.'],
     [],
-    ['Moving over from books you already keep? Fill Chart of Accounts (only if your books use their own codes), P&L History, Opening Balances, Open Receivables and Open Payables.'],
-    ['Opening Balances is your balance sheet on the switch-over day, and it is the only sheet that posts balances. Stock, fixed assets and the open invoices and bills are then registered without posting - they are the detail behind that balance sheet - and the result checks that each one adds up to it.'],
+    ['Moving over from books you already keep? Fill Chart of Accounts (only if your books use their own codes), P&L History, Opening Balances, Open Receivables, Open Payables and Open Deposits & Advances.'],
+    ['Opening Balances is your balance sheet on the switch-over day, and it is the only sheet that posts balances. Stock, fixed assets, the open invoices and bills, and the deposits and advances still unused are then registered without posting - they are the detail behind that balance sheet - and the result checks that each one adds up to it.'],
     ['Or keep it in Google Sheets and link it: Settings → Setup workbook from Google Sheets.'],
     [],
     ['Sheet', 'What it adds', 'Done in this order because'],
     ...specs.map((s, i) => [s.sheet, s.intro || '', i === 0 ? 'Goes first.' : `Comes after ${specs.slice(0, i).map((x) => x.sheet).join(', ')}.`]),
     [],
-    ['Menu products are not in this workbook - they have their own sheet with recipes and sizes: Menu Setup → Menu Sheet.'],
+    [businessType === 'log'
+      ? 'Your catalog comes from the Inventory sheet: each stocked item becomes a product you can sell, priced from its SRP / unit. Adjust prices afterwards in Catalog Setup or Pricing Control.'
+      : 'Menu products are not in this workbook - they have their own sheet with recipes and sizes: Menu Setup → Menu Sheet.'],
     ['"How to fill" lists every column: required or not, what to put, and an example. "Valid Values" and "Accounts" list the accepted entries.'],
   ];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(readMe), 'Read me');

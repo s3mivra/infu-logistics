@@ -57,6 +57,13 @@ export const PERMISSIONS = [
   // line - are held for sign-off unless the editor holds this. See
   // lib/changeApproval.js for exactly which fields are gated and why.
   { key: 'pricing.approve',    group: 'Accounting', label: 'Approve price, cost & credit-limit changes' },
+  // A journal entry typed by hand posts only with an approver's sign-off.
+  // Holding this, a person's own entries post directly (and are recorded as
+  // approved by them); without it, they wait for someone who does.
+  { key: 'journal.approve',    group: 'Accounting', label: 'Approve manual journal entries' },
+  // A sale on account beyond the client's credit limit goes through only with
+  // this person's approval (their PIN at the till, or their own sale).
+  { key: 'credit.approve',     group: 'Accounting', label: "Approve sales over a client's credit limit" },
   { key: 'reports.view',       group: 'Reports',     label: 'View reports' },
   { key: 'analytics.view',     group: 'Reports',     label: 'View analytics dashboard' },
   { key: 'audit.view',         group: 'Reports',     label: 'View audit report' },
@@ -96,16 +103,16 @@ export const SCREENS = [
     ['journal', 'General Ledger'], ['trial', 'Trial Balance'], ['pnl', 'P&L'], ['balance', 'Balance Sheet'],
     ['araap', 'AR & AP'], ['bills', 'Bills (AP)'],
     ['revolving', 'Revolving Funds'], ['expenses', 'Expenses'],
-    ['accperiods', 'Accounts & Periods'], ['backdate', 'Backdate Sale'], ['approvals', 'Approvals'],
+    ['accperiods', 'Accounts & Periods'], ['closing', 'Month-End Close'], ['backdate', 'Backdate Sale'], ['approvals', 'Approvals'],
     ['tenancy', 'Tenancy Health'], ['bookshealth', 'Books Health'], ['exportall', 'Export All'],
   ] },
   { tab: 'reports', label: 'Reports', parent: 'reports.view', pages: [
-    ['salessummary', 'Sales Summary'], ['salesline', 'Sales Line Items'], ['payments', 'By Payment'],
+    ['salessummary', 'Sales Summary'], ['salesline', 'Daily Sales Report'], ['saleschannel', 'Sales by Channel'], ['payments', 'By Payment'],
     ['profitcat', 'By Category'], ['menueng', 'Menu Engineering'],
     ['arreport', 'A/R Report'], ['collections', 'Collections'],
     ['apreport', 'A/P Report'], ['supplierpay', 'Supplier Payments'], ['checkvouchers', 'Check Vouchers'], ['advances', 'Advances'],
-    ['pnlmonthly', 'Monthly P&L'], ['bsmonthly', 'Monthly Balance Sheet'], ['percentagetax', 'Percentage Tax'], ['vatreturn', 'VAT Return'],
-    ['pricelog', 'Price Changes'], ['variance', 'Cashier Variance'], ['commissions', 'Commissions'],
+    ['pnlmonthly', 'Monthly P&L'], ['bsmonthly', 'Monthly Balance Sheet'], ['cashflow', 'Cash Flow'], ['budget', 'Budget vs Actual'], ['percentagetax', 'Percentage Tax'], ['vatreturn', 'VAT Return'],
+    ['pricelog', 'Price Changes'], ['variance', 'Cashier Variance'], ['commissions', 'Commissions'], ['exceptions', 'Exceptions'],
   ] },
 ];
 export const screenKey = (tab, page) => `screen.${tab}.${page}`;
@@ -156,7 +163,7 @@ export const ROLE_DEFAULT_PERMISSIONS = {
             'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage'],
   // The books role: view + post accounting, plus read-only ops context.
   finance: ['orders.view', 'inventory.view', 'procurement.view', 'production.view',
-            'accounting.view', 'accounting.manage', 'pricing.approve',
+            'accounting.view', 'accounting.manage', 'pricing.approve', 'credit.approve',
             'reports.view', 'analytics.view', 'audit.view'],
   cashier: ['pos.use', 'orders.view', 'orders.manage', 'orders.comp', 'inventory.view', 'inventory.waste', 'inventory.count', 'products.view', 'procurement.view'],
   staff:   ['pos.use', 'orders.view', 'orders.comp', 'inventory.view', 'inventory.waste', 'inventory.count', 'products.view'],
@@ -283,4 +290,78 @@ export function requirePermission(perm) {
     if (hasPermission(req.user, perm)) return next();
     return res.status(403).json({ success: false, error: `Forbidden: missing permission "${perm}".` });
   };
+}
+
+// ── Staff administration ─────────────────────────────────────────────────────
+// `users.manage` was in the catalogue - so the permissions UI offered it as a
+// tick box - while every /api/users mutation was guarded by requireSuperAdmin
+// alone. Granting it therefore did nothing, silently: the checkbox promised an
+// ability the routes would never honour.
+//
+// It is honoured now, but managing staff is the one permission that can be
+// used to grant every OTHER permission, so it comes with escalation limits
+// that superadmin does not need (see guardStaffEscalation below). A delegate
+// can run the roster; they cannot promote themselves.
+export function requireUserAdmin(req, res, next) {
+  if (norm(req.user?.role) === 'superadmin') return next();
+  if (hasPermission(req.user, 'users.manage')) return next();
+  return res.status(403).json({ success: false, error: 'Forbidden: missing permission "users.manage".' });
+}
+
+// Applied to create/update/delete of a staff account by a NON-superadmin.
+// Returns an error string to refuse with, or null to allow.
+//
+// Three rules, each closing a way to turn users.manage into full control:
+//   1. No touching a superadmin account - otherwise the delegate reassigns the
+//      owner's password and takes the deployment.
+//   2. No minting or promoting to superadmin.
+//   3. No granting a permission the grantor does not hold, which is how a
+//      narrow delegate would otherwise widen themselves one account at a time
+//      (make a new user with accounting.manage, log in as them).
+export function guardStaffEscalation(actor, { targetUser = null, role, permissions } = {}) {
+  if (norm(actor?.role) === 'superadmin') return null;
+
+  if (targetUser && norm(targetUser.role) === 'superadmin') {
+    return 'Only a superadmin can modify a superadmin account.';
+  }
+  if (role !== undefined && norm(role) === 'superadmin') {
+    return 'Only a superadmin can grant the superadmin role.';
+  }
+  // Judge the account's EFFECTIVE permissions afterwards, not just the boxes
+  // ticked. A role with no explicit permissions inherits the role's defaults,
+  // so checking only the ticked list let a delegate create an "Admin" whose
+  // defaults (accounting.view, settings.manage, ...) they do not hold
+  // themselves.
+  // Same source hasPermission() uses: the resolved set minted into the
+  // token. resolvePermissions(actor) fell back to the ROLE's defaults,
+  // because a token carries `perms`, not `permissions`.
+  const mine = new Set(Array.isArray(actor?.perms) ? actor.perms : resolvePermissions(actor));
+  // The account as it stands must also be within the delegate's reach. Only
+  // role/permission changes were checked, so a delegate could reset the
+  // password of an Admin holding more than they do, sign in as that Admin,
+  // and have everything the Admin had. Same for renaming or deleting them.
+  if (targetUser && String(targetUser._id) !== String(actor?.id || actor?._id)) {
+    const current = resolvePermissions({ role: targetUser.role || 'Staff', permissions: targetUser.permissions || [] });
+    const beyond = current.filter((k) => !mine.has(k));
+    if (beyond.length) {
+      return `This account holds permissions you do not hold yourself (${beyond.join(', ')}). Ask a superadmin.`;
+    }
+  }
+  const changesAccess = !targetUser || role !== undefined || Array.isArray(permissions);
+  if (changesAccess) {
+    const nextRole = role !== undefined ? role : (targetUser?.role || 'Staff');
+    const nextPerms = (Array.isArray(permissions) ? permissions : (targetUser?.permissions || []))
+      .filter((k) => PERMISSION_KEYS.has(k));
+    const effective = resolvePermissions({ role: nextRole, permissions: nextPerms });
+    const over = effective.filter((k) => !mine.has(k));
+    if (over.length) {
+      return `This would give the account permissions you do not hold yourself: ${over.join(', ')}.`;
+    }
+  }
+  // Editing your own role or permission set is self-escalation by definition.
+  if (targetUser && String(targetUser._id) === String(actor?.id || actor?._id)
+      && (role !== undefined || Array.isArray(permissions))) {
+    return 'You cannot change your own role or permissions.';
+  }
+  return null;
 }

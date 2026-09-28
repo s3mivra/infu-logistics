@@ -9,6 +9,9 @@ import { captureError } from '../lib/errorLog.js';
 import { addBatch, soonestExpiry, consumeBatches } from '../lib/expiry.js';
 import { dayStart } from '../lib/reportRange.js';
 
+import { atomic } from '../lib/atomicRoute.js';
+import { splitUpdate } from '../lib/changeApproval.js';
+import { hasPermission } from '../lib/authz.js';
 export default function registerPurchaseOrders(ctx) {
   const {
     app,
@@ -31,6 +34,7 @@ export default function registerPurchaseOrders(ctx) {
     Bill,
     BUSINESS_TYPE,
     Supplier,
+    ChangeRequest,
     Inventory,
     StockCard,
     JournalEntry,
@@ -197,7 +201,7 @@ export default function registerPurchaseOrders(ctx) {
   // ── UPDATE (edit draft header/lines, or move status Ordered↔Processing) ────────
   // PATCH /api/purchase-orders/:id  { supplier?, expectedDate?, notes?, status?, lines? }
   // Editing lines is only allowed before the PO is reconciled (Complete/Incomplete).
-  app.patch('/api/purchase-orders/:id', verifyToken, ...canManageProc, async (req, res) => {
+  app.patch('/api/purchase-orders/:id', verifyToken, ...canManageProc, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const po = await PurchaseOrder.findOne({ _id: req.params.id, ...tenantScope(req) });
@@ -236,7 +240,7 @@ export default function registerPurchaseOrders(ctx) {
       logAudit?.(req, { action: 'update', entity: 'purchase_order', entityId: po.poNumber, after: { status: po.status } });
       res.json({ success: true, purchaseOrder: po.toObject() });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
-  });
+  }));
 
   // A PO paid before delivery becomes a supplier advance (170200), not a
   // payable. It is an ASSET while it stands - the supplier owes us goods - and
@@ -514,7 +518,7 @@ export default function registerPurchaseOrders(ctx) {
   // Sets receivedQty per line, computes actualTotal, and flips status to Complete
   // (every line received ≥ ordered) or Incomplete (any short). Terminal - the PO
   // becomes read-only afterward.
-  app.post('/api/purchase-orders/:id/receive', verifyToken, ...canManageProc, async (req, res) => {
+  app.post('/api/purchase-orders/:id/receive', verifyToken, ...canManageProc, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const po = await PurchaseOrder.findOne({ _id: req.params.id, ...tenantScope(req) });
@@ -574,13 +578,34 @@ export default function registerPurchaseOrders(ctx) {
       // BillSchema comment in server.js for why source:'PO' bills don't wait
       // for approval to book the liability, only to be paid.
       let bill = null;
-      // Bill.supplierId is required - a PO placed against a free-text supplier
-      // name with no linked Supplier record (po.supplierId unset) can't get a
-      // bill. The receipt and its journal entry still post either way; this
-      // only affects the approval/scheduling workflow layered on top.
+      // Bill.supplierId is required, but a PO can be placed against a
+      // free-text supplier name with no linked Supplier record. That used to
+      // mean no bill - while the receipt still credited 220000, so the A/P
+      // subsidiary ledger could not see a payable the control account held.
+      // The supplier's name is already on the PO: link (or create) the record
+      // and let the bill be raised. Matching is by the same trimmed name the
+      // manual create path de-duplicates on.
+      //
       // A bill is a demand for payment. Raising one for a delivery already paid
       // for in advance asks for the money twice - approve and pay it and the
-      // supplier is paid twice over, with A/P driven negative.
+      // supplier is paid twice over, with A/P driven negative. So both of these
+      // key off payableTotal, not the delivery's full cost.
+      if (posted.payableTotal > 0 && !po.supplierId && String(po.supplier || '').trim()) {
+        try {
+          const cleanName = title(po.supplier);
+          let sup = await Supplier.findOne({ name: cleanName, ...tenantScope(req) });
+          if (!sup) {
+            sup = await Supplier.create({
+              supplierCode: await mkSeqRef('SUP'),
+              name: cleanName,
+              notes: `Created automatically when ${po.poNumber} was received.`,
+              ...tenantScope(req),
+            });
+          }
+          po.supplierId = sup._id;
+          await po.save();
+        } catch (err) { captureError(req, err); }   // fall through: the receipt still stands
+      }
       if (posted.payableTotal > 0 && po.supplierId) {
         const billNumber = await mkSeqRef('BILL');
         bill = await Bill.create({
@@ -604,7 +629,7 @@ export default function registerPurchaseOrders(ctx) {
       if (posted.totalCost > 0) emitToMgr?.('erpUpdated');
       res.json({ success: true, purchaseOrder: po.toObject(), bill });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
-  });
+  }));
 
   // -- RETURN TO SUPPLIER (debit memo) -------------------------------------------
   // POST /api/purchase-orders/:id/return  { lines: [{ lineId?, index?, qty }], reason }
@@ -620,7 +645,7 @@ export default function registerPurchaseOrders(ctx) {
   // side lands wherever the money actually is - against the supplier's still-open
   // invoice first, and only the remainder as credit they hold for us, because a
   // debit memo against an invoice already paid does not un-pay it.
-  app.post('/api/purchase-orders/:id/return', verifyToken, ...canManageProc, async (req, res) => {
+  app.post('/api/purchase-orders/:id/return', verifyToken, ...canManageProc, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const po = await PurchaseOrder.findOne({ _id: req.params.id, ...tenantScope(req) });
@@ -807,7 +832,7 @@ export default function registerPurchaseOrders(ctx) {
       emitToMgr?.('erpUpdated');
       res.json({ success: true, purchaseOrder: po.toObject(), debitMemo: { returnNumber: retRef, amount: grossTotal, vatAmount: vatTotal, restoredToAdvance, appliedToBills, creditToSupplier } });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
-  });
+  }));
 
   // ── DELETE (only drafts / cancelled - never a reconciled record) ───────────────
   app.delete('/api/purchase-orders/:id', verifyToken, requireSuperAdmin, async (req, res) => {
@@ -994,12 +1019,31 @@ export default function registerPurchaseOrders(ctx) {
       if (registeredName !== undefined) update.registeredName = freeText(registeredName).slice(0, 200);
       if (typeof isVatRegistered === 'boolean') update.isVatRegistered = isVatRegistered;
       if (typeof isActive === 'boolean') update.isActive = isActive;
-      const supplier = await Supplier.findOneAndUpdate(
-        { _id: req.params.id, ...tenantScope(req) }, { $set: update }, { new: true }
-      );
-      if (!supplier) return res.status(404).json({ success: false, error: 'Not found' });
-      logAudit?.(req, { action: 'update', entity: 'supplier', entityId: supplier.supplierCode });
-      res.json({ success: true, supplier: supplier.toObject() });
+
+      // Master-data approval: who we pay and what their invoices can be
+      // claimed as (name, TIN, registered name, VAT status) change only with
+      // sign-off. Contact details save at once. See lib/changeApproval.js.
+      const existing = await Supplier.findOne({ _id: req.params.id, ...tenantScope(req) }).lean();
+      if (!existing) return res.status(404).json({ success: false, error: 'Not found' });
+      const { apply, pending } = splitUpdate({ entity: 'Supplier', existing, update, canApprove: hasPermission(req.user, 'pricing.approve') });
+      let changeRequest = null;
+      if (pending.length) {
+        changeRequest = await ChangeRequest.create({
+          businessType: BUSINESS_TYPE, ...tenantScope(req),
+          entity: 'Supplier', entityId: String(existing._id), entityName: existing.name || '',
+          changes: pending, reason: String(req.body?.reason || '').trim().slice(0, 300),
+          requestedBy: req.user?.name || '',
+        });
+        emitToMgr?.('mgrAlert', { kind: 'changeRequest', ref: existing.name, message: `${req.user?.name || 'Someone'} requested a change to supplier ${existing.name}: ${pending.map(c => c.label).join(', ')}.` });
+      }
+      const supplier = Object.keys(apply).length
+        ? await Supplier.findOneAndUpdate({ _id: req.params.id, ...tenantScope(req) }, { $set: apply }, { new: true })
+        : await Supplier.findById(req.params.id);
+      logAudit?.(req, { action: 'update', entity: 'supplier', entityId: supplier.supplierCode, before: Object.fromEntries(Object.keys(apply).map(k => [k, existing[k]])), after: apply });
+      res.json({
+        success: true, supplier: supplier.toObject(),
+        ...(changeRequest ? { changeRequest, pendingApproval: pending.map(c => c.label), message: `Saved. ${pending.map(c => c.label).join(', ')} will change once approved.` } : {}),
+      });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 

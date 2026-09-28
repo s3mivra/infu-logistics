@@ -20,6 +20,8 @@ import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 import { normaliseInventoryRow, inventoryImportPayload } from '../../client/src/shared/importSheets.js';
 import { DATASETS } from '../lib/dataSets.js';
+// Fixture resets may clear journal entries, which are otherwise append-only.
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -46,7 +48,7 @@ describe('every importable dataset describes its own template', () => {
   it('finds the ones that claim to be importable', () => {
     // If this list shrinks, something lost its importSpec.
     expect(IMPORTABLE.map(([k]) => k).sort()).toEqual(
-      ['accounts', 'bills', 'clients', 'expenses', 'fixedAssets', 'inventory', 'openPayables', 'openReceivables', 'openingBalances', 'pnlHistory', 'products', 'suppliers'],
+      ['accounts', 'bills', 'clients', 'expenses', 'fixedAssets', 'inventory', 'openDeposits', 'openPayables', 'openReceivables', 'openingBalances', 'pnlHistory', 'products', 'suppliers'],
     );
   });
 
@@ -78,7 +80,7 @@ describe('every importable dataset describes its own template', () => {
 describe('the template round-trips through its own importer', () => {
   beforeEach(async () => {
     for (const n of ['Supplier', 'Bill', 'ClientAccount', 'Inventory', 'FixedAsset', 'JournalEntry', 'Settings']) {
-      await M(n).deleteMany({});
+      await withLedgerMaintenance(() => M(n).deleteMany({}));
     }
   });
 

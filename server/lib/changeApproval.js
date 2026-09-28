@@ -18,16 +18,27 @@ export const GUARDED_FIELDS = {
     basePrice:    'Selling price',
     costOverride: 'Recipe cost override',
   },
+  // Who we pay, and what their invoices can be claimed as: the name bills are
+  // made out to, the TIN and registered name a 2307 and an input-VAT claim
+  // rest on, and whether they charge VAT at all. Contact details are not.
+  Supplier: {
+    name:            'Supplier name',
+    tin:             'Supplier TIN',
+    registeredName:  'Registered name (on 2307s and invoices)',
+    isVatRegistered: 'VAT-registered',
+  },
+  // A client's credit line. Edited directly only by a superadmin; anyone else
+  // with the books files it here (POST /api/client-accounts/:id/credit-request).
+  ClientAccount: {
+    creditLimit:     'Credit limit',
+    creditTermsDays: 'Credit terms (days)',
+  },
 };
 
-// NOTE on scope: inventory unit cost / SRP and client credit limits are
-// deliberately NOT listed. Editing either is already superadmin-only
-// (PUT /api/inventory/:id, PATCH /api/client-accounts/:id), and a superadmin
-// holds pricing.approve - so a gate on those routes could never fire. Listing
-// the fields anyway would be dead config that reads like a protection which
-// isn't there. Product pricing is the live surface: PUT /api/products/:id is
-// requireStaff, and it is what the Pricing Control tab edits. To gate the
-// others, move those routes off requireSuperAdmin first, then add them here.
+// NOTE on scope: inventory unit cost / SRP is not listed - editing it is
+// superadmin-only (PUT /api/inventory/:id) and a superadmin holds
+// pricing.approve, so a gate there could never fire. Client credit terms are
+// listed because a non-superadmin can REQUEST a change to them.
 
 export const APPROVAL_ENTITIES = Object.keys(GUARDED_FIELDS);
 

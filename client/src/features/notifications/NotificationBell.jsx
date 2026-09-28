@@ -108,7 +108,7 @@ export default function NotificationBell({ align = 'right', full = false }) {
         aria-expanded={open}
         className={`relative flex items-center gap-1.5 px-2 py-2 rounded-xl font-bold text-xs border transition ${full ? 'w-full' : ''} ${
           data.criticalCount > 0
-            ? 'bg-red-500 text-white border-red-500 hover:bg-red-500/60'
+            ? 'bg-red-700 text-white border-red-700 hover:bg-red-500/60'
             : count > 0
               ? 'bg-amber-400 text-black border-amber-400 hover:bg-amber-300'
               : 'bg-white/5 text-fg/75 border-white/10 hover:bg-white/10 hover:text-fg'

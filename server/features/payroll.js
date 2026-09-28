@@ -19,10 +19,12 @@
 // different days, and a payroll approved on the 28th but paid on the 3rd is a
 // liability in between. Collapsing them would put the wages in the wrong month
 // or the cash outflow in the wrong one.
+import { businessDateStr } from '../lib/businessTime.js';
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { requireModule } from '../lib/optionalModules.js';
 
+import { atomic } from '../lib/atomicRoute.js';
 export default function registerPayroll(ctx) {
   const {
     app, mongoose, IS_PROD, log, BUSINESS_TYPE, tenantScope, logAudit, issueCheckVoucher,
@@ -286,7 +288,7 @@ export default function registerPayroll(ctx) {
   });
 
   // ── APPROVE: the wages hit the books ──────────────────────────────────────
-  app.post('/api/payroll-runs/:id/approve', verifyToken, ...canPost, async (req, res) => {
+  app.post('/api/payroll-runs/:id/approve', verifyToken, ...canPost, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const run = await PayrollRun.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
@@ -317,7 +319,7 @@ export default function registerPayroll(ctx) {
       assertBalanced(lines, reference);
       await JournalEntry.create({
         date: run.periodEnd, reference,
-        description: `Payroll ${run.reference} for ${run.lines.length} employee(s), period ending ${run.periodEnd.toISOString().slice(0, 10)}`,
+        description: `Payroll ${run.reference} for ${run.lines.length} employee(s), period ending ${businessDateStr(run.periodEnd)}`,
         lines,
         totalDebit: money(lines.reduce((s, l) => s + l.debit, 0)),
         totalCredit: money(lines.reduce((s, l) => s + l.credit, 0)),
@@ -335,10 +337,10 @@ export default function registerPayroll(ctx) {
       log.error?.({ err }, 'POST /api/payroll-runs/:id/approve failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 
   // ── PAY: the money actually leaves ────────────────────────────────────────
-  app.post('/api/payroll-runs/:id/pay', verifyToken, ...canPost, async (req, res) => {
+  app.post('/api/payroll-runs/:id/pay', verifyToken, ...canPost, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const run = await PayrollRun.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
@@ -375,7 +377,7 @@ export default function registerPayroll(ctx) {
         payeeType: 'other',
         payeeName: `Payroll ${run.reference} - ${run.lines.length} employee(s)`,
         amount: paying, purpose: 'payroll', sourceAccount: cashCode,
-        notes: `Net pay for ${new Date(run.periodStart).toISOString().slice(0, 10)} to ${new Date(run.periodEnd).toISOString().slice(0, 10)}`,
+        notes: `Net pay for ${businessDateStr(run.periodStart)} to ${businessDateStr(run.periodEnd)}`,
         journalEntryRef: reference, date: when,
       });
 
@@ -391,7 +393,7 @@ export default function registerPayroll(ctx) {
       log.error?.({ err }, 'POST /api/payroll-runs/:id/pay failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 
   // ── ONE PERSON'S PAYSLIP ──────────────────────────────────────────────────
   app.get('/api/payroll-runs/:id/payslip/:index', verifyToken, ...canView, async (req, res) => {

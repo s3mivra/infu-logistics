@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { login } from './helpers.js';
+import { login, openSettings } from './helpers.js';
 
 // Whole-dashboard smoke: open every tab and assert each lazy chunk mounts and no
 // runtime/console errors occur anywhere. Catches broken tabs, failed lazy-loads,
@@ -37,7 +37,10 @@ test('every dashboard tab opens without runtime errors', async ({ page }) => {
     // alert badge (e.g. "Inventory & Stock 2"), so their accessible name depends
     // on current stock. Matching the start of the label keeps this test about
     // navigation instead of about how much stock happens to be low.
-    const name = new RegExp('^' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    // The same tab is "Catalog Setup" on a logistics deployment.
+    const name = label === 'Menu Setup'
+      ? /^(Menu|Catalog) Setup/
+      : new RegExp('^' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
     await page.getByRole('button', { name }).first().click();
     // Lazy tab chunk finished mounting once the Suspense "Loading…" fallback is gone.
     await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
@@ -81,7 +84,7 @@ test('the optional accounting modules open once they are switched on', async ({ 
 
   await login(page);
 
-  await page.getByRole('button', { name: /^Settings/ }).first().click();
+  await openSettings(page);
   await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
 
   // The card only renders for a superadmin, which is who we are logged in as.

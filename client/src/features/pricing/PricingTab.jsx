@@ -1,4 +1,5 @@
 ﻿import React, { useState, useMemo } from 'react';
+import { dateStr } from '../../shared/businessDay.js';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, History } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
@@ -172,7 +173,7 @@ export default function PricingTab({ ctx }) {
   };
 
   const editAutoRule = (rule) => {
-    const iso = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
+    const iso = (d) => (d ? dateStr(d) : '');
     setAutoRuleEditId(rule._id);
     setAutoRuleForm({
       name: rule.name || '', percent: String(rule.percent ?? ''),
@@ -351,7 +352,7 @@ export default function PricingTab({ ctx }) {
                     <tr key={row.id} className={`border-white/10 hover:bg-page-bg/30 transition ${row.name !== '' ? 'border-t' : ''} ${isUnavailable ? 'opacity-50' : ''}`}>
                       <td className={`py-2 font-bold ${row.name !== '' ? 'text-fg pt-4' : ''}`}>
                         {row.name}
-                        {isUnavailable && <span className="ml-2 text-[9px] bg-red-500 text-white border border-red-500 rounded px-1 py-0.5 font-black uppercase tracking-wider">Removed</span>}
+                        {isUnavailable && <span className="ml-2 text-[9px] bg-red-700 text-white border border-red-500 rounded px-1 py-0.5 font-black uppercase tracking-wider">Removed</span>}
                         {row.isBase && row.product.isOutOfStock && <span className="ml-2 text-[9px] bg-amber-500 text-white border border-amber-500 rounded px-1 py-0.5 font-black uppercase tracking-wider">OOS</span>}
                       </td>
                       <td className={`py-2 text-xs text-fg ${row.name !== '' ? 'pt-4' : ''}`}>{row.cat}</td>
@@ -448,8 +449,8 @@ export default function PricingTab({ ctx }) {
                               title={isUnavailable ? 'Click to restore (un-remove)' : 'Click to REMOVE from menu (kept in reporting until stock is zero)'}
                               className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition border ${
                                 isUnavailable
-                                  ? 'bg-red-500 text-white border-red-500 hover:bg-green-500 hover:text-white hover:border-green-500'
-                                  : 'bg-transparent text-fg/70 border-white/10 hover:bg-red-500 hover:text-white hover:border-red-500'
+                                  ? 'bg-red-700 text-white border-red-700 hover:bg-green-500 hover:text-white hover:border-green-500'
+                                  : 'bg-transparent text-fg/70 border-white/10 hover:bg-red-700 hover:text-white hover:border-red-500'
                               }`}
                             >
                               {isUnavailable ? 'REMOVED' : 'LIVE'}
@@ -632,7 +633,7 @@ export default function PricingTab({ ctx }) {
                     <div key={r._id} className={`bg-page-bg border rounded-lg p-3 flex items-start justify-between gap-3 ${r.active ? 'border-white/10' : 'border-white/5 opacity-60'}`}>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <p className="font-bold text-fg text-sm truncate">{r.name}</p>
+                          <p className="font-bold text-fg text-sm truncate" title={String((r.name) ?? '')}>{r.name}</p>
                           <span className="text-xs font-mono font-black text-brand-text">{r.percent}% OFF</span>
                           {!r.active && <span className="text-[9px] uppercase tracking-widest font-black text-warning border border-warning/40 rounded px-1.5 py-0.5">Paused</span>}
                           {!!r.priority && <span className="text-[9px] uppercase tracking-widest font-bold text-fg/70">Priority {r.priority}</span>}

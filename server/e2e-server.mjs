@@ -22,6 +22,9 @@ process.env.JWT_SECRET = 'e2e-only-secret-not-for-production-use-1234567890';
 process.env.PORT = process.env.PORT || '5002';
 process.env.BUSINESS_TYPE = process.env.BUSINESS_TYPE || 'log';
 process.env.NODE_ENV = 'development';
+// Every e2e test drives the SAME Super Admin account back to back, which is far
+// more traffic per minute than any real user. Production keeps its 300/min.
+process.env.API_RATE_LIMIT_PER_MIN = process.env.API_RATE_LIMIT_PER_MIN || '5000';
 
 console.log('[e2e-server] in-memory MongoDB at', process.env.MONGO_URI);
 await import('./server.js');

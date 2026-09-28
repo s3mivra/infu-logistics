@@ -1,4 +1,5 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
+import { roundMoney } from '../../shared/money.js';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, Upload, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Receipt, History, HandCoins, Wallet } from 'lucide-react';
 import { isCancelledRow, isCancelledSheet, partitionCancelledGroups } from '../../shared/backdateCancelled';
 import { usePagination } from '../../shared/usePagination';
@@ -7,10 +8,14 @@ import ExpensesPage from './ExpensesPage';
 import * as ui from '../../shared/ui';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import { LEDGER_TAB_GROUPS, REPORT_TAB_GROUPS } from '../dashboard/navRegistry';
+import * as auth from '../auth/auth';
 
-import { monthStartStr, todayStr } from '../../shared/businessDay.js';
+import { dateStr, monthStartStr, todayStr } from '../../shared/businessDay.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import TemplatesCard from './TemplatesCard';
+import ManualJournalApprovals from './ManualJournalApprovals';
+import { CashFlowReport, SalesByChannelReport, BudgetReport, ExceptionsReport, ClosingChecklist } from './ProcessReports';
+import Attachments from '../../shared/Attachments';
 import RangePresets from '../../shared/RangePresets';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
@@ -102,6 +107,7 @@ export default function LedgerTab({ ctx }) {
     bills, billsFilter, setBillsFilter, fetchBills, billBusy,
     billCreate, setBillCreate, submitCreateBill,
     approveBill, rejectBill, scheduleBill,
+    billInvoiceModal, setBillInvoiceModal, billInvoiceForm, setBillInvoiceForm, openBillInvoice, submitBillInvoice,
     billPayModal, setBillPayModal, billPayFrom, setBillPayFrom, billPayReference, setBillPayReference, submitBillPay, expenseAccounts,
     billPayAmount, setBillPayAmount, applySupplierCredit,
     clientCreditModal, setClientCreditModal, openClientCredit, submitClientCredit,
@@ -238,9 +244,7 @@ export default function LedgerTab({ ctx }) {
   // Export All defaults to the current month: the journal export is capped at
   // one quarter server-side, so a wide-open default would just fail.
   const [exportAllRange, setExportAllRange] = useState(() => {
-    const now = new Date();
-    const iso = (d) => d.toISOString().slice(0, 10);
-    return { start: iso(new Date(now.getFullYear(), now.getMonth(), 1)), end: iso(now) };
+    return { start: monthStartStr(), end: todayStr() };
   });
   // What to export. A key that is missing counts as selected, so everything is
   // ticked until someone chooses otherwise; the presets write explicit values.
@@ -272,6 +276,49 @@ export default function LedgerTab({ ctx }) {
   };
   const [bdSearch, setBdSearch] = useState('');
   const [bdBusy, setBdBusy] = useState(false);
+  // Bumped when an entry is sent for approval, so the waiting list reloads.
+  const [jeDraftsKey, setJeDraftsKey] = useState(0);
+  // A change request's values in the terms of their field: money in pesos,
+  // terms in days, yes/no for flags, and text (a TIN, a name) as written.
+  const MONEY_FIELDS = new Set(['basePrice', 'costOverride', 'creditLimit', 'unitCost', 'srp']);
+  const crValue = (field, v) => {
+    if (v === null || v === undefined || v === '') return field === 'creditLimit' ? 'no limit' : '(blank)';
+    if (MONEY_FIELDS.has(field)) return `₱${Number(v || 0).toFixed(2)}`;
+    if (field === 'creditTermsDays') return `${v} days`;
+    if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+    return String(v);
+  };
+  const CR_ENTITY = { Product: 'Product', Inventory: 'Stock item', ClientAccount: 'Client', Supplier: 'Supplier' };
+  // Daily sales report: the item-level detail, or one row per sales document.
+  const [sliView, setSliView] = useState('detail');
+  const [sliSummary, setSliSummary] = useState(null);
+  const loadSliSummary = async () => {
+    try {
+      const d = await (await apiFetch(`/api/reports/sales-documents?start=${sliRange.start}&end=${sliRange.end}`)).json();
+      if (d.success) setSliSummary(d); else ui.alert(d.error || 'Could not load the summary.');
+    } catch { ui.alert('Network error.'); }
+  };
+  const loadSli = () => (sliView === 'summary' ? loadSliSummary() : fetchSalesLineItems());
+  const fmtD = (d) => (d ? dateStr(d) : '');
+  const exportSliExcel = async () => {
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+    if (sliView === 'summary') {
+      if (!sliSummary) return ui.alert('Load the summary first.');
+      const head = ['Posting Date', 'Document Date', 'Customer Number', 'Customer Name', 'Order', 'Billing Document No.', 'Delivery Receipt No.', 'Sales Invoice / OR No.', 'Payment', 'Gross', 'Discount', 'Billing / Sales Amount'];
+      const body = sliSummary.rows.map(r => [fmtD(r.postingDate), fmtD(r.documentDate), r.customerNumber, r.customerName, r.orderNumber, r.billingNumber, r.drNumbers, r.orNumber, r.paymentMethod, r.gross, r.discount, r.amount]);
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body, [], ['TOTAL', '', '', '', '', '', '', '', '', '', '', sliSummary.total]]), 'Daily Sales Summary');
+    } else {
+      if (!salesLineItems) return ui.alert('Load the report first.');
+      const head = ['Posting Date', 'Document Date', 'Item Code', 'Product Name', 'Customer Number', 'Customer Name', 'Billing Document No.', 'Delivery Receipt No.', 'Sales Invoice / OR No.', 'Unit Price', 'Quantity', 'Gross Sales', 'Discount', 'Net Sales'];
+      const body = salesLineItems.rows.filter(r => !r.isComponent).map(r => [fmtD(r.postingDate || r.date), fmtD(r.documentDate || r.date), r.itemCode, r.itemName, r.customerId, r.customerName, r.billingNumber || '', r.drNumbers || '', r.orNumber || '', r.unitPrice ?? '', r.quantity, r.grossSales ?? r.lineTotal, r.discount ?? 0, r.netSales ?? r.lineTotal]);
+      const t = salesLineItems.totals || {};
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body, [], ['TOTAL', '', '', '', '', '', '', '', '', '', '', t.gross ?? salesLineItems.grandTotal, t.discount ?? 0, t.net ?? salesLineItems.grandTotal]]), 'Daily Sales Detail');
+    }
+    XLSX.writeFile(wb, `Daily-Sales-${sliView === 'summary' ? 'Summary' : 'Detail'}_${sliRange.start}_to_${sliRange.end}.xlsx`);
+  };
+  // The voucher whose supporting documents are open.
+  const [cvDocs, setCvDocs] = useState(null);
 
   const bdAddProduct = (p) => setBdCart(prev => {
     const key = String(p._id);
@@ -285,12 +332,19 @@ export default function LedgerTab({ ctx }) {
     return n === 0 ? [] : [{ ...x, quantity: n }];
   }));
   const bdSetPrice = (id, price) => setBdCart(prev => prev.map(x => x.productId === id ? { ...x, price: Math.max(0, Number(price) || 0) } : x));
+  // A line's own discount (0-100%), kept as typed so the field can be cleared.
+  const bdSetLineDisc = (id, v) => setBdCart(prev => prev.map(x => x.productId === id ? { ...x, discountPercent: v } : x));
   const bdRemove = (id) => setBdCart(prev => prev.filter(x => x.productId !== id));
 
+  const r2 = roundMoney;
+  const bdLinePct = (x) => Math.max(0, Math.min(100, Number(x.discountPercent) || 0));
   const bdGross = bdCart.reduce((s, x) => s + x.price * x.quantity, 0);
   const bdPct = bd.isComplimentary ? 0 : Math.max(0, Math.min(100, Number(bd.discountPercent) || 0));
-  const bdDiscount = +(bdGross * bdPct / 100).toFixed(2);
-  const bdTotal = bd.isComplimentary ? 0 : +(bdGross - bdDiscount).toFixed(2);
+  // Same order as the server: each line's own discount first, then the
+  // order-wide percent on what is left.
+  const bdLineDiscount = bd.isComplimentary ? 0 : r2(bdCart.reduce((s, x) => s + r2(x.price * x.quantity * bdLinePct(x) / 100), 0));
+  const bdDiscount = r2(bdLineDiscount + (bdGross - bdLineDiscount) * bdPct / 100);
+  const bdTotal = bd.isComplimentary ? 0 : r2(bdGross - bdDiscount);
 
   const submitBackdateCart = async () => {
     if (!bd.date) return ui.alert('Pick the sale date.');
@@ -303,7 +357,7 @@ export default function LedgerTab({ ctx }) {
       const r = await apiFetch('/api/admin/backdate-sale', { method: 'POST', body: JSON.stringify({
         date: bd.date, customerName: bd.customerName, paymentMethod: bd.paymentMethod, notes: bd.notes,
         discountPercent: bdPct, affectInventory: bd.affectInventory, isComplimentary: bd.isComplimentary,
-        items: bdCart.map(x => ({ name: x.name, price: x.price, quantity: x.quantity, productId: x.productId, productCode: x.productCode })),
+        items: bdCart.map(x => ({ name: x.name, price: x.price, quantity: x.quantity, discountPercent: bdLinePct(x), productId: x.productId, productCode: x.productCode })),
       }) });
       const d = await r.json();
       if (d.success) {
@@ -870,6 +924,30 @@ export default function LedgerTab({ ctx }) {
     finally { setVatLoading(false); }
   };
 
+  // Book a month's percentage tax into the ledger (DR 745000 / CR 230400).
+  // The report alone never reached the books, so the P&L overstated net
+  // income. Safe to re-run: it posts only the difference from what is
+  // already accrued, and nothing at all when the month is unchanged.
+  const [ptaxMonth, setPtaxMonth] = useState(() => {
+    const d = new Date(); d.setDate(0);            // last month
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [ptaxAccruing, setPtaxAccruing] = useState(false);
+  const accruePtax = async () => {
+    if (!await ui.confirm(`Book the 3% percentage tax for ${ptaxMonth} into the ledger?
+
+It posts only what is not already accrued for that month.`)) return;
+    setPtaxAccruing(true);
+    try {
+      const r = await apiFetch('/api/reports/percentage-tax/accrue', { method: 'POST', body: JSON.stringify({ month: ptaxMonth }) });
+      const d = await r.json();
+      if (!d.success) return ui.alert(d.error || 'Could not accrue.');
+      ui.alert(d.posted
+        ? `Posted ${d.reference}: ${money2(d.amount)}. The month's tax is ${money2(d.taxDue)}.`
+        : `Nothing to post - ${ptaxMonth} is already accrued at ${money2(d.taxDue)}.`);
+    } catch { ui.alert('Network error.'); }
+    finally { setPtaxAccruing(false); }
+  };
   const exportTrialBalancePDF = async () => {
     if (!tb || tb.error) return ui.alert('Load the Trial Balance first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
@@ -955,8 +1033,15 @@ export default function LedgerTab({ ctx }) {
     if (!(await ui.confirm(`Approve ${slip.slipNumber}: ${label}?`))) return;
     setReqSlipBusy(true);
     try {
-      const r = await apiFetch(`/api/requisition-slips/${slip._id}/approve`, { method: 'POST', body: JSON.stringify({}) });
-      const d = await r.json();
+      const send = async (body) => (await apiFetch(`/api/requisition-slips/${slip._id}/approve`, { method: 'POST', body: JSON.stringify(body) })).json();
+      let d = await send({});
+      // Over the month's budget: the server holds it until the approver says
+      // why it should go ahead anyway. The reason is kept on the slip.
+      if (!d.success && d.overBudget) {
+        const reason = prompt(`${d.error}\n\nApprove over budget? Give the reason:`);
+        if (!reason || !reason.trim()) return;
+        d = await send({ acceptOverBudget: true, overBudgetReason: reason.trim() });
+      }
       if (d.success) { fetchRequisitionSlips(); fetchERPData(); ui.alert(`${slip.slipNumber} approved.`); }
       else ui.alert(d.error || 'Failed to approve.');
     } catch { ui.alert('Network error.'); }
@@ -1419,21 +1504,61 @@ export default function LedgerTab({ ctx }) {
             <div className="bg-surface border border-white/10 rounded-2xl p-5">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                 <div>
-                  <h3 className="text-lg font-black text-fg">Sales Line Items</h3>
-                  <p className="text-fg/65 text-xs">One row per item ordered - item code, item, quantity, per line.</p>
+                  <h3 className="text-lg font-black text-fg">Daily Sales Report</h3>
+                  <p className="text-fg/65 text-xs">{sliView === 'summary' ? 'One row per sales document, by posting date.' : 'One row per item sold - with its billing, delivery and invoice numbers.'}</p>
+                  <div className="flex gap-1 mt-2" role="tablist" aria-label="Report view">
+                    {[['detail', 'Detailed'], ['summary', 'Summary']].map(([k, label]) => (
+                      <button key={k} role="tab" aria-selected={sliView === k} onClick={() => { setSliView(k); if (k === 'summary' && !sliSummary) setTimeout(loadSliSummary, 0); }}
+                        className={`px-3 py-1 rounded-lg text-[11px] font-bold ${sliView === k ? 'bg-brand text-on-brand' : 'bg-white/5 text-fg/80 hover:bg-white/10'}`}>{label}</button>
+                    ))}
+                  </div>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <RangePresets value={sliRange} onChange={r => setSliRange(p => ({ ...p, ...r }))} onRun={fetchSalesLineItems} />
+                  <RangePresets value={sliRange} onChange={r => setSliRange(p => ({ ...p, ...r }))} onRun={loadSli} />
                   <input type="date" value={sliRange.start} onChange={e => setSliRange(p => ({ ...p, start: e.target.value }))}
                     className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
                   <span className="text-fg/65 font-bold text-sm">→</span>
                   <input type="date" value={sliRange.end} onChange={e => setSliRange(p => ({ ...p, end: e.target.value }))}
                     className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
-                  <button onClick={fetchSalesLineItems} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/80 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Load</button>
-                  {salesLineItems && <button onClick={exportSalesLineItemsPDF} className="flex items-center gap-1.5 bg-white/5 text-fg/80 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
+                  <button onClick={loadSli} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/80 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Load</button>
+                  {sliView === 'detail' && salesLineItems && <button onClick={exportSalesLineItemsPDF} className="flex items-center gap-1.5 bg-white/5 text-fg/80 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
+                  {((sliView === 'detail' && salesLineItems) || (sliView === 'summary' && sliSummary)) && <button onClick={exportSliExcel} className="flex items-center gap-1.5 bg-white/5 text-fg/80 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> Excel</button>}
                 </div>
               </div>
-              {!salesLineItems ? (
+              {sliView === 'summary' ? (
+                !sliSummary ? <p className="text-fg/65 text-sm">Pick a range and press Load.</p>
+                : sliSummary.rows.length === 0 ? <p className="text-fg/65 text-sm">No completed sales posted in range.</p>
+                : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm min-w-[980px]">
+                      <thead>
+                        <tr className="text-fg/80 text-[10px] font-black uppercase tracking-wider text-left border-b border-white/10">
+                          <th className="py-2">Posting</th><th className="py-2">Document</th><th className="py-2">Cust. No.</th><th className="py-2">Customer</th>
+                          <th className="py-2">Billing Doc</th><th className="py-2">DR No.</th><th className="py-2">SI / OR No.</th>
+                          <th className="py-2 text-right">Gross</th><th className="py-2 text-right">Discount</th><th className="py-2 text-right">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-fg/75">
+                        {sliSummary.rows.map((r, i) => (
+                          <tr key={i} className="border-b border-white/5 text-xs">
+                            <td className="py-1.5">{fmtD(r.postingDate)}</td><td className="py-1.5">{fmtD(r.documentDate)}</td>
+                            <td className="py-1.5 font-mono">{r.customerNumber}</td><td className="py-1.5">{r.customerName}</td>
+                            <td className="py-1.5 font-mono">{r.billingNumber || '-'}</td><td className="py-1.5 font-mono">{r.drNumbers || '-'}</td><td className="py-1.5 font-mono">{r.orNumber || '-'}</td>
+                            <td className="py-1.5 text-right font-mono">{money2(r.gross)}</td><td className="py-1.5 text-right font-mono">{money2(r.discount)}</td>
+                            <td className="py-1.5 text-right font-mono font-bold text-fg/90">{money2(r.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="font-black text-fg border-t-2 border-white/20">
+                          <td className="py-2" colSpan={9}>Total ({sliSummary.count} documents)</td>
+                          <td className="py-2 text-right font-mono text-brand-text">{money2(sliSummary.total)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )
+              ) : !salesLineItems ? (
                 <p className="text-fg/65 text-sm">Pick a range and press Load.</p>
               ) : sliPage.pageItems.length === 0 ? (
                 <p className="text-fg/65 text-sm">No completed sales in range.</p>
@@ -1442,34 +1567,43 @@ export default function LedgerTab({ ctx }) {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-fg/80 text-[10px] font-black uppercase tracking-wider text-left border-b border-white/10">
-                        <th className="py-2">Date</th>
-                        <th className="py-2">Customer ID</th><th className="py-2">Customer Name</th>
-                        <th className="py-2">Order</th>
+                        <th className="py-2">Posting</th><th className="py-2">Document</th>
+                        <th className="py-2">Cust. No.</th><th className="py-2">Customer Name</th>
+                        <th className="py-2">Billing / DR / SI</th>
                         <th className="py-2">Item Code</th><th className="py-2">Item</th>
+                        <th className="py-2 text-right">Unit Price</th>
                         <th className="py-2 text-right">Qty</th>
-                        <th className="py-2 text-right">Line Total</th>
+                        <th className="py-2 text-right">Gross</th>
+                        <th className="py-2 text-right">Discount</th>
+                        <th className="py-2 text-right">Net</th>
                       </tr>
                     </thead>
                     <tbody className="text-fg/75">
                       {sliPage.pageItems.map((row, i) => (
                         <tr key={i} className={`border-b border-white/5 ${row.isComponent ? 'bg-white/[0.02]' : ''}`}>
-                          <td className="py-1.5 text-fg/70 text-xs">{row.isComponent ? '' : (row.date ? new Date(row.date).toLocaleDateString() : '')}</td>
+                          <td className="py-1.5 text-fg/70 text-xs">{row.isComponent ? '' : fmtD(row.postingDate || row.date)}</td>
+                          <td className="py-1.5 text-fg/70 text-xs">{row.isComponent ? '' : fmtD(row.documentDate || row.date)}</td>
                           <td className="py-1.5 font-mono text-xs text-fg/70">{row.isComponent ? '' : (row.customerId || '-')}</td>
                           <td className="py-1.5 text-xs text-fg/70">{row.isComponent ? '' : (row.customerName || 'Guest')}</td>
-                          <td className="py-1.5 font-mono text-xs text-fg/70">{row.isComponent ? '' : row.orderNumber}</td>
+                          <td className="py-1.5 font-mono text-[10px] text-fg/70">{row.isComponent ? '' : [row.billingNumber, row.drNumbers, row.orNumber].filter(Boolean).join(' · ') || row.orderNumber}</td>
                           <td className="py-1.5 font-mono text-xs text-fg/70">{row.itemCode || (row.isComponent ? '' : '-')}</td>
                           <td className={`py-1.5 text-xs ${row.isComponent ? 'text-fg/70 pl-4' : 'text-fg/70'} ${row.isCombo ? 'font-bold' : ''}`}>
                             {row.isComponent ? `↳ ${row.itemName}` : row.itemName}{row.isCombo ? ' (promo)' : ''}
                           </td>
+                          <td className="py-1.5 text-right font-mono">{row.isComponent ? '' : money2(row.unitPrice ?? 0)}</td>
                           <td className="py-1.5 text-right font-mono">{row.quantity}</td>
-                          <td className="py-1.5 text-right font-mono font-bold text-fg/90">{row.isComponent ? <span className="text-fg/65 font-normal not-italic">included</span> : money2(row.lineTotal)}</td>
+                          <td className="py-1.5 text-right font-mono">{row.isComponent ? <span className="text-fg/65 font-normal not-italic">included</span> : money2(row.grossSales ?? row.lineTotal)}</td>
+                          <td className="py-1.5 text-right font-mono">{row.isComponent ? '' : money2(row.discount ?? 0)}</td>
+                          <td className="py-1.5 text-right font-mono font-bold text-fg/90">{row.isComponent ? '' : money2(row.netSales ?? row.lineTotal)}</td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot>
                       <tr className="font-black text-fg border-t-2 border-white/20">
-                        <td className="py-2" colSpan={7}>Total</td>
-                        <td className="py-2 text-right font-mono text-brand-text">{money2(salesLineItems.grandTotal)}</td>
+                        <td className="py-2" colSpan={9}>Total</td>
+                        <td className="py-2 text-right font-mono">{money2(salesLineItems.totals?.gross ?? salesLineItems.grandTotal)}</td>
+                        <td className="py-2 text-right font-mono">{money2(salesLineItems.totals?.discount ?? 0)}</td>
+                        <td className="py-2 text-right font-mono text-brand-text">{money2(salesLineItems.totals?.net ?? salesLineItems.grandTotal)}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -1552,6 +1686,23 @@ export default function LedgerTab({ ctx }) {
                 </div>
               ) : (
                 <p className="text-fg/70 text-sm">Pick a date range and press Compute.</p>
+              )}
+              {/* Only where the tax applies, and only for someone who may post. */}
+              {!ptax?.notApplicable && auth.can('accounting.manage') && (
+                <div className="mt-5 pt-4 border-t border-white/10 flex flex-wrap items-end gap-3">
+                  <div>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-fg/70">Book into the ledger</label>
+                    <input type="month" value={ptaxMonth} onChange={(e) => setPtaxMonth(e.target.value)}
+                      className="block bg-white/5 border border-white/15 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
+                  </div>
+                  <button onClick={accruePtax} disabled={ptaxAccruing || !ptaxMonth}
+                    className="bg-brand hover:bg-brand-dark text-on-brand font-bold text-sm px-4 py-2 rounded-lg transition disabled:opacity-50">
+                    {ptaxAccruing ? 'Posting…' : 'Accrue month'}
+                  </button>
+                  <p className="text-xs text-fg/70 max-w-md">
+                    Posts the month's 3% as Percentage Tax Expense / Payable. Re-run after a void to correct it.
+                  </p>
+                </div>
               )}
             </div>
           )}
@@ -1758,13 +1909,25 @@ export default function LedgerTab({ ctx }) {
           <div className="w-full xl:w-1/3 space-y-6">
             
             {/* --- LIVE CASH ON HAND --- */}
-            <div className="bg-accent border border-accent/30 rounded-xl p-6 shadow-lg shadow-accent/5">
-              <p className="text-on-brand text-xs font-bold uppercase tracking-wider mb-1">Live Cash on Hand</p>
-              <p className="text-4xl font-black text-on-brand">P{cashOnHand.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+            {/* Cash on hand below zero is not a balance, it is an error in the
+                books (more paid out of the drawer than was ever put in), so it
+                is shown as one - red, sign first - not in the same green as a
+                healthy drawer. */}
+            <div className={`${cashOnHand < 0 ? 'bg-red-700 border-red-800' : 'bg-accent border-accent/30'} border rounded-xl p-6 shadow-lg shadow-accent/5`}>
+              <p className={`${cashOnHand < 0 ? 'text-white' : 'text-on-brand'} text-xs font-bold uppercase tracking-wider mb-1`}>Live Cash on Hand</p>
+              <p className={`text-4xl font-black ${cashOnHand < 0 ? 'text-white' : 'text-on-brand'}`}>
+                {cashOnHand < 0 ? '−' : ''}₱{Math.abs(cashOnHand).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+              {cashOnHand < 0 && (
+                <p className="text-white/90 text-xs font-bold mt-2">More has been paid out of cash than was recorded coming in. Check the journal for a missing receipt or opening balance.</p>
+              )}
             </div>
 
+            <ManualJournalApprovals apiFetch={apiFetch} can={can} peso={peso} onPosted={fetchERPData}
+              refreshKey={jeDraftsKey} activeAdmin={activeAdmin} isSuperAdmin={isSuperAdmin} />
             <div className="bg-surface border border-white/10 rounded-xl p-6 h-fit">
               <h3 className="text-xl font-bold mb-4 text-brand-text border-b border-white/10 pb-2">New Journal Entry</h3>
+              {!can('journal.approve') && <p className="text-[11px] text-fg/70 -mt-2 mb-3">Your entries are held for an approver before they reach the ledger.</p>}
               <div className="space-y-4">
                 <div>
                   <label className="text-[10px] text-fg/80 font-bold uppercase block mb-1">Entry date</label>
@@ -1818,13 +1981,16 @@ export default function LedgerTab({ ctx }) {
                       const res = await apiFetch(`/api/journal`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(jeForm) });
                       const d = await res.json();
                       if (!d.success) { ui.alert(d.error || 'The entry was not posted.'); return; }
+                      if (d.pending) {
+                        ui.toast(`Saved as ${d.draft?.draftNumber} - it posts once an approver signs off.`, { tone: 'success' });
+                        setJeDraftsKey(k => k + 1);
+                      }
                       setJeForm({
                         date: todayStr(),
                         description: '',
                         lines: [{accountCode:'', accountName:'', debit:'', credit:''}, {accountCode:'', accountName:'', debit:'', credit:''}],
                       });
-                      ui.toast('Entry posted.', { tone: 'success' });
-                      fetchERPData();
+                      if (!d.pending) { ui.toast('Entry posted.', { tone: 'success' }); fetchERPData(); }
                     } catch { ui.alert('Network error - nothing was posted.'); }
                   }} className="bg-accent text-on-brand font-bold py-2 px-4 rounded hover:bg-page-bg hover:text-brand-text transition shadow-lg shadow-accent/20">Post Entry</button>
                 </div>
@@ -2299,7 +2465,7 @@ export default function LedgerTab({ ctx }) {
                   <div>
                     <h3 className="text-xl font-black text-fg flex items-center gap-2">
                       <ShieldCheck size={18} className="text-warning" />
-                      {changeRequests.length} Price Change{changeRequests.length === 1 ? '' : 's'} Awaiting Approval
+                      {changeRequests.length} Change{changeRequests.length === 1 ? '' : 's'} Awaiting Approval
                     </h3>
                     <p className="text-fg/70 text-[11px] mt-0.5">
                       {canApprovePricing
@@ -2312,14 +2478,14 @@ export default function LedgerTab({ ctx }) {
                       <div key={r._id} className="bg-page-bg/50 border border-white/10 rounded-xl p-3">
                         <div className="flex items-start justify-between gap-3 flex-wrap">
                           <div className="min-w-0">
-                            <p className="text-fg font-bold text-sm">{r.entityName || r.entityId}</p>
+                            <p className="text-fg font-bold text-sm"><span className="text-[10px] text-fg/65 uppercase tracking-wider mr-1.5">{CR_ENTITY[r.entity] || r.entity}</span>{r.entityName || r.entityId}</p>
                             {r.changes.map((c, i) => (
-                              <div key={i} className="flex items-center gap-2 font-mono text-xs mt-0.5">
+                              <div key={i} className="flex items-center gap-2 font-mono text-xs mt-0.5 flex-wrap">
                                 <span className="text-fg/75">{c.label}</span>
-                                <span className="text-fg/70 line-through">₱{Number(c.oldValue || 0).toFixed(2)}</span>
+                                <span className="text-fg/70 line-through">{crValue(c.field, c.oldValue)}</span>
                                 <span className="text-fg/65">→</span>
-                                <span className={`font-black ${Number(c.newValue) > Number(c.oldValue) ? 'text-danger' : 'text-success'}`}>
-                                  ₱{Number(c.newValue || 0).toFixed(2)}
+                                <span className={`font-black ${MONEY_FIELDS.has(c.field) ? (Number(c.newValue) > Number(c.oldValue) ? 'text-danger' : 'text-success') : 'text-fg'}`}>
+                                  {crValue(c.field, c.newValue)}
                                 </span>
                               </div>
                             ))}
@@ -2337,8 +2503,8 @@ export default function LedgerTab({ ctx }) {
                                 </button>
                                 <button onClick={async () => {
                                   const reason = await ui.confirm({
-                                    title: 'Reject this price change?',
-                                    message: `${r.entityName}: ${r.changes.map(c => `${c.label} → ₱${Number(c.newValue || 0).toFixed(2)}`).join(', ')}. The price stays as it is.`,
+                                    title: 'Reject this change?',
+                                    message: `${r.entityName}: ${r.changes.map(c => `${c.label} → ${crValue(c.field, c.newValue)}`).join(', ')}. It stays as it is.`,
                                     confirmLabel: 'Reject', tone: 'danger',
                                   });
                                   if (reason) actOnChangeRequest(r._id, 'reject', 'Rejected by approver');
@@ -3235,6 +3401,10 @@ export default function LedgerTab({ ctx }) {
                           </td>
                           <td className="py-2.5 text-right">
                             <div className="flex items-center justify-end gap-1.5">
+                              <button onClick={() => setCvDocs(v)} title="Supporting documents for this voucher"
+                                className="border border-white/15 text-fg/70 px-2.5 py-1 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-white/10 hover:text-fg transition">
+                                Docs
+                              </button>
                               <button onClick={() => printCheckVoucher(v)} title="Print this voucher for signing"
                                 className="border border-white/15 text-fg/70 px-2.5 py-1 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-white/10 hover:text-fg transition">
                                 Print
@@ -3255,6 +3425,21 @@ export default function LedgerTab({ ctx }) {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+
+              {cvDocs && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setCvDocs(null)}>
+                  <div role="dialog" aria-label="Voucher documents" className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+                    <h2 className="font-black text-fg mb-1">Voucher {cvDocs.voucherNumber}</h2>
+                    <p className="text-fg/75 text-sm">{cvDocs.payeeName} · {peso(cvDocs.amount)} · {cvDocs.purpose}</p>
+                    <p className="text-[11px] text-fg/65">Journal {cvDocs.journalEntryRef || '-'} · {cvDocs.status}</p>
+                    <Attachments entity="CheckVoucher" entityId={cvDocs._id} apiFetch={apiFetch} canAttach={can('accounting.manage')}
+                      currentUserId={activeAdmin?._id} isSuperAdmin={isSuperAdmin} title="Receipts, invoices, signed copy" />
+                    <div className="flex justify-end mt-4">
+                      <button onClick={() => setCvDocs(null)} className="px-4 py-2 rounded-xl bg-white/5 text-fg/80 text-sm font-bold">Close</button>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -3284,7 +3469,7 @@ export default function LedgerTab({ ctx }) {
                         Cancel
                       </button>
                       <button onClick={submitVoidVoucher} disabled={cvVoidModal.busy || !cvVoidModal.reason.trim()}
-                        className="flex-1 bg-red-500 text-white px-4 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-red-500/90 transition disabled:opacity-40">
+                        className="flex-1 bg-red-700 text-white px-4 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-red-500/90 transition disabled:opacity-40">
                         {cvVoidModal.busy ? 'Voiding…' : 'Void Voucher'}
                       </button>
                     </div>
@@ -3716,7 +3901,7 @@ export default function LedgerTab({ ctx }) {
                         Keep
                       </button>
                       <button onClick={submitCancelAdvance} disabled={advBusy || !advCancelModal.reason.trim()}
-                        className="flex-1 bg-red-500 text-white px-4 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-red-500/90 transition disabled:opacity-40">
+                        className="flex-1 bg-red-700 text-white px-4 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-red-500/90 transition disabled:opacity-40">
                         {advBusy ? 'Cancelling…' : 'Cancel Advance'}
                       </button>
                     </div>
@@ -3797,7 +3982,7 @@ export default function LedgerTab({ ctx }) {
                         <tr key={row.client} className={`border-b border-white/5 ${row.overLimit ? 'bg-red-500/5' : ''}`}>
                           <td className="py-2.5 px-4 font-bold text-fg">
                             {row.client}
-                            {row.overLimit && <span className="ml-2 text-[8px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">Over</span>}
+                            {row.overLimit && <span className="ml-2 text-[8px] font-black bg-red-700 text-white px-1.5 py-0.5 rounded uppercase">Over</span>}
                           </td>
                           <td className="py-2.5 text-right tabular-nums text-fg/70">{row.current ? `₱${row.current.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
                           <td className="py-2.5 text-right tabular-nums text-warning">{row.d31_60 ? `₱${row.d31_60.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
@@ -3903,7 +4088,7 @@ export default function LedgerTab({ ctx }) {
                                   note: '', referenceNumber: '', collectedBy: '',
                                   collectionDate: todayLocal(), depositDate: todayLocal(),
                                   checkNumber: wasCheck ? (o.paymentReference || '') : '',
-                                  checkDate: wasCheck && o.paymentCheckDate ? new Date(o.paymentCheckDate).toISOString().slice(0, 10) : '',
+                                  checkDate: wasCheck && o.paymentCheckDate ? dateStr(o.paymentCheckDate) : '',
                                   checkBank: '', checkDrawer: '',
                                 });
                               }}
@@ -4440,6 +4625,12 @@ export default function LedgerTab({ ctx }) {
             </div>
           )}
 
+          {ledgerSubTab === 'cashflow' && <CashFlowReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'saleschannel' && <SalesByChannelReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'budget' && <BudgetReport apiFetch={apiFetch} can={can} />}
+          {ledgerSubTab === 'exceptions' && <ExceptionsReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'closing' && <ClosingChecklist apiFetch={apiFetch} can={can} />}
+
           {/* ===== COMMISSIONS ===== */}
           {ledgerSubTab === 'commissions' && (
             <div className="space-y-4 animate-fade-in">
@@ -4530,6 +4721,10 @@ export default function LedgerTab({ ctx }) {
                       <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Due date (optional)</label>
                       <input type="date" value={billCreate.dueDate} onChange={e => setBillCreate(c => ({ ...c, dueDate: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" />
                     </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Supplier invoice no. (optional)</label>
+                      <input value={billCreate.supplierInvoiceNo || ''} onChange={e => setBillCreate(c => ({ ...c, supplierInvoiceNo: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" placeholder="e.g. INV-88120" />
+                    </div>
                     <div className="sm:col-span-2">
                       <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Description</label>
                       <input value={billCreate.description} onChange={e => setBillCreate(c => ({ ...c, description: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" placeholder="e.g. October warehouse rent" />
@@ -4565,7 +4760,7 @@ export default function LedgerTab({ ctx }) {
                       <tr>
                         <th className="px-4 py-3">Bill #</th><th className="px-4 py-3">Supplier</th>
                         <th className="px-4 py-3">Source</th><th className="px-4 py-3">Description</th>
-                        <th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3">Invoice match</th><th className="px-4 py-3">Status</th>
                         <th className="px-4 py-3 text-right">Actions</th>
                       </tr>
                     </thead>
@@ -4583,12 +4778,26 @@ export default function LedgerTab({ ctx }) {
                               {peso(b.amount)}
                               {b.status === 'Partially Paid' && <div className="text-[10px] font-normal text-warning mt-0.5">{peso(billOutstanding)} left</div>}
                             </td>
+                            <td className="px-4 py-3">
+                              {(() => {
+                                const ms = b.match?.status || (b.source === 'PO' ? 'Unmatched' : null);
+                                if (!ms) return <span className="text-[10px] text-fg/65">{b.supplierInvoiceNo || '-'}</span>;
+                                const cls = { Matched: 'bg-green-500/15 text-success', Accepted: 'bg-blue-500/15 text-info', Exception: 'bg-red-500/15 text-danger', Unmatched: 'bg-white/5 text-fg/70' }[ms];
+                                return (
+                                  <div title={(b.match?.issues || []).map(x => x.text).join(' ') || undefined}>
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${cls}`}>{ms === 'Unmatched' ? 'Needs invoice' : ms}</span>
+                                    {b.supplierInvoiceNo && <div className="text-[10px] text-fg/65 mt-1 font-mono">{b.supplierInvoiceNo}</div>}
+                                  </div>
+                                );
+                              })()}
+                            </td>
                             <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${stCls}`}>{b.status}</span>
                               {b.scheduledPaymentDate && b.status === 'Approved' && <div className="text-[10px] text-fg/70 mt-1">pay {String(b.scheduledPaymentDate).slice(0,10)}</div>}
                             </td>
                             <td className="px-4 py-3 text-right whitespace-nowrap">
                               {b.status === 'Pending' && (
                                 <div className="flex gap-1.5 justify-end">
+                                  <button disabled={billBusy} onClick={() => openBillInvoice(b)} className="px-2.5 py-1 rounded-lg bg-white/5 text-fg/80 hover:bg-white/10 text-[11px] font-bold transition disabled:opacity-50">{b.supplierInvoiceNo ? 'Invoice' : 'Record invoice'}</button>
                                   <button disabled={billBusy} onClick={() => approveBill(b)} className="px-2.5 py-1 rounded-lg bg-green-500/15 text-success hover:bg-green-500/25 text-[11px] font-bold transition disabled:opacity-50">Approve</button>
                                   <button disabled={billBusy} onClick={() => rejectBill(b)} className="px-2.5 py-1 rounded-lg bg-red-500/10 text-danger hover:bg-red-500/20 text-[11px] font-bold transition disabled:opacity-50">Reject</button>
                                 </div>
@@ -4614,6 +4823,29 @@ export default function LedgerTab({ ctx }) {
               )}
 
               {/* Pay modal */}
+              {billInvoiceModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setBillInvoiceModal(null)}>
+                  <div role="dialog" aria-label="Supplier invoice" className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+                    <h2 className="font-black text-fg mb-1">Supplier invoice - {billInvoiceModal.billNumber}</h2>
+                    <p className="text-fg/75 text-sm mb-3">{billInvoiceModal.supplierName} · received {peso(billInvoiceModal.amount)}{billInvoiceModal.poNumber ? ` on ${billInvoiceModal.poNumber}` : ''}</p>
+                    <p className="text-[11px] text-fg/70 mb-3">{billInvoiceModal.source === 'PO' ? 'Compared with the PO price of what arrived and with what receiving booked. It must match (within ₱1) before this bill can be approved.' : 'Compared with this bill\'s amount.'}</p>
+                    <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Invoice number</label>
+                    <input value={billInvoiceForm.no} onChange={e => setBillInvoiceForm(f => ({ ...f, no: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-3" placeholder="As printed on the invoice" />
+                    <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Invoice total</label>
+                    <input type="number" min="0" step="0.01" value={billInvoiceForm.amount} onChange={e => setBillInvoiceForm(f => ({ ...f, amount: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-3" />
+                    <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Invoice date (optional)</label>
+                    <input type="date" value={billInvoiceForm.date} onChange={e => setBillInvoiceForm(f => ({ ...f, date: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-1" />
+                    <Attachments entity="Bill" entityId={billInvoiceModal._id} apiFetch={apiFetch} canAttach={can('accounting.manage')}
+                      currentUserId={activeAdmin?._id} isSuperAdmin={isSuperAdmin} title="Invoice & delivery documents" />
+                    <div className="mb-4" />
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => setBillInvoiceModal(null)} className="px-4 py-2 rounded-xl bg-white/5 text-fg/80 text-sm font-bold">Cancel</button>
+                      <button onClick={submitBillInvoice} disabled={billBusy} className="px-4 py-2 rounded-xl bg-brand text-on-brand text-sm font-bold disabled:opacity-50">{billBusy ? 'Checking…' : 'Record & match'}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {billPayModal && (() => {
                 const outstanding = +(billPayModal.amount - (billPayModal.paidAmount || 0)).toFixed(2);
                 const enteredAmt = parseFloat(billPayAmount) || 0;
@@ -4721,7 +4953,7 @@ export default function LedgerTab({ ctx }) {
                               <button onClick={() => setReqSlipPreview(s)} className="hover:text-brand-text hover:underline">{s.slipNumber}</button>
                             </td>
                             <td className="px-5 py-2.5 text-fg/65 whitespace-nowrap">{reqTypeLabel(s.type)}</td>
-                            <td className="px-5 py-2.5 text-fg/70 truncate max-w-[260px]">{reqSummary(s)}</td>
+                            <td className="px-5 py-2.5 text-fg/70 truncate max-w-[260px]">{(s.budgetCheck || []).some(c => c.over) && <span className="mr-1.5 px-1.5 py-0.5 rounded bg-red-500/15 text-danger text-[9px] font-black uppercase" title={s.overBudgetReason ? `Accepted by ${s.overBudgetAcceptedBy}: ${s.overBudgetReason}` : "Over this month's budget"}>Over budget</span>}{reqSummary(s)}</td>
                             <td className="px-5 py-2.5 text-fg/65 whitespace-nowrap">{s.preparedBy || '-'}</td>
                             <td className="px-5 py-2.5">
                               <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-full ${s.status === 'Pending' ? 'bg-amber-500/20 text-warning' : s.status === 'Approved' ? 'bg-brand/20 text-brand-text' : 'bg-red-500/20 text-danger'}`}>{s.status}</span>
@@ -5350,11 +5582,20 @@ export default function LedgerTab({ ctx }) {
                       ) : bdCart.map(x => (
                         <div key={x.productId} className="flex items-center gap-2 py-2 border-b border-white/5">
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold text-fg truncate">{x.name}</p>
+                            <p className="text-xs font-bold text-fg truncate" title={String((x.name) ?? '')}>{x.name}</p>
                             <div className="flex items-center gap-1 mt-1">
                               <span className="text-[10px] text-fg/70">₱</span>
                               <input type="number" min="0" step="0.01" value={x.price} onChange={e => bdSetPrice(x.productId, e.target.value)}
+                                aria-label={`Price of ${x.name}`}
                                 className="w-16 bg-surface border border-white/10 rounded px-1.5 py-0.5 text-[11px] text-fg tabular-nums outline-none focus:border-brand/60" />
+                              {!bd.isComplimentary && (<>
+                                <span className="text-[10px] text-fg/70 ml-2">Disc</span>
+                                <input type="number" min="0" max="100" step="0.01" placeholder="0" value={x.discountPercent ?? ''}
+                                  onChange={e => bdSetLineDisc(x.productId, e.target.value)}
+                                  aria-label={`Discount percent on ${x.name}`}
+                                  className="w-12 bg-surface border border-white/10 rounded px-1.5 py-0.5 text-[11px] text-fg tabular-nums outline-none focus:border-brand/60" />
+                                <span className="text-[10px] text-fg/70">%</span>
+                              </>)}
                             </div>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
@@ -5363,7 +5604,10 @@ export default function LedgerTab({ ctx }) {
                               className="w-11 bg-surface border border-white/10 rounded px-1 py-1 text-center text-xs text-fg tabular-nums outline-none focus:border-brand/60" />
                             <button onClick={() => bdSetQty(x.productId, x.quantity + 1)} className="w-7 h-7 rounded-lg bg-white/5 text-fg/65 hover:bg-white/10 font-black">+</button>
                           </div>
-                          <span className="w-20 text-right text-xs font-black text-fg tabular-nums shrink-0">{peso(x.price * x.quantity)}</span>
+                          <span className="w-20 text-right shrink-0 tabular-nums">
+                            {bdLinePct(x) > 0 && !bd.isComplimentary && <span className="block text-[10px] text-fg/65 line-through">{peso(x.price * x.quantity)}</span>}
+                            <span className="text-xs font-black text-fg">{peso(bd.isComplimentary ? x.price * x.quantity : x.price * x.quantity - r2(x.price * x.quantity * bdLinePct(x) / 100))}</span>
+                          </span>
                           <button onClick={() => bdRemove(x.productId)} className="text-danger shrink-0"><Trash2 size={14}/></button>
                         </div>
                       ))}
@@ -5453,7 +5697,8 @@ export default function LedgerTab({ ctx }) {
                     {/* Totals */}
                     <div className="bg-surface border border-white/10 rounded-lg p-3 space-y-1 text-sm">
                       <div className="flex justify-between text-fg/65"><span>Gross</span><span className="tabular-nums">{peso(bdGross)}</span></div>
-                      {bdDiscount > 0 && <div className="flex justify-between text-fg/65"><span>Discount ({bdPct}%)</span><span className="tabular-nums">−{peso(bdDiscount)}</span></div>}
+                      {bdLineDiscount > 0 && <div className="flex justify-between text-fg/65"><span>Item discounts</span><span className="tabular-nums">−{peso(bdLineDiscount)}</span></div>}
+                      {bdDiscount - bdLineDiscount > 0.004 && <div className="flex justify-between text-fg/65"><span>Discount ({bdPct}%)</span><span className="tabular-nums">−{peso(r2(bdDiscount - bdLineDiscount))}</span></div>}
                       <div className="flex justify-between text-base font-black text-fg border-t border-white/10 pt-1 mt-1"><span>{bd.isComplimentary ? 'Complimentary' : 'Total'}</span><span className="tabular-nums text-brand-text">{peso(bdTotal)}</span></div>
                     </div>
 
@@ -5509,7 +5754,7 @@ export default function LedgerTab({ ctx }) {
                               <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap font-bold">{row.date || <span className="text-danger">no date</span>}</td>
                               <td className="px-5 py-2.5 text-fg/70 truncate max-w-[140px]">{row.sheet || '-'}</td>
                               <td className="px-5 py-2.5 text-fg/80 font-bold truncate max-w-[160px]">{row.client || 'Walk-in'}</td>
-                              <td className="px-5 py-2.5 text-fg/65 truncate max-w-[220px]">{(row.items || []).map(it => it.name).join(', ')}</td>
+                              <td className="px-5 py-2.5 text-fg/65 truncate max-w-[220px]" title={String(((row.items || []).map(it => it.name).join(', ')) ?? '')}>{(row.items || []).map(it => it.name).join(', ')}</td>
                               <td className="px-5 py-2.5 text-right text-fg font-mono tabular-nums font-bold">{peso(total)}</td>
                               <td className="px-5 py-2.5 text-right whitespace-nowrap">
                                 <button onClick={() => setBdQueueResolve({ row, paymentMethod: 'Cash', affectInventory: false })}
@@ -5576,7 +5821,7 @@ export default function LedgerTab({ ctx }) {
                                   {new Date(o.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
                                 </td>
                                 <td className="px-5 py-2.5 font-mono text-fg/65 whitespace-nowrap">{o.orderNumber}</td>
-                                <td className="px-5 py-2.5 text-fg/80 font-bold truncate max-w-[160px]">{o.customerName || 'Walk-in'}</td>
+                                <td className="px-5 py-2.5 text-fg/80 font-bold truncate max-w-[160px]" title={String((o.customerName || 'Walk-in') ?? '')}>{o.customerName || 'Walk-in'}</td>
                                 <td className="px-5 py-2.5 text-fg/65 whitespace-nowrap">{o.paymentMethod}</td>
                                 <td className="px-5 py-2.5 text-fg/70 truncate max-w-[220px]">{o.orderNotes || '-'}</td>
                                 <td className="px-5 py-2.5 text-right text-fg font-mono tabular-nums font-bold">{peso(o.total)}</td>
@@ -5688,7 +5933,7 @@ export default function LedgerTab({ ctx }) {
                               next.has(name) ? next.delete(name) : next.add(name);
                               return { ...s, selected: next };
                             })} className="accent-brand w-4 h-4" />
-                            <span className="text-sm font-bold text-fg truncate">{name}</span>
+                            <span className="text-sm font-bold text-fg truncate" title={String((name) ?? '')}>{name}</span>
                           </label>
                         );
                       })}
@@ -5857,7 +6102,7 @@ export default function LedgerTab({ ctx }) {
                 </div>
                 <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
                   <button onClick={() => setReqSlipRejecting(null)} disabled={reqSlipBusy} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/75 hover:text-fg transition disabled:opacity-40">Cancel</button>
-                  <button onClick={submitRejectReqSlip} disabled={reqSlipBusy || !reqSlipRejectReason.trim()} className="flex items-center gap-2 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
+                  <button onClick={submitRejectReqSlip} disabled={reqSlipBusy || !reqSlipRejectReason.trim()} className="flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
                     {reqSlipBusy ? 'Rejecting…' : 'Reject Slip'}
                   </button>
                 </div>

@@ -46,6 +46,11 @@ export const DOC_SERIES = [
     sample: (p) => `${p}-2026-000031`,
   },
   {
+    code: 'DR', key: 'docPrefixDR', defaultPrefix: 'DR',
+    label: 'Delivery receipt', note: 'One per delivery - a partly fulfilled order gets one for each batch that leaves.',
+    sample: (p) => `${p}-2026-000027`,
+  },
+  {
     code: 'BILL', key: 'docPrefixBILL', defaultPrefix: 'BILL',
     label: "Supplier's bill", note: 'A payable raised against a supplier.',
     sample: (p) => `${p}-2026-000042`,

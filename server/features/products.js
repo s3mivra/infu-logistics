@@ -1,6 +1,7 @@
 ﻿// products routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { MONEY_MAX } from '../lib/normalize.js';
 import { captureError } from '../lib/errorLog.js';
 import { parseBulkRecipes, parseDrinkSheet, collectMaterials, buildProductDraft } from '../lib/recipeImport.js';
 import { parseMenuSheet, toImportRows } from '../lib/menuSheet.js';
@@ -16,6 +17,7 @@ import { buildSalePriceMap, saleUnitPrice, activeSalesQuery } from '../lib/saleP
 // it reads the same in every file.
 import { requirePermission as permit, requireAnyPermission as permitAny } from '../lib/authz.js';
 
+import { atomic } from '../lib/atomicRoute.js';
 export default function registerProducts(ctx) {
   const {
     app,
@@ -227,8 +229,14 @@ app.post('/api/categories', verifyToken, requireStaff, permit('products.manage')
     // without this a new category is saved untagged and vanishes from the list.
     // Let the schema default set the department (Logistics for log, Kitchen for fb)
     // when none is supplied, instead of forcing 'Kitchen' onto log deployments.
+    const name = String(req.body.name || '').trim();
+    if (!name) return res.status(400).json({ success: false, error: 'A category name is required.' });
+    // Orders are routed to Kitchen / Bar / Logistics BY CATEGORY NAME, so two
+    // categories with the same name made routing depend on which loaded last.
+    const clash = await Category.findOne({ businessType: BUSINESS_TYPE, ...tenantScope(req), name: { $regex: new RegExp(`^${escapeRegex(name)}$`, 'i') } }).lean();
+    if (clash) return res.status(409).json({ success: false, error: `A category called "${clash.name}" already exists.` });
     const newCat = await Category.create({
-      name: req.body.name,
+      name,
       ...(department ? { department } : {}),
       businessType: BUSINESS_TYPE,
       ...tenantScope(req),
@@ -241,24 +249,42 @@ app.post('/api/categories', verifyToken, requireStaff, permit('products.manage')
 });
 
 // --- NEW: UPDATE CATEGORY ROUTE ---
-app.put('/api/categories/:id', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
+app.put('/api/categories/:id', verifyToken, requireStaff, permit('products.manage'), atomic(mongoose, async (req, res) => {
   try {
     const department = validDepartment(req.body.department);
+    const current = await Category.findById(req.params.id).lean();
+    if (!current) return res.status(404).json({ success: false, error: 'Category not found.' });
     // Only overwrite department when one was supplied; otherwise leave the stored
     // value untouched (a bare rename shouldn't blank the routing).
-    const update = { name: req.body.name };
+    const update = {};
+    const name = req.body.name === undefined ? current.name : String(req.body.name || '').trim();
+    if (!name) return res.status(400).json({ success: false, error: 'A category name is required.' });
+    if (name.toLowerCase() !== String(current.name).toLowerCase()) {
+      const clash = await Category.findOne({ _id: { $ne: current._id }, businessType: BUSINESS_TYPE, ...tenantScope(req), name: { $regex: new RegExp(`^${escapeRegex(name)}$`, 'i') } }).lean();
+      if (clash) return res.status(409).json({ success: false, error: `A category called "${clash.name}" already exists.` });
+    }
+    update.name = name;
     if (department) update.department = department;
     const updated = await Category.findByIdAndUpdate(
       req.params.id,
       update,
       { returnDocument: 'after' }
     );
+    // Products point at their category BY NAME. A rename used to leave every
+    // product under the old name - out of the category filter and without
+    // its Kitchen/Bar/Logistics routing. They move with it, in the same
+    // transaction.
+    let productsMoved = 0;
+    if (name !== current.name) {
+      const r = await Product.updateMany({ category: current.name }, { $set: { category: name } });
+      productsMoved = r.modifiedCount || 0;
+    }
     emitToAll('menuUpdated');
-    res.json({ success: true, category: updated });
+    res.json({ success: true, category: updated, productsMoved });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 app.delete('/api/categories/:id', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
   try {
@@ -391,7 +417,9 @@ app.get('/api/products', async (req, res) => {
     invItems.forEach(i => {
       invById[i._id.toString()] = i;
       if (i.itemCode) invByCode[i.itemCode] = i;
-      if (i.itemName) invByName[i.itemName] = i;
+      // Keyed lowercase: inventory names are stored UPPERCASE and product names
+      // are not, so an exact-case key never matched (see resolveLinkedInventory).
+      if (i.itemName) invByName[String(i.itemName).trim().toLowerCase()] = i;
     });
     // A pack under one whole kg/L reads better in the sub-unit: 0.377kg → 377g,
     // 0.5L → 500ml. Mirrors the dashboard's fmtPackLabel so the slip and the
@@ -425,7 +453,7 @@ app.get('/api/products', async (req, res) => {
       // Resolve the linked stock item: FB recipe products link via invId; log 1:1
       // goods match by code then name. Used for both stock and the unit label.
       const linkedInv = recipe.find(r => r.invId) ? invById[recipe.find(r => r.invId).invId]
-        : (invByCode[p.productCode] || invByName[p.name]);
+        : (invByCode[p.productCode] || invByName[String(p.name || '').trim().toLowerCase()]);
       p.unitLabel = unitLabelOf(linkedInv);
 
       // Why a product is unavailable, so staff are not left guessing when the
@@ -442,7 +470,7 @@ app.get('/api/products', async (req, res) => {
           // matching by ing.name (the ingredient's own recipe-time snapshot),
           // mirroring the 1:1 logistics-good lookup a few lines below - a stale
           // ID must never permanently strand an otherwise-in-stock product.
-          const inv = invById[ing.invId] || (ing.name ? invByName[ing.name] : null);
+          const inv = invById[ing.invId] || (ing.name ? invByName[String(ing.name).trim().toLowerCase()] : null);
           const need = Number(ing.qty) || 0;
           if (!inv) {
             p.stockReason = `Ingredient "${ing.name || ing.invId}" is not in inventory (its stock record was deleted or renamed).`;
@@ -470,7 +498,7 @@ app.get('/api/products', async (req, res) => {
         // An FB product can still be a plain resold good (bottled water), so a
         // genuine stock match by code/name is honoured either way - that is the
         // only route by which a recipe-less product is sellable.
-        const inv = invByCode[p.productCode] || invByName[p.name];
+        const inv = invByCode[p.productCode] || invByName[String(p.name || '').trim().toLowerCase()];
         p.stockAvailable = !!inv && inv.stockQty >= baseUnitsPerSale(p, inv);
         if (!p.stockAvailable) {
           if (inv) {
@@ -526,7 +554,7 @@ app.get('/api/products/by-barcode/:code', verifyToken, requireStaff, async (req,
   }
 });
 
-app.post('/api/products', verifyToken, requireStaff, validate(productSchema), permit('products.manage'), async (req, res) => {
+app.post('/api/products', verifyToken, requireStaff, permit('products.manage'), validate(productSchema), async (req, res) => {
   try {
   // Generate base product code (e.g., DRS-A0001)
   const catPrefix = getCategoryPrefix(req.body.category);
@@ -848,7 +876,7 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, require
 
     for (const p of products) {
       const name = String(p?.name || '').trim();
-      if (!name || !(Number(p.basePrice) >= 0)) {
+      if (!name || !(Number(p.basePrice) >= 0) || !(Number(p.basePrice) <= MONEY_MAX)) {
         results.push({ name: name || '(missing)', ok: false, error: 'Missing product name or base price.' });
         continue;
       }
@@ -1279,7 +1307,7 @@ app.post('/api/products/import-menu', verifyToken, requireStaff, permit('product
   }
 });
 
-app.put('/api/products/:id', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
+app.put('/api/products/:id', verifyToken, requireStaff, permit('products.manage'), atomic(mongoose, async (req, res) => {
   try {
     const existing = await Product.findById(req.params.id).lean();
     if (!existing) return res.status(404).json({ success: false, error: 'Product not found.' });
@@ -1389,7 +1417,7 @@ app.put('/api/products/:id', verifyToken, requireStaff, permit('products.manage'
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // ── PRICE HISTORY ─────────────────────────────────────────────────────────────
 // Every base-price and recipe-cost change already gets logged to AuditLog
@@ -1459,7 +1487,9 @@ app.patch('/api/products/:id/availability', verifyToken, requireSuperAdmin, asyn
     const { isAvailable } = req.body;
     if (typeof isAvailable !== 'boolean')
       return res.status(400).json({ success: false, error: 'isAvailable must be true or false.' });
-    const product = await Product.findByIdAndUpdate(req.params.id, { isAvailable }, { returnDocument: 'after' });
+    // A person's decision either way ends any automatic removal: a product
+    // removed by hand is never brought back by a restock.
+    const product = await Product.findByIdAndUpdate(req.params.id, { isAvailable, autoUnavailable: false }, { returnDocument: 'after' });
     if (!product) return res.status(404).json({ success: false, error: 'Product not found.' });
     await AuditLog.create({
       userId: req.user?.name || 'System',

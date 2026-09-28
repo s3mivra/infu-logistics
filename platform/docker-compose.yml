@@ -37,16 +37,85 @@ services:
     restart: unless-stopped
     # Replica set is mandatory: the app's money paths use multi-document
     # transactions, which MongoDB only allows on a replica set.
-    command: ["--replSet", "rs0", "--bind_ip_all", "--wiredTigerCacheSizeGB", "2"]
+    # Starts mongod as before unless MONGO_AUTH=on, which adds --auth and the
+    # replica-set keyfile. See mongo-entrypoint.sh and MONGO_AUTH.md.
+    entrypoint: ["/bin/bash", "/mongo-entrypoint.sh"]
+    environment:
+      MONGO_AUTH: ${MONGO_AUTH:-off}
+      MONGO_ROOT_USER: ${MONGO_ROOT_USER:-root}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-}
+      MONGO_KEYFILE_CONTENT: ${MONGO_KEYFILE_CONTENT:-}
+      # First boot of an EMPTY data dir only: the image creates this root user.
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-}
     volumes:
       - mongo-data:/data/db
       - ./backups:/backups
+      - ./mongo-entrypoint.sh:/mongo-entrypoint.sh:ro
+      - ./mongo-health.sh:/mongo-health.sh:ro
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok }"]
+      test: ["CMD", "bash", "/mongo-health.sh"]
       interval: 10s
       timeout: 10s
       start_period: 40s
       retries: 12
+    networks: [semivra-net]
+
+  # Scheduled, self-verifying backups of every tenant database. Each run is
+  # read back with a dry-run restore before it is kept; see backup-loop.sh.
+  # Prove a full restore periodically with: bash platform/restore-drill.sh
+  backup:
+    image: mongo:7
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "/backup-loop.sh"]
+    environment:
+      # With MONGO_AUTH=on set MONGO_BACKUP_URI to the root login, e.g.
+      # mongodb://root:<password>@mongo:27017/?replicaSet=rs0&authSource=admin
+      MONGO_BACKUP_URI: ${MONGO_BACKUP_URI:-mongodb://mongo:27017/?replicaSet=rs0}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      TZ: Asia/Manila
+    volumes:
+      - ./backups:/backups
+      - ./backup-loop.sh:/backup-loop.sh:ro
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks: [semivra-net]
+
+  # Offsite copy to Cloudflare R2 or Backblaze B2 (both speak S3). A backup
+  # that lives on the same VPS as the data dies with it. Set it up from the
+  # control panel (Platform health -> Set up offsite backup): the panel writes
+  # platform/offsite.env and starts this service - nothing to edit by hand.
+  #
+  # Archives are encrypted HERE (rclone crypt) before upload, with a recovery
+  # key the panel generates once: the bucket only ever holds ciphertext, so a
+  # leaked R2/B2 key does not leak every tenant's books. Keep the recovery key
+  # (the panel shows it) somewhere other than this server.
+  backup-offsite:
+    image: rclone/rclone:1.68
+    profiles: ["offsite"]
+    restart: unless-stopped
+    env_file:
+      - path: ./offsite.env
+        required: false
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        [ -n "$${OFFSITE_CRYPT_PASSWORD}" ] && [ -n "$${OFFSITE_BUCKET}" ] || { echo "Offsite backup is not set up - use the control panel"; exit 1; };
+        export RCLONE_CONFIG_SECURE_TYPE=crypt;
+        export RCLONE_CONFIG_SECURE_REMOTE="offsite:$${OFFSITE_BUCKET}/semivra-backups";
+        export RCLONE_CONFIG_SECURE_PASSWORD="$$(rclone obscure "$${OFFSITE_CRYPT_PASSWORD}")";
+        export RCLONE_CONFIG_SECURE_PASSWORD2="$$(rclone obscure "$${OFFSITE_CRYPT_SALT:-$${OFFSITE_CRYPT_PASSWORD}-salt}")";
+        while true; do
+          rclone copy /backups secure:
+            --include 'semivra-*.archive.gz' --include 'LAST_*' --s3-no-check-bucket
+          && date -u +%FT%TZ > /backups/LAST_OFFSITE_SYNC
+          || { echo "offsite sync failed"; date -u +%FT%TZ > /backups/LAST_OFFSITE_FAILURE; };
+          sleep 21600;
+        done
+    volumes:
+      - ./backups:/backups
     networks: [semivra-net]
 
   control-plane:
@@ -58,6 +127,9 @@ services:
       - "127.0.0.1:9000:9000"
     environment:
       PORT: 9000
+      MONGO_AUTH: ${MONGO_AUTH:-off}
+      MONGO_ROOT_USER: ${MONGO_ROOT_USER:-root}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-}
       DOMAIN: ${DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL}
       # STACK_ROOT is the path where the control-plane reads/writes tenant files
@@ -70,6 +142,8 @@ services:
       CP_PASSWORD: ${CP_PASSWORD}
       CP_DANGER_PASSWORD: ${CP_DANGER_PASSWORD}
       LOCAL_MODE: ${LOCAL_MODE:-0}
+      # Read by the Backups panel to judge whether the last backup is overdue.
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       # Mount the repo root (parent of platform/) at /opt/semivra inside the

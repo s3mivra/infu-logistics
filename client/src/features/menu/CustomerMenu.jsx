@@ -8,7 +8,7 @@ import LegalLinks from '../../shared/LegalLinks';
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
+import { API_URL } from '../../shared/apiBase.js';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 // Order routing station. Every other order-entry surface (AdminDashboard,
 // OrdersTab, ProductsTab) resolves this per BUSINESS_TYPE - this QR-scanned
@@ -87,7 +87,7 @@ const MenuItemCard = memo(({ product, onAdd }) => {
       )}
     </div>
     <div className="p-3">
-      <h3 className="font-bold text-fg text-sm leading-tight truncate">{product.name}</h3>
+      <h3 className="font-bold text-fg text-sm leading-tight truncate" title={String((product.name) ?? '')}>{product.name}</h3>
       {product.description && <p className="text-fg/70 text-xs mt-0.5 line-clamp-1">{product.description}</p>}
       {product.activeSalePrice != null ? (
         <div className="flex items-baseline gap-1.5 mt-2">

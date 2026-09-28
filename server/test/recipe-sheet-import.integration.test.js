@@ -10,6 +10,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+// Fixture resets may clear journal entries, which are otherwise append-only.
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -26,7 +28,7 @@ afterAll(async () => { await ctx.stop(); });
 const M = (n) => mongoose.model(n);
 
 beforeEach(async () => {
-  for (const n of ['Inventory', 'Product', 'Category']) await M(n).deleteMany({});
+  for (const n of ['Inventory', 'Product', 'Category']) await withLedgerMaintenance(() => M(n).deleteMany({}));
   await M('Inventory').create([
     { itemCode: 'RM-MILK', itemName: 'Full Milk', unit: 'ml', stockQty: 50000, unitCost: 0.08, unitMultiplier: 1000 },
     { itemCode: 'RM-ESP', itemName: 'Espresso', unit: 'ml', stockQty: 5000, unitCost: 1, unitMultiplier: 1 },

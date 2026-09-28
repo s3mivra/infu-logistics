@@ -14,6 +14,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+// Fixture resets may clear journal entries, which are otherwise append-only.
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -33,7 +35,7 @@ afterAll(async () => { await ctx.stop(); });
 
 beforeEach(async () => {
   for (const n of ['ClosedPeriod', 'JournalEntry', 'FixedAsset', 'Advance']) {
-    await M(n).deleteMany({});
+    await withLedgerMaintenance(() => M(n).deleteMany({}));
   }
   // March 2026 is closed: reported, signed off, not to be moved.
   await M('ClosedPeriod').create({ year: 2026, month: 3, isOpen: false, closedBy: 'LockSuper' });

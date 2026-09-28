@@ -10,11 +10,54 @@ import express from 'express';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import readline from 'node:readline';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// ── MongoDB authentication (opt-in: MONGO_AUTH=on) ───────────────────────────
+// Every tenant shares one mongod. Without auth, a compromise of ANY tenant's
+// API container is read/write access to EVERY tenant's books - isolation was
+// only the database name. With MONGO_AUTH=on:
+//   - the control plane talks to mongod as root (MONGO_ROOT_PASSWORD),
+//   - each tenant gets its OWN user with readWrite on its OWN database only,
+//     and its MONGO_URI carries those credentials.
+// Off by default: switching an EXISTING deployment on needs the one-time
+// migration in platform/MONGO_AUTH.md, or every tenant loses its database.
+const MONGO_AUTH = String(process.env.MONGO_AUTH || '').toLowerCase() === 'on';
+const MONGO_ROOT_USER = process.env.MONGO_ROOT_USER || 'root';
+const MONGO_ROOT_PASSWORD = process.env.MONGO_ROOT_PASSWORD || '';
+if (MONGO_AUTH && MONGO_ROOT_PASSWORD.length < 24) {
+  console.error('MONGO_AUTH=on needs MONGO_ROOT_PASSWORD of at least 24 characters.');
+  process.exit(1);
+}
+// `docker exec` prefix for mongosh inside the mongo container, logged in as
+// root when auth is on. The password rides in the connection string: visible
+// only inside the mongo container itself, which nothing else runs in.
+function mongoshExec() {
+  const base = ['exec', 'semivra-platform-mongo-1', 'mongosh', '--quiet'];
+  if (!MONGO_AUTH) return base;
+  const uri = `mongodb://${encodeURIComponent(MONGO_ROOT_USER)}:${encodeURIComponent(MONGO_ROOT_PASSWORD)}@localhost:27017/admin?directConnection=true`;
+  return ['exec', 'semivra-platform-mongo-1', 'mongosh', uri, '--quiet'];
+}
+// Creates (or re-passwords) the tenant's own database user and returns the
+// URI its API should use. Without auth, the unauthenticated URI as before.
+async function tenantMongoUri(slug) {
+  const db = `semivra_${slug}`;
+  if (!MONGO_AUTH) return `mongodb://mongo:27017/${db}?replicaSet=rs0`;
+  const user = `app_${slug}`;
+  const pwd = crypto.randomBytes(24).toString('hex');
+  const script = `
+    const d = db.getSiblingDB(${JSON.stringify(db)});
+    const roles = [{ role: 'readWrite', db: ${JSON.stringify(db)} }];
+    if (d.getUser(${JSON.stringify(user)})) d.updateUser(${JSON.stringify(user)}, { pwd: ${JSON.stringify(pwd)}, roles });
+    else d.createUser({ user: ${JSON.stringify(user)}, pwd: ${JSON.stringify(pwd)}, roles });
+    print('ok');`;
+  await docker([...mongoshExec(), '--eval', script], { timeout: 60_000 });
+  return `mongodb://${user}:${pwd}@mongo:27017/${db}?replicaSet=rs0&authSource=${db}`;
+}
 
 const run = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -241,7 +284,7 @@ async function readDbSizes(slugs) {
   `;
   try {
     const raw = await docker(
-      ['exec', 'semivra-platform-mongo-1', 'mongosh', '--quiet', '--eval', script],
+      [...mongoshExec(), '--eval', script],
       { timeout: 60_000 },
     );
     const line = raw.trim().split('\n').filter((l) => l.trim().startsWith('{')).pop() || '{}';
@@ -424,8 +467,9 @@ app.post('/api/tenants', requireAuth, async (req, res) => {
     TENANT: slug,
     STACK_ROOT,
     ...resourceEnv(memMb, cpuShares),
-    // Each tenant gets its own database inside the one shared mongod.
-    MONGO_URI: `mongodb://mongo:27017/semivra_${slug}?replicaSet=rs0`,
+    // Each tenant gets its own database inside the one shared mongod - and,
+    // with MONGO_AUTH=on, its own user that can reach nothing else.
+    MONGO_URI: await tenantMongoUri(slug),
     JWT_SECRET: crypto.randomBytes(32).toString('hex'),
     ADMIN_PASS: adminPass,
     ALLOWED_ORIGINS: origins,
@@ -572,8 +616,45 @@ app.post('/api/update/apply', requireAuth, async (req, res) => {
       }
     }),
   );
-  res.json({ ok: true, tenants: results });
+  const selfUpdate = await maybeUpdateControlPlane();
+  res.json({ ok: true, tenants: results, controlPlane: selfUpdate });
 });
+
+// The panel updates itself too. "Update all apps" pulls new code, but this
+// process runs from its own image (/app), so a change to the panel used to
+// need a rebuild by hand over SSH. When the pulled code differs from what is
+// running, a short-lived helper container - started from this same image, so
+// it has docker compose - rebuilds and restarts the control-plane service
+// after this reply has gone out. The panel reconnects a few seconds later.
+async function maybeUpdateControlPlane() {
+  if (LOCAL_MODE) return { updated: false, reason: 'local mode' };
+  const files = ['server.js', 'public/index.html', 'Dockerfile', 'package.json'];
+  let changed = false;
+  for (const f of files) {
+    const [a, b] = await Promise.all([
+      fs.readFile(path.join('/app', f), 'utf8').catch(() => null),
+      fs.readFile(path.join(PLATFORM_DIR, 'control-plane', f), 'utf8').catch(() => null),
+    ]);
+    // The Dockerfile and package.json are not copied into /app as-is, so an
+    // unreadable one only counts as a change when the other side exists.
+    if (a !== null && b !== null && a !== b) { changed = true; break; }
+  }
+  if (!changed) return { updated: false, reason: 'already current' };
+  try {
+    const image = (await docker(['inspect', '-f', '{{.Config.Image}}', os.hostname()], { timeout: 30_000 })).trim();
+    await docker([
+      'run', '-d', '--rm', '--name', `semivra-cp-update-${Date.now()}`,
+      '-v', '/var/run/docker.sock:/var/run/docker.sock',
+      '-v', `${STACK_ROOT}:${STACK_ROOT}`,
+      '-w', PLATFORM_DIR,
+      '--entrypoint', 'sh', image,
+      '-c', 'sleep 5 && docker compose up -d --build --no-deps control-plane',
+    ], { timeout: 60_000 });
+    return { updated: true };
+  } catch (err) {
+    return { updated: false, reason: String(err.stderr || err.message).slice(-500) };
+  }
+}
 
 // Adjust a tenant's resource envelope. Rewrites only the resource keys in its
 // .env — every other value (secrets, billing, business type) is read back and
@@ -912,6 +993,173 @@ app.post('/api/tenants/:slug/testlab/security-scan', requireAuth, requireTestTen
   }
 });
 
+// Backup health, from the markers the backup job, the offsite sync and the
+// restore drill leave in platform/backups. A backup nobody looks at fails
+// silently for months; this puts the answer on the first screen.
+const BACKUP_DIR = path.join(PLATFORM_DIR, 'backups');
+async function readMarker(name) {
+  try {
+    const raw = (await fs.readFile(path.join(BACKUP_DIR, name), 'utf8')).trim();
+    const at = Date.parse(raw.split(/\s+/)[0]);
+    return { raw, at: Number.isNaN(at) ? null : at };
+  } catch { return null; }
+}
+// ── PLATFORM HEALTH ───────────────────────────────────────────────────────────
+// Everything that keeps the platform safe to run, on one card, each with the
+// button that fixes it - nothing here asks for a hand-edited .env. Read from
+// the markers the backup job, the offsite sync and the restore drill leave in
+// platform/backups, from each tenant's .env, and from this process's config.
+const OFFSITE_ENV = path.join(PLATFORM_DIR, 'offsite.env');
+const PLATFORM_COMPOSE = path.join(PLATFORM_DIR, 'docker-compose.yml');
+// A secret that was once committed to the repository, and so is public.
+const LEAKED_SECRETS = new Set(['infu-pass-2026']);
+
+async function readOffsiteEnv() {
+  try { return parseEnvFile(await fs.readFile(OFFSITE_ENV, 'utf8')); } catch { return null; }
+}
+
+// Tenants whose JWT signing secret is short, public, or shared with another
+// tenant - any of which lets someone forge a login for that tenant.
+async function weakSecretTenants() {
+  const slugs = await listSlugs();
+  const secrets = await Promise.all(slugs.map(async (slug) => {
+    try { return parseEnvFile(await fs.readFile(tenantEnvPath(slug), 'utf8')).JWT_SECRET || ''; } catch { return null; }
+  }));
+  const seen = new Map();
+  secrets.forEach((s) => { if (s) seen.set(s, (seen.get(s) || 0) + 1); });
+  return slugs.map((slug, i) => {
+    const s = secrets[i];
+    if (s === null) return null;
+    const why = !s ? 'no login secret'
+      : LEAKED_SECRETS.has(s) ? 'a login secret that has been published'
+      : s.length < 32 ? 'a short login secret'
+      : seen.get(s) > 1 ? 'the same login secret as another client'
+      : null;
+    return why ? { slug, why } : null;
+  }).filter(Boolean);
+}
+
+let drillRun = null;   // { startedAt, promise } while a drill is running
+async function latestArchive() {
+  try {
+    const files = (await fs.readdir(BACKUP_DIR)).filter((f) => /^semivra-.*\.archive\.gz$/.test(f));
+    return files.sort().pop() || null;
+  } catch { return null; }
+}
+function runRestoreDrill() {
+  if (drillRun) return drillRun;
+  const startedAt = Date.now();
+  const promise = run('bash', [path.join(PLATFORM_DIR, 'restore-drill.sh')], { timeout: 45 * 60_000, maxBuffer: 8 * 1024 * 1024 })
+    .then((o) => ({ ok: true, log: ((o.stdout || '') + (o.stderr || '')).slice(-3000) }))
+    .catch((err) => ({ ok: false, log: String(err.stdout || '') + String(err.stderr || err.message) }))
+    .finally(() => { drillRun = null; });
+  drillRun = { startedAt, promise };
+  return drillRun;
+}
+// Monthly, unattended: in the small hours (Manila), when the last drill is a
+// month old - so "has a restore ever been proven?" is always answered.
+const DRILL_EVERY_MS = 30 * 24 * 3600_000;
+setInterval(async () => {
+  try {
+    if (drillRun || LOCAL_MODE) return;
+    const hour = Number(new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila', hour: 'numeric', hour12: false }));
+    if (hour < 2 || hour >= 5) return;
+    if (!(await latestArchive())) return;
+    const last = await readMarker('LAST_RESTORE_DRILL');
+    if (last?.at && Date.now() - last.at < DRILL_EVERY_MS) return;
+    runRestoreDrill();
+  } catch { /* try again next hour */ }
+}, 60 * 60_000).unref();
+
+app.get('/api/backup-health', requireAuth, async (_req, res) => {
+  const [success, failure, offsite, drill, offsiteEnv, weak] = await Promise.all([
+    ...['LAST_SUCCESS', 'LAST_FAILURE', 'LAST_OFFSITE_SYNC', 'LAST_RESTORE_DRILL'].map(readMarker),
+    readOffsiteEnv(), weakSecretTenants(),
+  ]);
+  const now = Date.now();
+  const intervalH = Number(process.env.BACKUP_INTERVAL_HOURS) || 24;
+  const problems = [];   // [{ text, action? }] - action names a button the card shows
+  if (!success?.at) problems.push({ text: 'No backup has completed yet. The backup job runs a few minutes after the platform starts, then daily.' });
+  else if (now - success.at > intervalH * 1.5 * 3600_000) problems.push({ text: `Last good backup was ${Math.round((now - success.at) / 3600_000)}h ago - check the backup container.` });
+  if (failure?.at && (!success?.at || failure.at > success.at)) problems.push({ text: 'The most recent backup attempt FAILED - check the backup container logs.' });
+  if (!offsiteEnv) problems.push({ text: 'Backups live only on this server - if it is lost, so are they. Set up an offsite copy (Cloudflare R2 or Backblaze B2).', action: 'offsite' });
+  else if (!offsite?.at) problems.push({ text: 'Offsite copy is set up but has not completed yet (it runs every 6 hours).' });
+  else if (now - offsite.at > 12 * 3600_000) problems.push({ text: `Last offsite copy was ${Math.round((now - offsite.at) / 3600_000)}h ago - check the backup-offsite container.`, action: 'offsite' });
+  if (drillRun) problems.push({ text: 'A restore drill is running now…' });
+  else if (!drill?.at) problems.push({ text: 'No restore has been proven yet. One runs automatically each month once a backup exists.', action: 'drill' });
+  else if (!/PASSED/.test(drill.raw)) problems.push({ text: 'The last restore drill FAILED.', action: 'drill' });
+  else if (now - drill.at > 35 * 24 * 3600_000) problems.push({ text: `Last restore drill was ${Math.round((now - drill.at) / 86400_000)} days ago.`, action: 'drill' });
+  for (const w of weak) problems.push({ text: `${w.slug} uses ${w.why}. Rotating it signs everyone in that client out once.`, action: 'rotate', slug: w.slug });
+  if (!MONGO_AUTH) problems.push({ text: 'The database has no login: a compromised client app could read other clients\' data. Turning it on is a one-time migration - see platform/MONGO_AUTH.md; everything keeps running meanwhile.' });
+  res.json({
+    ok: problems.length === 0, problems,
+    lastSuccess: success?.at || null, lastFailure: failure?.at || null,
+    lastOffsite: offsite?.at || null, lastDrill: drill?.at || null, lastDrillResult: drill?.raw || null,
+    drillRunning: !!drillRun, offsiteConfigured: !!offsiteEnv,
+    offsite: offsiteEnv ? { provider: offsiteEnv.RCLONE_CONFIG_OFFSITE_PROVIDER, endpoint: offsiteEnv.RCLONE_CONFIG_OFFSITE_ENDPOINT, bucket: offsiteEnv.OFFSITE_BUCKET } : null,
+  });
+});
+
+app.post('/api/backup/drill', requireAuth, async (_req, res) => {
+  if (!(await latestArchive())) return res.status(400).json({ error: 'There is no backup to test yet.' });
+  const r = runRestoreDrill();
+  res.status(202).json({ ok: true, startedAt: r.startedAt });
+});
+
+// Offsite copies, set up from the panel. Credentials go to platform/offsite.env
+// (read by the backup-offsite service); the archives are encrypted before they
+// leave with a recovery key generated here ONCE and kept - replacing it would
+// make every copy already uploaded unreadable.
+app.post('/api/backup/offsite', requireAuth, async (req, res) => {
+  const b = req.body || {};
+  const provider = b.provider === 'Backblaze' ? 'Other' : 'Cloudflare';
+  const clean = (v) => String(v || '').trim();
+  const endpoint = clean(b.endpoint), bucket = clean(b.bucket), keyId = clean(b.accessKeyId), secret = clean(b.secretAccessKey);
+  if (!/^https:\/\/[^\s]+$/.test(endpoint)) return res.status(400).json({ error: 'The endpoint must be the https:// address your provider gives for the bucket.' });
+  if (!/^[a-z0-9][a-z0-9.-]{1,62}$/.test(bucket)) return res.status(400).json({ error: 'Bucket name: lowercase letters, digits, dots and dashes.' });
+  if (!keyId || !secret || /[\r\n]/.test(keyId + secret)) return res.status(400).json({ error: 'Both the access key ID and the secret are required.' });
+  const current = await readOffsiteEnv();
+  const env = {
+    RCLONE_CONFIG_OFFSITE_TYPE: 's3',
+    RCLONE_CONFIG_OFFSITE_PROVIDER: provider,
+    RCLONE_CONFIG_OFFSITE_ENDPOINT: endpoint,
+    RCLONE_CONFIG_OFFSITE_ACCESS_KEY_ID: keyId,
+    RCLONE_CONFIG_OFFSITE_SECRET_ACCESS_KEY: secret,
+    OFFSITE_BUCKET: bucket,
+    OFFSITE_CRYPT_PASSWORD: current?.OFFSITE_CRYPT_PASSWORD || crypto.randomBytes(24).toString('base64url'),
+    OFFSITE_CRYPT_SALT: current?.OFFSITE_CRYPT_SALT || crypto.randomBytes(24).toString('base64url'),
+  };
+  await fs.writeFile(OFFSITE_ENV, toEnvFile(env), { mode: 0o600 });
+  try {
+    const log = await docker(['compose', '-f', PLATFORM_COMPOSE, '--profile', 'offsite', 'up', '-d', 'backup-offsite'], { timeout: 5 * 60_000 });
+    res.json({ ok: true, firstTime: !current, recoveryKey: `${env.OFFSITE_CRYPT_PASSWORD} / ${env.OFFSITE_CRYPT_SALT}`, log: log.slice(-1500) });
+  } catch (err) {
+    res.status(500).json({ error: `Saved, but the offsite service did not start: ${String(err.stderr || err.message).slice(-1500)}` });
+  }
+});
+
+app.get('/api/backup/offsite-key', requireAuth, async (_req, res) => {
+  const env = await readOffsiteEnv();
+  if (!env?.OFFSITE_CRYPT_PASSWORD) return res.status(404).json({ error: 'Offsite backup is not set up yet.' });
+  res.json({ recoveryKey: `${env.OFFSITE_CRYPT_PASSWORD} / ${env.OFFSITE_CRYPT_SALT}` });
+});
+
+// A fresh signing secret for one tenant, and its API restarted onto it. Every
+// session of that tenant ends (they sign in again); no data is touched.
+app.post('/api/tenants/:slug/rotate-secret', requireAuth, async (req, res) => {
+  const slug = req.params.slug;
+  if (!(await listSlugs()).includes(slug)) return res.status(404).json({ error: 'No such tenant.' });
+  try {
+    const env = parseEnvFile(await fs.readFile(tenantEnvPath(slug), 'utf8'));
+    env.JWT_SECRET = crypto.randomBytes(32).toString('hex');
+    await fs.writeFile(tenantEnvPath(slug), toEnvFile(env), { mode: 0o600 });
+    const log = await docker([...composeArgs(slug), 'up', '-d', 'api'], { timeout: 5 * 60_000 });
+    res.json({ ok: true, log: log.slice(-1500) });
+  } catch (err) {
+    res.status(500).json({ error: String(err.stderr || err.message).slice(-2000) });
+  }
+});
+
 // Usage meters. Memory is a live reading against an enforced ceiling; disk and
 // bandwidth are observed only — see readDbSizes and readEgress for why neither
 // can be capped on this architecture.
@@ -994,8 +1242,8 @@ app.post('/api/tenants/:slug/wipe', requireAuth, passwordAttemptLimiter, async (
     return res.status(400).json({ error: `Type "${slug}" to confirm.` });
   }
   try {
-    await docker(['exec', 'semivra-platform-mongo-1', 'mongosh', '--quiet', '--eval',
-      `db.getSiblingDB(${JSON.stringify(`semivra_${slug}`)}).dropDatabase()`], { timeout: 120_000 });
+    await docker([...mongoshExec(), '--eval',
+      `const t = db.getSiblingDB(${JSON.stringify(`semivra_${slug}`)}); t.dropAllUsers(); t.dropDatabase()`], { timeout: 120_000 });
     // The API seeds the superadmin from ADMIN_PASS on boot when no user exists,
     // so a restart is what makes the tenant usable again.
     await docker([...composeArgs(slug), 'restart', 'api'], { timeout: 180_000 });
@@ -1036,7 +1284,7 @@ app.get('/api/errors', requireAuth, async (req, res) => {
   `;
 
   try {
-    const raw = await docker(['exec', 'semivra-platform-mongo-1', 'mongosh', '--quiet', '--eval', script],
+    const raw = await docker([...mongoshExec(), '--eval', script],
       { timeout: 60_000 });
     const line = raw.trim().split('\n').filter((l) => l.trim().startsWith('[')).pop() || '[]';
     res.json({ groups: JSON.parse(line), hours, tenants: slugs });
@@ -1054,8 +1302,8 @@ app.delete('/api/tenants/:slug', requireAuth, passwordAttemptLimiter, async (req
   if (req.get('x-confirm-slug') !== slug) return res.status(400).json({ error: `Type "${slug}" to confirm.` });
   try {
     await docker([...composeArgs(slug), 'down', '-v'], { timeout: 180_000 });
-    await docker(['exec', 'semivra-platform-mongo-1', 'mongosh', '--quiet', '--eval',
-      `db.getSiblingDB(${JSON.stringify(`semivra_${slug}`)}).dropDatabase()`], { timeout: 120_000 });
+    await docker([...mongoshExec(), '--eval',
+      `const t = db.getSiblingDB(${JSON.stringify(`semivra_${slug}`)}); t.dropAllUsers(); t.dropDatabase()`], { timeout: 120_000 });
     await fs.rm(caddyPath(slug), { force: true });
     await fs.rm(tenantDir(slug), { recursive: true, force: true });
     await docker(['exec', 'semivra-platform-caddy-1', 'caddy', 'reload',

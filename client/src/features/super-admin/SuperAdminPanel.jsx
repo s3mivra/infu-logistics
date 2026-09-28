@@ -14,7 +14,7 @@ const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase()
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
+import { API_URL } from '../../shared/apiBase.js';
 
 const ROLE_META = {
   superadmin: { label: 'Superadmin', bg: 'bg-emerald-500/20', text: 'text-success', border: 'border-emerald-500/30' },
@@ -79,7 +79,7 @@ const UserCard = memo(({ user, isSelected, onSelect, onEdit, onDelete }) => {
       </div>
 
       <div className="flex-1 min-w-0">
-        <p className="font-bold text-fg truncate">{user.name}</p>
+        <p className="font-bold text-fg truncate" title={String((user.name) ?? '')}>{user.name}</p>
         <p className="text-xs text-fg/70 font-mono">{user.userCode}</p>
       </div>
 
@@ -129,7 +129,7 @@ const NAV_ITEMS = [
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
-function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }) {
+function SidebarNav({ items = NAV_ITEMS, activeSection, onSectionChange, onPOS, onLogout, onClose }) {
   return (
     <>
       <div className="p-5 border-b border-white/5">
@@ -150,7 +150,7 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
       </div>
 
       <nav className="flex-1 p-3 space-y-0.5">
-        {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
+        {items.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             onClick={() => { onSectionChange(id); onClose?.(); }}
@@ -189,21 +189,36 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
 // Main component
 // ---------------------------------------------------------------------------
 
-const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false, permissions: [], customPerms: false, commissionRate: '', pin: '', employeeNumber: '', sssNumber: '', philhealthNumber: '', pagibigNumber: '', tin: '' };
+// Who may open this panel, read from the access token.
+//   'super' - the owner: every section.
+//   'staff' - holds "Manage staff & permissions" (users.manage) but is not a
+//             superadmin: User Control only. The server enforces the same line
+//             (lib/authz.js guardStaffEscalation); this keeps the screen from
+//             offering what the server would refuse.
+function panelAccess() {
+  const p = auth.decodeToken();
+  if (!p) return null;
+  if (String(p.role || '').toLowerCase() === 'superadmin') return 'super';
+  return auth.can('users.manage') ? 'staff' : null;
+}
+
+const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false, permissions: [], customPerms: false, commissionRate: '', dailyRate: '', pin: '', employeeNumber: '', sssNumber: '', philhealthNumber: '', pagibigNumber: '', tin: '' };
 
 export default function SuperAdminPanel() {
   const navigate = useNavigate();
 
   // Auth - access token lives in memory; restored via silent refresh on mount.
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [access, setAccess] = useState(null); // 'super' | 'staff'
+  const isDelegate = access === 'staff';
   const [authBootstrapping, setAuthBootstrapping] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     auth.refreshSession(API_URL).then((data) => {
       if (cancelled) return;
-      // This panel is superadmin-only - only authenticate if the role matches.
-      if (data?.user?.role === 'superadmin') setIsAuthenticated(true);
+      const lvl = data ? panelAccess() : null;
+      if (lvl) { setAccess(lvl); setIsAuthenticated(true); }
       setAuthBootstrapping(false);
     });
     return () => { cancelled = true; };
@@ -310,7 +325,10 @@ export default function SuperAdminPanel() {
 
   const apiFetch = useCallback(async (endpoint, options = {}) => {
     const res = await auth.apiFetch(API_URL, endpoint, options);
-    if ((res.status === 401 || res.status === 403) && endpoint !== '/api/users/login') handleLogout();
+    // Only an expired/invalid session logs out. A 403 is the server refusing
+    // one action (a delegate granting something they do not hold) - the
+    // caller shows its reason; throwing the user out would lose their work.
+    if (res.status === 401 && endpoint !== '/api/users/login') handleLogout();
     return res;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -369,12 +387,14 @@ export default function SuperAdminPanel() {
       });
       const data = await res.json();
       if (data.success) {
-        const payload = JSON.parse(atob(data.token.split('.')[1]));
-        if (payload.role !== 'superadmin') {
-          setLoginError('Access Denied: Superadmin credentials required.');
+        auth.setToken(data.token);
+        const lvl = panelAccess();
+        if (!lvl) {
+          auth.clearToken();
+          setLoginError('Access denied: this needs a superadmin, or the "Manage staff & permissions" permission.');
           return;
         }
-        auth.setToken(data.token);
+        setAccess(lvl);
         setIsAuthenticated(true);
       } else {
         // Surface the server's reason (e.g. rate-limit lockout) rather than
@@ -391,6 +411,8 @@ export default function SuperAdminPanel() {
     auth.logout(API_URL); // revoke refresh session + clear cookie
     auth.clearToken();
     setIsAuthenticated(false);
+    setAccess(null);
+    setActiveSection('users');
     setLoginForm({ name: '', password: '', showPassword: false });
     setUsers([]);
     setSelected(new Set());
@@ -427,7 +449,7 @@ export default function SuperAdminPanel() {
     const perms = Array.isArray(user.permissions) ? user.permissions : [];
     setForm({
       name: user.name, password: '', role: user.role, showPassword: false,
-      permissions: perms, customPerms: perms.length > 0, commissionRate: user.commissionRate ?? '',
+      permissions: perms, customPerms: perms.length > 0, commissionRate: user.commissionRate ?? '', dailyRate: user.dailyRate || '',
       // Never prefilled: the PIN is hashed and cannot be read back. Empty means
       // "leave it as it is"; typing one replaces it.
       pin: '', hasPin: !!user.hasPin || !!user.pinHash,
@@ -462,7 +484,11 @@ export default function SuperAdminPanel() {
   // Permission catalogue grouped by domain, for the editor. [ [group, [perm,...]], ... ]
   const groupedPerms = useMemo(() => {
     const by = {};
-    for (const p of permCatalog) { (by[p.group] = by[p.group] || []).push(p); }
+    const mine = isDelegate ? new Set(auth.getPermissions()) : null;
+    for (const p of permCatalog) {
+      if (mine && !mine.has(p.key)) continue;
+      (by[p.group] = by[p.group] || []).push(p);
+    }
     return Object.entries(by);
   }, [permCatalog]);
   const permLabel = useMemo(() => Object.fromEntries(permCatalog.map(p => [p.key, p.label])), [permCatalog]);
@@ -511,6 +537,7 @@ export default function SuperAdminPanel() {
         const body = { name: form.name.trim(), role: form.role, permissions: permsPayload };
         if (form.password) body.password = form.password;
         if (form.commissionRate !== '') body.commissionRate = form.commissionRate;
+        body.dailyRate = Number(form.dailyRate) || 0;
         // Payroll copies these onto each run, so they are worth having on file
         // before the first payslip rather than after the first filing.
         for (const key of ['employeeNumber', 'sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin']) {
@@ -543,7 +570,10 @@ export default function SuperAdminPanel() {
         setSelected(s => { const n = new Set(s); n.delete(confirmDelete.user._id); return n; });
         setConfirmDelete({ open: false, user: null });
         fetchUsers();
-      } else { showToast('Failed to remove user.', 'error'); }
+      } else {
+        const d = await res.json().catch(() => ({}));
+        showToast(d.error || 'Failed to remove user.', 'error');
+      }
     } finally { setDeleteLoading(false); }
   };
 
@@ -560,14 +590,28 @@ export default function SuperAdminPanel() {
     );
   }, [selected, selectableUsers]);
 
+  // Batch results are counted, not assumed. These used to report "updated N
+  // user(s)" without looking at a single response, so an account the server
+  // refused was reported as changed.
+  const summarizeBatch = async (responses, verb) => {
+    let ok = 0; let reason = '';
+    for (const res of responses) {
+      if (res.ok) { ok++; continue; }
+      if (!reason) reason = (await res.json().catch(() => ({}))).error || '';
+    }
+    const refused = responses.length - ok;
+    if (!refused) showToast(`${verb} ${ok} user(s).`);
+    else showToast(`${verb} ${ok} of ${responses.length}. ${refused} refused${reason ? `: ${reason}` : '.'}`, 'error');
+  };
+
   const handleBatchChangeRole = async () => {
     if (!batchRole || !selected.size) return;
     setBatchLoading(true);
     try {
-      await Promise.all([...selected].map(id =>
+      const results = await Promise.all([...selected].map(id =>
         apiFetch(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify({ role: batchRole }) })
       ));
-      showToast(`Role updated for ${selected.size} user(s).`);
+      await summarizeBatch(results, 'Role updated for');
       setSelected(new Set()); setBatchRole(''); fetchUsers();
     } catch { showToast('Failed to update roles.', 'error'); }
     finally { setBatchLoading(false); }
@@ -577,8 +621,8 @@ export default function SuperAdminPanel() {
     if (!selected.size) return;
     setBatchLoading(true);
     try {
-      await Promise.all([...selected].map(id => apiFetch(`/api/users/${id}`, { method: 'DELETE' })));
-      showToast(`${selected.size} user(s) removed.`);
+      const results = await Promise.all([...selected].map(id => apiFetch(`/api/users/${id}`, { method: 'DELETE' })));
+      await summarizeBatch(results, 'Removed');
       setSelected(new Set()); fetchUsers();
     } catch { showToast('Failed to remove users.', 'error'); }
     finally { setBatchLoading(false); }
@@ -973,7 +1017,7 @@ export default function SuperAdminPanel() {
   };
 
   const openClientCreate = () => {
-    setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '', creditTermsDays: '', segments: '', requiresQuote: false, isVatRegistered: false, tin: '', registeredName: '', registeredAddress: '' });
+    setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '', creditTermsDays: '', segments: '', requiresQuote: false, isVatRegistered: false, tin: '', registeredName: '', registeredAddress: '', assignedSalesperson: '' });
     setClientFormError('');
     setClientModal({ open: true, mode: 'create', client: null });
   };
@@ -981,7 +1025,7 @@ export default function SuperAdminPanel() {
   const openClientEdit = (client) => {
     // null/undefined means "no limit set"; 0 is a real value (cash only), so it
     // must render as "0" rather than collapsing to an empty field.
-    setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false, creditLimit: client.creditLimit === null || client.creditLimit === undefined ? '' : String(client.creditLimit), creditTermsDays: client.creditTermsDays === null || client.creditTermsDays === undefined ? '' : String(client.creditTermsDays), segments: (client.segments || []).join(', '), requiresQuote: client.requiresQuote === true, isVatRegistered: client.isVatRegistered === true, tin: client.tin || '', registeredName: client.registeredName || '', registeredAddress: client.registeredAddress || '' });
+    setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false, creditLimit: client.creditLimit === null || client.creditLimit === undefined ? '' : String(client.creditLimit), creditTermsDays: client.creditTermsDays === null || client.creditTermsDays === undefined ? '' : String(client.creditTermsDays), segments: (client.segments || []).join(', '), requiresQuote: client.requiresQuote === true, isVatRegistered: client.isVatRegistered === true, tin: client.tin || '', registeredName: client.registeredName || '', registeredAddress: client.registeredAddress || '', assignedSalesperson: client.assignedSalesperson || '' });
     setClientFormError('');
     setClientModal({ open: true, mode: 'edit', client });
     fetchClientPricing(client._id);
@@ -1057,7 +1101,7 @@ export default function SuperAdminPanel() {
         if (data.success) { showToast('Client account created.'); closeClientModal(); fetchClients(); }
         else setClientFormError(data.error || 'Failed to create client.');
       } else {
-        const body = { name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, isActive: clientForm.isActive, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments, requiresQuote: !!clientForm.requiresQuote, isVatRegistered: !!clientForm.isVatRegistered, tin: clientForm.tin.trim(), registeredName: clientForm.registeredName.trim(), registeredAddress: clientForm.registeredAddress.trim() };
+        const body = { assignedSalesperson: clientForm.assignedSalesperson || '', name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, isActive: clientForm.isActive, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments, requiresQuote: !!clientForm.requiresQuote, isVatRegistered: !!clientForm.isVatRegistered, tin: clientForm.tin.trim(), registeredName: clientForm.registeredName.trim(), registeredAddress: clientForm.registeredAddress.trim() };
         if (clientForm.username.trim()) body.username = clientForm.username.trim();
         if (clientForm.password) body.password = clientForm.password;
         const res = await apiFetch(`/api/client-accounts/${clientModal.client._id}`, { method: 'PATCH', body: JSON.stringify(body) });
@@ -1234,6 +1278,7 @@ export default function SuperAdminPanel() {
       <aside className={`lg:hidden fixed top-0 left-0 h-full w-64 bg-sidebar-bg z-50 flex flex-col border-r border-white/5
         transition-transform duration-300 ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <SidebarNav
+          items={isDelegate ? NAV_ITEMS.filter(n => n.id === 'users') : NAV_ITEMS}
           activeSection={activeSection}
           onSectionChange={setActiveSection}
           onPOS={() => navigate('/admin')}
@@ -1245,6 +1290,7 @@ export default function SuperAdminPanel() {
       {/* Desktop sidebar */}
       <aside className="hidden lg:flex flex-col w-64 flex-shrink-0 bg-sidebar-bg border-r border-white/5 h-screen sticky top-0 overflow-y-auto">
         <SidebarNav
+          items={isDelegate ? NAV_ITEMS.filter(n => n.id === 'users') : NAV_ITEMS}
           activeSection={activeSection}
           onSectionChange={setActiveSection}
           onPOS={() => navigate('/admin')}
@@ -1470,7 +1516,7 @@ export default function SuperAdminPanel() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="font-bold text-fg text-sm truncate">{tier.name}</p>
+                        <p className="font-bold text-fg text-sm truncate" title={String((tier.name) ?? '')}>{tier.name}</p>
                         {tier.isActive === false && (
                           <span className="text-[9px] font-black uppercase tracking-wider bg-white/10 text-fg/70 px-1.5 py-0.5 rounded">Inactive</span>
                         )}
@@ -1525,7 +1571,7 @@ export default function SuperAdminPanel() {
                     <tbody>
                       {pricingTable.products.map(p => (
                         <tr key={p._id} className="border-b border-white/5 hover:bg-white/[0.03]">
-                          <td className="px-4 py-2.5 text-fg font-bold truncate max-w-[220px] sticky left-0 bg-sidebar-bg">{p.name}</td>
+                          <td className="px-4 py-2.5 text-fg font-bold truncate max-w-[220px] sticky left-0 bg-sidebar-bg" title={String((p.name) ?? '')}>{p.name}</td>
                           <td className="px-4 py-2.5 text-right text-fg/75 font-mono tabular-nums">₱{Number(p.basePrice || 0).toFixed(2)}</td>
                           {pricingTable.tiers.map(t => {
                             const price = t.prices[p._id];
@@ -1579,7 +1625,7 @@ export default function SuperAdminPanel() {
                       {client.name.slice(0, 2).toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-bold text-fg truncate">{client.name}</p>
+                      <p className="font-bold text-fg truncate" title={String((client.name) ?? '')}>{client.name}</p>
                       <p className="text-xs text-fg/70 font-mono">
                         {client.clientCode} · {client.source === 'pos' ? 'no portal login (auto-promoted)' : `@${client.username}`}
                       </p>
@@ -1983,7 +2029,7 @@ export default function SuperAdminPanel() {
                   <button onClick={() => setPurgeModal({ open: false, phrase: '', busy: false, error: '', result: null })} disabled={purgeModal.busy}
                     className="text-sm font-bold px-4 py-2 rounded-lg text-fg/75 hover:text-fg transition disabled:opacity-40">Cancel</button>
                   <button onClick={handlePurgeData} disabled={purgeModal.busy || purgeModal.phrase.trim() !== 'PURGE' || purgeSelected.size === 0}
-                    className="flex items-center gap-2 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-lg transition">
+                    className="flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-lg transition">
                     {purgeModal.busy ? 'Purging…' : `Purge ${purgeSelected.size ? `${purgeSelected.size} Selected` : 'Selected'}`}
                   </button>
                 </div>
@@ -2162,6 +2208,21 @@ export default function SuperAdminPanel() {
                     className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm"
                   />
                   <p className="text-[10px] text-fg/65 mt-1.5">Percent of this cashier's attributed sales, shown on the Commissions report.</p>
+                </div>
+              )}
+              {modal.mode === 'edit' && (
+                <div>
+                  <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
+                    Daily Rate (₱)
+                  </label>
+                  <input
+                    type="number" min="0" step="0.01"
+                    value={form.dailyRate}
+                    onChange={e => handleFormChange('dailyRate', e.target.value)}
+                    placeholder="0.00"
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm"
+                  />
+                  <p className="text-[10px] text-fg/65 mt-1.5">Pay per working day. Payroll's "Fill from timesheet" multiplies it by days worked and paid leave, plus overtime at 125%.</p>
                 </div>
               )}
 
@@ -2347,7 +2408,7 @@ export default function SuperAdminPanel() {
                   <div className="mt-2 max-h-24 overflow-y-auto space-y-0.5">
                     {t.rows.slice(0, 6).map(r => (
                       <div key={r.productId} className="flex justify-between text-[11px] text-fg/75">
-                        <span className="truncate pr-2">{r.name}</span>
+                        <span className="truncate pr-2" title={String((r.name) ?? '')}>{r.name}</span>
                         <span className="font-mono text-fg/70 shrink-0">₱{r.price.toFixed(2)}</span>
                       </div>
                     ))}
@@ -2534,7 +2595,7 @@ export default function SuperAdminPanel() {
                     return (
                       <div key={p._id} className="flex items-center gap-3 py-1.5">
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm text-fg font-bold truncate">{p.name}</p>
+                          <p className="text-sm text-fg font-bold truncate" title={String((p.name) ?? '')}>{p.name}</p>
                           <p className="text-[10px] text-fg/70">List ₱{Number(p.basePrice || 0).toFixed(2)}{p.category ? ` · ${p.category}` : ''}</p>
                         </div>
                         {off !== null && (
@@ -2768,6 +2829,20 @@ export default function SuperAdminPanel() {
                 </div>
               )}
 
+              {clientModal.mode === 'edit' && (
+                <div>
+                  <label htmlFor="client-rep" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Salesperson</label>
+                  <select id="client-rep" value={clientForm.assignedSalesperson}
+                    onChange={e => setClientForm(f => ({ ...f, assignedSalesperson: e.target.value }))}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand">
+                    <option value="">None - credit the cashier</option>
+                    {clientForm.assignedSalesperson && !users.some(u => u.name === clientForm.assignedSalesperson) && <option value={clientForm.assignedSalesperson}>{clientForm.assignedSalesperson}</option>}
+                    {users.filter(u => u.role !== 'client').map(u => <option key={u._id} value={u.name}>{u.name}</option>)}
+                  </select>
+                  <p className="text-[10px] text-fg/65 mt-1">Their sales are credited to this person on the Commissions report, whoever rings them up.</p>
+                </div>
+              )}
+
               <div>
                 <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Price Tier</label>
                 {(() => {
@@ -2844,7 +2919,7 @@ export default function SuperAdminPanel() {
                       {clientPricing.map(p => (
                         <details key={p.productId} className="group bg-page-bg/40 border border-white/10 rounded-lg">
                           <summary className="flex items-center justify-between gap-2 px-3 py-2 cursor-pointer list-none">
-                            <span className="text-xs font-bold text-fg truncate">{p.name}</span>
+                            <span className="text-xs font-bold text-fg truncate" title={String((p.name) ?? '')}>{p.name}</span>
                             <span className="flex items-center gap-2 shrink-0">
                               <span className="text-xs font-black text-brand-text tabular-nums">
                                 ₱{(p.flatPrice ?? p.basePrice).toFixed(2)}

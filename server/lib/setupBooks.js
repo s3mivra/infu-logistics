@@ -1,3 +1,4 @@
+import { roundMoney } from './money.js';
 // Carrying a business's existing books in: the arithmetic, with no database.
 //
 // Used by the setup workbook's accounting sheets (features/setup-import.js) and
@@ -6,7 +7,7 @@
 
 export const MONTH_KEYS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
-const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const round2 = (n) => roundMoney(n);
 
 // A money cell as people type it, or as an accounting spreadsheet exports it:
 // 1,061,821 · (29,762) · -29762 · ₱ 20,000 · "-" or blank for nothing.

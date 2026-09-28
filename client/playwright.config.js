@@ -32,7 +32,17 @@ export default defineConfig({
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-    // Add a tablet pass later if wanted:
-    // { name: 'tablet', use: { ...devices['iPad (gen 7) landscape'] } },
+    // The counter device: Samsung Galaxy Tab A11+ (11", 1920x1200 panel at
+    // 1.5x = 1280x800 CSS px), landscape, touch. Runs the checks that depend
+    // on layout - the flows themselves are covered once, on desktop.
+    {
+      name: 'tab-a11plus',
+      testMatch: /(smoke|navigation|contrast)\.spec\.js$/,
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1.5, isMobile: true, hasTouch: true },
+    },
+    // A staff phone (clock-in, stock count, the client portal on the go).
+    // navigation.spec clicks the desktop sidebar, which a phone keeps
+    // off-canvas behind the menu button - so the phone runs sign-in and smoke.
+    { name: 'phone', testMatch: /(smoke|auth)\.spec\.js$/, use: { ...devices['Pixel 7'] } },
   ],
 });

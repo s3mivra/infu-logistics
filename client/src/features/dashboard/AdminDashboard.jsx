@@ -48,7 +48,7 @@ import {
 } from '../../shared/importSheets';
 import { LEDGER_REPORT_SPEC, ledgerReportTable } from '../../shared/ledgerReport';
 import * as ui from '../../shared/ui';
-import { monthStartStr, setClientBusinessTz, todayStr, yearStartStr } from '../../shared/businessDay.js';
+import { dateStr, monthStartStr, setClientBusinessTz, todayStr, yearStartStr } from '../../shared/businessDay.js';
 import { PACK_UNIT } from '../../shared/packUnit.js';
 import { setUpdateGuard } from '../../shared/autoUpdate.js';
 // Tabs are lazy-loaded so only the active tab's code ships on first dashboard
@@ -70,6 +70,7 @@ const FixedAssetsTab = lazy(() => import('../fixed-assets/FixedAssetsTab'));
 const BankReconciliationTab = lazy(() => import('../finance-modules/BankReconciliationTab'));
 const WithholdingTaxTab = lazy(() => import('../finance-modules/WithholdingTaxTab'));
 const PayrollTab = lazy(() => import('../finance-modules/PayrollTab'));
+const TimeOffTab = lazy(() => import('../finance-modules/TimeOffTab'));
 const QuotationsTab = lazy(() => import('../quotations/QuotationsTab'));
 
 // Small fallback shown while a tab chunk loads.
@@ -80,8 +81,8 @@ const TabFallback = () => (
 );
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
-const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL || 'http://192.168.100.2:3000';
+import { API_URL, FRONTEND_URL } from '../../shared/apiBase.js';
+import { useManagerApproval } from '../../shared/ManagerApproval.jsx';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 // fb categories route to Kitchen; log categories route to Logistics. Every
 // catForm reset/fallback must use this so a new category in log mode isn't
@@ -196,7 +197,7 @@ const pdfMoney = (n) => {
 
 export default function AdminDashboard() {
   // PWA runtime: connectivity, install prompt, offline order queue
-  const { isOnline, installable, install, queuedCount, refreshQueue, syncQueue } = usePwa();
+  const { isOnline, installable, install, queuedCount, refreshQueue, syncQueue, rejectedOrders, dismissRejected } = usePwa();
   const navigate = useNavigate(); // in-app (SPA) navigation - no full page reload
 
   const [paymentSelections, setPaymentSelections] = useState({});
@@ -562,6 +563,35 @@ export default function AdminDashboard() {
   const [posCart, setPosCart] = useState([]);
   const [posSubmitting, setPosSubmitting] = useState(false); // disables Place Order while in flight
   const posSubmittingRef = useRef(false);                    // synchronous double-tap guard
+  // Over a client's credit limit, an approver releases the sale: their PIN here
+  // (useManagerApproval), or - if the person at the till may approve credit -
+  // their own confirmation. Returns the fields to resend with, or null.
+  const creditRelease = async (refusal) => {
+    if (!refusal?.needsCreditApproval) return null;
+    if (can('credit.approve')) {
+      const ok = await ui.confirm({ message: `${refusal.error}\n\nYou can approve credit. Release this sale anyway?`, confirmLabel: 'Approve & continue' });
+      return ok ? { creditOverride: true } : null;
+    }
+    const got = await requestApproval({
+      permission: 'credit.approve', target: refusal.clientId, title: 'Over the credit limit',
+      detail: `${refusal.error}\n\nSomeone who approves credit can release it with their PIN.`,
+    });
+    return got ? { creditApproval: got.approval } : null;
+  };
+  // Saves that write money or the catalogue: a second tap while the first is
+  // still in flight is dropped (the ref is synchronous, state is not), and
+  // busyForms lets the button say so. Returns false for a dropped tap.
+  const formInFlight = useRef({});
+  const [busyForms, setBusyForms] = useState({});
+  const onceAtATime = (key, fn) => async (...args) => {
+    if (formInFlight.current[key]) { args[0]?.preventDefault?.(); return false; }
+    formInFlight.current[key] = true;
+    setBusyForms((b) => ({ ...b, [key]: true }));
+    try { return await fn(...args); } finally {
+      formInFlight.current[key] = false;
+      setBusyForms((b) => ({ ...b, [key]: false }));
+    }
+  };
   // What a reload would lose, for the updater that moves an installed till to
   // a new version: a cart with something in it, or the register open. Read
   // when the updater decides, so it always sees the current state.
@@ -576,6 +606,10 @@ export default function AdminDashboard() {
   // Optional client account link - when set, the order qualifies for that
   // client's per-product discount overrides on the server side.
   const [posClientId, setPosClientId] = useState('');
+  // Who the sale is credited to (Commissions). Blank = the client's assigned
+  // salesperson, else whoever rings it up - decided on the server.
+  const [posSalesperson, setPosSalesperson] = useState('');
+  const [salesStaff, setSalesStaff] = useState([]);
   // The selected client's resolved discount per product (clientDiscounts,
   // segmentDiscounts, AND price tiers - the same resolver orders.js uses at
   // checkout), so the POS cart shows their real price live instead of only
@@ -871,6 +905,19 @@ export default function AdminDashboard() {
     }
     return response;
   }, []);
+  // The PIN prompt for an approver (credit release) - needs apiFetch above.
+  const { requestApproval, approvalDialog } = useManagerApproval(apiFetch);
+
+  // Staff names for the POS salesperson picker (logistics sells through reps;
+  // a cafe till has none). Names only reach this screen.
+  useEffect(() => {
+    if (!isAuthenticated || BUSINESS_TYPE !== 'log') return;
+    let alive = true;
+    apiFetch('/api/users').then(r => r.json()).then(d => {
+      if (alive && d.success) setSalesStaff((d.users || []).filter(u => u.role !== 'client' && u.isActive !== false).map(u => u.name).filter(Boolean).sort((a, b) => a.localeCompare(b)));
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [isAuthenticated, apiFetch]);
 
   // ── SHARED CASH DRAWER ─────────────────────────────────────────────────────
   // The shop's one till, when sharedDrawer is on. Kept separate from logout on
@@ -989,7 +1036,7 @@ export default function AdminDashboard() {
   // down - past `if (!isAuthenticated) return <login/>` - its hooks ran only
   // once someone was logged in, so the hook count changed between the logged
   // out and logged in renders and React threw #310 at the moment of login.
-  const { isOn: moduleOn } = useModules(apiFetch, { enabled: isAuthenticated });
+  const { isOn: moduleOn, reload: reloadModules } = useModules(apiFetch, { enabled: isAuthenticated });
 
   // COA-derived tender list (see usePaymentMethods) - the POS's own copy of
   // the same live list the client portal reads, riding this dashboard's
@@ -1039,43 +1086,41 @@ export default function AdminDashboard() {
       // Superadmin, or any role once the shop has turned the requirement off,
       // logs the shift at ₱0 when nothing was entered.
       const finalCash = (isSuperAdminLogin || !requireCashShift || joiningOpenDrawer) ? (isNaN(cashAmount) ? 0 : cashAmount) : cashAmount;
-      try {
-        const shiftRes = await fetch(`${API_URL}/api/shifts/start`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${data.token}` },
-          body: JSON.stringify({ startingCash: finalCash })
-        });
-        if (!shiftRes.ok) {
-          console.warn('Shift record failed to save - check server logs.');
-        } else {
-          // Joining an open till means taking on cash somebody else counted.
-          // The response used to be discarded, so the incoming shift was told
-          // nothing about the money they had just become responsible for -
-          // they simply were not asked for a float and the field vanished.
-          // Say what they are accepting, and from whom.
-          //
-          // Shown AFTER authentication rather than on the login form on
-          // purpose: the pre-login settings endpoint is public, and putting a
-          // cash figure on it would let anyone polling the URL learn how much
-          // is in the till.
-          const sd = await shiftRes.json().catch(() => null);
-          if (sd?.success && sd.joined && sd.shift) {
-            const float = Number(sd.shift.startingCash || 0);
-            const opener = sd.shift.openedBy || sd.shift.cashierName || 'someone';
-            const openedAt = sd.shift.shiftStart ? new Date(sd.shift.shiftStart).toLocaleString() : '';
-            const NL = String.fromCharCode(10);
-            ui.alert([
-              'You have joined the open drawer.',
-              '',
-              `Opened by ${opener}${openedAt ? ` on ${openedAt}` : ''}.`,
-              `Cash handed over: ₱${float.toLocaleString('en-PH', { minimumFractionDigits: 2 })}.`,
-              '',
-              'Count the till if that does not match what is in front of you, and tell a manager before ringing anything.',
-            ].join(NL));
-          }
+      // The shift record is what end-of-day cash is reconciled against. A
+      // failure here used to go only to the console, so a cashier could work a
+      // whole day with no shift and a meaningless variance. Retry once, then
+      // say so on screen.
+      const startShift = () => fetch(`${API_URL}/api/shifts/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${data.token}` },
+        body: JSON.stringify({ startingCash: finalCash })
+      });
+      let shiftRes = null;
+      for (let attempt = 0; attempt < 2 && !shiftRes?.ok; attempt++) {
+        try { shiftRes = await startShift(); } catch { shiftRes = null; }
+        if (!shiftRes?.ok && attempt === 0) await new Promise(r => setTimeout(r, 1500));
+      }
+      if (!shiftRes?.ok) {
+        ui.alert("Your shift could not be started, so today's cash will not reconcile. Log out and back in; if it keeps happening, tell your manager.");
+      } else {
+        // Joining an open till means taking on cash somebody else counted.
+        // Say what they are accepting, and from whom. Shown after
+        // authentication on purpose: the pre-login settings endpoint is public.
+        const sd = await shiftRes.json().catch(() => null);
+        if (sd?.success && sd.joined && sd.shift) {
+          const float = Number(sd.shift.startingCash || 0);
+          const opener = sd.shift.openedBy || sd.shift.cashierName || 'someone';
+          const openedAt = sd.shift.shiftStart ? new Date(sd.shift.shiftStart).toLocaleString() : '';
+          const NL = String.fromCharCode(10);
+          ui.alert([
+            'You have joined the open drawer.',
+            '',
+            `Opened by ${opener}${openedAt ? ` on ${openedAt}` : ''}.`,
+            `Cash handed over: ₱${float.toLocaleString('en-PH', { minimumFractionDigits: 2 })}.`,
+            '',
+            'Count the till if that does not match what is in front of you, and tell a manager before ringing anything.',
+          ].join(NL));
         }
-      } catch {
-        console.warn('Shift start request failed - shift may not be recorded.');
       }
       setStartingCash('');
       localStorage.removeItem('semivra_last_actual_cash');
@@ -1357,7 +1402,7 @@ export default function AdminDashboard() {
   };
 
   // 3. Add these two handler functions right above your return() statement:
-  const handleSaveAddOn = async (e) => {
+  const handleSaveAddOn = onceAtATime('addon', async (e) => {
     e.preventDefault();
     const { _id, ...body } = addOnForm;
     // Only lines that take something; a line left at zero is not a recipe.
@@ -1366,7 +1411,7 @@ export default function AdminDashboard() {
     await apiFetch(url, { method: _id ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     setAddOnForm({ name: '', price: '', category: 'Extras', recipe: [] });
     fetchData();
-  };
+  });
   
   const deleteAddOn = async (id) => {
     if(await ui.confirm('Delete this Add-on?')) await apiFetch(`/api/addons/${id}`, { method: 'DELETE' });
@@ -1470,16 +1515,26 @@ export default function AdminDashboard() {
   // Sends one queued offline order. The stable queue-entry id is the idempotency
   // key, so replaying a half-sent order won't create a duplicate. Returns true on
   // success so the queue drops it; false/throw keeps it for the next attempt.
+  // Reports the OUTCOME, not just success. A 4xx is the server refusing the
+  // order (an item no longer on the menu, a price rule, a credit limit): it
+  // will never succeed on retry, so it is set aside for a person to see.
+  // Anything else - offline, a 5xx, an expired session - is retried.
   const sendQueuedOrder = async (entry) => {
     try {
       const res = await apiFetch('/api/orders', {
         method: 'POST',
         headers: { 'Idempotency-Key': entry.id },
-        body: JSON.stringify(entry.payload),
+        // When it was actually rung up, so a replay after midnight still lands
+        // on the day it was taken (the server bounds and checks this).
+        body: JSON.stringify({ ...entry.payload, ...(entry.queuedAt ? { placedAt: new Date(entry.queuedAt).toISOString() } : {}) }),
       });
-      const data = await res.json();
-      return !!data.success;
-    } catch { return false; }
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) return 'sent';
+      if (res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 408 && res.status !== 429) {
+        return { status: 'rejected', reason: data.error || `Refused (${res.status}).` };
+      }
+      return 'retry';
+    } catch { return 'retry'; }
   };
 
   // Replay a queued offline clock event against the server, backdating it to when
@@ -1524,11 +1579,15 @@ export default function AdminDashboard() {
       ]
     };
 
-    await apiFetch(`/api/journal`, { 
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(jePayload) 
+    const res = await apiFetch(`/api/journal`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(jePayload)
     });
+    const d = await res.json().catch(() => ({}));
+    if (!d.success) { ui.alert(d.error || 'Nothing was posted.'); return; }
     fetchERPData();
-    ui.alert(`₱${amount.toFixed(2)} injected into Cash on Hand.`);
+    ui.alert(d.pending
+      ? `Capital injection of ₱${amount.toFixed(2)} saved as ${d.draft?.draftNumber} - it reaches Cash on Hand once an approver signs off.`
+      : `₱${amount.toFixed(2)} injected into Cash on Hand.`);
   };
 
   // Pricing Control's "History" button - same idea as Inventory's Stock Card,
@@ -2462,6 +2521,7 @@ export default function AdminDashboard() {
       // discount overrides for this order. Optional - falls back to the
       // product's default discountPercent when blank.
       clientAccountId: posClientId || undefined,
+      salesperson: posSalesperson || undefined,
       reserveOnly: posReserveOnly || undefined,
       paymentMethod: ['Grab Delivery', 'Foodpanda', 'Manual Delivery', 'Lalamove'].includes(posTable) ? posTable : 'Cash',
       isComplimentary: false,
@@ -2482,6 +2542,7 @@ export default function AdminDashboard() {
       setPosCart([]);
       setPosCustomerName('');
       setPosClientId('');
+      setPosSalesperson('');
       setPosReserveOnly(false);
       setPosDeliveryAddress('');
       setPosCustomerPhone('');
@@ -2510,7 +2571,13 @@ export default function AdminDashboard() {
       const res = await apiFetch(`/api/orders`, {
         method: 'POST', headers: { 'Idempotency-Key': idemKey }, body: JSON.stringify(payload)
       });
-      const data = await res.json();
+      let data = await res.json();
+      if (!data.success && data.needsCreditApproval) {
+        const extra = await creditRelease(data);
+        // A fresh key: the refused attempt's answer is remembered under the first one.
+        if (extra) data = await (await apiFetch(`/api/orders`, { method: 'POST', headers: { 'Idempotency-Key': `${idemKey}-credit` }, body: JSON.stringify({ ...payload, ...extra }) })).json();
+        else data = { success: false, error: 'Not placed - the sale is over the client\'s credit limit.' };
+      }
       if (data.success) {
         // Apply any manually-set per-item discounts from the POS cart
         const cartWithDisc = posCart.filter(item => (item.discountPercent || 0) > 0);
@@ -2588,7 +2655,12 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
+      let data = await res.json();
+      if (!data.success && data.needsCreditApproval) {
+        const extra = await creditRelease(data);
+        if (extra) data = await (await apiFetch(`/api/orders/${orderId}`, { method: 'PUT', body: JSON.stringify({ ...payload, ...extra }) })).json();
+        else data = { success: false, error: 'Not changed - the sale is over the client\'s credit limit.' };
+      }
 
       if (!data.success) {
         ui.alert(data.error);
@@ -2694,23 +2766,18 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
   const applyDiscount = async (orderId, isRemoving = false) => {
     const order = orders.find(o => o._id === orderId);
     const percent = isRemoving ? 0 : parseFloat(discountInputs[orderId] || 0);
-    if (percent < 0 || percent > 100) return ui.alert('Discount must be between 0% and 100%');
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) return ui.alert('Discount must be between 0% and 100%');
     
     // Grab the ticked checkboxes
     const selectedIndices = isRemoving ? [] : getSelectedItems(order);
 
-    // Auto-detect SC/PWD to trigger isolated VAT Exemption
-    let isVatExempt = false;
-    let discountType = 'None';
-    const selectedVal = discountInputs[orderId];
-    const selectedObj = discounts.find(d => d.percentage.toString() === selectedVal);
-    
-    if (selectedObj && selectedObj.isSCPWD) {
-      isVatExempt = true;
-      discountType = 'SC/PWD';
-    } else if (percent > 0) {
-      discountType = 'Promo';
-    }
+    // This is the ORDER-LEVEL promo control, and a promo is never a VAT
+    // exemption. SC/PWD is applied per item through its own control, which
+    // is what sets isVatExempt. This used to look the chosen percentage up
+    // across every preset, so a 20% promo matched the 20% SC/PWD preset and
+    // was booked as VAT-exempt.
+    const isVatExempt = false;
+    const discountType = percent > 0 ? 'Promo' : 'None';
 
     await apiFetch(`/api/orders/${orderId}`, { 
       method: 'PUT', 
@@ -3855,11 +3922,11 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
         // sheet_to_json without cellDates gives numbers - handle both, plus a
         // plain typed string like "2026-08-01".
         let date = '';
-        if (dateRaw instanceof Date && !Number.isNaN(dateRaw.getTime())) date = dateRaw.toISOString().slice(0, 10);
+        if (dateRaw instanceof Date && !Number.isNaN(dateRaw.getTime())) date = dateStr(dateRaw);
         else if (typeof dateRaw === 'number') date = new Date(Math.round((dateRaw - 25569) * 86400 * 1000)).toISOString().slice(0, 10);
         else if (String(dateRaw ?? '').trim()) {
           const parsed = new Date(String(dateRaw).trim());
-          date = Number.isNaN(parsed.getTime()) ? String(dateRaw).trim() : parsed.toISOString().slice(0, 10);
+          date = Number.isNaN(parsed.getTime()) ? String(dateRaw).trim() : dateStr(parsed);
         }
         const dateInvalid = date && Number.isNaN(new Date(date).getTime());
 
@@ -4397,7 +4464,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
     }
   };
 
-  const addInventory = async () => {
+  const addInventory = onceAtATime('inventory', async () => {
     // log: honour the chosen unit (defaulting to pcs) and per-qty size (default 1)
     // so a "10× 1L Milk" restock keeps its L unit and 1-per-pack size.
     const eff = BUSINESS_TYPE === 'log'
@@ -4494,7 +4561,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
 
     setInvForm({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', productionDate: '', expiryWarnDays: 7, creditAccount: '111000', revolvingFundId: '', supplierId: '', supplierName: '', stockLocation: '', stockCategory: '' });
     fetchERPData();
-  };
+  });
   const deleteInventory = async (id) => { if(await ui.confirm('Delete inventory item?')) { await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' }); fetchERPData(); } };
 
   // --- OPEN EDIT INVENTORY MODAL: pre-fill from item ---
@@ -5866,7 +5933,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       unit: item.unit || '',
       unitCost: ((item.unitCost || 0) * costBasis).toFixed(2),                      // base → per-pack (log) / per-display (fb)
       lowStockThreshold: ((item.lowStockThreshold || 0) / costBasis).toString(),    // base → packages (log) / display (fb)
-      expiryDate: item.expiryDate ? new Date(item.expiryDate).toISOString().slice(0, 10) : '',
+      expiryDate: item.expiryDate ? dateStr(item.expiryDate) : '',
       expiryWarnDays: item.expiryWarnDays || 7,
       displayUnit: eff.unit,
       packSize: item.packSize != null ? String(item.packSize) : '',
@@ -6023,7 +6090,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         head: [['Item Name', 'Unit', 'Beginning Bal.', 'Purchases (In)', 'Sales (Out)', 'Adjustments', 'Ending Bal.']],
         body: stockBody, theme: 'grid', headStyles: { fillColor: [30, 30, 30], textColor: [255,255,255] }
       });
-      doc.save(`Inventory_Movement_${new Date().toISOString().split('T')[0]}.pdf`);
+      doc.save(`Inventory_Movement_${todayStr()}.pdf`);
     } catch (err) { ui.alert("Failed to generate PDF: " + err.message); }
   };
 
@@ -6048,7 +6115,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       });
       currentY = doc.lastAutoTable.finalY + 15;
     });
-    doc.save(`General_Ledger_${new Date().toISOString().split('T')[0]}.pdf`);
+    doc.save(`General_Ledger_${todayStr()}.pdf`);
   };
 
   // 1. COMPLETE SALES HISTORY (Master Summary + Daily Breakdown)
@@ -6158,7 +6225,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       });
       currentY = doc.lastAutoTable.finalY + 15;
     });
-    doc.save(`Complete_Sales_History_${new Date().toISOString().split('T')[0]}.pdf`);
+    doc.save(`Complete_Sales_History_${todayStr()}.pdf`);
   };
 
   // 2. EXPORT SPECIFIC DAY 
@@ -6300,7 +6367,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         pdfMoney(i.tiedUpCapital || 0),
       ]; }), [90, 90, 90]);
 
-    doc.save(`Analytics_Report_${new Date().toISOString().split('T')[0]}.pdf`);
+    doc.save(`Analytics_Report_${todayStr()}.pdf`);
   };
 
   const exportMonthlyToPDF = async () => {
@@ -6327,11 +6394,11 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       startY: 25, head: [['Month', 'Cash', 'Bank', 'E-Wallet', 'Total Revenue']],
       body: rows, theme: 'grid', headStyles: { fillColor: [40, 40, 40] }
     });
-    doc.save(`Monthly_Summary_${new Date().toISOString().split('T')[0]}.pdf`);
+    doc.save(`Monthly_Summary_${todayStr()}.pdf`);
   };
 
   // 4. Sales History PDF Helper
-  const handleSaveCategory = async (e) => { 
+  const handleSaveCategory = onceAtATime('category', async (e) => {
     e.preventDefault(); 
     if(!catForm.name.trim()) return; 
 
@@ -6349,7 +6416,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     }
     setCatForm({ name: '', department: DEFAULT_DEPARTMENT });
     fetchData();
-  };
+  });
 
   const deleteCategory = async (id) => { if(await ui.confirm('Delete category?')) await apiFetch(`/api/categories/${id}`, { method: 'DELETE' }); };
 
@@ -6370,7 +6437,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     };
   };
 
-  const handleSaveProduct = async (e) => {
+  const handleSaveProduct = onceAtATime('product', async (e) => {
     e.preventDefault();
     const method = editingProduct ? 'PUT' : 'POST';
     const url = editingProduct ? `/api/products/${editingProduct._id}` : `/api/products`;
@@ -6386,7 +6453,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     resetProductForm();
     fetchData();
     return true;
-  };
+  });
   const deleteProduct = async (id) => {
     if(await ui.confirm("Delete this product permanently?")) {
       await apiFetch(`/api/products/${id}`, { method: 'DELETE' });
@@ -7081,10 +7148,10 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     catch (err) { console.error('fetchSalesLineItems', err); }
   };
   const exportSalesLineItemsPDF = async () => {
-    if (!salesLineItems) return ui.alert('Load the Sales Line Items report first.');
+    if (!salesLineItems) return ui.alert('Load the Daily Sales Report first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
     await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Sales Line Items`, 14, 14);
+    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Daily Sales Report`, 14, 14);
     doc.setFontSize(9); doc.text(`${sliRange.start} to ${sliRange.end}`, 14, 20);
     const head = ['Date', 'Customer ID', 'Customer Name', 'Order ID', 'Item Code', 'Item', 'Qty', 'Payment', 'Line Total'];
     const body = salesLineItems.rows.map(r => r.isComponent
@@ -7347,6 +7414,9 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         // The registered serial, once the sale has completed and been issued
         // one. An unfinished order has no receipt number to show.
         ...(order.orNumber ? [{ label: 'OR No.', value: order.orNumber }] : []),
+        // Delivery receipts, one per delivery (logistics). Several when the
+        // order went out in parts.
+        ...((order.deliveryReceipts || []).length || order.drNumber ? [{ label: 'DR No.', value: (order.deliveryReceipts || []).map(d => d.drNumber).join(', ') || order.drNumber }] : []),
       ],
       subFields: [
         { label: 'Terms of Payment', value: order.paymentMethod || '' },
@@ -7730,7 +7800,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   // ── Bills (AP approval workflow) ────────────────────────────────────────────
   const [bills, setBills] = useState(null);
   const [billsFilter, setBillsFilter] = useState('Pending');
-  const [billCreate, setBillCreate] = useState({ open: false, supplierId: '', description: '', amount: '', dueDate: '', expenseAccountCode: '600000', claimInputVat: false });
+  const [billCreate, setBillCreate] = useState({ open: false, supplierId: '', description: '', amount: '', dueDate: '', expenseAccountCode: '600000', claimInputVat: false, supplierInvoiceNo: '' });
   const [billPayModal, setBillPayModal] = useState(null); // the bill being paid
   const [billPayFrom, setBillPayFrom] = useState('111000');
   const [billPayReference, setBillPayReference] = useState('');
@@ -7761,7 +7831,51 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     finally { setBillBusy(false); }
   };
 
-  const approveBill = (b) => billAction(b._id, 'approve');
+  // Three-way match: a bill for received goods needs the supplier's invoice
+  // recorded against it before it can be approved for payment.
+  const [billInvoiceModal, setBillInvoiceModal] = useState(null); // the bill whose invoice is being recorded
+  const [billInvoiceForm, setBillInvoiceForm] = useState({ no: '', amount: '', date: '' });
+  const openBillInvoice = (b) => {
+    setBillInvoiceForm({
+      no: b.supplierInvoiceNo || '',
+      amount: b.supplierInvoiceAmount != null ? String(b.supplierInvoiceAmount) : String(b.amount ?? ''),
+      date: b.supplierInvoiceDate ? String(b.supplierInvoiceDate).slice(0, 10) : '',
+    });
+    setBillInvoiceModal(b);
+  };
+  const submitBillInvoice = async () => {
+    const b = billInvoiceModal;
+    if (!b) return;
+    const amount = parseFloat(billInvoiceForm.amount);
+    if (!billInvoiceForm.no.trim()) return ui.alert("Enter the supplier's invoice number.");
+    if (!(amount > 0)) return ui.alert('Enter the invoice total.');
+    setBillBusy(true);
+    try {
+      const res = await apiFetch(`/api/bills/${b._id}/invoice`, { method: 'POST', body: JSON.stringify({ supplierInvoiceNo: billInvoiceForm.no.trim(), invoiceAmount: amount, invoiceDate: billInvoiceForm.date || null }) });
+      const d = await res.json();
+      if (!d.success) return ui.alert(d.error || 'Could not record the invoice.');
+      setBillInvoiceModal(null);
+      fetchBills();
+      if (d.match?.status === 'Exception') {
+        ui.alert(`Invoice recorded - it does NOT match:\n\n${(d.match.issues || []).map(i => '• ' + i.text).join('\n')}\n\nReturn it to procurement, or have someone who can approve price changes accept the difference.`);
+      }
+    } catch { ui.alert('Network error.'); }
+    finally { setBillBusy(false); }
+  };
+  const approveBill = async (b) => {
+    if (b.source === 'PO') {
+      const status = b.match?.status || 'Unmatched';
+      if (status === 'Unmatched') return openBillInvoice(b);
+      if (status === 'Exception') {
+        const issues = (b.match.issues || []).map(i => '• ' + i.text).join('\n');
+        if (!can('pricing.approve')) return ui.alert(`This bill's invoice does not match:\n\n${issues}\n\nReturn it to procurement, or ask someone who can approve price changes to accept it.`);
+        const reason = prompt(`Accept the difference and approve ${b.billNumber}?\n\n${issues}\n\nThe payable becomes the invoiced amount and the difference is booked to Purchase Price Variance. Why is it accepted?`);
+        if (!reason || !reason.trim()) return;
+        return billAction(b._id, 'approve', { acceptVariance: true, acceptReason: reason.trim() });
+      }
+    }
+    return billAction(b._id, 'approve');
+  };
   const rejectBill = async (b) => {
     const reason = prompt(`Reject bill ${b.billNumber}? Enter a reason:`);
     if (!reason || !reason.trim()) return;
@@ -8013,11 +8127,12 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         supplierId: billCreate.supplierId, description: billCreate.description.trim(),
         amount: amt, dueDate: billCreate.dueDate || null, expenseAccountCode: billCreate.expenseAccountCode,
         claimInputVat: billCreate.claimInputVat === true,
+        supplierInvoiceNo: (billCreate.supplierInvoiceNo || '').trim() || undefined,
       }) });
       const d = await res.json();
       if (d.success) {
         ui.alert('Bill created (Pending approval).');
-        setBillCreate({ open: false, supplierId: '', description: '', amount: '', dueDate: '', expenseAccountCode: '600000', claimInputVat: false });
+        setBillCreate({ open: false, supplierId: '', description: '', amount: '', dueDate: '', expenseAccountCode: '600000', claimInputVat: false, supplierInvoiceNo: '' });
         fetchBills();
       } else ui.alert(d.error || 'Failed to create bill.');
     } catch { ui.alert('Network error.'); }
@@ -8689,7 +8804,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             <span className="text-fg font-black text-xs">{activeAdmin?.name?.charAt(0)?.toUpperCase()}</span>
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-fg text-xs font-bold truncate">{activeAdmin?.name}</p>
+            <p className="text-fg text-xs font-bold truncate" title={String((activeAdmin?.name) ?? '')}>{activeAdmin?.name}</p>
             <p className="text-fg/65 text-[10px] truncate" title={`${activeAdmin?.role || ''} · time until the automatic end-of-day close`}>
               Day closes in <MidnightCountdown short className="text-brand-text font-bold" />
             </p>
@@ -8805,7 +8920,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     orderSearch, setOrderSearch,
     collapsedOrders, setCollapsedOrders, updatingOrders, cashTendered, setCashTendered,
     isPosOpen, setIsPosOpen, posCart, setPosCart, posCategory, setPosCategory, posPage, setPosPage,
-    posSearch, setPosSearch, posCustomerName, setPosCustomerName, posClientId, setPosClientId, posBuyerDiscounts, posReserveOnly, setPosReserveOnly, posTable, setPosTable,
+    posSearch, setPosSearch, posCustomerName, setPosCustomerName, posClientId, setPosClientId, posSalesperson, setPosSalesperson, salesStaff, posBuyerDiscounts, posReserveOnly, setPosReserveOnly, posTable, setPosTable,
     posBranch, setPosBranch,
     posPayment, setPosPayment, posSelectedProduct, setPosSelectedProduct,
     posActiveSize, setPosActiveSize, posActiveAddOns, setPosActiveAddOns, posItemQty, setPosItemQty,
@@ -8895,7 +9010,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     exportPricingMasterlistPDF, exportPriceTiersPDF, exportShiftHistoryPDF, exportTimesheetsPDF,
     exportPriceTiersExcel, priceTierImportPreview, setPriceTierImportPreview, parsePriceTierExcel, submitPriceTierImport, priceTierImporting,
     exportInventoryToPDF, exportLedgerToPDF, exportAllToPDF,
-    handleSaveProduct, handleSaveCategory, toggleProductAvailability, toggleProductOOS, toggleProductQr,
+    handleSaveProduct, handleSaveCategory, busyForms, toggleProductAvailability, toggleProductOOS, toggleProductQr,
     // ── Change Password ──────────────────────────────────────────────────────
     changePwModal, setChangePwModal, setChangePwError, changePwForm, setChangePwForm, changePwLoading, changePwError, handleChangePassword,
     // ── Modifier Groups ──────────────────────────────────────────────────────
@@ -8922,6 +9037,10 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     profitByCategory, fetchProfitByCategory,
     // ── System Settings / QR Toggle ─────────────────────────────────────────
     systemSettings, toggleQROrders, toggleAutoClose, toggleImages, saveSetting,
+    // Settings owns the module switches, but the SIDEBAR owns the copy that
+    // decides which tabs exist. Without this the switch moved and the tab
+    // did not appear until a manual reload.
+    reloadModules,
     // ── Sales by Payment ─────────────────────────────────────────────────────
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     arReport, arReportAsOf, setArReportAsOf, fetchArReport,
@@ -8954,6 +9073,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     bills, billsFilter, setBillsFilter, fetchBills, billBusy,
     billCreate, setBillCreate, submitCreateBill,
     approveBill, rejectBill, scheduleBill,
+    billInvoiceModal, setBillInvoiceModal, billInvoiceForm, setBillInvoiceForm, openBillInvoice, submitBillInvoice,
     billPayModal, setBillPayModal, billPayFrom, setBillPayFrom, billPayReference, setBillPayReference, submitBillPay,
     billPayAmount, setBillPayAmount, applySupplierCredit,
     expenseAccounts,
@@ -8978,6 +9098,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   return (
     <DashboardProvider value={ctx}>
     <div className="min-h-screen bg-page-bg flex text-fg">
+      {approvalDialog}
 
 
       {/* ── WHO IS AT THE SCREEN ──
@@ -9147,14 +9268,15 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <p className="font-black text-fg text-sm uppercase tracking-widest truncate">{BIZ_NAME}</p>
-              <span className="text-[8px] font-black bg-brand/20 border border-brand/30 text-brand-text px-1.5 py-0.5 rounded-full uppercase tracking-widest flex-shrink-0">NON-VAT</span>
+              {/* Hidden on the narrowest screens, where it crowded the business
+                  name down to two letters; the sidebar still shows it. */}
+              <span className="hidden min-[400px]:inline text-[8px] font-black bg-brand/20 border border-brand/30 text-brand-text px-1.5 py-0.5 rounded-full uppercase tracking-widest flex-shrink-0">{vatRegistered ? 'VAT' : 'NON-VAT'}</span>
             </div>
             <p className="text-brand-text text-[10px] font-bold uppercase truncate">{activeAdmin?.name} · {navMode === 'libellus' ? 'Operations' : 'Management'}</p>
           </div>
           {/* min-w-0 + overflow-x lets this action group scroll internally on a
               very narrow phone (≤320px) rather than pushing the whole page wider;
-              shrink-0 keeps each control its natural size. At 375px+ it all fits,
-              so no scrollbar shows. */}
+              shrink-0 keeps each control its natural size. */}
           <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-hide">
             {(!isOnline || queuedCount > 0) && (
               <span className={`shrink-0 flex items-center gap-1 px-2 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider ${isOnline ? 'bg-amber-500/15 text-warning border border-amber-500/30' : 'bg-red-500/15 text-danger border border-red-500/30'}`}>
@@ -9171,10 +9293,12 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             <button onClick={e => { e.preventDefault(); BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR(); }} className="shrink-0 flex items-center gap-1.5 bg-brand/20 text-brand-text border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
               <QrCode size={13} /> {BUSINESS_TYPE === 'log' ? 'Portal' : 'QR'}
             </button>
-            <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="shrink-0 flex items-center gap-1.5 bg-white/5 text-fg/75 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 transition" title="Change Password">
+            {/* Settings and Log Out are in the navigation drawer too; on a phone the
+                bar ran out of room for them and squeezed the business name away. */}
+            <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="shrink-0 hidden sm:flex items-center gap-1.5 bg-white/5 text-fg/75 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 transition" title="Change Password">
               <Settings size={13} />
             </button>
-            <button onClick={handleLogout} className="shrink-0 flex items-center gap-1.5 bg-red-500/10 text-danger border border-red-500/20 px-3 py-2 rounded-xl font-bold text-xs hover:bg-red-500/20 transition">
+            <button onClick={handleLogout} className="shrink-0 hidden sm:flex items-center gap-1.5 bg-red-500/10 text-danger border border-red-500/20 px-3 py-2 rounded-xl font-bold text-xs hover:bg-red-500/20 transition">
               {isSuperAdmin ? 'Log Out' : 'End Shift'}
             </button>
           </div>
@@ -9265,6 +9389,40 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           ============================================================ */}
       <ShiftEndModal />
 
+      {/* Offline orders the server REFUSED when they synced. Each may be a sale
+          the customer already paid for that is not in the system - so it stays
+          on every screen until someone deals with it and dismisses it. */}
+      {rejectedOrders.length > 0 && (
+        <div role="alert" className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 p-4">
+          <p className="text-danger font-black text-sm uppercase tracking-wider flex items-center gap-2">
+            <AlertTriangle size={16} /> {rejectedOrders.length} offline order{rejectedOrders.length === 1 ? ' was' : 's were'} not recorded
+          </p>
+          <p className="text-fg/80 text-xs mt-1">
+            These were taken while offline and refused when they synced. If the customer paid, re-enter the order.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {rejectedOrders.map(r => {
+              const items = r.payload?.items || [];
+              const total = items.reduce((t, i) => t + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0);
+              return (
+                <li key={r.id} className="flex flex-wrap items-center gap-3 bg-page-bg/60 rounded-lg px-3 py-2 text-xs">
+                  <span className="text-fg font-bold">{new Date(r.queuedAt).toLocaleString()}</span>
+                  <span className="text-fg/80 min-w-0 flex-1 truncate" title={items.map(i => `${i.quantity}× ${i.name}`).join(', ')}>
+                    {items.map(i => `${i.quantity}× ${i.name}`).join(', ')}
+                  </span>
+                  <span className="font-mono text-fg">₱{total.toFixed(2)}</span>
+                  <span className="text-danger basis-full sm:basis-auto">{r.reason}</span>
+                  <button onClick={() => dismissRejected(r.id)}
+                    className="ml-auto border border-white/15 text-fg/80 hover:bg-white/5 rounded-md px-2 py-1 font-bold">
+                    Dealt with
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
       {/* --- ANALYTICS DASHBOARD TAB --- */}
       {activeTab === 'analytics' && <Suspense fallback={<TabFallback />}><AnalyticsTab ctx={ctx} /></Suspense>}
 
@@ -9316,6 +9474,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       {activeTab === 'bankrec' && <Suspense fallback={<TabFallback />}><BankReconciliationTab /></Suspense>}
       {activeTab === 'wht' && <Suspense fallback={<TabFallback />}><WithholdingTaxTab /></Suspense>}
       {activeTab === 'payroll' && <Suspense fallback={<TabFallback />}><PayrollTab /></Suspense>}
+      {activeTab === 'timeoff' && <Suspense fallback={<TabFallback />}><TimeOffTab /></Suspense>}
       {activeTab === 'quotations' && <Suspense fallback={<TabFallback />}><QuotationsTab /></Suspense>}
 
 {/* --- MENU SETUP (PRODUCTS/CATEGORIES) --- */}

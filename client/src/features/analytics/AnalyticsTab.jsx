@@ -365,7 +365,7 @@ export default function AnalyticsTab({ ctx }) {
                   ) : musPage.pageItems.map((item, idx) => { const d = analyticsDisplay(item); return (
                     <div key={idx} className="flex flex-col border-b border-accent/10 pb-3 last:border-0 last:pb-0">
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-fg/80 font-bold text-sm truncate pr-2">{item.name}</span>
+                        <span className="text-fg/80 font-bold text-sm truncate pr-2" title={String((item.name) ?? '')}>{item.name}</span>
                         {item.isNewSku || item.trendPct == null ? (
                           <span className="flex items-center gap-0.5 text-[10px] font-black px-2 py-0.5 rounded bg-blue-500/20 text-info">NEW SKU</span>
                         ) : (
@@ -399,7 +399,7 @@ export default function AnalyticsTab({ ctx }) {
                     : lsPage.pageItems.map(item => (
                       <div key={item._id} className="flex justify-between items-center text-sm">
                         <div className="flex flex-col min-w-0 pr-2">
-                          <span className="text-fg/80 truncate font-semibold">{item.itemName}</span>
+                          <span className="text-fg/80 truncate font-semibold" title={String((item.itemName) ?? '')}>{item.itemName}</span>
                           <span className="text-fg/70 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit} left</span>
                         </div>
                         <span className={`font-black text-xs whitespace-nowrap px-2 py-1 rounded min-w-[74px] text-center shrink-0 ${item.daysOfSupply <= 3 ? 'bg-danger/15 text-danger animate-pulse' : item.daysOfSupply <= 7 ? 'bg-warning/15 text-warning' : 'bg-warning/10 text-warning'}`}>
@@ -420,7 +420,7 @@ export default function AnalyticsTab({ ctx }) {
                     : hsPage.pageItems.map(item => (
                       <div key={item._id} className="flex justify-between items-center text-sm">
                         <div className="flex flex-col min-w-0 pr-2">
-                          <span className="text-fg/80 truncate font-semibold">{item.itemName}</span>
+                          <span className="text-fg/80 truncate font-semibold" title={String((item.itemName) ?? '')}>{item.itemName}</span>
                           <span className="text-fg/70 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit}</span>
                         </div>
                         <div className="flex flex-col items-end gap-0.5">
@@ -445,7 +445,7 @@ export default function AnalyticsTab({ ctx }) {
                     : smPage.pageItems.map(item => (
                       <div key={item._id} className="flex justify-between items-center text-sm">
                         <div className="flex flex-col min-w-0 pr-2">
-                          <span className="text-fg/80 truncate font-semibold">{item.itemName}</span>
+                          <span className="text-fg/80 truncate font-semibold" title={String((item.itemName) ?? '')}>{item.itemName}</span>
                           <span className="text-fg/65 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit} on hand</span>
                         </div>
                         <div className="flex flex-col items-end gap-0.5">
@@ -467,7 +467,7 @@ export default function AnalyticsTab({ ctx }) {
                     : deadPage.pageItems.map(item => (
                       <div key={item._id} className="flex justify-between items-center text-sm">
                         <div className="flex flex-col min-w-0 pr-2">
-                          <span className="text-fg/80 truncate font-semibold">{item.itemName}</span>
+                          <span className="text-fg/80 truncate font-semibold" title={String((item.itemName) ?? '')}>{item.itemName}</span>
                           <span className="text-fg/65 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit} · no sales 30d</span>
                         </div>
                         {item.tiedUpCapital > 0 && <span className="text-danger text-[11px] font-mono font-bold whitespace-nowrap">₱{Number(item.tiedUpCapital).toFixed(0)} tied</span>}

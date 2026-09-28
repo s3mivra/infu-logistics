@@ -2,9 +2,11 @@
 // All routes that accept calls FROM partner APIs use x-link-token auth
 // (requireLinkToken), not JWT - each tenant has its own JWT_SECRET so
 // partner JWTs are never valid here.
+import { positiveQty } from '../lib/normalize.js';
+import { atomic } from '../lib/atomicRoute.js';
 import crypto from 'node:crypto';
 import { businessDateStr } from '../lib/businessTime.js';
-import { dayEnd } from '../lib/reportRange.js';
+import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { mergeTrialBalances, buildPnl, buildBalanceSheet, unknownCodes } from '../lib/consolidate.js';
 import { rollUpByLocation, parseBranchCode } from '../lib/branchCode.js';
 // Action permissions. Each route below changes data, and was guarded only by
@@ -22,6 +24,8 @@ const TENANT = (() => {
 // HUB_URL_PATTERN: override in .env for non-Docker deployments.
 // Use {slug} as the placeholder, e.g. https://{slug}.semivra.app
 const HUB_URL_PATTERN = process.env.HUB_URL_PATTERN || 'http://{slug}-api:5002';
+// Inter-branch clearing account. Declared in lib/chartOfAccounts.js.
+export const HUB_CLEARING_CODE = '160200';
 const hubUrlFor = (slug) => HUB_URL_PATTERN.replace('{slug}', slug);
 
 // Where a person opens that branch, which is NOT where this server calls it.
@@ -58,6 +62,7 @@ export default function registerHub(ctx) {
     mkSeqRef,
     acctMeta,
     Settings,
+    requirePermission,
   } = ctx;
 
   // This deployment's own branch code ("AC-A001"), set in Settings. Two branches
@@ -222,13 +227,14 @@ export default function registerHub(ctx) {
 
   // Internal: hub confirms handshake (called by client during redeem)
   app.post('/api/hub/internal/handshake', async (req, res) => {
-    const { code, clientSlug, clientUrl, linkToken } = req.body || {};
+    const { code, clientSlug, linkToken } = req.body || {};
     // Strings only. This route is open by design - the invite code is the
     // secret - so an object here is somebody probing the query, not a client.
     const str = (v) => typeof v === 'string' && v.length > 0 && v.length <= 200;
-    if (!str(code) || !str(clientSlug) || !str(linkToken) || (clientUrl != null && typeof clientUrl !== 'string')) {
+    if (!str(code) || !str(clientSlug) || !str(linkToken)) {
       return res.status(400).json({ error: 'Missing fields.' });
     }
+    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(clientSlug)) return res.status(400).json({ error: 'Invalid business slug.' });
 
     const invite = await HubInvite.findOneAndUpdate(
       { businessType: BUSINESS_TYPE, code, usedAt: null, expiresAt: { $gt: new Date() } },
@@ -239,7 +245,7 @@ export default function registerHub(ctx) {
 
     await LinkedBusiness.findOneAndUpdate(
       { businessType: BUSINESS_TYPE, partnerSlug: clientSlug },
-      { role: 'hub', partnerName: clientSlug, partnerUrl: clientUrl || hubUrlFor(clientSlug), partnerAppUrl: appUrlFor(clientSlug, clientUrl), linkToken, status: 'active', linkedAt: new Date() },
+      { role: 'hub', partnerName: clientSlug, partnerUrl: hubUrlFor(clientSlug), partnerAppUrl: appUrlFor(clientSlug, hubUrlFor(clientSlug)), linkToken, status: 'active', linkedAt: new Date() },
       { upsert: true, new: true },
     );
 
@@ -288,7 +294,7 @@ export default function registerHub(ctx) {
 
     for (const line of items) {
       const { itemId, qty, batchIdx, note } = line;
-      if (!itemId || !(Number(qty) > 0)) { errors.push(`Invalid line`); continue; }
+      if (!itemId || Number.isNaN(positiveQty(qty))) { errors.push(`Invalid line`); continue; }
 
       const item = await Inventory.findOne({ _id: itemId, businessType: BUSINESS_TYPE }).lean();
       if (!item) { errors.push(`Item not found.`); continue; }
@@ -471,7 +477,7 @@ export default function registerHub(ctx) {
   });
 
   // Accept inbound transfer - receive stock + post ledger JE
-  app.post('/api/hub/transfers/:id/accept', verifyToken, requireAuth, permit('inventory.manage'), async (req, res) => {
+  app.post('/api/hub/transfers/:id/accept', verifyToken, requireAuth, permit('inventory.manage'), atomic(mongoose, async (req, res) => {
     const transfer = await CrossTransfer.findOne({
       _id: req.params.id, businessType: BUSINESS_TYPE, direction: 'inbound', status: 'Pending',
     });
@@ -548,7 +554,7 @@ export default function registerHub(ctx) {
       reference: transfer.reference,
       description: `Hub transfer in: ${transfer.qtyBase}${transfer.unit} of ${transfer.itemName} from ${transfer.partnerName}`,
       debitCode: '130000', debitName: 'Inventory Asset',
-      creditCode: '540900', creditName: 'Hub Transfer Clearing',
+      creditCode: HUB_CLEARING_CODE, creditName: 'Hub Transfer Clearing',
       amount: receivedValue,
     });
 
@@ -563,10 +569,10 @@ export default function registerHub(ctx) {
     }
 
     res.json({ ok: true, transfer });
-  });
+  }));
 
   // Internal: sender decrements stock after receiver accepted + posts JE
-  app.post('/api/hub/internal/transfer-release', requireLinkToken, async (req, res) => {
+  app.post('/api/hub/internal/transfer-release', requireLinkToken, atomic(mongoose, async (req, res) => {
     const { reference } = req.body || {};
     const transfer = await CrossTransfer.findOne({ businessType: BUSINESS_TYPE, reference, direction: 'outbound' });
     if (!transfer || transfer.status === 'Released') return res.json({ ok: true });
@@ -596,7 +602,7 @@ export default function registerHub(ctx) {
       await postHubJE({
         reference: transfer.reference,
         description: `Hub transfer out: ${transfer.qtyBase}${item.unit} of ${item.itemName} to ${req.linkedPartner.partnerName || req.linkedPartner.partnerSlug}`,
-        debitCode: '540900', debitName: 'Hub Transfer Clearing',
+        debitCode: HUB_CLEARING_CODE, debitName: 'Hub Transfer Clearing',
         creditCode: '130000', creditName: 'Inventory Asset',
         amount: releasedValue,
       });
@@ -605,7 +611,7 @@ export default function registerHub(ctx) {
     transfer.status = 'Released';
     await transfer.save();
     res.json({ ok: true });
-  });
+  }));
 
   // Reject inbound transfer
   app.post('/api/hub/transfers/:id/reject', verifyToken, requireAuth, permit('inventory.manage'), async (req, res) => {
@@ -1031,9 +1037,16 @@ export default function registerHub(ctx) {
   // financial statement, which is worse than no statement, so the response
   // always carries `complete` and `unreachable` and the UI must refuse to
   // present an incomplete set of books as final.
+  // dayStart/dayEnd (lib/reportRange.js) read a plain YYYY-MM-DD as LOCAL
+  // midnight. `new Date('2026-03-01')` is UTC midnight, and then setHours()
+  // moved it in local time - mixing the two shifted the whole window by the
+  // zone offset. Full ISO timestamps (what this branch forwards to partners)
+  // pass through unchanged.
   const parseRange = (q) => {
-    const start = q.start ? new Date(q.start) : new Date(new Date().getFullYear(), 0, 1);
-    start.setHours(0, 0, 0, 0);
+    // dayStart reads a plain YYYY-MM-DD in the business zone. new Date('2026-03-01')
+    // is UTC midnight, and setHours then moved it in the server's local time,
+    // shifting the start of every consolidated period.
+    const start = q.start ? dayStart(q.start) : new Date(new Date().getFullYear(), 0, 1);
     let end = q.end ? new Date(q.end) : new Date();
     end = dayEnd(businessDateStr(end));
     let asOf = q.asOf ? new Date(q.asOf) : end;
@@ -1103,6 +1116,27 @@ export default function registerHub(ctx) {
       const periodRows = mergeTrialBalances(branches.map(b => ({ rows: b.period })));
       const asOfRows = mergeTrialBalances(branches.map(b => ({ rows: b.asOf })));
 
+      // The three figures an owner asks for before anything else: how much
+      // money is there, who owes us, who do we owe. All three are already in
+      // the trial balance that crossed the wire, so this adds no round trip
+      // and needs no partner redeploy - it is arithmetic on data we hold.
+      //
+      // Cash is the whole 110000 Current Assets family EXCEPT the receivable
+      // and unassigned holding accounts: on-hand, bank, e-wallet, petty cash
+      // and undeposited cheques are all spendable-or-about-to-be. Summing the
+      // parent by prefix rather than naming each child keeps a branch's own
+      // custom sub-account (112001 "BPI Main") inside the total.
+      const NON_CASH_CURRENT = new Set(['118000']);
+      const r2 = (n) => +Number(n || 0).toFixed(2);
+      const balanceOf = (rows, pred, sign) => r2(rows.reduce((t, r) => {
+        if (!pred(String(r.code))) return t;
+        const d = Number(r.debit || 0), c = Number(r.credit || 0);
+        return t + (sign === 'debit' ? d - c : c - d);
+      }, 0));
+      const cashOf = (rows) => balanceOf(rows, (c) => c.startsWith('11') && !NON_CASH_CURRENT.has(c) && c !== '110000', 'debit');
+      const arOf   = (rows) => balanceOf(rows, (c) => c.startsWith('12'), 'debit');
+      const apOf   = (rows) => balanceOf(rows, (c) => c.startsWith('22'), 'credit');
+
       const branchRows = branches.map(b => {
         const code = String(b.branchCode || '').trim().toUpperCase();
         return {
@@ -1113,6 +1147,9 @@ export default function registerHub(ctx) {
           branchCodeValid: parseBranchCode(code).valid,
           netIncome: buildPnl(b.period, acctMeta).totals.netIncome,
           totalAssets: buildBalanceSheet(b.asOf, acctMeta).totals.assets,
+          cash: cashOf(b.asOf),
+          receivables: arOf(b.asOf),
+          payables: apOf(b.asOf),
         };
       });
 
@@ -1127,7 +1164,24 @@ export default function registerHub(ctx) {
         // The same branches grouped by LOCATION. Two inventories can share one
         // address (AC-A001 and AC-A002), so "how did the mall site do?" is a
         // real question the per-branch list alone cannot answer.
-        byLocation: rollUpByLocation(branchRows, ['netIncome', 'totalAssets']),
+        byLocation: rollUpByLocation(branchRows, ['netIncome', 'totalAssets', 'cash', 'receivables', 'payables']),
+        // Group position as of the balance-sheet date. Computed from the
+        // MERGED rows rather than by adding the branch figures up, so it
+        // cannot disagree with the consolidated balance sheet beside it.
+        position: {
+          cash: cashOf(asOfRows),
+          receivables: arOf(asOfRows),
+          payables: apOf(asOfRows),
+          netIncome: buildPnl(periodRows, acctMeta).totals.netIncome,
+        },
+        // Inter-branch transfers should net to zero across the group: the
+        // sender debits clearing, the receiver credits it. Whatever is left is
+        // stock sent but not yet received, or a receipt valued differently from
+        // its release. It is real money in the group's assets either way, so it
+        // is surfaced rather than left for the owner to find in the detail.
+        interBranch: {
+          unmatched: balanceOf(asOfRows, (c) => c === HUB_CLEARING_CODE, 'debit'),
+        },
         pnl: buildPnl(periodRows, acctMeta),
         balanceSheet: buildBalanceSheet(asOfRows, acctMeta),
         // Codes a branch posted to that this instance's chart doesn't know -

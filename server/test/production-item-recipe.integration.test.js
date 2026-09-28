@@ -10,6 +10,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -26,7 +27,7 @@ afterAll(async () => { await ctx.stop(); });
 
 let condensed, milk, spanish;
 beforeEach(async () => {
-  for (const n of ['ProductionOrder', 'Inventory', 'StockCard', 'JournalEntry']) await M(n).deleteMany({});
+  for (const n of ['ProductionOrder', 'Inventory', 'StockCard', 'JournalEntry']) await withLedgerMaintenance(() => M(n).deleteMany({}));
   condensed = await M('Inventory').create({ itemCode: 'RM-COND', itemName: 'CONDENSED MILK', unit: 'g', stockQty: 3770, unitCost: 0.175 });
   milk = await M('Inventory').create({ itemCode: 'RM-MILK', itemName: 'FRESH MILK', unit: 'ml', stockQty: 20000, unitCost: 0.095 });
   spanish = await M('Inventory').create({ itemCode: 'FG-SPAN', itemName: 'SPANISH MILK', unit: 'ml', stockQty: 0, unitCost: 0 });

@@ -21,7 +21,7 @@ const loadPdfLib = () => {
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
+import { API_URL } from '../../shared/apiBase.js';
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Semivra').toUpperCase();
 // transports: WebSocket first, then long-polling as a fallback. It used to be
 // websocket-only with upgrade:false, which meant that if anything between the
@@ -136,7 +136,7 @@ const TONE_CLS = {
   amber: 'bg-amber-500 border-amber-500 text-white',
   blue:  'bg-blue-500 border-blue-500 text-white',
   green: 'bg-emerald-500 border-emerald-500 text-white',
-  red:   'bg-red-500 border-red-500/30 text-white',
+  red:   'bg-red-700 border-red-500/30 text-white',
   gray:  'bg-white border-white text-black',
 };
 
@@ -145,9 +145,12 @@ const ProductCard = memo(({ product, onAdd, onPreview, showPrices }) => {
   const unavailable = product.isAvailable === false || product.stockAvailable === false;
   const discount = (product.effectiveDiscountPercent ?? product.discountPercent) || 0;
   const base = Number(product.basePrice || 0);
-  // Sale price from active sales takes priority over client discount percent
+  // What the server charges (lib/salePricing.js + lib/discounts.js): the sale
+  // price replaces the list price, and the client's own discount still applies
+  // on top - the same as at the POS. Showing the sale price alone quoted a
+  // different number from the one charged.
   const hasSale = product.activeSalePrice != null;
-  const net = hasSale ? Number(product.activeSalePrice) : base * (1 - discount / 100);
+  const net = (hasSale ? Number(product.activeSalePrice) : base) * (1 - discount / 100);
   return (
   <div
     // Tapping the card previews the product (its image, full-size) - it no
@@ -545,6 +548,8 @@ export default function ClientOrderPage() {
       // ordinary one the client already knows.
       setCart((data.items || []).map(i => ({
         productId: i.productId, name: i.name, price: i.price, quantity: i.quantity,
+        // Carried to the order so the server charges the agreed price.
+        quotationId: i.quotationId,
       })));
       setCartOpen(true);
       fetchMyQuotes();
@@ -662,6 +667,7 @@ export default function ClientOrderPage() {
           { label: 'Status', value: STATUS_VIEW(order.status).label },
           ...(order.billingNumber ? [{ label: 'Billing No.', value: order.billingNumber }] : []),
           ...(order.orNumber ? [{ label: 'OR No.', value: order.orNumber }] : []),
+          ...((order.deliveryReceipts || []).length || order.drNumber ? [{ label: 'DR No.', value: (order.deliveryReceipts || []).map(d => d.drNumber).join(', ') || order.drNumber }] : []),
           ...(order.paymentMethod ? [{ label: 'Payment', value: order.paymentMethod }] : []),
         ],
         schedRows: order.orderNotes ? [{ label: 'Notes:', value: order.orderNotes }] : [],
@@ -689,7 +695,8 @@ export default function ClientOrderPage() {
         productId: String(product._id),
         name: product.name,
         productCode: product.productCode,
-        price: product.basePrice,
+        // Display only - the server re-prices every line from the records.
+        price: product.activeSalePrice ?? product.basePrice,
         // effectiveDiscountPercent reflects the per-client override (when applicable);
         // falls back to the product default if there's no override.
         discountPercent: (product.effectiveDiscountPercent ?? product.discountPercent) || 0,
@@ -1013,7 +1020,7 @@ export default function ClientOrderPage() {
               <div className="px-5 pt-5 pb-4 border-b-2 border-neutral-900">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h2 className="font-black text-lg leading-tight truncate">{companyName}</h2>
+                    <h2 className="font-black text-lg leading-tight truncate" title={String((companyName) ?? '')}>{companyName}</h2>
                     {contact.map((c, i) => (
                       <p key={i} className="text-[10.5px] text-neutral-500 leading-snug">{c}</p>
                     ))}
@@ -1278,7 +1285,7 @@ export default function ClientOrderPage() {
           {portal.businessLogo
             ? <img src={portal.businessLogo} alt="" className="w-7 h-7 rounded-lg object-cover shrink-0" />
             : <Package size={18} className="text-brand-text shrink-0" />}
-          <span className="font-black text-fg text-xs sm:text-sm uppercase tracking-widest truncate">{companyName}</span>
+          <span className="font-black text-fg text-xs sm:text-sm uppercase tracking-widest truncate" title={String((companyName) ?? '')}>{companyName}</span>
         </div>
 
         {/* Desktop / tablet actions */}
@@ -1341,7 +1348,7 @@ export default function ClientOrderPage() {
           <nav className="w-64 max-w-[80vw] h-full bg-sidebar-bg border-l border-white/10 flex flex-col">
             <div className="flex items-center justify-between px-4 h-14 border-b border-white/5">
               <div className="min-w-0">
-                <p className="text-fg font-black text-xs uppercase tracking-widest truncate">{clientInfo?.name || clientInfo?.username || 'Client'}</p>
+                <p className="text-fg font-black text-xs uppercase tracking-widest truncate" title={String((clientInfo?.name || clientInfo?.username || 'Client') ?? '')}>{clientInfo?.name || clientInfo?.username || 'Client'}</p>
                 {clientInfo?.clientCode && <p className="text-fg/65 text-[10px] font-mono truncate">{clientInfo.clientCode}</p>}
               </div>
               <button onClick={() => setMenuOpen(false)} className="p-2 -mr-2 rounded-xl text-fg/70 hover:text-fg hover:bg-white/10 transition" aria-label="Close menu">
@@ -1591,7 +1598,7 @@ export default function ClientOrderPage() {
         const discount = (p.effectiveDiscountPercent ?? p.discountPercent) || 0;
         const base = Number(p.basePrice || 0);
         const hasSale = p.activeSalePrice != null;
-        const net = hasSale ? Number(p.activeSalePrice) : base * (1 - discount / 100);
+        const net = (hasSale ? Number(p.activeSalePrice) : base) * (1 - discount / 100);
         return (
           <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm"
             onClick={() => setPreviewProduct(null)} role="dialog" aria-modal="true" aria-label={p.name}>
@@ -1889,7 +1896,7 @@ export default function ClientOrderPage() {
             </button>
             <div className="flex-1 min-w-0">
               <h2 className="font-black text-fg text-sm uppercase tracking-widest">Your Order</h2>
-              <p className="text-fg/70 text-xs truncate">{clientInfo?.name || clientInfo?.username}</p>
+              <p className="text-fg/70 text-xs truncate" title={String((clientInfo?.name || clientInfo?.username) ?? '')}>{clientInfo?.name || clientInfo?.username}</p>
             </div>
           </div>
 
@@ -1914,7 +1921,7 @@ export default function ClientOrderPage() {
                   {item.productCode && (
                     <p className="text-fg/65 text-[10px] font-mono uppercase tracking-widest truncate">{item.productCode}</p>
                   )}
-                  <p className="font-bold text-fg text-sm truncate">{item.name}</p>
+                  <p className="font-bold text-fg text-sm truncate" title={String((item.name) ?? '')}>{item.name}</p>
                   {showPrices
                     ? <p className="text-fg/75 text-[11px] tabular-nums">{peso(netPrice(item))} each</p>
                     : <p className="text-fg/65 text-[10px] italic">Price confirmed by our team</p>}

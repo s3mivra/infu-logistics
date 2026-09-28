@@ -19,6 +19,8 @@ const parseTermsDays = (v) => {
 };
 
 import { captureError } from '../lib/errorLog.js';
+import { splitUpdate } from '../lib/changeApproval.js';
+import { hasPermission, requirePermission } from '../lib/authz.js';
 
 export default function registerClientPortal(ctx) {
   const {
@@ -156,6 +158,7 @@ export default function registerClientPortal(ctx) {
     User,
     ClientAccountSchema,
     ClientAccount,
+    ChangeRequest,
     RefreshSessionSchema,
     RefreshSession,
     RoleSchema,
@@ -568,7 +571,7 @@ app.post('/api/client-accounts/import', verifyToken, requireSuperAdmin, async (r
 
 app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
-    const { username, password, name, paymentMethod, isActive, creditLimit, creditTermsDays, segments, phone, email, contactNotes, requiresQuote, isVatRegistered, tin, registeredName, registeredAddress } = req.body;
+    const { username, password, name, paymentMethod, isActive, creditLimit, creditTermsDays, segments, phone, email, contactNotes, requiresQuote, isVatRegistered, tin, registeredName, registeredAddress, assignedSalesperson } = req.body;
     const update = {};
     // Which buyers are quoted before they buy. Sent explicitly so it can be
     // switched off again, not just on.
@@ -595,14 +598,62 @@ app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req
       update.email = emailVal;
     }
     if (contactNotes !== undefined) update.contactNotes = String(contactNotes ?? '').trim().slice(0, 1000);
+    if (assignedSalesperson !== undefined) update.assignedSalesperson = String(assignedSalesperson ?? '').trim().slice(0, 100);
     if (password) update.password = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    const before = await ClientAccount.findById(req.params.id, { creditLimit: 1, creditTermsDays: 1, clientCode: 1, name: 1 }).lean();
     const client = await ClientAccount.findByIdAndUpdate(req.params.id, { $set: update }, { returnDocument: 'after', select: '-password' });
     if (!client) return res.status(404).json({ success: false, error: 'Client account not found.' });
+    // A credit line changed directly (by a superadmin) lands in the same trail
+    // an approved request does - it used to leave no record at all.
+    for (const [field, action] of [['creditLimit', 'CLIENT_CREDIT_LIMIT_CHANGED'], ['creditTermsDays', 'CLIENT_CREDIT_TERMS_CHANGED']]) {
+      if (field in update && String(before?.[field] ?? '') !== String(update[field] ?? '')) {
+        await AuditLog.create({ userId: req.user?.name || 'System', action, targetReference: client.clientCode || String(client._id),
+          details: { name: client.name, field, oldValue: before?.[field] ?? null, newValue: update[field] ?? null, approvedBy: req.user?.name || '', viaApproval: false } }).catch(() => {});
+      }
+    }
     res.json({ success: true, client });
   } catch (err) {
     if (err.code === 11000) return res.status(409).json({ success: false, error: 'Username already taken.' });
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
+});
+
+// A change to a client's credit line, asked for by someone who keeps the
+// books but may not set it. It is filed for an approver (pricing.approve) in
+// the same queue as price changes; someone who holds that permission applies
+// it at once, recorded the same way.
+app.post('/api/client-accounts/:id/credit-request', verifyToken, requireStaff, requirePermission('accounting.manage'), async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Client account not found.' });
+    const existing = await ClientAccount.findById(req.params.id).lean();
+    if (!existing) return res.status(404).json({ success: false, error: 'Client account not found.' });
+    const update = {};
+    if (req.body?.creditLimit !== undefined) update.creditLimit = parseCreditLimit(req.body.creditLimit);
+    if (req.body?.creditTermsDays !== undefined) update.creditTermsDays = parseTermsDays(req.body.creditTermsDays);
+    if (!Object.keys(update).length) return res.status(400).json({ success: false, error: 'Give the new credit limit or terms.' });
+    const reason = String(req.body?.reason || '').trim().slice(0, 300);
+    if (!reason) return res.status(400).json({ success: false, error: 'Say why - the approver reads it.' });
+    const canApprove = hasPermission(req.user, 'pricing.approve');
+    const { apply, pending } = splitUpdate({ entity: 'ClientAccount', existing, update, canApprove });
+    if (canApprove && Object.keys(apply).length) {
+      await ClientAccount.updateOne({ _id: existing._id }, { $set: apply });
+      for (const [field, action] of [['creditLimit', 'CLIENT_CREDIT_LIMIT_CHANGED'], ['creditTermsDays', 'CLIENT_CREDIT_TERMS_CHANGED']]) {
+        if (field in apply && String(existing[field] ?? '') !== String(apply[field] ?? '')) {
+          await AuditLog.create({ userId: req.user?.name || 'System', action, targetReference: existing.clientCode || String(existing._id),
+            details: { name: existing.name, field, oldValue: existing[field] ?? null, newValue: apply[field] ?? null, reason, approvedBy: req.user?.name || '', viaApproval: false } }).catch(() => {});
+        }
+      }
+      return res.json({ success: true, applied: true });
+    }
+    if (!pending.length) return res.json({ success: true, applied: false, message: 'That is already the current credit line.' });
+    const changeRequest = await ChangeRequest.create({
+      businessType: BUSINESS_TYPE, ...tenantScope(req),
+      entity: 'ClientAccount', entityId: String(existing._id), entityName: existing.name || '',
+      changes: pending, reason, requestedBy: req.user?.name || '',
+    });
+    emitToMgr?.('mgrAlert', { kind: 'changeRequest', ref: existing.name, message: `${req.user?.name || 'Someone'} requested a credit change for ${existing.name}: ${pending.map(c => `${c.label} ${c.oldValue ?? 'none'} -> ${c.newValue ?? 'none'}`).join(', ')}.` });
+    res.status(202).json({ success: true, applied: false, changeRequest, message: 'Sent for approval.' });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // A client's password is bcrypt-hashed - there is no "reveal the existing

@@ -385,7 +385,7 @@ export default function HistoryTab({ ctx }) {
           {historySubTab === 'daily' && (<>
           <div className="bg-accent border border-accentShadow rounded-xl p-6 shadow-xl shadow-accent/5">
             <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
-              <h3 className="text-white font-black tracking-widest uppercase text-sm flex items-center gap-2">
+              <h3 className="text-on-brand font-black tracking-widest uppercase text-sm flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-page-bg animate-pulse"></span> Active Register
               </h3>
               <div className="flex flex-wrap items-center gap-2">
@@ -404,22 +404,22 @@ export default function HistoryTab({ ctx }) {
             
             <div className="space-y-4 mb-6">
               <div>
-                <p className="text-white text-xs font-bold uppercase tracking-wider mb-1">Net Sales</p>
-                <p className="text-4xl font-black text-white">P{shiftRevenue.toFixed(2)}</p>
-                <p className="text-white text-[10px] font-semibold mt-1">Gross P{shiftGross.toFixed(2)} &minus; Discounts P{shiftDisc.toFixed(2)}</p>
+                <p className="text-on-brand text-xs font-bold uppercase tracking-wider mb-1">Net Sales</p>
+                <p className="text-4xl font-black text-on-brand">P{shiftRevenue.toFixed(2)}</p>
+                <p className="text-on-brand text-[10px] font-semibold mt-1">Gross P{shiftGross.toFixed(2)} &minus; Discounts P{shiftDisc.toFixed(2)}</p>
                 {shiftCompAmount > 0 && (
-                  <p className="text-fg/75 text-[10px] font-bold mt-0.5">+P{shiftCompAmount.toFixed(2)} complimentary (not collected)</p>
+                  <p className="text-on-brand/80 text-[10px] font-bold mt-0.5">+P{shiftCompAmount.toFixed(2)} complimentary (not collected)</p>
                 )}
               </div>
               <div className="flex justify-between border-t border-white/10 pt-4">
                 <div>
-                  <p className="text-white text-[10px] font-bold uppercase tracking-wider">Completed Orders</p>
-                  <p className="text-lg font-bold text-white">{todayShiftOrders.length}</p>
-                  {shiftComp.length > 0 && <p className="text-[9px] text-fg/75 font-bold">{shiftComp.length} complimentary</p>}
+                  <p className="text-on-brand text-[10px] font-bold uppercase tracking-wider">Completed Orders</p>
+                  <p className="text-lg font-bold text-on-brand">{todayShiftOrders.length}</p>
+                  {shiftComp.length > 0 && <p className="text-[9px] text-on-brand/80 font-bold">{shiftComp.length} complimentary</p>}
                 </div>
                 <div className="text-right">
-                  <p className="text-white text-[10px] font-bold uppercase tracking-wider">Avg Ticket</p>
-                  <p className="text-lg font-bold text-white">P{todayShiftOrders.length > 0 ? (shiftRevenue / todayShiftOrders.length).toFixed(2) : '0.00'}</p>
+                  <p className="text-on-brand text-[10px] font-bold uppercase tracking-wider">Avg Ticket</p>
+                  <p className="text-lg font-bold text-on-brand">P{todayShiftOrders.length > 0 ? (shiftRevenue / todayShiftOrders.length).toFixed(2) : '0.00'}</p>
                 </div>
               </div>
             </div>

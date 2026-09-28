@@ -1,4 +1,8 @@
 ﻿import 'dotenv/config';
+import { requestContext, currentActor } from './lib/requestContext.js';
+import { roundMoney, toCentavos } from './lib/money.js';
+import { createAutoRestorer } from './lib/autoRestore.js';
+import { LEDGER_WRITE_OPS, inLedgerMaintenance, refuseLedgerRewrite, withLedgerMaintenance } from './lib/ledgerGuard.js';
 import express from 'express';
 import { businessDayStart, businessDateStr, businessClosingDateStr, setBusinessTimeZone, isValidTimeZone, DEFAULT_BUSINESS_TZ } from './lib/businessTime.js';
 import { deliveryFeeVat } from './lib/vatPosting.js';
@@ -22,11 +26,11 @@ import { assertBalanced, debitAccountFor, suggestedSettleAccount } from './lib/l
 import { createIdempotencyMiddleware } from './lib/idempotency.js';
 import { ACCOUNTS, EXPENSE_CATEGORIES, CODE_MAP } from './lib/chartOfAccounts.js';
 import { resolveUnit, displayToBase, effectiveDisplay, UNIT_TO_BASE, unitTypeOf } from './lib/units.js';
-import { title, code, lower, freeText, zTitle, zText, zMoneyLoose } from './lib/normalize.js';
+import { title, code, lower, freeText, zTitle, zText, zMoneyLoose, zMoneyStrict, MONEY_MAX } from './lib/normalize.js';
 import { addBatch, consumeBatches, consumeSpecificBatch, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
 import { stripQueryOperators, forwardAsyncErrors } from './lib/requestSafety.js';
 import { withFloorActions } from './lib/authz.js';
-import { requireStaff, evaluateClientAccess, requirePermission, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS, setCustomRolePermissions } from './lib/authz.js';
+import { requireStaff, evaluateStaffAccess, evaluateClientAccess, requirePermission, requireAnyPermission, requireUserAdmin, guardStaffEscalation, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS, setCustomRolePermissions } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
 import { computeOrderVat, extractVat, normaliseVatRate, DEFAULT_VAT_RATE } from './lib/vat.js';
 import { validateDateRange } from './lib/reportRange.js';
@@ -69,6 +73,11 @@ import registerNotifications from './features/notifications.js';
 import registerClients from './features/clients.js';
 import registerHub from './features/hub.js';
 import registerInventorySheet from './features/inventory-sheet.js';
+import registerAttachments from './features/attachments.js';
+import registerBudgets from './features/budgets.js';
+import registerExceptions from './features/exceptions.js';
+import registerClosing from './features/closing.js';
+import registerTimeOff from './features/timeoff.js';
 
 const log = pino({
   level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
@@ -106,6 +115,17 @@ if (process.env.NODE_ENV === 'production') {
   if (!(process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL)) {
     weakReasons.push('ALLOWED_ORIGINS (or FRONTEND_URL) must list your frontend origin(s)');
   }
+  // Every tenant's database sits in one mongod. Without a login, any process
+  // that can reach it - another tenant's API included - can read every
+  // tenant's books. That is warned about, loudly, but it does NOT stop the
+  // app: tenants are started by the control plane with no hand-edited .env,
+  // and refusing to boot here took every tenant down on the next "Update all
+  // apps". The control plane shows the same warning on its health panel.
+  // user[:password]@ before the host list (a multi-host URI is not a valid URL).
+  const mongoHasLogin = /^mongodb(\+srv)?:\/\/[^@/]+@/.test(String(process.env.MONGO_URI || ''));
+  if (!mongoHasLogin) {
+    console.warn('⚠️  MongoDB has no login (MONGO_URI carries no username). Any process that reaches the database can read every tenant. See platform/MONGO_AUTH.md.');
+  }
   if (weakReasons.length) {
     console.error('❌ Insecure production config - server will not start:\n  - ' + weakReasons.join('\n  - '));
     process.exit(1);
@@ -124,6 +144,9 @@ const server = http.createServer(app);
 //   reflect the real client IP, not the load balancer's.
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
+// Makes the acting user visible to code deep in a request (journal entries
+// stamp postedBy from it). Must come before every route.
+app.use(requestContext);
 
 // Hardened security headers. This is a JSON API consumed by a separate SPA origin,
 // so the restrictive default CSP is relaxed to avoid breaking nothing-served-here,
@@ -202,7 +225,18 @@ app.use(stripQueryOperators);
 // connection cannot turn one press of a Create button into several records.
 // Must sit after express.json (it fingerprints the parsed body) and before the
 // feature routes. See lib/idempotency.js for why in-flight only.
-app.use(createIdempotencyMiddleware({ log }));
+// Identity for duplicate-request detection: the VERIFIED user id, never a
+// claim read from an unverified token (that would let one person replay
+// another's cached answer).
+app.use(createIdempotencyMiddleware({
+  log,
+  identify: (req) => {
+    const h = req.headers.authorization || '';
+    if (!h.startsWith('Bearer ')) return null;
+    try { const d = jwt.verify(h.slice(7), process.env.JWT_SECRET); return d?._id ? `u:${d.aud || 'staff'}:${d._id}` : null; }
+    catch { return null; }
+  },
+}));
 
 // ── STANDARDISED LEDGER REFERENCE GENERATOR ─────────────────────────────────────
 //
@@ -244,7 +278,10 @@ async function resolveLinkedInventory(product, productCode, session) {
   const or = [];
   if (productCode) or.push({ itemCode: productCode });
   if (product?.productCode) or.push({ itemCode: product.productCode });
-  if (product?.name) or.push({ itemName: product.name });
+  // Case-insensitive: the inventory route stores item names UPPERCASE, while
+  // product names keep their case, so an exact match on name could never
+  // succeed - the sale then "skipped cleanly" and recorded no stock movement.
+  if (product?.name) or.push({ itemName: { $regex: new RegExp(`^${escapeRegex(String(product.name).trim())}$`, 'i') } });
   if (!or.length) return null;
   return Inventory.findOne({ $or: or }).session(session);
 }
@@ -323,7 +360,7 @@ const signAccessToken = (user) => jwt.sign(
   // (see verifyToken / lib/authz.js), independent of the role string.
   // `perms` carries the resolved permission set so requirePermission needn't hit
   // the DB; legacy tokens without it fall back to role defaults in hasPermission.
-  { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, tenantId: user.tenantId || null, perms: resolvePermissions(user), aud: 'staff' },
+  { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, tenantId: user.tenantId || null, perms: resolvePermissions(user), tv: user.tokenVersion || 0, aud: 'staff' },
   process.env.JWT_SECRET,
   { expiresIn: ACCESS_TTL }
 );
@@ -369,8 +406,31 @@ const issueSession = async (res, user, meta = {}) => {
 
 // Revoke every active refresh session for a user - call on password/role change
 // or account deletion so existing logins can no longer silently refresh.
-const revokeUserSessions = (userId) =>
-  RefreshSession.updateMany({ userId, revoked: false }, { revoked: true });
+// A privilege change (password, role, permissions, deletion) must take effect
+// NOW, not when the 15-minute access token happens to expire. Revoking the
+// refresh sessions stops new tokens; bumping tokenVersion makes verifyToken
+// refuse the ones already issued, so the client silently refreshes and comes
+// back with the new permission set.
+const tokenVersionCache = new Map();            // userId -> { tv, at }
+const TOKEN_VERSION_TTL_MS = 60_000;
+async function currentTokenVersion(userId) {
+  const key = String(userId);
+  const hit = tokenVersionCache.get(key);
+  if (hit && Date.now() - hit.at < TOKEN_VERSION_TTL_MS) return hit.tv;
+  // A lookup failure throws (the caller refuses with 503) and is NOT cached:
+  // caching it as "deleted" locked every user out for a minute after one blip.
+  const u = await User.findById(key, { tokenVersion: 1 }).lean();
+  // A deleted user has no version to match: -1 would let old tokens through,
+  // so treat the account as gone.
+  const tv = u ? (u.tokenVersion || 0) : Number.POSITIVE_INFINITY;
+  tokenVersionCache.set(key, { tv, at: Date.now() });
+  return tv;
+}
+const revokeUserSessions = async (userId) => {
+  await RefreshSession.updateMany({ userId, revoked: false }, { revoked: true });
+  const u = await User.findByIdAndUpdate(userId, { $inc: { tokenVersion: 1 } }, { new: true, projection: { tokenVersion: 1 } }).lean().catch(() => null);
+  tokenVersionCache.set(String(userId), { tv: u ? (u.tokenVersion || 0) : Number.POSITIVE_INFINITY, at: Date.now() });
+};
 
 // ── BOUNDARY VALIDATION ──────────────────────────────────────────────────────
 // validate(schema) parses req.body against a Zod schema. Zod strips unknown keys
@@ -399,7 +459,7 @@ const zName  = z.string().trim().min(1).max(120);
 // zLabel canonicalizes user-facing names so "abc trading" / "ABC Trading" /
 // "  ABC   Trading " collapse to one stored value.
 const zLabel = zTitle(z, 120);
-const zMoney = z.number().finite().min(0);
+const zMoney = zMoneyStrict(z);   // selling prices: 0..₱999,999,999.99, rounded to the centavo
 const zRole  = z.enum(['superadmin', 'Manager', 'Staff', 'Cashier']).or(z.string().trim().min(1).max(40));
 
 // Reusable recipe-line shape
@@ -564,24 +624,33 @@ const orderLimiter = rateLimit({
 // nothing wrong. Decoding is best-effort and unverified (jwt.verify already
 // runs downstream in each route's own auth middleware) - this key only needs
 // to be a stable per-device bucket, not a trust boundary.
+// Per-user bucket for a SIGNED token, else per-IP. This used jwt.decode, which
+// does not check the signature: anyone could mint a token with a random _id on
+// every request and get a fresh 300/min bucket each time - no limit at all.
+// ipKeyGenerator groups an IPv6 address by its /56 subnet; keying on the raw
+// req.ip let one IPv6 host rotate through billions of addresses (and is what
+// express-rate-limit's ERR_ERL_KEY_GEN_IPV6 boot warning was about).
 const rateLimitKey = (req) => {
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
     try {
-      const decoded = jwt.decode(authHeader.slice(7));
-      if (decoded?._id) return String(decoded._id);
-    } catch { /* fall through to IP */ }
+      const verified = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+      if (verified?._id) return `u:${verified._id}`;
+    } catch { /* unsigned, expired or forged - fall through to IP */ }
   }
   // An IPv6 client is handed a whole /64 of its own, so keying on the exact
   // address lets one caller rotate through addresses and reset its own bucket
   // at will. ipKeyGenerator collapses the address to its subnet, which is the
   // unit an ISP actually assigns - and is what express-rate-limit warns about
   // when a custom keyGenerator returns req.ip raw.
-  return ipKeyGenerator(req.ip);
+  return `ip:${ipKeyGenerator(req.ip)}`;
 };
 const generalApiLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 300,            // generous per device; no longer shared across a whole location
+  // Generous per user; no longer shared across a whole location. Overridable
+  // (API_RATE_LIMIT_PER_MIN) for the e2e server, where one account drives
+  // every test back to back.
+  max: Number(process.env.API_RATE_LIMIT_PER_MIN) || 300,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: rateLimitKey,
@@ -603,12 +672,55 @@ const pinLimiter = rateLimit({
   message: { success: false, error: 'Too many wrong PINs from this device. Wait a few minutes, or sign in with a password.' },
 });
 
+// Money actions get their own, tighter per-user limit on top of the general
+// one. A void, refund, settlement or manual journal entry is never something a
+// person does dozens of times a minute; a script replaying one is. Keyed on
+// the verified user (rateLimitKey), so one account cannot starve another.
+const moneyActionLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: rateLimitKey,
+  // Only writes count - reading a void screen is not a void.
+  skip: (req) => req.method === 'GET',
+  message: { success: false, error: 'Too many money actions in a minute. Wait a moment and try again.' },
+});
+app.use([
+  '/api/orders/:id/void', '/api/orders/:id/unvoid', '/api/orders/:id/refund', '/api/orders/:id/settle-ar',
+  '/api/orders/:id/partial-refund', '/api/orders/:id/exchange', '/api/orders/:id/complimentary',
+  '/api/bills/:id/pay', '/api/journal', '/api/expenses', '/api/bank-deposits',
+  '/api/finance/ap-payment', '/api/reports/percentage-tax/accrue',
+], moneyActionLimiter);
 
 
 // --- STARTUP TASKS (run once after DB connect) ---
 // Idempotent: seed superadmin, backfill businessType, seed payment-method sub-accounts,
 // run the one-time COA 4→6-digit code migration, and sync atomic counters. Extracted into
 // a named, exported function so integration tests can seed legacy data and invoke it.
+// Hub transfers used to post to 540900, a code never declared in the chart of
+// accounts. Every statement skips unknown codes, so after a transfer the
+// sender's balance sheet stopped balancing and the consolidated books listed it
+// as unmapped. Transfers now post to 160200 Hub Transfer Clearing; this moves
+// the historical lines across so old and new agree.
+//
+// Only the account code and name on the line change - amounts, dates and the
+// entry itself are untouched, and the lines were never on any statement to
+// begin with, so no previously reported figure is restated. Idempotent: once
+// no line carries 540900, it matches nothing.
+async function migrateHubClearingAccount() {
+  const res = await withLedgerMaintenance(() => JournalEntry.updateMany(
+    { 'lines.accountCode': '540900' },
+    { $set: {
+      'lines.$[l].accountCode': '160200',
+      'lines.$[l].accountName': 'Hub Transfer Clearing (Inter-branch)',
+    } },
+    { arrayFilters: [{ 'l.accountCode': '540900' }] },
+  ));
+  if (res.modifiedCount > 0) log.info(`✅ Moved ${res.modifiedCount} hub transfer entr(ies) from 540900 to 160200 Hub Transfer Clearing`);
+  return res.modifiedCount || 0;
+}
+
 const runStartupTasks = async () => {
     log.info('Connected to MongoDB Atlas');
     // The business's own clock drives every day boundary - report ranges, the
@@ -628,7 +740,7 @@ const runStartupTasks = async () => {
     // somebody added by hand. Failures are logged, not fatal: a slow report is
     // better than a server that will not start.
     (async () => {
-      for (const name of ['JournalEntry', 'AuditLog', 'Order', 'StockCard', 'Inventory', 'Bill']) {
+      for (const name of ['JournalEntry', 'AuditLog', 'Order', 'StockCard', 'Inventory', 'Bill', 'Budget', 'ManualJournal', 'Attachment', 'LeaveRequest', 'OvertimeRequest']) {
         try { await mongoose.model(name).createIndexes(); }
         catch (e) { log.warn({ err: e, model: name }, 'Index build failed - reports on this collection may be slow'); }
       }
@@ -662,6 +774,8 @@ const runStartupTasks = async () => {
       ]);
       const stampedTotal = (bO.modifiedCount || 0) + (bP.modifiedCount || 0) + (bI.modifiedCount || 0) + (bC.modifiedCount || 0);
       if (stampedTotal > 0) log.info(`✅ Stamped businessType=${BUSINESS_TYPE} on ${stampedTotal} legacy doc(s) - Orders:${bO.modifiedCount} Products:${bP.modifiedCount} Inventory:${bI.modifiedCount} Categories:${bC.modifiedCount}`);
+
+      await migrateHubClearingAccount();
     } catch (err) {
       log.error({ err }, 'Seeding error');
     }
@@ -829,11 +943,11 @@ const runStartupTasks = async () => {
       if (!done) {
         let migrated = 0;
         for (const [oldC, newC] of Object.entries(CODE_MAP)) {
-          const r = await JournalEntry.updateMany(
+          const r = await withLedgerMaintenance(() => JournalEntry.updateMany(
             { 'lines.accountCode': oldC },
             { $set: { 'lines.$[el].accountCode': newC } },
             { arrayFilters: [{ 'el.accountCode': oldC }] }
-          );
+          ));
           migrated += r.modifiedCount || 0;
         }
         await Settings.updateOne({ key: 'coaV2Migrated' }, { $set: { value: true } }, { upsert: true });
@@ -963,6 +1077,10 @@ const runStartupTasks = async () => {
 };
 
 // --- MONGODB CONNECTION (single connect) ---
+// Lets lib/atomicRoute.js run a whole handler in one transaction: every query
+// inside mongoose.connection.transaction() joins it without passing a session.
+// Queries outside such a callback are unaffected.
+mongoose.set('transactionAsyncLocalStorage', true);
 mongoose.connect(process.env.MONGO_URI, {
   serverSelectionTimeoutMS: 10000, // fail fast on an unreachable cluster instead of hanging
   socketTimeoutMS: 45000,
@@ -972,7 +1090,12 @@ mongoose.connect(process.env.MONGO_URI, {
   // captureError() is a no-op until then, so early boot errors are simply not
   // recorded rather than crashing the process.
   .then(() => { initErrorLog(); return runStartupTasks(); })
-  .catch(err => console.error('❌ MongoDB Connection Error:', err));
+  .catch(err => {
+    console.error('❌ MongoDB Connection Error:', err);
+    // Running on without a database only answers every request with an error
+    // until someone notices. In production, exit and let Docker restart us.
+    if (IS_PROD) process.exit(1);
+  });
 
   // --- 🔒 NEW: JWT MIDDLEWARE 🔒 ---
   const verifyToken = (req, res, next) => {
@@ -993,6 +1116,22 @@ mongoose.connect(process.env.MONGO_URI, {
         return res.status(403).json({ success: false, message: 'Forbidden: client token not permitted here.' });
       }
       req.user = decoded; // Stage 3 (role allowlist) is enforced by requireStaff on staff routes.
+      // Stage 4 - still current? A token minted before the user's last
+      // privilege change is refused (401 -> the client refreshes). Staff
+      // tokens only; client-portal tokens carry no version.
+      if (decoded.aud === 'staff' && decoded._id) {
+        return currentTokenVersion(decoded._id).then((tv) => {
+          if ((decoded.tv || 0) < tv) {
+            return res.status(401).json({ success: false, message: 'Unauthorized: permissions changed, please sign in again' });
+          }
+          next();
+        }, (err) => {
+          // Fail closed: if we cannot tell whether the token was revoked, it
+          // does not get through.
+          log.error({ err }, 'token version lookup failed');
+          res.status(503).json({ success: false, message: 'Could not verify your session. Try again in a moment.' });
+        });
+      }
       next();
     } catch (error) {
       // 401 (not 403) for an expired/invalid token so the client silently refreshes
@@ -1045,13 +1184,35 @@ mongoose.connect(process.env.MONGO_URI, {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
+      let decoded;
       try {
-        req.user = jwt.verify(token, process.env.JWT_SECRET);
-        return next();
+        decoded = jwt.verify(token, process.env.JWT_SECRET);
       } catch {
         // 401 so the client refreshes + retries instead of failing an expired session.
         return res.status(401).json({ success: false, error: 'Invalid or expired token.' });
       }
+      // A signed token is not enough: it must be a real client-portal session
+      // or a staff session, and a staff token revoked by a role/password
+      // change (tokenVersion) is refused here exactly as verifyToken does -
+      // otherwise a demoted or deleted person kept ringing sales for up to
+      // 15 minutes.
+      if (decoded.aud === 'client' || String(decoded.role || '').toLowerCase() === 'client') {
+        if (!evaluateClientAccess(decoded).ok) return res.status(403).json({ success: false, error: 'Client session required.' });
+        req.user = decoded;
+        return next();
+      }
+      if (!evaluateStaffAccess(decoded).ok) return res.status(403).json({ success: false, error: 'Forbidden: staff access required.' });
+      if (decoded._id) {
+        try {
+          const tv = await currentTokenVersion(decoded._id);
+          if ((decoded.tv || 0) < tv) return res.status(401).json({ success: false, error: 'Unauthorized: permissions changed, please sign in again' });
+        } catch (err) {
+          log.error({ err }, 'token version lookup failed');
+          return res.status(503).json({ success: false, error: 'Could not verify your session. Try again in a moment.' });
+        }
+      }
+      req.user = decoded;
+      return next();
     }
     const { sessionId, table } = req.body;
     if (sessionId && table && !['Takeout', 'Grab Delivery', 'Foodpanda', 'Manual Delivery'].includes(table)) {
@@ -1214,6 +1375,10 @@ const ProductSchema = new mongoose.Schema({
   // badge) and STILL appear in every report. Separate from isAvailable so a
   // temporary stockout doesn't get conflated with a permanent removal.
   isOutOfStock:   { type: Boolean, default: false },
+  // Set when a sale drained an ingredient and the product was taken off the
+  // menu automatically (isAvailable false). Only these are put back by
+  // lib/autoRestore.js once stock returns; a manual removal clears it.
+  autoUnavailable: { type: Boolean, default: false, index: true },
   // Café: whether customers see it on the table QR menu. Off = counter-only -
   // still sold at the POS, never offered to (or orderable from) a QR code.
   showOnQr:       { type: Boolean, default: true },
@@ -1544,6 +1709,15 @@ items: [{
   //   arDueDate   = completedAt + arTermsDays; the date this A/R turns overdue.
   arTermsDays:      { type: Number, default: null },
   arDueDate:        { type: Date, default: null },
+  // A sale placed over the client's credit limit with an approver's sign-off:
+  // who approved it and the numbers they saw.
+  creditOverride: {
+    approvedBy:  { type: String, default: '' },
+    approvedAt:  { type: Date, default: null },
+    limit:       { type: Number, default: null },
+    outstanding: { type: Number, default: null },
+    orderTotal:  { type: Number, default: null },
+  },
   // ── Logistics fields ──────────────────────────────────────────────────────
   // billingNumber: monthly-reset sequential ref (YYYY-MM-XXXX), log mode only
   billingNumber:   { type: String, default: '' },
@@ -1552,6 +1726,25 @@ items: [{
   // was never issued a receipt, and burning a serial on it would leave a gap
   // nobody can account for. Continues from the series configured in Settings.
   orNumber:        { type: String, default: '', index: true },
+  // When the sale was completed - its POSTING date. createdAt is the document
+  // date (when the order was taken); the two differ for an order taken today
+  // and delivered tomorrow, and the daily sales report shows both.
+  completedAt:     { type: Date, default: null, index: true },
+  // Wholesale or retail, decided when the order is placed: a buyer whose
+  // client account carries a "wholesale" segment buys wholesale. The sales
+  // by channel report groups on it.
+  channel:         { type: String, enum: ['Retail', 'Wholesale'], default: 'Retail', index: true },
+  // Who the sale is credited to: picked at the POS, else the client's assigned
+  // salesperson, else whoever rang it up. Commissions follow it.
+  salesperson:     { type: String, default: '', index: true },
+  // Delivery receipts (logistics): one per delivery. A partly fulfilled order
+  // gets one per batch; drNumber is the latest.
+  drNumber:        { type: String, default: '', index: true },
+  deliveryReceipts: [{
+    drNumber: { type: String, required: true },
+    at:       { type: Date, default: Date.now },
+    lines:    [{ index: Number, name: String, itemCode: String, qty: Number }],
+  }],
   termsOfPayment:  { type: String, default: '' },
   // Client who placed the order (log mode; blank for fb/POS-originated orders)
   clientId:        { type: String, default: '' },
@@ -1560,6 +1753,11 @@ items: [{
 OrderSchema.index({ createdAt: -1 });
 OrderSchema.index({ status: 1, isArchived: 1 });
 OrderSchema.index({ orderNumber: 1 }, { unique: true, sparse: true });
+// A client's orders (portal history, statements, the Clients screen) were a
+// full collection scan on clientId; and every report filters on the business,
+// the status and a date range together.
+OrderSchema.index({ clientId: 1, createdAt: -1 });
+OrderSchema.index({ businessType: 1, status: 1, createdAt: -1 });
 const Order = mongoose.model('Order', OrderSchema);
 
 const QRSessionSchema = new mongoose.Schema({
@@ -1643,6 +1841,14 @@ const InventorySchema = new mongoose.Schema({
 }, { timestamps: true });
 InventorySchema.index({ expiryDate: 1 });
 InventorySchema.index({ itemName: 1 });
+// Any stock write may have refilled an ingredient that took products off the
+// menu - ask the auto-restorer (created once sockets exist) to check.
+let autoRestorer = null;
+const scheduleAutoRestore = () => { autoRestorer?.schedule(); };
+InventorySchema.post('save', scheduleAutoRestore);
+InventorySchema.post(['findOneAndUpdate', 'updateOne', 'updateMany', 'replaceOne'], scheduleAutoRestore);
+InventorySchema.post('insertMany', scheduleAutoRestore);
+InventorySchema.post('bulkWrite', scheduleAutoRestore);
 const Inventory = mongoose.model('Inventory', InventorySchema);
 
 // Storage places - the physical locations stock can sit in (branch, warehouse,
@@ -1878,7 +2084,16 @@ const JournalEntrySchema = new mongoose.Schema({
   // that predate it simply group under "Unattributed".
   supplierId:   { type: String, default: null, index: true },
   supplierName: { type: String, default: '' },
+  // Who posted it. Filled from the request (lib/requestContext.js) by the
+  // validate hook below, so every one of the ~60 posting paths is attributed
+  // without each having to remember. Empty means the SYSTEM posted it (the
+  // midnight auto-close, a boot migration) - there was no person.
+  postedBy:     { type: String, default: '' },
+  postedById:   { type: String, default: '' },
 }, { timestamps: true });
+// Per-account lookups (a control-account balance, a ledger drill-down) filter
+// on lines.accountCode; without this each one scanned the whole ledger.
+JournalEntrySchema.index({ 'lines.accountCode': 1, date: 1 });
 
 // ── Data-layer double-entry guarantee ────────────────────────────────────────
 // A journal entry can NEVER be persisted unbalanced. This is the floor beneath
@@ -1887,15 +2102,47 @@ const JournalEntrySchema = new mongoose.Schema({
 // every create()/save()/insertMany() before the document is stored. Debits must
 // equal credits to within one centavo; the denormalized totals are re-derived
 // from the lines here so they can never drift out of sync with them.
+// Append-only: see lib/ledgerGuard.js. Query-level writes and re-saving an
+// existing entry are refused outside withLedgerMaintenance().
+JournalEntrySchema.pre(LEDGER_WRITE_OPS, { query: true, document: false }, function () {
+  if (!inLedgerMaintenance()) throw refuseLedgerRewrite(this.op || 'update');
+});
+JournalEntrySchema.pre('deleteOne', { document: true, query: false }, function () {
+  if (!inLedgerMaintenance()) throw refuseLedgerRewrite('deleteOne');
+});
+JournalEntrySchema.pre('bulkWrite', function (ops) {
+  const rewrites = (Array.isArray(ops) ? ops : []).some((op) => !op.insertOne);
+  if (rewrites && !inLedgerMaintenance()) throw refuseLedgerRewrite('bulkWrite');
+});
+JournalEntrySchema.pre('save', function () {
+  if (!this.isNew && !inLedgerMaintenance()) throw refuseLedgerRewrite('save');
+});
+
 JournalEntrySchema.pre('validate', function () {
+  if (!this.postedBy) {
+    const actor = currentActor();
+    if (actor) { this.postedBy = actor.name; this.postedById = actor.id; }
+  }
   const lines = this.lines || [];
   if (!lines.length) return;
+  // Store every amount to the centavo under the one rounding rule
+  // (lib/money.js), so what balances here is exactly what is summed later.
+  for (const l of lines) {
+    for (const side of ['debit', 'credit']) {
+      const v = Number(l[side] || 0);
+      if (!Number.isFinite(v) || Math.abs(v) > MONEY_MAX) {
+        throw new Error(`Journal entry ref ${this.reference || '?'}: ${side} on ${l.accountCode || '?'} is not a valid amount (${l[side]}).`);
+      }
+    }
+    l.debit = roundMoney(l.debit || 0);
+    l.credit = roundMoney(l.credit || 0);
+  }
   // Throws on imbalance - Mongoose 9 runs validate hooks promise-style, so a
   // throw here rejects the create()/save()/insertMany() before anything is
   // written. This is the single chokepoint every entry must pass through.
   assertBalanced(lines, `ref ${this.reference || '?'}`);
-  this.totalDebit = Math.round(lines.reduce((s, l) => s + (Number(l.debit) || 0), 0) * 100) / 100;
-  this.totalCredit = Math.round(lines.reduce((s, l) => s + (Number(l.credit) || 0), 0) * 100) / 100;
+  this.totalDebit = lines.reduce((s, l) => s + toCentavos(l.debit), 0) / 100;
+  this.totalCredit = lines.reduce((s, l) => s + toCentavos(l.credit), 0) / 100;
 });
 
 // The ledger is the one collection that only ever grows, and nearly every
@@ -2375,6 +2622,9 @@ const acctMeta = (code) => ACCOUNTS[code] || CUSTOM_META.get(code) || null;
 refreshCustomMeta();
 
 const UserSchema = new mongoose.Schema({
+  // Bumped on every privilege change; access tokens carry it and are refused
+  // once it moves on (see revokeUserSessions / verifyToken).
+  tokenVersion: { type: Number, default: 0 },
   userCode: { type: String, index: true },
   name: { type: String, required: true, index: true },
   password: { type: String, required: true },
@@ -2405,6 +2655,8 @@ const UserSchema = new mongoose.Schema({
   tin:             { type: String, default: '' },
   // What HR calls this person, as distinct from userCode (a login sequence).
   employeeNumber:  { type: String, default: '' },
+  // Pay per working day, for the payroll timesheet's suggested gross.
+  dailyRate:       { type: Number, default: 0, min: 0 },
   // Granular RBAC: explicit permission override. Empty ⇒ fall back to the role's
   // defaults (see lib/authz.js resolvePermissions). Ignored for superadmin (full).
   permissions: { type: [String], default: [] },
@@ -2458,6 +2710,9 @@ const ClientAccountSchema = new mongoose.Schema({
   // target instead of (or in addition to) a one-off clientDiscounts entry for
   // this specific client. Empty = no segment-level discount applies.
   segments:      { type: [String], default: [] },
+  // The salesperson who looks after this client (a staff member's name). Their
+  // orders are credited to that person unless the POS names someone else.
+  assignedSalesperson: { type: String, default: '' },
   // The client's OWN portal appearance, stored on the account so it follows them
   // across devices. Deliberately separate from the staff-side `dash.theme`
   // (per-device localStorage): a shop changing its POS theme must not restyle
@@ -2579,7 +2834,7 @@ const CHANGE_REQUEST_STATUSES = ['Pending', 'Approved', 'Rejected'];
 const ChangeRequestSchema = new mongoose.Schema({
   businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
   tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  entity:       { type: String, enum: ['Product', 'Inventory', 'ClientAccount'], required: true },
+  entity:       { type: String, enum: ['Product', 'Inventory', 'ClientAccount', 'Supplier'], required: true },
   entityId:     { type: String, required: true, index: true },
   entityName:   { type: String, default: '' },   // snapshot, so the queue reads well even if renamed later
   changes: [{
@@ -2613,6 +2868,15 @@ AuditLogSchema.index({ createdAt: -1 });
 AuditLogSchema.index({ userId: 1, createdAt: -1 });
 AuditLogSchema.index({ action: 1, createdAt: -1 });
 AuditLogSchema.index({ targetReference: 1 });
+AuditLogSchema.pre(LEDGER_WRITE_OPS, { query: true, document: false }, function () {
+  if (!inLedgerMaintenance()) { const e = new Error(`The audit log is append-only: ${this.op || 'update'} refused.`); e.status = 409; throw e; }
+});
+AuditLogSchema.pre('deleteOne', { document: true, query: false }, function () {
+  if (!inLedgerMaintenance()) { const e = new Error('The audit log is append-only: deleteOne refused.'); e.status = 409; throw e; }
+});
+AuditLogSchema.pre('save', function () {
+  if (!this.isNew && !inLedgerMaintenance()) { const e = new Error('The audit log is append-only: save refused.'); e.status = 409; throw e; }
+});
 const AuditLog = mongoose.model('AuditLog', AuditLogSchema);
 
 // (Auth middleware - verifyToken, requireStaff, verifyClientToken, requireSuperAdmin,
@@ -2923,6 +3187,28 @@ const BillSchema = new mongoose.Schema({
   rejectedAt:        { type: Date, default: null },
   rejectionReason:   { type: String, default: '' },
   paidAt:            { type: Date, default: null },
+  // ── Three-way match (lib/threeWayMatch.js) ──
+  // The supplier's invoice, as recorded against this bill, and how it compared
+  // with the PO and what was received. A PO bill cannot be approved for
+  // payment until this is Matched - or Accepted by someone allowed to approve
+  // price changes, with a reason. supplierInvoiceKey is the normalised invoice
+  // number, so the same invoice cannot be entered twice for one supplier.
+  supplierInvoiceKey:    { type: String, default: '', index: true },
+  supplierInvoiceAmount: { type: Number, default: null },
+  supplierInvoiceDate:   { type: Date, default: null },
+  match: {
+    status:        { type: String, enum: ['Unmatched', 'Matched', 'Exception', 'Accepted'], default: 'Unmatched' },
+    poValue:       { type: Number, default: null },
+    receivedValue: { type: Number, default: null },
+    invoiceAmount: { type: Number, default: null },
+    variance:      { type: Number, default: 0 },
+    issues:        [{ code: String, text: String }],
+    checkedBy:     { type: String, default: '' },
+    checkedAt:     { type: Date, default: null },
+    acceptedBy:    { type: String, default: '' },
+    acceptReason:  { type: String, default: '' },
+    varianceJournalRef: { type: String, default: '' },
+  },
   // Reference of the JournalEntry this bill is tied to: the PO-receipt entry for
   // source:'PO' bills, the approval entry for source:'Manual' bills, and
   // overwritten with the LATEST payment entry's reference once any payment lands.
@@ -2951,6 +3237,7 @@ const BillSchema = new mongoose.Schema({
   }],
 }, { timestamps: true });
 BillSchema.index({ businessType: 1, status: 1 });
+BillSchema.index({ supplierId: 1, supplierInvoiceKey: 1 });
 const Bill = mongoose.model('Bill', BillSchema);
 
 // --- CHECK VOUCHER ---
@@ -2996,6 +3283,109 @@ const CheckVoucherSchema = new mongoose.Schema({
 }, { timestamps: true });
 CheckVoucherSchema.index({ businessType: 1, date: -1 });
 const CheckVoucher = mongoose.model('CheckVoucher', CheckVoucherSchema);
+
+// ── MANUAL JOURNAL APPROVAL ──────────────────────────────────────────────────
+// A journal entry typed by hand is prepared, then approved, then posted - the
+// automatic ones (sales, receipts, payments) come from approved transactions
+// already. Someone holding journal.approve posts their own entry straight
+// away (their approval is recorded); anyone else's waits here as Pending
+// until an approver posts or rejects it. Only a Posted one is in the ledger.
+const MANUAL_JOURNAL_STATUSES = ['Pending', 'Posted', 'Rejected'];
+const ManualJournalSchema = new mongoose.Schema({
+  businessType:  { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  draftNumber:   { type: String, index: true },            // MJ-2026-000001
+  date:          { type: Date, default: null },            // the entry's date once posted (null = the day it is approved)
+  description:   { type: String, default: '' },
+  lines: [{
+    accountCode: { type: String, required: true },
+    accountName: { type: String, default: '' },
+    debit:       { type: Number, default: 0 },
+    credit:      { type: Number, default: 0 },
+  }],
+  totalDebit:    { type: Number, default: 0 },
+  totalCredit:   { type: Number, default: 0 },
+  status:        { type: String, enum: MANUAL_JOURNAL_STATUSES, default: 'Pending', index: true },
+  preparedBy:    { type: String, default: '' },
+  preparedById:  { type: String, default: '' },
+  approvedBy:    { type: String, default: '' },
+  approvedAt:    { type: Date, default: null },
+  rejectedBy:    { type: String, default: '' },
+  rejectedAt:    { type: Date, default: null },
+  rejectionReason: { type: String, default: '' },
+  postedReference: { type: String, default: '' },          // the JournalEntry it became
+}, { timestamps: true });
+const ManualJournal = mongoose.model('ManualJournal', ManualJournalSchema);
+
+// ── DOCUMENT ATTACHMENTS ─────────────────────────────────────────────────────
+// Supporting documents - a supplier's invoice, an official receipt, a signed
+// voucher - kept with the transaction they support. Stored in the tenant's
+// own database, so they are in every backup and restore with the books.
+const ATTACHMENT_ENTITIES = ['ManualJournal', 'JournalEntry', 'Bill', 'PurchaseOrder', 'CheckVoucher', 'Advance', 'Order', 'RequisitionSlip'];
+const AttachmentSchema = new mongoose.Schema({
+  businessType:  { type: String, default: () => BUSINESS_TYPE, index: true },
+  entity:        { type: String, enum: ATTACHMENT_ENTITIES, required: true },
+  entityId:      { type: String, required: true },
+  filename:      { type: String, required: true },
+  mime:          { type: String, required: true },
+  size:          { type: Number, required: true },
+  data:          { type: Buffer, required: true },
+  uploadedBy:    { type: String, default: '' },
+  uploadedById:  { type: String, default: '' },
+}, { timestamps: true });
+AttachmentSchema.index({ entity: 1, entityId: 1, createdAt: 1 });
+const Attachment = mongoose.model('Attachment', AttachmentSchema);
+
+// ── BUDGETS ──────────────────────────────────────────────────────────────────
+// One amount per account per month (features/budgets.js).
+const BudgetSchema = new mongoose.Schema({
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  year:         { type: Number, required: true },
+  month:        { type: Number, required: true, min: 1, max: 12 },
+  accountCode:  { type: String, required: true },
+  amount:       { type: Number, required: true, min: 0 },
+  setBy:        { type: String, default: '' },
+}, { timestamps: true });
+BudgetSchema.index({ businessType: 1, tenantId: 1, year: 1, month: 1, accountCode: 1 }, { unique: true });
+const Budget = mongoose.model('Budget', BudgetSchema);
+
+// ── LEAVE & OVERTIME (Phase 2, features/timeoff.js) ─────────────────────────
+// Dates are YYYY-MM-DD strings on the business calendar, like ClockEntry.date.
+const TimeOffBase = {
+  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
+  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+  userId:       { type: String, required: true, index: true },
+  userName:     { type: String, required: true },
+  reason:       { type: String, default: '' },
+  status:       { type: String, enum: ['Pending', 'Approved', 'Rejected'], default: 'Pending', index: true },
+  filedBy:      { type: String, default: '' },
+  decidedBy:    { type: String, default: '' },
+  decidedAt:    { type: Date, default: null },
+  decisionNote: { type: String, default: '' },
+};
+const LeaveRequestSchema = new mongoose.Schema({
+  ...TimeOffBase,
+  type: { type: String, enum: ['Vacation', 'Sick', 'Emergency', 'Unpaid'], required: true },
+  from: { type: String, required: true },
+  to:   { type: String, required: true },
+  days: { type: Number, required: true },
+  paid: { type: Boolean, default: true },
+}, { timestamps: true });
+// The overlap check (one person's live leave) and the timesheet (approved
+// leave touching a pay period), plus the list screen.
+LeaveRequestSchema.index({ userId: 1, status: 1, from: 1, to: 1 });
+LeaveRequestSchema.index({ status: 1, from: 1, to: 1 });
+LeaveRequestSchema.index({ businessType: 1, tenantId: 1, status: 1, createdAt: -1 });
+const LeaveRequest = mongoose.model('LeaveRequest', LeaveRequestSchema);
+const OvertimeRequestSchema = new mongoose.Schema({
+  ...TimeOffBase,
+  date:  { type: String, required: true },
+  hours: { type: Number, required: true },
+}, { timestamps: true });
+OvertimeRequestSchema.index({ status: 1, date: 1 });
+OvertimeRequestSchema.index({ businessType: 1, tenantId: 1, status: 1, createdAt: -1 });
+const OvertimeRequest = mongoose.model('OvertimeRequest', OvertimeRequestSchema);
 
 // Cash, bank, and e-wallet accounts - the ones money can actually leave from.
 const VOUCHER_SOURCE_ACCOUNTS = /^(111|112|113|114)/;
@@ -3455,6 +3845,11 @@ const PayrollRun = mongoose.model('PayrollRun', PayrollRunSchema);
 // Helpers so server code stays clean:
 const emitToOps  = (evt, data) => io.to('cashier').to('kitchen').emit(evt, data);   // operational events
 const emitToAll  = (evt, data) => io.emit(evt, data);                               // menu / archive - everyone
+autoRestorer = createAutoRestorer({
+  Product, Inventory, log,
+  onRestored: () => emitToAll('menuUpdated'),
+  intervalMs: process.env.NODE_ENV === 'test' ? 0 : 60_000,
+});
 const emitToMgr  = (evt, data) => io.to('manager').emit(evt, data);                 // ledger/ERP - superadmin only
 
 // Verify JWT on the socket handshake. The client passes the access token via
@@ -3486,9 +3881,14 @@ io.on('connection', (socket) => {
 
   // Auto-room placement based on the verified JWT. The client no longer
   // controls which rooms it joins - the server decides from the token's role.
-  if (user) {
-    socket.join('cashier'); // every authenticated user gets order updates
-    if (role === 'superadmin' || role === 'admin') socket.join('manager');
+  // STAFF tokens only. A client-portal token is also a valid JWT, and it used
+  // to land in 'cashier' too - every other customer's orders, live. Rooms
+  // follow permissions, not role names: 'manager' carries ledger/ERP events,
+  // so it is whoever may view the books - which now includes the finance
+  // role, previously left out because it is not literally "admin".
+  if (user && user.aud !== 'client' && role !== 'client') {
+    socket.join('cashier'); // order flow for every staff member
+    if (hasPermission(user, 'accounting.view')) socket.join('manager');
     if (role === 'kitchen') socket.join('kitchen');
   }
 
@@ -3970,6 +4370,15 @@ const RequisitionSlipSchema = new mongoose.Schema({
     creditAccount: { type: String, default: null },
   }],
   estTotal: { type: Number, default: 0 },
+  // The budget check made when the slip was filed (features/budgets.js): what
+  // each account it charges had budgeted, spent and already asked for that
+  // month. An over-budget slip is approved only with an explicit reason.
+  budgetCheck: [{
+    accountCode: String, accountName: String, hasBudget: Boolean,
+    budget: Number, spent: Number, committed: Number, requested: Number, available: Number, over: Boolean,
+  }],
+  overBudgetAcceptedBy: { type: String, default: '' },
+  overBudgetReason:     { type: String, default: '' },
 
   notes: { type: String, default: '' },
   preparedBy: { type: String, default: '' },               // requester's name - the slip's "Prepared By" line
@@ -4102,6 +4511,13 @@ const ProductionOrder = mongoose.model('ProductionOrder', ProductionOrderSchema)
 // model/helper/middleware they use is passed via this ctx object. Registration
 // order preserves the original in-file route order per feature.
 const ctx = {
+  Budget,
+  LeaveRequest,
+  OvertimeRequest,
+  ManualJournal,
+  MANUAL_JOURNAL_STATUSES,
+  Attachment,
+  ATTACHMENT_ENTITIES,
   app,
   io,
   server,
@@ -4192,6 +4608,7 @@ const ctx = {
   orderLimiter,
   generalApiLimiter,
   runStartupTasks,
+  migrateHubClearingAccount,
   CategorySchema,
   Category,
   ModifierGroupSchema,
@@ -4350,6 +4767,9 @@ const ctx = {
   requireSuperOrAdmin,
   verifyOrderAuth,
   requirePermission,
+  requireAnyPermission,
+  requireUserAdmin,
+  guardStaffEscalation,
   resolvePermissions,
   hasPermission,
   PERMISSIONS,
@@ -4369,6 +4789,11 @@ registerProducts(ctx);
 registerQrSessions(ctx);
 registerOrders(ctx);
 registerFinance(ctx);
+registerAttachments(ctx);
+registerBudgets(ctx);
+registerExceptions(ctx);
+registerClosing(ctx);
+registerTimeOff(ctx);
 registerReports(ctx);
 registerShifts(ctx);
 registerScheduling(ctx);
@@ -4429,7 +4854,7 @@ if (!IS_TEST) {
 // Exported for in-process integration tests (supertest + socket.io-client). Importing
 // the module still connects to MONGO_URI; tests point that at an in-memory MongoDB.
 // `server` (the http.Server) is exported so socket tests can listen on an ephemeral port.
-export { app, server, runStartupTasks, scheduleMidnightArchive };
+export { app, server, runStartupTasks, scheduleMidnightArchive, migrateHubClearingAccount };
 
 const shutdown = async (signal, exitCode = 0) => {
   log.info({ signal }, 'Shutting down gracefully');

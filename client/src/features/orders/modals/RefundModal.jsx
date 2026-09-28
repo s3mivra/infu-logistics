@@ -62,14 +62,14 @@ export default function RefundModal() {
           const remaining = remainingOf(item);
           if (remaining <= 0) return (
             <div key={idx} className="flex items-center justify-between gap-2 bg-page-bg/50 border border-gray-800 rounded-lg px-3 py-2 opacity-40">
-              <span className="text-xs font-bold text-fg/75 truncate">{item.name}</span>
+              <span className="text-xs font-bold text-fg/75 truncate" title={String((item.name) ?? '')}>{item.name}</span>
               <span className="text-[10px] text-fg/70 font-bold uppercase shrink-0">Fully refunded</span>
             </div>
           );
           return (
             <div key={idx} className="flex items-center justify-between gap-2 bg-page-bg border border-gray-700 rounded-lg px-3 py-2">
               <div className="min-w-0">
-                <p className="text-xs font-bold text-fg truncate">{item.name}</p>
+                <p className="text-xs font-bold text-fg truncate" title={String((item.name) ?? '')}>{item.name}</p>
                 <p className="text-[10px] text-fg/70">
                   {remaining} of {item.quantity} refundable{Number(item.refundedQty) > 0 ? ` (${item.refundedQty} already refunded)` : ''} · ₱{Number(item.price || 0).toFixed(2)} ea
                 </p>

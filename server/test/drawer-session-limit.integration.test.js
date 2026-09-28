@@ -14,6 +14,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let app, stop, ana;
 
@@ -32,7 +33,7 @@ afterAll(async () => { await stop(); });
 beforeEach(async () => {
   await mongoose.model('Shift').deleteMany({});
   await mongoose.model('Order').deleteMany({});
-  await mongoose.model('JournalEntry').deleteMany({});
+  await withLedgerMaintenance(() => mongoose.model('JournalEntry').deleteMany({}));
   await setSetting('sharedDrawer', true);
   await setSetting('blindClose', false);
   await setSetting('varianceThreshold', 50);

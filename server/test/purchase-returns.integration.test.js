@@ -9,6 +9,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok, supplier, item;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -48,7 +49,7 @@ afterAll(async () => { await ctx.stop(); });
 beforeEach(async () => {
   await Promise.all([
     M('PurchaseOrder').deleteMany({}), M('Bill').deleteMany({}),
-    M('JournalEntry').deleteMany({}), M('StockCard').deleteMany({}),
+    withLedgerMaintenance(() => M('JournalEntry').deleteMany({})), M('StockCard').deleteMany({}),
     M('Supplier').deleteMany({}), M('Inventory').deleteMany({}),
     M('Settings').deleteMany({ key: { $in: ['vatEnabled', 'vatRate', 'vatInclusive'] } }),
   ]);
@@ -108,6 +109,7 @@ describe('returning received goods', () => {
 
   it('turns the credit into money the supplier holds once the invoice is paid', async () => {
     const { po, bill } = await receivePO({ qty: 10, unitCost: 100 });
+    await auth('post', `/api/bills/${bill._id}/invoice`).send({ supplierInvoiceNo: `PR-${bill._id}`, invoiceAmount: bill.amount });
     await auth('post', `/api/bills/${bill._id}/approve`).send({});
     const paid = await auth('post', `/api/bills/${bill._id}/pay`).send({ payFromAccount: '111000' });
     expect(paid.body.success).toBe(true);

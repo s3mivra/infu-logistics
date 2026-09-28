@@ -13,6 +13,7 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 import { businessDateStr } from '../lib/businessTime.js';
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok, product;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -54,7 +55,7 @@ beforeAll(async () => {
 afterAll(async () => { await ctx.stop(); });
 
 beforeEach(async () => {
-  await M('JournalEntry').deleteMany({});
+  await withLedgerMaintenance(() => M('JournalEntry').deleteMany({}));
   await M('Order').deleteMany({});
 });
 

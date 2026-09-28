@@ -22,12 +22,17 @@
 // the year's profit, and that shortfall is plugged back to Owner's Capital.
 // When the two statements agree, Owner's Capital nets to nothing - so what is
 // left there is the difference between them, and the response says how much.
+import { businessDateStr } from '../lib/businessTime.js';
+import { atomic } from '../lib/atomicRoute.js';
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import {
   parseAmount, isPnlType, buildOpeningEntry, buildPnlMonthEntry, monthEnd, readMonths,
 } from '../lib/setupBooks.js';
 import { OPENING_AR_STATUS } from '../lib/credit.js';
+import { OPEN_DEPOSIT_KINDS, openDepositKind } from '../lib/dataSets.js';
+
+const OPEN_DEPOSIT_REFS_KEY = 'openDepositRefs';   // Settings: rows already carried in
 
 const PAYMENT_PARENTS = new Set(['111000', '112000', '113000', '115000', '120000', '220000']);
 // Accounts the system itself posts through: sales on account and collections
@@ -45,6 +50,7 @@ export default function registerSetupImport(ctx) {
     ACCOUNTS, Account, JournalEntry, Order, Bill, Supplier, ClientAccount, Settings,
     acctMeta, refreshCustomMeta, normalBalanceForCode, assertBalanced, mkSeqRef, periodLockFor,
     verifyToken, requireStaff, requirePermission,
+    Advance, ADVANCE_ACCOUNTS, currentBranchCode,
   } = ctx;
 
   const canPost = [requireStaff, requirePermission('accounting.manage')];
@@ -246,7 +252,7 @@ export default function registerSetupImport(ctx) {
   // history carried in too (`pnlHistory: true`), a "net income" line - any
   // account under Current Year Earnings - is left out, because the P&L months
   // already produce it; the response compares the two.
-  app.post('/api/setup/opening-balances/import', verifyToken, ...canPost, async (req, res) => {
+  app.post('/api/setup/opening-balances/import', verifyToken, ...canPost, atomic(mongoose, async (req, res) => {
     try {
       const rows = rowsOf(req, res); if (!rows) return;
       const resolve = await codeResolver();
@@ -279,7 +285,7 @@ export default function registerSetupImport(ctx) {
       if (existing && req.body?.force !== true) {
         return res.status(409).json({ success: false, error: `Nothing was posted. Opening balances were already carried in (${existing.reference}) - importing them again would double every balance.` });
       }
-      const lock = await closed(dayEnd(asOf.toISOString().slice(0, 10)));
+      const lock = await closed(dayEnd(businessDateStr(asOf)));
       if (lock) return res.status(423).json({ success: false, error: `Nothing was posted. ${lock}` });
 
       const reference = await mkSeqRef('OPEN');
@@ -293,20 +299,24 @@ export default function registerSetupImport(ctx) {
       emitToMgr('erpUpdated');
       res.json({
         success: true, created: built.jeLines.length, reference,
-        asOf: asOf.toISOString().slice(0, 10),
+        asOf: businessDateStr(asOf),
         // The balance sheet's own view of the year's profit, and what was
         // plugged to make the entry balance. With P&L history these two should
         // be the same number; the client says so, or says by how much not.
         earningsOnBalanceSheet: earningsLeftOut,
         balancingToCapital: built.plug,
         // The control balances the open-item sheets must add up to.
-        controls: Object.fromEntries([['receivables', '120000'], ['payables', '220000'], ['inventory', '130000']].map(([k, code]) => {
+        controls: Object.fromEntries([
+          ['receivables', '120000', 'debit'], ['payables', '220000', 'credit'], ['inventory', '130000', 'debit'],
+          // What the Open Deposits & Advances sheet must add up to, kind by kind.
+          ...OPEN_DEPOSIT_KINDS.map(k => [k.key, k.account, k.side]),
+        ].map(([k, code, side]) => {
           const l = built.jeLines.find(x => x.accountCode === code);
-          return [k, l ? r2(code === '220000' ? l.credit - l.debit : l.debit - l.credit) : 0];
+          return [k, l ? r2(side === 'credit' ? l.credit - l.debit : l.debit - l.credit) : 0];
         })),
       });
     } catch (err) { fail(req, res, err); }
-  });
+  }));
 
   // ── OPEN RECEIVABLES ───────────────────────────────────────────────────────
   // Each unpaid customer invoice becomes a receivable that AR & AP lists, ages
@@ -359,6 +369,107 @@ export default function registerSetupImport(ctx) {
       });
     } catch (err) { fail(req, res, err); }
   });
+
+  // ── OPEN DEPOSITS & ADVANCES ───────────────────────────────────────────────
+  // Money paid ahead and still unused on switch-over day. The opening balance
+  // sheet already carries each TOTAL (Customer Deposits, Advances to
+  // Suppliers, ...); without the detail behind it there was nothing to apply
+  // to a customer's next order or a supplier's next bill, and Books Health
+  // showed every one of those accounts as unexplained. Each row is registered
+  // where the app keeps that kind - the Advances screen, or the client's /
+  // supplier's credit balance - with NO posting, like open invoices and bills.
+  //
+  // One transaction: a row that fails validation is skipped, but a server
+  // error rolls the whole sheet back rather than leaving half of it in.
+  // Each row's (kind, name, reference) is remembered, so carrying the same
+  // sheet in twice cannot double a credit balance.
+  app.post('/api/setup/open-deposits/import', verifyToken, ...canPost, atomic(mongoose, async (req, res) => {
+    try {
+      const rows = rowsOf(req, res); if (!rows) return;
+      const [clients, suppliers, doneRow] = await Promise.all([
+        ClientAccount.find(tenantScope(req), { name: 1 }).lean(),
+        Supplier.find(tenantScope(req), { name: 1 }).lean(),
+        Settings.findOne({ key: OPEN_DEPOSIT_REFS_KEY }).lean(),
+      ]);
+      const clientByName = new Map(clients.map(c => [String(c.name || '').trim().toLowerCase(), c]));
+      const supplierByName = new Map(suppliers.map(s => [String(s.name || '').trim().toLowerCase(), s]));
+      const done = new Set(Array.isArray(doneRow?.value) ? doneRow.value : []);
+      const branchCode = await currentBranchCode();
+      const created = [], skipped = [], newKeys = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i] || {};
+        try {
+          const kind = openDepositKind(r.kind);
+          if (!kind) throw new Error(`"${text(r.kind) || '(blank)'}" is not a kind - use one of: ${OPEN_DEPOSIT_KINDS.map(k => k.label).join(', ')}.`);
+          const name = text(r.name);
+          if (!name) throw new Error('Name is required.');
+          const reference = text(r.reference);
+          if (!reference) throw new Error('A reference (receipt, OR or voucher number) is required - it is what stops the row being carried in twice.');
+          const amount = r2(parseAmount(r.amountRemaining));
+          if (!(amount > 0)) throw new Error('Amount remaining must be more than zero.');
+          if (amount > 999_999_999.99) throw new Error('Amount remaining is too large.');
+          const date = dateOf(r.date);
+          if (date === undefined) throw new Error(`"${r.date}" is not a date.`);
+          const key = `${kind.key}|${name.toLowerCase()}|${reference.toLowerCase()}`;
+          if (done.has(key)) throw new Error(`${kind.label} ${reference} for ${name} was already carried in.`);
+
+          const client = clientByName.get(name.toLowerCase());
+          const supplier = supplierByName.get(name.toLowerCase());
+          const note = text(r.note);
+          let registeredAs = '';
+          if (kind.key === 'customerCredit') {
+            if (!client) throw new Error(`No client account named "${name}" - a credit balance lives on the client, so add them on the Clients sheet first.`);
+            await ClientAccount.updateOne({ _id: client._id }, { $inc: { creditBalance: amount } });
+            registeredAs = `credit balance of ${client.name}`;
+          } else if (kind.key === 'supplierCredit') {
+            if (!supplier) throw new Error(`No supplier named "${name}" - add them on the Suppliers sheet first.`);
+            await Supplier.updateOne({ _id: supplier._id }, { $inc: { creditBalance: amount } });
+            registeredAs = `credit balance with ${supplier.name}`;
+          } else {
+            const type = { customerDeposit: 'customer', supplierAdvance: 'supplier', employeeAdvance: 'employee' }[kind.key];
+            if (type === 'supplier' && !supplier) throw new Error(`No supplier named "${name}" - add them on the Suppliers sheet first.`);
+            const ctl = ADVANCE_ACCOUNTS[type];
+            const advanceNumber = await mkSeqRef('ADV');
+            await Advance.create({
+              businessType: BUSINESS_TYPE, ...tenantScope(req), branchCode,
+              advanceNumber, type,
+              payeeName: type === 'customer' && client ? client.name : (type === 'supplier' ? supplier.name : name),
+              payeeId: type === 'supplier' ? String(supplier._id) : '',
+              clientId: type === 'customer' && client ? String(client._id) : '',
+              amount, purpose: note || 'Carried in at switch-over',
+              account: ctl.code, sourceAccount: '', sourceAccountName: 'Opening balance',
+              referenceNumber: reference, journalEntryRef: '',
+              issuedBy: req.user?.name || 'Setup import',
+              date: date || new Date(),
+            });
+            registeredAs = advanceNumber;
+          }
+          done.add(key); newKeys.push(key);
+          created.push({
+            row: i + 1, kind: kind.key, kindLabel: kind.label, name, reference, amount, registeredAs,
+            matched: kind.key === 'customerDeposit' ? !!client : true,
+          });
+        } catch (e) {
+          skipped.push({ row: i + 1, error: e.message });
+        }
+      }
+      if (newKeys.length) {
+        await Settings.findOneAndUpdate({ key: OPEN_DEPOSIT_REFS_KEY }, { $push: { value: { $each: newKeys } } }, { upsert: true });
+      }
+      const totals = Object.fromEntries(OPEN_DEPOSIT_KINDS.map(k => [k.key, r2(created.filter(c => c.kind === k.key).reduce((s, c) => s + c.amount, 0))]));
+      const total = r2(created.reduce((s, x) => s + x.amount, 0));
+      await logAudit(req, { action: 'import', entity: 'Advance', entityId: 'open-deposits', after: { created: created.length, skipped: skipped.length, totals } });
+      emitToMgr('erpUpdated');
+      const walkIns = created.filter(c => !c.matched).length;
+      const peso = (n) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+      res.json({
+        success: true, created: created.length, deposits: created, skipped, total, totals,
+        note: (OPEN_DEPOSIT_KINDS.filter(k => totals[k.key] > 0).map(k => `${k.label}s ${peso(totals[k.key])}`).join(' · ') || 'Nothing carried in')
+          + '. Nothing posted - the opening balance already holds them.'
+          + (walkIns ? ` ${walkIns} customer deposit(s) are for a name with no client account and were kept as walk-in deposits.` : ''),
+      });
+    } catch (err) { fail(req, res, err); }
+  }));
 
   // ── OPEN PAYABLES ──────────────────────────────────────────────────────────
   // Each unpaid supplier bill, Approved and ready to pay - with no posting,

@@ -83,7 +83,7 @@ export default function BounceCheckModal() {
           </button>
           <button onClick={submitBounceCheck}
             disabled={bounceSubmitting || !bounceForm.reason || (bounceForm.reason === '__other' && !String(bounceForm.otherReason || '').trim())}
-            className="flex-1 py-3.5 bg-red-500 text-white font-black rounded-xl uppercase tracking-widest text-xs hover:bg-red-500/90 active-press transition shadow-elev-2 disabled:opacity-40 min-h-[52px]">
+            className="flex-1 py-3.5 bg-red-700 text-white font-black rounded-xl uppercase tracking-widest text-xs hover:bg-red-500/90 active-press transition shadow-elev-2 disabled:opacity-40 min-h-[52px]">
             {bounceSubmitting ? 'Reversing…' : 'Bounce & Reverse'}
           </button>
         </div>

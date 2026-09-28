@@ -93,7 +93,7 @@ export default function OrdersTab({ ctx }) {
     ordersItemsPerPage, ordersPage, parseImportFile, paymentSelections, peso,
     physicalCounts, pnlData, pnlRange, posActiveAddOns, posActiveSize, posItemQty, setPosItemQty,
     posCart, posCashTendered, posCategory, posCheckoutModal, posCustomerName,
-    posClientId, setPosClientId, posBuyerDiscounts, clientAccounts, coaAccounts,
+    posClientId, setPosClientId, posSalesperson, setPosSalesperson, salesStaff = [], posBuyerDiscounts, clientAccounts, coaAccounts,
     posReserveOnly, setPosReserveOnly,
     posCustomerPhone, posDeliveryAddress, posDeliveryFee, posDeliveryFeeNum, posDiscountAmt,
     posDiscountType, posDiscountValue, posItemDiscountAmt, posGrandTotal, posSubmitting, posPage, posPayment,
@@ -288,6 +288,42 @@ export default function OrdersTab({ ctx }) {
       setAmendModal({ ...m, busy: false, error: 'Network error - nothing was changed.' });
     }
   };
+  // Promo rules (spend-over, day-of-week, date range, client segment) are
+  // evaluated server-side per pending order. The best match is SUGGESTED in
+  // the Promo control, never applied on its own: the cashier still decides,
+  // exactly as with a preset. Skipped entirely when no rule is active, so a
+  // business that uses none pays for no requests.
+  const [promoHints, setPromoHints] = React.useState({});
+  const [hasPromoRules, setHasPromoRules] = React.useState(false);
+  React.useEffect(() => {
+    apiFetch('/api/discount-rules?active=true')
+      .then(r => r.json()).then(d => setHasPromoRules(!!(d.success && d.rules?.length)))
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const pendingPromoKey = hasPromoRules
+    ? (orders || []).filter(o => o.status === 'Pending')
+        .map(o => `${o._id}:${o.subtotal}:${o.clientAccountId || o.clientId || ''}`).join('|')
+    : '';
+  React.useEffect(() => {
+    if (!pendingPromoKey) { setPromoHints({}); return undefined; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const pending = (orders || []).filter(o => o.status === 'Pending');
+      const out = {};
+      await Promise.all(pending.map(async (o) => {
+        try {
+          const r = await apiFetch('/api/discount-rules/evaluate', {
+            method: 'POST',
+            body: JSON.stringify({ subtotal: o.subtotal || 0, clientId: o.clientAccountId || o.clientId || undefined }),
+          });
+          const d = await r.json();
+          if (d.success && d.bestRule) out[o._id] = d.bestRule;
+        } catch { /* no suggestion is a safe outcome */ }
+      }));
+      if (!cancelled) setPromoHints(out);
+    }, 400);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [pendingPromoKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
           <div className="w-full">
@@ -390,7 +426,7 @@ export default function OrdersTab({ ctx }) {
                               {activeCombos.map(c => (
                                 <button key={c._id} onClick={() => addComboToPosCart(c)}
                                   className="shrink-0 w-28 bg-brand/10 border border-brand/30 rounded-xl p-2.5 text-left hover:bg-brand/20 active-press transition">
-                                  <p className="text-[11px] font-black text-fg leading-tight line-clamp-2">{c.name}</p>
+                                  <p title={c.name} className="text-[11px] font-black text-fg leading-tight line-clamp-3">{c.name}</p>
                                   <p className="text-brand-text font-black text-sm mt-1 tabular-nums">₱{Number(c.price).toFixed(2)}</p>
                                   <p className="text-[8px] text-fg/70 uppercase tracking-wide mt-0.5">{(c.items||[]).length} items</p>
                                 </button>
@@ -441,15 +477,18 @@ export default function OrdersTab({ ctx }) {
                                 </div>
                               )}
                               <div className="w-full min-h-[2.4em] flex items-center justify-center">
-                                <span className="font-bold text-xs text-fg/80 line-clamp-2 leading-tight">{p.name}</span>
+                                {/* Three lines, not two: two products that begin alike ("Premium
+                                    Single-Origin Benguet…") were indistinguishable at the till. The
+                                    full name is still one tap away in the add dialog. */}
+                                <span title={p.name} className="font-bold text-xs text-fg/80 line-clamp-3 leading-tight">{p.name}</span>
                               </div>
                               {p.activeSalePrice != null ? (
                                 <div className="mt-auto pt-1 flex flex-col items-center gap-0.5">
-                                  <span className="text-warning font-black text-sm tabular-nums">₱{Number(p.activeSalePrice).toFixed(2)}</span>
-                                  <span className="text-fg/65 font-bold text-[10px] tabular-nums line-through">₱{Number(p.basePrice || 0).toFixed(2)}</span>
+                                  <span className="text-warning font-black text-sm tabular-nums">₱{Number(p.activeSalePrice).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                  <span className="text-fg/65 font-bold text-[10px] tabular-nums line-through">₱{Number(p.basePrice || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                 </div>
                               ) : (
-                                <span className="text-brand-text font-black mt-auto pt-1 text-sm tabular-nums">₱{Number(p.basePrice || p.price || 0).toFixed(2)}</span>
+                                <span className="text-brand-text font-black mt-auto pt-1 text-sm tabular-nums">₱{Number(p.basePrice || p.price || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                               )}
                             </button>
                             );
@@ -520,6 +559,18 @@ export default function OrdersTab({ ctx }) {
                           <span className="text-[10px] text-brand-text font-bold">Pricing applied - up to {best}% off for this client</span>
                         </div>
                       ) : null;
+                    })()}
+                    {/* Salesperson credited with the sale (logistics). Blank follows the
+                        client's assigned rep, else the cashier. */}
+                    {BUSINESS_TYPE === 'log' && salesStaff.length > 0 && (() => {
+                      const rep = posClientId ? (clientAccounts || []).find(a => String(a._id) === posClientId)?.assignedSalesperson : '';
+                      return (
+                        <select value={posSalesperson} onChange={e => setPosSalesperson(e.target.value)} aria-label="Salesperson"
+                          className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg text-xs font-bold outline-none focus:border-brand/60 transition">
+                          <option value="">{rep ? `Salesperson: ${rep} (client's rep)` : 'Salesperson: me'}</option>
+                          {salesStaff.map(n => <option key={n} value={n}>Salesperson: {n}</option>)}
+                        </select>
+                      );
                     })()}
                     {/* Which branch this device is ringing up as - only shown once there's
                         more than one location to choose between (Inventory → Places & Categories). */}
@@ -619,9 +670,9 @@ export default function OrdersTab({ ctx }) {
                       return (
                         <div key={idx} className="bg-page-bg/50 p-3 rounded-xl border border-white/10 flex justify-between items-start">
                           <div className="flex-1 pr-2 min-w-0">
-                            <p className="font-bold text-fg/90 text-sm truncate leading-tight">{item.name}</p>
+                            <p className="font-bold text-fg/90 text-sm truncate leading-tight" title={String((item.name) ?? '')}>{item.name}</p>
                             {item.selectedAddOns.map((a, i) => (
-                              <p key={i} className="text-[10px] text-fg/70 truncate">+ {a.name} ₱{a.price}</p>
+                              <p key={i} className="text-[10px] text-fg/70 flex gap-1 min-w-0"><span className="truncate" title={a.name}>+ {a.name}</span><span className="shrink-0 tabular-nums">₱{a.price}</span></p>
                             ))}
                             <div className="flex items-center gap-2 mt-2">
                               <button onClick={() => setPosCart(posCart.map((c, i) => i === idx ? {...c, quantity: Math.max(1, c.quantity - 1)} : c))}
@@ -1231,7 +1282,7 @@ export default function OrdersTab({ ctx }) {
                                         <div className="text-fg/65 text-[9px]">{new Date(order.complimentaryApprovedAt).toLocaleString()}</div>
                                       )}
                                     </div>
-                                    {can('orders.comp') && <button onClick={() => removeComplimentary(order._id)} className="flex-shrink-0 bg-red-600 hover:bg-red-700 text-white p-1 rounded font-black transition" title="Remove Complimentary">
+                                    {can('orders.comp') && <button onClick={() => removeComplimentary(order._id)} className="flex-shrink-0 bg-red-700 hover:bg-red-800 text-white p-1 rounded font-black transition" title="Remove Complimentary">
                                       <X size={11} />
                                     </button>}
                                   </div>
@@ -1327,7 +1378,7 @@ export default function OrdersTab({ ctx }) {
                                 </div>
                               )}
                               {(() => {
-                                const promoDiscounts = discounts.filter(d => !d.name.toLowerCase().match(/pwd|senior/));
+                                const promoDiscounts = discounts.filter(d => !d.isSCPWD && !d.name.toLowerCase().match(/pwd|senior/));
                                 const scpwdDiscounts = discounts.filter(d => d.name.toLowerCase().match(/pwd|senior/));
                                 const hasScpwd = order.items.some(i => i.discountPercent > 0);
                                 const hasPromo = order.discountPercent > 0 && order.discountType !== 'SC/PWD';
@@ -1361,22 +1412,63 @@ export default function OrdersTab({ ctx }) {
                                     <div className="flex justify-between items-center text-[11px] text-fg border-b border-white/5 pb-1.5">
                                       <div className="flex items-center gap-2 flex-1 pr-2">
                                         <span className="whitespace-nowrap uppercase tracking-wider text-[9px]">Promo</span>
+                                        {order.status === 'Pending' && !hasScpwd && promoHints[order._id] && !(order.discountPercent > 0) && (
+                                          <button
+                                            type="button"
+                                            title={`Eligible: ${promoHints[order._id].name}. Click to select it, then confirm.`}
+                                            onClick={() => setDiscountInputs(prev => ({ ...prev, [order._id]: String(promoHints[order._id].percent) }))}
+                                            className="shrink-0 text-[9px] font-black uppercase tracking-wider bg-amber-400 text-black rounded px-1.5 h-5"
+                                          >
+                                            ★ {promoHints[order._id].percent}%
+                                          </button>
+                                        )}
                                         {order.status === 'Pending' && (
                                           hasScpwd ? (
                                             <span className="text-[9px] text-fg italic ml-auto">SC/PWD active</span>
                                           ) : (
-                                            <div className="flex gap-1 items-center flex-1 justify-end">
+                                            <div className="flex flex-wrap gap-1 items-center flex-1 justify-end min-w-0">
+                                              {(() => {
+                                                // A preset or a typed percent feed the same value, so the
+                                                // picker shows "Manual" once the cashier types their own.
+                                                const cur = discountInputs[order._id] || '';
+                                                const presets = [...promoDiscounts.map(d => String(d.percentage)), ...(promoHints[order._id] ? [String(promoHints[order._id].percent)] : [])];
+                                                const isManual = cur !== '' && !presets.includes(String(cur));
+                                                return (
+                                              <>
                                               <select
-                                                className="w-full max-w-[130px] bg-page-bg border border-white/10 rounded px-1 text-[10px] text-fg outline-none h-6"
-                                                value={discountInputs[order._id] || ''}
-                                                onChange={(e) => setDiscountInputs(prev => ({ ...prev, [order._id]: e.target.value }))}
+                                                className="basis-full min-w-0 bg-page-bg border border-white/10 rounded px-1 text-[10px] text-fg outline-none h-6"
+                                                value={isManual ? '__manual' : cur}
+                                                onChange={(e) => { if (e.target.value !== '__manual') setDiscountInputs(prev => ({ ...prev, [order._id]: e.target.value })); }}
+                                                aria-label="Promo discount"
                                               >
                                                 <option value="">No promo</option>
+                                                {isManual && <option value="__manual">Manual ({cur}%)</option>}
+                                                {promoHints[order._id] && (
+                                                  <option value={promoHints[order._id].percent}>
+                                                    ★ {promoHints[order._id].name} ({promoHints[order._id].percent}%)
+                                                  </option>
+                                                )}
                                                 {promoDiscounts.map(d => <option key={d._id} value={d.percentage}>{d.name} ({d.percentage}%)</option>)}
                                               </select>
+                                              {/* Order-wide manual discount: the same percent off every
+                                                  line, for a deal no preset covers. Confirmed with the
+                                                  check button like a preset. */}
+                                              <input
+                                                type="number" min="0" max="100" step="0.01" inputMode="decimal"
+                                                placeholder="%"
+                                                value={isManual ? cur : ''}
+                                                onChange={(e) => setDiscountInputs(prev => ({ ...prev, [order._id]: e.target.value }))}
+                                                onKeyDown={(e) => { if (e.key === 'Enter') applyDiscount(order._id); }}
+                                                aria-label="Manual discount percent for the whole order"
+                                                title="Manual discount - percent off the whole order"
+                                                className="w-12 bg-page-bg border border-white/10 rounded px-1 text-[10px] text-fg tabular-nums outline-none h-6 focus:border-brand"
+                                              />
+                                              </>
+                                                );
+                                              })()}
                                               <button onClick={() => applyDiscount(order._id)} className="bg-accent hover:bg-accent/80 text-on-brand px-2 rounded font-black transition h-6 flex items-center border border-accent/20"><Check size={12} /></button>
                                               {order.discountPercent > 0 && order.discountType !== 'SC/PWD' && (
-                                                <button onClick={() => applyDiscount(order._id, true)} className="bg-red-500 text-white px-2 rounded font-black h-6 border border-red-500 flex items-center"><X size={12} /></button>
+                                                <button onClick={() => applyDiscount(order._id, true)} className="bg-red-700 text-white px-2 rounded font-black h-6 border border-red-500 flex items-center"><X size={12} /></button>
                                               )}
                                             </div>
                                           )
@@ -1832,7 +1924,7 @@ export default function OrdersTab({ ctx }) {
                               {order.status === 'Completed' && departmentFilter === 'All' && (canVoid || canVoidRefund) && (
                                 <div className="flex gap-2">
                                   {canVoid && (
-                                    <button onClick={() => handleVoidOrder(order._id)} className="flex-1 bg-red-600 border border-red-600 text-white py-2 rounded-lg hover:bg-red-700 font-bold text-xs uppercase tracking-widest transition">
+                                    <button onClick={() => handleVoidOrder(order._id)} className="flex-1 bg-red-700 border border-red-700 text-white py-2 rounded-lg hover:bg-red-800 font-bold text-xs uppercase tracking-widest transition">
                                       Void
                                     </button>
                                   )}
@@ -1865,7 +1957,7 @@ export default function OrdersTab({ ctx }) {
                       return (
                         <div key={i} className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${changed ? 'border-sky-500/40 bg-sky-500/5' : 'border-white/10'}`}>
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm text-fg font-bold truncate">{it.name}</p>
+                            <p className="text-sm text-fg font-bold truncate" title={String((it.name) ?? '')}>{it.name}</p>
                             <p className="text-[10px] text-fg/65">Ordered {it.quantity}{changed ? ` → ${amendModal.qty[i] || 0}` : ''}</p>
                           </div>
                           <label htmlFor={`amend-qty-${i}`} className="sr-only">New quantity for {it.name}</label>
@@ -1878,7 +1970,7 @@ export default function OrdersTab({ ctx }) {
                     {amendModal.adds.map((a, k) => (
                       <div key={a.productId} className="flex items-center gap-3 rounded-lg border border-emerald-500/40 bg-emerald-500/5 px-3 py-2">
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm text-fg font-bold truncate">{a.name}</p>
+                          <p className="text-sm text-fg font-bold truncate" title={String((a.name) ?? '')}>{a.name}</p>
                           <p className="text-[10px] text-success">New line · ₱{Number(a.price).toFixed(2)} each</p>
                         </div>
                         <label htmlFor={`amend-add-${k}`} className="sr-only">Quantity for {a.name}</label>

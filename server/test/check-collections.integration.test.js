@@ -20,6 +20,8 @@ const Order = () => mongoose.model('Order');
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 async function receivable(price) {
+  // Line prices come from the product record now, so it must cost `price`.
+  await mongoose.model('Product').updateOne({ _id: prod._id }, { $set: { basePrice: price } });
   const a = await auth('post', '/api/orders', staffTok).send({
     items: [{ productId: String(prod._id), name: 'Widget', price, quantity: 1 }],
     table: 'Takeout', paymentMethod: 'On Account', clientAccountId: client._id,

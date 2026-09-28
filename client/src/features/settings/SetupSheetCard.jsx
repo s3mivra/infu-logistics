@@ -31,7 +31,7 @@ export default function SetupSheetCard({ apiFetch, can, isSuperAdmin, businessTy
     setBusy('Building the workbook…');
     try {
       const XLSX = await import('xlsx');
-      const wb = await buildSetupWorkbook(XLSX, available, apiFetch);
+      const wb = await buildSetupWorkbook(XLSX, available, apiFetch, { businessType });
       if (!wb) { ui.alert('There is nothing here you have permission to import.'); return; }
       XLSX.writeFile(wb, 'Setup-workbook.xlsx');
     } catch { ui.alert('Could not build the workbook. Check the connection and try again.'); }

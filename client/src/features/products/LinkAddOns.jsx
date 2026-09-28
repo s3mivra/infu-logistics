@@ -126,7 +126,7 @@ export default function LinkAddOns({ addOns = [], products = [], categories = []
               {shownProducts.map((p) => (
                 <label key={p._id} className={`${box} ${prods.has(String(p._id)) ? on : off}`}>
                   <input type="checkbox" className="accent-brand" checked={prods.has(String(p._id))} onChange={() => toggle(prods, setProds, String(p._id))} />
-                  <span className="truncate">{p.name}</span>
+                  <span className="truncate" title={String((p.name) ?? '')}>{p.name}</span>
                   <span className="ml-auto text-xs text-fg/70 shrink-0">{p.category}</span>
                 </label>
               ))}

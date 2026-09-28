@@ -11,6 +11,7 @@
 import { captureError } from '../lib/errorLog.js';
 import { withArBalance, RECEIVABLE_STATUSES } from '../lib/credit.js';
 import { SHEET_KINDS } from './inventory-sheet.js';
+import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 
 export default function registerNotifications(ctx) {
   const {
@@ -81,7 +82,7 @@ export default function registerNotifications(ctx) {
           : [],
         may('accounting.view')
           ? Order.find({
-              ...scope, status: { $in: RECEIVABLE_STATUSES }, paymentMethod: { $ne: 'Cash' },
+              ...scope, status: { $in: RECEIVABLE_STATUSES }, paymentMethod: AR_PAYMENT_METHOD_FILTER,
               isComplimentary: { $ne: true }, arSettled: { $ne: true },
             }, { orderNumber: 1, customerName: 1, total: 1, createdAt: 1, paymentMethod: 1, arPaidAmount: 1, refundedAmount: 1 }).sort({ createdAt: 1 }).limit(500).lean()
               // Alert on the unpaid remainder, not the original invoice value.

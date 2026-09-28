@@ -1,4 +1,5 @@
-﻿// VAT - pure computation, no DB. Unit-testable in isolation.
+import { roundMoney } from './money.js';
+// VAT - pure computation, no DB. Unit-testable in isolation.
 //
 // Prices can be treated two ways, chosen per business by the `vatInclusive` flag:
 //
@@ -21,7 +22,7 @@ export const DEFAULT_VAT_RATE = 0.12; // 12% - Philippine VAT (NIRC §106)
 // and not cosmetic.
 export const SC_PWD_ORDERS = ['vat-first', 'discount-first'];
 
-const round2 = (n) => +(+n || 0).toFixed(2);
+const round2 = (n) => roundMoney(n);
 
 // Normalises whatever is sitting in the settings collection. Operators type the
 // rate as a percentage ("12"), but a value already stored as a fraction (0.12)

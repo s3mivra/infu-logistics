@@ -11,6 +11,7 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 import { businessDateStr } from '../lib/businessTime.js';
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok, client, product;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -48,7 +49,7 @@ beforeAll(async () => {
 afterAll(async () => { await ctx.stop(); });
 
 beforeEach(async () => {
-  await Promise.all([M('Order').deleteMany({}), M('JournalEntry').deleteMany({}), M('ClientAccount').deleteMany({})]);
+  await Promise.all([M('Order').deleteMany({}), withLedgerMaintenance(() => M('JournalEntry').deleteMany({})), M('ClientAccount').deleteMany({})]);
   client = await M('ClientAccount').create({
     username: `ar-${Date.now()}`, password: 'x', name: 'Northwind Trading', paymentMethod: 'Credit',
   });

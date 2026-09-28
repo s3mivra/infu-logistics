@@ -815,7 +815,7 @@ export default function ProductionTab({ ctx }) {
               className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent resize-none mb-3" />
             <div className="flex gap-2">
               <button onClick={() => setRejecting(null)} className="flex-1 border border-white/10 text-fg/65 hover:text-fg py-2 rounded-lg text-xs font-bold uppercase transition">Cancel</button>
-              <button onClick={submitReject} disabled={busy} className="flex-1 bg-red-500 hover:bg-red-400 disabled:opacity-50 text-white py-2 rounded-lg text-xs font-bold uppercase transition">Reject</button>
+              <button onClick={submitReject} disabled={busy} className="flex-1 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white py-2 rounded-lg text-xs font-bold uppercase transition">Reject</button>
             </div>
           </div>
         </div>

@@ -116,7 +116,7 @@ export default function RecipeMatrix({ form, setForm, inventory = [], calcRecipe
             {rows.map((r, ri) => (
               <tr key={r.key} className="border-b border-white/5">
                 <th scope="row" className="text-left px-3 py-1.5 font-semibold text-fg">
-                  <span className="block truncate max-w-[220px]">{r.name}</span>
+                  <span className="block truncate max-w-[220px]" title={String((r.name) ?? '')}>{r.name}</span>
                   <span className="text-[11px] font-normal text-fg/70">
                     {isLog && r.packBase > 1 ? `packs of ${r.packBase}` : r.unit}{r.nonStock ? ' · not stock' : ''}
                   </span>

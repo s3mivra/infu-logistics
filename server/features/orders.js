@@ -3,7 +3,7 @@
 /* eslint-disable no-unused-vars */
 import { resolveCreditLimit, checkCreditAvailable, arBalance, isFullySettled, isReceivableStatus } from '../lib/credit.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
-import { title } from '../lib/normalize.js';
+import { title, MONEY_MAX, roundCentavo } from '../lib/normalize.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
@@ -22,7 +22,9 @@ import { isAnonymousCustomerName } from '../lib/customerName.js';
 // it reads the same in every file.
 import { requirePermission as permit, requireAnyPermission as permitAny, hasPermission } from '../lib/authz.js';
 import { checkApproval, orderIsPaid } from '../lib/approval.js';
+import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 
+import { atomic } from '../lib/atomicRoute.js';
 export default function registerOrders(ctx) {
   const {
     app,
@@ -124,6 +126,9 @@ export default function registerOrders(ctx) {
     Product,
     ComboSchema,
     Combo,
+    Sale,
+    Quotation,
+    hasPermission,
     OrderSchema,
     Order,
     QRSessionSchema,
@@ -207,6 +212,7 @@ export default function registerOrders(ctx) {
     requireSuperOrAdmin,
     requirePermission,
     verifyOrderAuth,
+    requireAnyPermission,
   } = ctx;
 
 // Small randomized backoff between WriteConflict retries on the completion/
@@ -243,6 +249,20 @@ async function runWithStatsRetry(onceFn, req, res) {
 // instant collide often enough to exhaust the retries and fail the sale. It
 // runs after the commit instead, as its own atomic increment, so a serial is
 // spent only by a sale that really did complete.
+// A delivery receipt for what just left, numbered after the save committed
+// (like the OR) so a retried transaction never burns a number. Logistics only:
+// a café hands the goods over the counter.
+const issueDeliveryReceipt = async (order, lines) => {
+  if (BUSINESS_TYPE !== 'log' || !order?._id || !lines?.length) return '';
+  try {
+    const drNumber = await mkSeqRef('DR');
+    await Order.updateOne({ _id: order._id }, { $set: { drNumber }, $push: { deliveryReceipts: { drNumber, at: new Date(), lines } } });
+    order.drNumber = drNumber;
+    return drNumber;
+  } catch (err) { log.error({ err }, 'delivery receipt numbering failed'); return ''; }
+};
+const drLine = (it, index, qty) => ({ index, name: it.name, itemCode: it.productCode || '', qty });
+
 const assignOrNumber = async (order, attempt = 1) => {
   if (!order || order.orNumber || order.isComplimentary) return order?.orNumber || '';
   try {
@@ -473,7 +493,11 @@ app.get('/api/orders', verifyToken, requireStaff, async (req, res) => {
       const [orders, total] = await Promise.all([query, Order.countDocuments(baseFilter)]);
       return res.json({ success: true, orders, total, page: pageNum, limit: limitNum });
     }
-    const orders = await query;
+    // Unpaginated callers (the live order board) get the most recent 2,000.
+    // The end-of-day archive keeps the active set far below that; the cap is
+    // what stops a register left un-archived for months from returning its
+    // whole history in one response.
+    const orders = await query.limit(2000);
     res.json({ success: true, orders });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -568,7 +592,9 @@ app.get('/api/orders/:id', async (req, res) => {
     } catch { /* invalid/expired token → treat as anonymous */ }
     const safeProjection = {
       orderNumber: 1, status: 1, dispatchStatus: 1, isParked: 1, table: 1,
-      total: 1, customerName: 1, createdAt: 1, scheduledTime: 1,
+      // No customerName: an order id is all an anonymous caller has, and the
+      // QR status page shows the order, never who placed it.
+      total: 1, createdAt: 1, scheduledTime: 1,
       'items.name': 1, 'items.quantity': 1, 'items.itemStatus': 1, 'items.department': 1,
     };
     const order = await Order.findById(req.params.id, isPrivileged ? undefined : safeProjection);
@@ -814,7 +840,8 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // folded into `total`. Every delivery order's recorded total therefore
     // undercounted by exactly the fee, which is why it never reconciled
     // against what was actually collected/quoted.
-    const deliveryFee = Math.max(0, Number(req.body.deliveryFee) || 0);
+    // Bounded and rounded: Infinity or a 3-decimal fee used to reach the books.
+    const deliveryFee = roundCentavo(Math.min(MONEY_MAX, Math.max(0, Number(req.body.deliveryFee) || 0)));
     const deliveryAddress = String(req.body.deliveryAddress || '').trim().slice(0, 300);
     const customerPhone = String(req.body.customerPhone || '').trim().slice(0, 40);
     const scheduledTime = String(req.body.scheduledTime || '').trim().slice(0, 40);
@@ -845,17 +872,60 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // JWT identity is canonical and can't be overridden client-side).
     let onBehalfClientId = '';
     let onBehalfSegments = [];
+    let buyerRep = '';   // the client's assigned salesperson, if any
     if (!isClientOrder && req.body.clientAccountId) {
       try {
         const cli = await ClientAccount.findById(req.body.clientAccountId).lean();
-        if (cli && cli.isActive) { onBehalfClientId = String(cli._id); onBehalfSegments = cli.segments || []; }
+        if (cli && cli.isActive) { onBehalfClientId = String(cli._id); onBehalfSegments = cli.segments || []; buyerRep = cli.assignedSalesperson || ''; }
       } catch { /* invalid id - ignore, fall back to default discount */ }
     }
 
     // SC/PWD is a property of the SALE, not of the business's VAT registration -
     // the cashier marks it per order and the POS already sends the flag. A non-VAT
     // business still labels the discount SC/PWD; it simply has no VAT to strip.
-    const isVatExempt = req.body.isVatExempt === true;
+    let isVatExempt = req.body.isVatExempt === true;
+
+    // Order-level discounts, SC/PWD and complimentary are the cashier's call,
+    // never the buyer's. A QR diner or a client-portal account used to be able
+    // to send discountPercent: 100 or isComplimentary: true and have it booked.
+    // Their prices and product/client discounts are resolved server-side below;
+    // anything order-level they send is dropped.
+    const selfServiceOrder = isClientOrder || req.user?.aud === 'client' || !!req.qrSession;
+    // A salesperson named at the till must be someone on the staff list - the
+    // Commissions report pays by this name.
+    if (!selfServiceOrder && req.body.salesperson) {
+      const name = String(req.body.salesperson).trim().slice(0, 100);
+      if (!(await User.exists({ name }))) return res.status(400).json({ success: false, error: `"${name}" is not on the staff list.` });
+    }
+    if (selfServiceOrder) {
+      discountPercent = 0;
+      discountFlat = 0;
+      isComplimentary = false;
+      isVatExempt = false;
+    } else if (isComplimentary === true && !hasPermission(req.user, 'orders.comp')) {
+      return res.status(403).json({ success: false, error: 'Forbidden: missing permission "orders.comp".' });
+    }
+    isComplimentary = isComplimentary === true;
+    discountPercent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
+    discountFlat = Math.min(MONEY_MAX, Math.max(0, Number(discountFlat) || 0));
+
+    // An order rung up while the tablet was offline is replayed when the WiFi
+    // returns, and it belongs to the day it was TAKEN: replayed after midnight
+    // it used to land on the next business day's report, EOD and shift. The
+    // claimed time is honoured only for a staff replay (it carries the queue's
+    // idempotency key), only within the last 72 hours, and never into a day
+    // that has been closed (EOD locked or period closed) - those fall back to
+    // now, exactly as before.
+    let placedAt = null;
+    const claimedAt = req.body.placedAt ? new Date(req.body.placedAt) : null;
+    if (claimedAt && !selfServiceOrder && idempotencyKey && !Number.isNaN(claimedAt.getTime())) {
+      const age = Date.now() - claimedAt.getTime();
+      if (age > 0 && age <= 72 * 60 * 60 * 1000) {
+        const eod = await EODRecord.findOne({ dateString: businessDateStr(claimedAt) }).lean();
+        const closed = eod?.status === 'LOCKED' || await periodLockFor(claimedAt);
+        if (!closed) placedAt = claimedAt;
+      }
+    }
     // FIX 1: Safely default to Takeout if the table is null or empty
     if (!table) table = 'Takeout';
 
@@ -878,15 +948,18 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     }
 
     if (!items || items.length === 0) {
-      throw new Error("Cart is empty");
+      throw Object.assign(new Error("Cart is empty"), { status: 400 });
     }
 
     for (const item of items) {
       if (!item.quantity || item.quantity <= 0) {
-        throw new Error(`Invalid quantity for item: ${item.name || item.productId}`);
+        throw Object.assign(new Error(`Invalid quantity for item: ${item.name || item.productId}`), { status: 400 });
       }
-      if (item.price === undefined || item.price < 0) {
-        throw new Error(`Invalid price for item: ${item.name || item.productId}`);
+      if (!Number.isFinite(Number(item.quantity)) || Number(item.quantity) > 100000) {
+        throw Object.assign(new Error(`Invalid quantity for item: ${item.name || item.productId}`), { status: 400 });
+      }
+      if (item.price === undefined || !(Number(item.price) >= 0)) {
+        throw Object.assign(new Error(`Invalid price for item: ${item.name || item.productId}`), { status: 400 });
       }
     }
 
@@ -959,8 +1032,9 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     let _buyerSegments = onBehalfSegments;
     if (isClientOrder && _buyerClientId) {
       try {
-        const buyerAcct = await ClientAccount.findById(_buyerClientId, { segments: 1 }).lean();
+        const buyerAcct = await ClientAccount.findById(_buyerClientId, { segments: 1, assignedSalesperson: 1 }).lean();
         _buyerSegments = buyerAcct?.segments || [];
+        buyerRep = buyerAcct?.assignedSalesperson || '';
       } catch { /* ignore - no segment discount applies */ }
     }
     const { linePercent, productIsExempt } = await buildLinePricing(req, items, { buyerClientId: _buyerClientId, buyerSegments: _buyerSegments });
@@ -1095,6 +1169,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // immediately and can never grow the receivable. Checked here, after the
     // total is server-authoritative and before anything is written, so a
     // rejected order leaves no partial state behind.
+    let creditOverride = null;   // set when an approver lets an over-limit sale through
     const creditClientId = _buyerClientId;
     if (creditClientId && resolvedPaymentMethod !== 'Cash' && !isComplimentary && finalTotal > 0) {
       const [modeRow, globalRow, client] = await Promise.all([
@@ -1128,7 +1203,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
           ],
           status: { $nin: ['Cancelled', 'Voided', 'Refunded', 'Parked'] },
           isParked: { $ne: true },
-          paymentMethod: { $ne: 'Cash' },
+          paymentMethod: AR_PAYMENT_METHOD_FILTER,
           isComplimentary: { $ne: true },
           arSettled: { $ne: true },
         }, { total: 1, arPaidAmount: 1, refundedAmount: 1 }).lean();
@@ -1137,11 +1212,15 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
         const outstanding = openRows.reduce((s, r) => s + arBalance(r), 0);
         const check = checkCreditAvailable({ limit, outstanding, orderTotal: finalTotal });
         if (!check.allowed) {
-          return res.status(409).json({
-            success: false,
-            error: `Credit limit reached. Limit ₱${check.limit.toFixed(2)}, already owing ₱${check.outstanding.toFixed(2)}, available ₱${check.available.toFixed(2)}.`,
-            creditLimit: check,
-          });
+          const override = creditOverrideFor(req, creditClientId);
+          if (!override) {
+            return res.status(409).json({
+              success: false,
+              error: `Credit limit reached. Limit ₱${check.limit.toFixed(2)}, already owing ₱${check.outstanding.toFixed(2)}, available ₱${check.available.toFixed(2)}.`,
+              creditLimit: check, needsCreditApproval: true, clientId: String(creditClientId),
+            });
+          }
+          creditOverride = creditOverrideRecord(override, { limit: check.limit, outstanding: check.outstanding, orderTotal: finalTotal });
         }
       }
     }
@@ -1182,6 +1261,12 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       ...(billingNumber && { billingNumber }),
       ...(isClientOrder && { clientId: req.user._id || req.user.clientId || '', clientUsername: req.user.username || '' }),
       ...(idempotencyKey && { idempotencyKey }),
+      ...(placedAt && { createdAt: placedAt }),
+      // Wholesale when the buyer is a wholesale account; staff may also say so.
+      channel: (!selfServiceOrder && ['Retail', 'Wholesale'].includes(req.body.channel)) ? req.body.channel
+        : ((_buyerSegments || []).some(s => /wholesale/i.test(String(s))) ? 'Wholesale' : 'Retail'),
+      salesperson: String((!selfServiceOrder && req.body.salesperson) || buyerRep || (selfServiceOrder ? '' : cashier) || '').trim().slice(0, 100),
+      ...(creditOverride && { creditOverride }),
       ...(paymentsInput?.length > 0 && { payments: paymentsInput }),
       ...(paymentReference && { paymentReference }),
       ...(paymentCheckDate && { paymentCheckDate }),
@@ -1212,6 +1297,12 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     if (error?.code === 11000 && error?.keyPattern?.idempotencyKey && idempotencyKey) {
       const existingOrder = await Order.findOne({ idempotencyKey });
       if (existingOrder) return res.status(200).json({ success: true, order: existingOrder, message: "Duplicate prevented." });
+    }
+    // A refusal about the ORDER (bad quantity, an item not on the menu, a
+    // quotation already used) is the caller's to fix, so it goes back as a 400
+    // with its reason. Only a genuine fault stays a 500.
+    if (error?.status >= 400 && error.status < 500) {
+      return res.status(error.status).json({ success: false, error: error.message });
     }
     console.error("Order Creation Error:", error);
     captureError(req, error);
@@ -1467,7 +1558,11 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
     const totalAfter = Number(order.total) || 0;
     if (totalAfter > totalBefore + 0.005 && buyerClientId && order.paymentMethod !== 'Cash' && !order.isComplimentary) {
       const refusal = await creditRefusal({ buyerClientId, excludeId: order._id, orderTotal: totalAfter });
-      if (refusal) return res.status(409).json({ success: false, error: refusal });
+      if (refusal) {
+        const override = creditOverrideFor(req, buyerClientId);
+        if (!override) return res.status(409).json({ success: false, error: refusal, needsCreditApproval: true, clientId: buyerClientId });
+        order.creditOverride = creditOverrideRecord(override, { orderTotal: totalAfter });
+      }
     }
 
     // Cash already tendered at Preparing: the change due follows the new total.
@@ -1497,6 +1592,24 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
 // or null when it fits (or the client has no limit). Exposure is every other
 // committed, non-cash, unsettled order of theirs - the A/R report's definition,
 // the same one order creation uses.
+// An over-limit sale on account needs an approver: either a manager's PIN
+// approval for this client (POST /api/users/authorize, permission
+// credit.approve, target = the client id - good for two minutes, for the
+// person who asked), or the seller's own explicit override when they hold
+// credit.approve. Returns { approvedBy } or null.
+function creditOverrideFor(req, clientId) {
+  if (req.user?.aud === 'client' || String(req.user?.role || '').toLowerCase() === 'client') return null;
+  const token = req.body?.creditApproval;
+  const ok = token ? checkApproval(token, { permission: 'credit.approve', requestedBy: req.user?._id, target: String(clientId) }) : null;
+  if (ok) return { approvedBy: ok.approverName };
+  if (req.body?.creditOverride === true && hasPermission(req.user, 'credit.approve')) return { approvedBy: req.user?.name || '' };
+  return null;
+}
+const creditOverrideRecord = (who, numbers = {}) => ({
+  approvedBy: who.approvedBy, approvedAt: new Date(),
+  limit: numbers.limit ?? null, outstanding: numbers.outstanding ?? null, orderTotal: numbers.orderTotal ?? null,
+});
+
 async function creditRefusal({ buyerClientId, excludeId, orderTotal }) {
   if (!buyerClientId) return null;
   const [modeRow, globalRow, client] = await Promise.all([
@@ -1533,6 +1646,10 @@ app.put('/api/orders/:id', verifyToken, requireStaff, permitAny('pos.use', 'orde
 const completeOrderOnce = async (req, res, mayRetry) => {
   const session = await mongoose.startSession();
   session.startTransaction();
+  // Audit rows are written only once the transaction has committed. They are
+  // outside it, so writing them inline meant a write-conflict retry of this
+  // whole handler logged the same cancel/status change twice.
+  const pendingAudits = [];
 
   try {
     const { status, discountPercent, isVatExempt, paymentMethod, discountType, discountedIndices, items, amountTendered } = req.body;
@@ -1561,6 +1678,21 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ success: false, error: 'Completed orders are immutable. Use the void workflow for cancellations.' });
+    }
+
+    if (status !== undefined) {
+      // The generic update may only move an order along its normal life.
+      // Voided and Refunded have their own routes that capture a reason and
+      // reverse stock and the ledger; this route used to accept any string at
+      // all, so a staff token could set "Voided" and skip all of it. Status has
+      // no schema enum, which is why the list lives here. (Cancelling a PAID
+      // order is handled just below, with manager approval.)
+      const PUT_STATUSES = new Set(['Pending', 'Preparing', 'Ready', 'Completed', 'Cancelled']);
+      if (!PUT_STATUSES.has(status)) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ success: false, error: `An order cannot be set to "${status}" here. Use the void or refund action.` });
+      }
     }
 
     // Deleting (cancelling) a PAID order. An unpaid ticket is a typo anyone at
@@ -1595,10 +1727,11 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         order.cancelledBy = req.user?.name || 'system';
         order.cancelledAt = new Date();
         if (cancelApprovedBy) order.cancelApprovedBy = cancelApprovedBy;
-        await logAudit(req, { action: 'cancel', entity: 'Order', entityId: order._id, after: {
+        const cancelAudit = {
           orderNumber: order.orderNumber, cancelledBy: order.cancelledBy,
           paid: orderIsPaid(order), ...(cancelApprovedBy ? { approvedBy: cancelApprovedBy } : {}),
-        } });
+        };
+        pendingAudits.push(() => logAudit(req, { action: 'cancel', entity: 'Order', entityId: order._id, after: cancelAudit }));
       }
     }
     // Moving an order off cash at payment time - "not paid yet", or any tender
@@ -1608,11 +1741,13 @@ const completeOrderOnce = async (req, res, mayRetry) => {
     if (paymentMethod && paymentMethod !== 'Cash' && (order.paymentMethod || 'Cash') === 'Cash'
         && buyerClientId && !order.isComplimentary && status !== 'Cancelled') {
       const refusal = await creditRefusal({ buyerClientId, excludeId: order._id, orderTotal: Number(order.total) || 0 });
-      if (refusal) {
+      const override = refusal ? creditOverrideFor(req, buyerClientId) : null;
+      if (refusal && !override) {
         await session.abortTransaction();
         session.endSession();
-        return res.status(409).json({ success: false, error: refusal });
+        return res.status(409).json({ success: false, error: refusal, needsCreditApproval: true, clientId: buyerClientId });
       }
+      if (override) order.creditOverride = creditOverrideRecord(override, { orderTotal: Number(order.total) || 0 });
     }
     if (paymentMethod && !order.isComplimentary) order.paymentMethod = paymentMethod;
 
@@ -1655,13 +1790,13 @@ const completeOrderOnce = async (req, res, mayRetry) => {
           if (incomingItem.itemStatus !== undefined) order.items[index].itemStatus = incomingItem.itemStatus;
           if (incomingItem.selectedAddOns !== undefined) order.items[index].selectedAddOns = incomingItem.selectedAddOns; 
           // NEW: Listen for the isolated discount from the frontend!
-          if (incomingItem.discountPercent !== undefined) order.items[index].discountPercent = incomingItem.discountPercent; 
+          if (incomingItem.discountPercent !== undefined) order.items[index].discountPercent = Math.min(100, Math.max(0, Number(incomingItem.discountPercent) || 0));
         }
       });
       order.markModified('items');
     }
 
-    if (discountPercent !== undefined) order.discountPercent = discountPercent;
+    if (discountPercent !== undefined) order.discountPercent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
     if (isVatExempt !== undefined) order.isVatExempt = isVatExempt;
     if (discountType !== undefined) order.discountType = discountType;
 
@@ -1729,6 +1864,8 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         });
       }
     }
+
+    if (status === 'Completed' && wasNotCompleted) order.completedAt = new Date();
 
     // --- POS GUARDRAIL: CHECK IF EOD IS LOCKED ---
     if (status === 'Completed' && wasNotCompleted) {
@@ -1972,7 +2109,9 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               { 'addOns.recipe.invId': { $in: ids } },
             ],
           },
-          { $set: { isAvailable: false } }
+          // Flagged as automatic so lib/autoRestore.js puts it back once
+          // the ingredient is restocked.
+          { $set: { isAvailable: false, autoUnavailable: true } }
         );
         emitToAll('menuUpdated');
         log.info({ depletedInvIds: ids }, 'Auto-marked products unavailable due to depleted stock');
@@ -2070,20 +2209,31 @@ const completeOrderOnce = async (req, res, mayRetry) => {
 
     // FIX: Removed the array brackets and {session} to prevent Mongoose crash
     if (status && status !== previousStatus) {
-      await AuditLog.create({
+      const statusAudit = {
         userId: req.user ? req.user.name : 'System',
         action: `ORDER_${status.toUpperCase()}`,
         targetReference: order.orderNumber,
         details: { previousStatus, newStatus: status, total: order.total, method: paymentMethod }
-      });
+      };
+      pendingAudits.push(() => AuditLog.create(statusAudit));
     }
 
     await order.save({ session }); 
     await session.commitTransaction();
     session.endSession();
 
+    for (const write of pendingAudits) {
+      try { await write(); } catch (err) { captureError(req, err); }
+    }
+
     // The receipt's own serial, now that the sale is definitely committed.
     if (status === 'Completed' && wasNotCompleted) await assignOrNumber(order);
+    if (status === 'Completed' && wasNotCompleted) {
+      const delivered = new Map();
+      for (const dr of order.deliveryReceipts || []) for (const l of dr.lines || []) delivered.set(l.index, (delivered.get(l.index) || 0) + (Number(l.qty) || 0));
+      const rest = (order.items || []).map((it, i) => drLine(it, i, (Number(it.quantity) || 0) - (delivered.get(i) || 0))).filter(l => l.qty > 0);
+      await issueDeliveryReceipt(order, rest);
+    }
 
     emitToOps('orderUpdated', order);
     // Push menuUpdated so CustomerMenu instantly re-fetches products and recomputes
@@ -2220,6 +2370,17 @@ app.post('/api/orders/:id/void', verifyToken, requireStaff, permit('orders.delet
   await runWithStatsRetry(voidOrderOnce, req, res);
 });
 
+// Every product an order touches, in ONE query. Void, refund and exchange
+// used to look each line's product up separately inside the transaction -
+// one round trip per line, holding the transaction (and its locks) open the
+// whole time. An id that is not a valid ObjectId is simply absent, as a
+// deleted product already was.
+const loadProductsById = async (ids, session) => {
+  const valid = [...new Set((ids || []).map(String).filter((id) => mongoose.Types.ObjectId.isValid(id)))];
+  const docs = valid.length ? await Product.find({ _id: { $in: valid } }).populate('modifierGroups').session(session ?? null) : [];
+  return new Map(docs.map((p) => [String(p._id), p]));
+};
+
 const voidOrderOnce = async (req, res, mayRetry) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -2285,8 +2446,9 @@ const voidOrderOnce = async (req, res, mayRetry) => {
     }
 
     let totalCogs = 0;
+    const voidProducts = await loadProductsById(order.items.map(i => i.productId), session);
     for (const item of order.items) {
-      let product = await Product.findById(item.productId).populate('modifierGroups').session(session);
+      let product = voidProducts.get(String(item.productId)) || null;
       if (!product) continue;
 
       let recipeToUse = product.baseRecipe || [];
@@ -2477,7 +2639,7 @@ app.post('/api/orders/archive', verifyToken, requireStaff, permit('orders.delete
 // The journal entry is dated on the deposit date, because that is when the
 // asset account actually moved.
 // ============================================================
-app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, atomic(mongoose, async (req, res) => {
   try {
     const {
       amount, paymentMethod, note, referenceNumber, collectionDate, depositDate, collectedBy,
@@ -2655,20 +2817,21 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
     } catch { /* audit is non-fatal */ }
 
     emitToMgr('erpUpdated');
+    await logAudit(req, { action: 'settle', entity: 'Receivable', entityId: order.orderNumber, after: { balance: arBalance(order), fullySettled, overpay } });
     emitToOps('orderUpdated', order.toObject());
     res.json({ success: true, order, balance: arBalance(order), fullySettled, overpay, clientCreditBalance: overpayClient?.creditBalance });
   } catch (err) {
     log.error({ err }, 'A/R settlement failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // --- CLIENT CREDIT: apply to an order's A/R balance --------------------------
 // Reclassifies stored client credit (260100, a liability - we owe it to
 // them) directly against an order's outstanding A/R. No cash moves; this is
 // purely "use what they're already owed instead of collecting more cash."
 // Same gate as settle-ar - both actually move AR/credit balances.
-app.post('/api/client-accounts/:id/credit/apply', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/client-accounts/:id/credit/apply', verifyToken, requireSuperAdmin, atomic(mongoose, async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Client not found.' });
     const client = await ClientAccount.findOne({ _id: req.params.id, ...tenantScope(req) });
@@ -2719,14 +2882,14 @@ app.post('/api/client-accounts/:id/credit/apply', verifyToken, requireSuperAdmin
     log.error({ err }, 'POST /api/client-accounts/:id/credit/apply failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // --- CLIENT CREDIT: refund out via Check Voucher -----------------------------
 // The client's stored credit is real money we owe them - this is how it
 // actually leaves: a real disbursement, with the same paper trail (Check
 // Voucher) a supplier payment gets, rather than sitting as an invisible
 // liability forever.
-app.post('/api/client-accounts/:id/credit/refund', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/client-accounts/:id/credit/refund', verifyToken, requireSuperAdmin, atomic(mongoose, async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Client not found.' });
     const client = await ClientAccount.findOne({ _id: req.params.id, ...tenantScope(req) });
@@ -2771,7 +2934,7 @@ app.post('/api/client-accounts/:id/credit/refund', verifyToken, requireSuperAdmi
     log.error({ err }, 'POST /api/client-accounts/:id/credit/refund failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // --- A/R PAYMENT HISTORY for one order ---------------------------------------
 // Every collection posted against this receivable, oldest first, with the
@@ -3026,6 +3189,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     order.markModified('items');
     const allFulfilled = order.items.every(it => (it.fulfilledQty || 0) >= (it.quantity || 0));
     order.status = allFulfilled ? 'Completed' : 'Partially Fulfilled';
+    if (allFulfilled) order.completedAt = new Date();
     if (paymentMethod) order.paymentMethod = paymentMethod;
     // Keep the evidence with the order, same as a full sale does.
     if (partialRef) order.paymentReference = partialRef;
@@ -3040,6 +3204,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
 
     await session.commitTransaction();
     session.endSession();
+    await issueDeliveryReceipt(order, deltas.map(({ i, want }) => drLine(order.items[i], i, want)));
     emitToMgr('erpUpdated');
     emitToOps('orderUpdated', order);
     res.json({ success: true, order });
@@ -3114,6 +3279,7 @@ const dropRemainingOnce = async (req, res, mayRetry) => {
     order.droppedBy = req.user?.name || 'system';
     order.droppedAt = new Date();
     order.status = 'Completed';
+    order.completedAt = new Date();
     // Same reasoning as partial-fulfill's final round: this is this order's one
     // and only transition into 'Completed', counted against the now-shrunk
     // (fulfilled-only) items/total computed just above.
@@ -3172,8 +3338,9 @@ const refundOnce = async (req, res, mayRetry) => {
     const invAction = inventoryAction === 'Restock' || inventoryAction === 'Spoilage' ? inventoryAction : 'None';
     if (isFullRefund && invAction !== 'None' && !order.isComplimentary) {
       let totalCogs = 0;
+      const refundProducts = await loadProductsById(order.items.map(i => i.productId), session);
       for (const item of order.items) {
-        const product = await Product.findById(item.productId).populate('modifierGroups').session(session);
+        const product = refundProducts.get(String(item.productId)) || null;
         if (!product) continue;
 
         let recipeToUse = product.baseRecipe || [];
@@ -3364,12 +3531,13 @@ const partialRefundOnce = async (req, res, mayRetry) => {
     const invAction = inventoryAction === 'Restock' || inventoryAction === 'Spoilage' ? inventoryAction : 'None';
     let totalCogs = 0;
     const refundedItemsLog = [];
+    const partialRefundProducts = await loadProductsById(validatedItems.map(v => v.item.productId), session);
     for (const { itemIndex, qty, item } of validatedItems) {
       refundedItemsLog.push({ itemIndex, name: item.name, qty });
       item.refundedQty = +((Number(item.refundedQty) || 0) + qty).toFixed(6);
       if (invAction === 'None') continue;
 
-      const product = await Product.findById(item.productId).populate('modifierGroups').session(session);
+      const product = partialRefundProducts.get(String(item.productId)) || null;
       if (!product) continue;
       let recipeToUse = product.baseRecipe || [];
       const sizeMatch = item.name.match(/\(([^)]+)\)$/);
@@ -3532,10 +3700,11 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
 
     // --- Validate the replacement side + resolve each product ---
     const validatedNew = [];
+    const exchangeNewProducts = await loadProductsById(newItems.map(x => x.productId), session);
     for (const n of newItems) {
       const qty = Number(n.quantity);
       if (!Number.isFinite(qty) || qty <= 0) return await fail(400, 'Replacement quantity must be greater than zero.');
-      const product = await Product.findById(n.productId).populate('modifierGroups').session(session);
+      const product = exchangeNewProducts.get(String(n.productId)) || null;
       if (!product) return await fail(400, `Replacement product ${n.productId} not found.`);
       validatedNew.push({ product, qty });
     }
@@ -3603,11 +3772,12 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
         remarks: `Exchange return (${invAction}): ${label}`,
       }], { session });
     };
+    const exchangeReturnProducts = await loadProductsById(validatedReturns.map(v => v.item.productId), session);
     for (const { itemIndex, qty, item } of validatedReturns) {
       returnedItemsLog.push({ itemIndex, name: item.name, qty });
       item.refundedQty = +((Number(item.refundedQty) || 0) + qty).toFixed(6);
       if (invAction === 'None') continue;
-      const product = await Product.findById(item.productId).populate('modifierGroups').session(session);
+      const product = exchangeReturnProducts.get(String(item.productId)) || null;
       if (!product) continue;
       let recipeToUse = product.baseRecipe || [];
       const sizeMatch = item.name.match(/\(([^)]+)\)$/);

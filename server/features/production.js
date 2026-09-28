@@ -85,7 +85,7 @@ export default function registerProduction(ctx) {
     invId: m.invId || null, itemName: m.itemName, qty: m.qty, unit: m.unit, nonStock: !!m.nonStock,
   }));
 
-  app.post('/api/production-orders', verifyToken, requireStaff, async (req, res) => {
+  app.post('/api/production-orders', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
     try {
       const { materials, outputType, outputInvId, outputName, outputQty, outputUnit, outputEnteredUnit, outputPackSize,
         outputStockCategory, outputStockLocation, outputExpiryDate, productionDate, notes } = req.body || {};

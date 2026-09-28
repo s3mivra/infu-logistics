@@ -11,6 +11,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -137,7 +138,7 @@ describe('purge, then restore', () => {
     const orderBefore = await M('Order').findOne({ status: 'Completed' }).lean();
 
     // The disaster: everything gone.
-    for (const c of snapshot.collections) await M(c.name).deleteMany({});
+    for (const c of snapshot.collections) await withLedgerMaintenance(() => M(c.name).deleteMany({}));
     expect((await census()).orders).toBe(0);
 
     // Sessions are gone with the database, so sign in again the way a person

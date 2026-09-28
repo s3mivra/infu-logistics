@@ -1,11 +1,13 @@
 ﻿// admin-tools routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { roundMoney } from '../lib/money.js';
 import { captureError } from '../lib/errorLog.js';
 import { saleRevenueLines, vatFromInclusive } from '../lib/vatPosting.js';
 import { loadVatConfig } from '../lib/vatSettings.js';
 import { isAnonymousCustomerName } from '../lib/customerName.js';
 
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 export default function registerAdminTools(ctx) {
   const {
     app,
@@ -557,7 +559,10 @@ async function createBackdatedSale(payload, actorName) {
         if (!it.name || !Number.isFinite(price) || price < 0 || !Number.isFinite(qty) || qty <= 0) {
           throw fail(400, 'Each item needs a name, a non-negative price, and a positive quantity.');
         }
-        orderItems.push({ name: String(it.name), price, quantity: qty, productId: it.productId || undefined, productCode: it.productCode || undefined, productDiscountPercent: 0, itemStatus: 'Served' });
+        // A per-line discount, as the paper receipt showed it (a staff meal at
+        // 50%, one damaged item at 20%). Bounded 0-100 like every other discount.
+        const linePct = Math.max(0, Math.min(100, Number(it.discountPercent) || 0));
+        orderItems.push({ name: String(it.name), price, quantity: qty, productId: it.productId || undefined, productCode: it.productCode || undefined, productDiscountPercent: 0, discountPercent: linePct, itemStatus: 'Served' });
       }
     } else {
       const amt = Number(amount);
@@ -565,11 +570,14 @@ async function createBackdatedSale(payload, actorName) {
       orderItems = [{ name: 'Historical Sale', price: amt, quantity: 1, productDiscountPercent: 0 }];
     }
 
-    const gross = +orderItems.reduce((s, it) => s + it.price * it.quantity, 0).toFixed(2);
+    const gross = roundMoney(orderItems.reduce((s, it) => s + it.price * it.quantity, 0));
     // A complimentary sale is free: no discount line, nothing collected. Its cost
     // is booked as Complimentary Expense against revenue (keeps gross visible).
+    // Line discounts come off first; the order-wide percent then applies to
+    // what is left, the same order the POS applies them in.
+    const lineDiscount = comp ? 0 : roundMoney(orderItems.reduce((s, it) => s + roundMoney(it.price * it.quantity * (it.discountPercent || 0) / 100), 0));
     const pct = comp ? 0 : Math.max(0, Math.min(100, Number(discountPercent) || 0));
-    const discount = +(gross * pct / 100).toFixed(2);
+    const discount = roundMoney(lineDiscount + (gross - lineDiscount) * pct / 100);
     // Same gap as the live POS path had (see orders.js): a delivery fee is a
     // flat pass-through add-on, not part of what's discounted/comped, added
     // after. Bulk Excel imports of a delivery business's historical sales
@@ -640,7 +648,7 @@ async function createBackdatedSale(payload, actorName) {
       deliveryFee: delivery,
       isVatExempt: backdateVat === 0,
       isComplimentary: comp,
-      discountType: comp ? 'Complimentary' : (pct > 0 ? 'Promo' : 'None'),
+      discountType: comp ? 'Complimentary' : (pct > 0 || lineDiscount > 0 ? 'Promo' : 'None'),
       transactionType: 'NORMAL',
       orderNotes: (notes || '').trim().slice(0, 300),
       isBackdated: true,
@@ -989,7 +997,8 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
     // Ledger (journal entries, period locks, bank deposits, expenses - expenses
     // are just JournalEntry rows with an expense account code, no separate model)
     if (selected.has('ledger')) {
-      await del('journalEntries', JournalEntry, false);
+      // The one sanctioned bulk delete of the ledger (see lib/ledgerGuard.js).
+      await withLedgerMaintenance(() => del('journalEntries', JournalEntry, false));
       await del('closedPeriods', ClosedPeriod, false);
       await del('bankDeposits', BankDeposit, false);
     }
@@ -1038,7 +1047,7 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
       await del('collectionReminders', CollectionReminder);
       await del('qrSessions', QRSession, false);
     }
-    if (selected.has('auditLog')) await del('auditLog', AuditLog, false);
+    if (selected.has('auditLog')) await withLedgerMaintenance(() => del('auditLog', AuditLog, false));
 
     if (selected.has('menu')) {
       // No businessType field on these (see hasBizField note above).

@@ -181,6 +181,7 @@ export default function registerPricing(ctx) {
     requireSuperAdmin,
     requireSuperOrAdmin,
     verifyOrderAuth,
+    requirePermission,
   } = ctx;
 
 // --- DISCOUNT ROUTES ---

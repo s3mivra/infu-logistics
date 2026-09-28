@@ -5,7 +5,9 @@ import { ageingByClient, resolveClientKey, withArBalance, arBalance, isFullySett
 import { businessDateStr } from '../lib/businessTime.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
+import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 
+import { atomic } from '../lib/atomicRoute.js';
 export default function registerCollections(ctx) {
   const {
     app,
@@ -48,7 +50,7 @@ export default function registerCollections(ctx) {
   async function overdueRows(req) {
     return Order.find({
       businessType: BUSINESS_TYPE, ...tenantScope(req),
-      status: { $in: RECEIVABLE_STATUSES }, paymentMethod: { $ne: 'Cash' },
+      status: { $in: RECEIVABLE_STATUSES }, paymentMethod: AR_PAYMENT_METHOD_FILTER,
       isComplimentary: { $ne: true }, arSettled: { $ne: true },
       // withArBalance restates `total` as the unpaid remainder, so a client who
       // has partly paid an aged invoice is chased for what is actually left.
@@ -320,7 +322,7 @@ export default function registerCollections(ctx) {
   // ── CLEAR ────────────────────────────────────────────────────────────────
   // The bank honoured it: the money is finally real. Moves the amount out of
   // Checks on Hand into the account that received it.
-  app.post('/api/collections/checks/:orderId/:paymentId/clear', verifyToken, ...canActCheck, async (req, res) => {
+  app.post('/api/collections/checks/:orderId/:paymentId/clear', verifyToken, ...canActCheck, atomic(mongoose, async (req, res) => {
     try {
       const found = await findCheck(req, res);
       if (!found) return;
@@ -358,14 +360,14 @@ export default function registerCollections(ctx) {
       emitToMgr('erpUpdated');
       res.json({ success: true, check: payment });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
-  });
+  }));
 
   // ── BOUNCE ───────────────────────────────────────────────────────────────
   // The check was never money. This is the one that MUST be right: the
   // collection is reversed, so the invoice reopens for the amount and the
   // client goes back to owing it. Without this a bounced check silently
   // forgives a debt - the money is gone and the books say it was paid.
-  app.post('/api/collections/checks/:orderId/:paymentId/bounce', verifyToken, ...canActCheck, async (req, res) => {
+  app.post('/api/collections/checks/:orderId/:paymentId/bounce', verifyToken, ...canActCheck, atomic(mongoose, async (req, res) => {
     try {
       const found = await findCheck(req, res);
       if (!found) return;
@@ -427,5 +429,5 @@ export default function registerCollections(ctx) {
       emitToMgr('erpUpdated');
       res.json({ success: true, check: payment, balance: arBalance(order), reopened: !order.arSettled });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
-  });
+  }));
 }

@@ -5,6 +5,7 @@ import { captureError } from '../lib/errorLog.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { hasPermission } from '../lib/authz.js';
 
+import { atomic } from '../lib/atomicRoute.js';
 export default function registerShifts(ctx) {
   const {
     app,
@@ -348,7 +349,7 @@ app.post('/api/shifts/start', verifyToken, requireStaff, async (req, res) => {
 // when the expense is filed and the safe drop becomes a deposit when the
 // deposit is recorded; both already write their own entry, so posting here as
 // well would credit the same cash twice.
-app.post('/api/shifts/movement', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/shifts/movement', verifyToken, requireStaff, atomic(mongoose, async (req, res) => {
   try {
     const { type, amount, reason, expenseAccount, vendor, refNo } = req.body || {};
     if (!['in', 'out'].includes(String(type))) {
@@ -399,9 +400,10 @@ app.post('/api/shifts/movement', verifyToken, requireStaff, async (req, res) => 
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
-app.post('/api/shifts/end', verifyToken, requireStaff, async (req, res) => {
+// Close shift - records actual cash count and calculates variance
+app.post('/api/shifts/end', verifyToken, requireStaff, atomic(mongoose, async (req, res) => {
   try {
     const { actualCash, handover } = req.body;
     const { sharedDrawer, varianceThreshold } = await drawerSettings();
@@ -518,7 +520,7 @@ app.post('/api/shifts/end', verifyToken, requireStaff, async (req, res) => {
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // The open session for whoever is asking - shop-wide on a shared drawer.
 app.get('/api/shifts/current', verifyToken, requireStaff, async (req, res) => {

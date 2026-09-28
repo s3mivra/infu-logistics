@@ -63,7 +63,7 @@ export default function ImportModal() {
                 <span className="text-[10px] font-black uppercase tracking-widest bg-blue-500 text-white px-2.5 py-1.5 rounded">NEW · {newCount}</span>
                 {batchCount > 0 && <span title="Rows for an item that is already listed above - each is another lot and is added to it." className="text-[10px] font-black uppercase tracking-widest bg-purple-500 text-white px-2.5 py-1.5 rounded">+ ANOTHER LOT · {batchCount}</span>}
                 <span className="text-[10px] font-black uppercase tracking-widest bg-green-500 text-white px-2.5 py-1.5 rounded">↑ INCREASE · {upCount}</span>
-                <span className="text-[10px] font-black uppercase tracking-widest bg-red-500 text-white px-2.5 py-1.5 rounded">↓ DECREASE · {downCount}</span>
+                <span className="text-[10px] font-black uppercase tracking-widest bg-red-700 text-white px-2.5 py-1.5 rounded">↓ DECREASE · {downCount}</span>
                 <span className="text-[10px] font-black uppercase tracking-widest bg-white/5 text-fg/65 px-2.5 py-1.5 rounded">UNCHANGED · {sameCount}</span>
                 {errCount > 0 && <span className="text-[10px] font-black uppercase tracking-widest bg-red-500/40 text-danger px-2.5 py-1.5 rounded">ERRORS · {errCount}</span>}
                 {skippedCount > 0 && <span title="These rows have no quantity, so they are not counted. Type 0 to count zero." className="text-[10px] font-black uppercase tracking-widest bg-white/10 text-fg/75 px-2.5 py-1.5 rounded">NOT COUNTED · {skippedCount}</span>}
@@ -145,7 +145,7 @@ export default function ImportModal() {
                           <span title={`This cell's Excel format is day-first (d/m/yyyy), not MM/DD/YYYY like the rest of the file - it displayed as "${r._dateFormatWarn.display}". Auto-corrected to ${r.expiryDate || r.productionDate} for this import. Fix the cell's format in the source file so this stops happening.`} className="ml-1.5 text-[9px] font-black bg-amber-500 text-black border border-amber-600/40 px-1.5 py-0.5 rounded uppercase align-middle">✓ Date auto-fixed</span>
                         )}
                         {r._dateFormatWarn && !r._dateFormatWarn.corrected && (
-                          <span title={`This cell's Excel format is day-first (d/m/yyyy) and displayed as "${r._dateFormatWarn.display}" - it couldn't be safely auto-corrected (its day is over 12, so it can't also be read as a month). Verify this date manually and fix the cell's format in the source file.`} className="ml-1.5 text-[9px] font-black bg-red-500 text-white border border-red-600/40 px-1.5 py-0.5 rounded uppercase align-middle">⚠ Check date</span>
+                          <span title={`This cell's Excel format is day-first (d/m/yyyy) and displayed as "${r._dateFormatWarn.display}" - it couldn't be safely auto-corrected (its day is over 12, so it can't also be read as a month). Verify this date manually and fix the cell's format in the source file.`} className="ml-1.5 text-[9px] font-black bg-red-700 text-white border border-red-600/40 px-1.5 py-0.5 rounded uppercase align-middle">⚠ Check date</span>
                         )}
                         {r._notes?.length > 0 && (
                           <p className="text-warning text-[10px] font-normal normal-case mt-1 leading-snug">{r._notes.join(' ')}</p>
@@ -154,12 +154,12 @@ export default function ImportModal() {
                         {isBatch && !r.expiryDate && r.productionDate && <span className="ml-1.5 text-special text-[10px]">prod {r.productionDate}</span>}
                       </td>
                       <td className="px-2 py-2.5">
-                        {isErr && <span className="text-[10px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">{r._error}</span>}
+                        {isErr && <span className="text-[10px] font-black bg-red-700 text-white px-1.5 py-0.5 rounded uppercase">{r._error}</span>}
                         {isSkipped && <span title="A count sheet leaves a line blank when it was not counted, so this row changes nothing. Type 0 to count zero." className="text-[10px] font-black bg-white/10 text-fg/75 px-1.5 py-0.5 rounded uppercase">{r._skipped}</span>}
                         {!isErr && !isSkipped && isNew && <span className="text-[10px] font-black bg-blue-500 text-white px-1.5 py-0.5 rounded uppercase">NEW</span>}
                         {!isErr && !isSkipped && isBatch && <span title="Another lot of an item already counted above - its quantity is ADDED to that one, so each expiry date keeps its own count." className="text-[10px] font-black bg-purple-500 text-white px-1.5 py-0.5 rounded uppercase">+ ANOTHER LOT</span>}
                         {!isErr && !isSkipped && !isNew && !isBatch && diff > 0 && <span className="text-[10px] font-black bg-green-500 text-white px-1.5 py-0.5 rounded uppercase">↑ INC</span>}
-                        {!isErr && !isSkipped && !isNew && !isBatch && diff < 0 && <span className="text-[10px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">↓ DEC</span>}
+                        {!isErr && !isSkipped && !isNew && !isBatch && diff < 0 && <span className="text-[10px] font-black bg-red-700 text-white px-1.5 py-0.5 rounded uppercase">↓ DEC</span>}
                         {!isErr && !isSkipped && !isNew && !isBatch && diff === 0 && <span className="text-[10px] font-black bg-white/10 text-fg/65 px-1.5 py-0.5 rounded uppercase">SAME</span>}
                       </td>
                       <td className="px-2 py-2.5 text-right text-fg/65 tabular-nums">{isNew || isErr || isSkipped ? '-' : fmtQty(r._oldDisplay.qty)}</td>

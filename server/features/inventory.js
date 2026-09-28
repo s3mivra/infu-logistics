@@ -1,7 +1,7 @@
 ﻿// inventory routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { title, upper } from '../lib/normalize.js';
+import { title, upper, positiveQty } from '../lib/normalize.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { INPUT_VAT } from '../lib/vatPosting.js';
 import { loadVatConfig } from '../lib/vatSettings.js';
@@ -16,6 +16,7 @@ import { dayStart, dayEnd } from '../lib/reportRange.js';
 // it reads the same in every file.
 import { requirePermission as permit, requireAnyPermission as permitAny } from '../lib/authz.js';
 
+import { atomic } from '../lib/atomicRoute.js';
 export default function registerInventory(ctx) {
   const {
     app,
@@ -192,6 +193,7 @@ export default function registerInventory(ctx) {
     requireSuperAdmin,
     requireSuperOrAdmin,
     verifyOrderAuth,
+    requirePermission,
   } = ctx;
 
 // --- 1. FETCH EOD STATUS & REAL MOVEMENTS ---
@@ -763,7 +765,7 @@ app.get('/api/stock-analytics/by-location', verifyToken, requireStaff, async (re
 // expiryDate, or its productionDate for goods with no real expiry, e.g. beans);
 // omitted/null = FEFO/FPFO (oldest first) at release time - the default and
 // recommended choice.
-app.post('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/stock-transfers', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   try {
     const { fromItemId, toItemId, qtyBase, note, expiryDate } = req.body || {};
     if (!fromItemId || !toItemId) return res.status(400).json({ success: false, error: 'Source and destination items are required.' });
@@ -814,7 +816,7 @@ app.post('/api/stock-transfers/:id/approve', verifyToken, requireSuperAdmin, asy
 });
 
 // Reject (superadmin) or cancel (staff, own request while still Requested).
-app.post('/api/stock-transfers/:id/reject', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/stock-transfers/:id/reject', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   try {
     const t = await StockTransfer.findById(req.params.id);
     if (!t) return res.status(404).json({ success: false, error: 'Transfer not found.' });
@@ -831,7 +833,7 @@ app.post('/api/stock-transfers/:id/reject', verifyToken, requireStaff, async (re
 
 // Release (staff): Approved → Released. Moves the quantity between the two items
 // inside a transaction and writes a StockCard row on each side.
-app.post('/api/stock-transfers/:id/release', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/stock-transfers/:id/release', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   const MAX_ATTEMPTS = 3;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const session = await mongoose.startSession();
@@ -929,7 +931,7 @@ app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
-app.post('/api/inventory', verifyToken, requireStaff, permit('inventory.manage'), async (req, res) => {
+app.post('/api/inventory', verifyToken, requireStaff, permit('inventory.manage'), atomic(mongoose, async (req, res) => {
   try {
     // Canonicalize first so the stored name is stable ("test milk" → "TEST MILK")
     // and the existing case-insensitive dup check compares like with like. Stock
@@ -1081,13 +1083,13 @@ app.post('/api/inventory', verifyToken, requireStaff, permit('inventory.manage')
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // --- INVENTORY REVALUATION: set book Inventory (130000) = actual on-hand value ---
 // Resolves negative/incorrect inventory caused by missing opening balance / purchases.
 // Offset defaults to Owner's Capital (opening contribution; no P&L impact); '530000'
 // books it as an Inventory Adjustment instead.
-app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, atomic(mongoose, async (req, res) => {
   try {
     const VALID = { '310000': "Owner's Capital", '530000': 'Inventory Adjustments' };
     const offCode = VALID[req.body.offsetAccount] ? req.body.offsetAccount : '310000';
@@ -1114,7 +1116,7 @@ app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, async (req, r
     emitToMgr('erpUpdated');
     res.json({ success: true, onHand, book, diff, offset: offCode, reference });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
-});
+}));
 
 // --- RESTOCK EXISTING INVENTORY (Weighted Average Cost, transactional) ---
 // The whole flow - read stockQty/unitCost, compute WAC, save the item, write
@@ -1526,11 +1528,11 @@ app.get('/api/inventory/expiring', verifyToken, requireStaff, async (req, res) =
 });
 
 // --- BATCH MANAGEMENT: add a new expiry (or production-date) batch manually ---
-app.post('/api/inventory/:id/batches', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/inventory/:id/batches', verifyToken, requireSuperAdmin, atomic(mongoose, async (req, res) => {
   try {
     const { qty, expiryDate, productionDate, reference } = req.body;
-    const n = parseFloat(qty);
-    if (!n || n <= 0) return res.status(400).json({ success: false, error: 'qty must be > 0' });
+    const n = positiveQty(qty);
+    if (Number.isNaN(n)) return res.status(400).json({ success: false, error: 'qty must be a positive number.' });
     // At least one date is required - goods with no real expiry (roasted beans,
     // etc.) date freshness by production date instead.
     if (!expiryDate && !productionDate) return res.status(400).json({ success: false, error: 'expiryDate or productionDate required' });
@@ -1575,7 +1577,7 @@ app.post('/api/inventory/:id/batches', verifyToken, requireSuperAdmin, async (re
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // --- BATCH MANAGEMENT: correct a batch's expiry/production date by index
 // (use when an import or manual entry recorded the wrong date - e.g. a
@@ -1617,7 +1619,7 @@ app.patch('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmin
 });
 
 // --- BATCH MANAGEMENT: delete a specific batch by index (use when physical stock no longer matches) ---
-app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmin, atomic(mongoose, async (req, res) => {
   try {
     const item = await Inventory.findById(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Item not found' });
@@ -1658,7 +1660,7 @@ app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmi
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // --- PATCH expiry only (after a partial spoilage clears the expired batch) ---
 app.patch('/api/inventory/:id/expiry', verifyToken, requireStaff, permit('inventory.manage'), async (req, res) => {
@@ -2304,8 +2306,8 @@ app.post('/api/inventory/spoilage/:id', verifyToken, requireStaff, permit('inven
   // standalone MongoDB, so dev/e2e environments can exercise this path.
   try {
     const { qty, reason, note } = req.body;
-    const spoilQty = parseFloat(qty);
-    if (!spoilQty || spoilQty <= 0) return res.status(400).json({ success: false, error: 'Invalid quantity.' });
+    const spoilQty = positiveQty(qty);
+    if (Number.isNaN(spoilQty)) return res.status(400).json({ success: false, error: 'Invalid quantity.' });
     if (!reason) return res.status(400).json({ success: false, error: 'Reason is required.' });
 
     const item = await withOptionalTransaction(mongoose, async (session) => {

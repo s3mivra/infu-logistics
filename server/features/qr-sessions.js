@@ -175,10 +175,11 @@ export default function registerQrSessions(ctx) {
     requireSuperAdmin,
     requireSuperOrAdmin,
     verifyOrderAuth,
+    requirePermission,
   } = ctx;
 
 // --- 📱 STRICT QR SESSION CONTROL ---
-app.post('/api/sessions/generate', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/sessions/generate', verifyToken, requireStaff, requirePermission('pos.use'), async (req, res) => {
   try {
     const { table } = req.body;
     // KILL any previously active links for this table so there's never a duplicate online

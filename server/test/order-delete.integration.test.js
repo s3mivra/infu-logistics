@@ -7,6 +7,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok, beans, latte;
 const M = (n) => mongoose.model(n);
@@ -26,7 +27,7 @@ beforeAll(async () => {
 }, 120000);
 afterAll(async () => { await ctx.stop(); });
 beforeEach(async () => {
-  for (const n of ['Order', 'Product', 'Inventory', 'JournalEntry', 'AuditLog']) await M(n).deleteMany({});
+  for (const n of ['Order', 'Product', 'Inventory', 'JournalEntry', 'AuditLog']) await withLedgerMaintenance(() => M(n).deleteMany({}));
   beans = await M('Inventory').create({
     itemName: 'BEANS', unit: 'g', displayUnit: 'kg', unitMultiplier: 1000, stockQty: 1000, unitCost: 0.386, businessType: 'fb',
   });

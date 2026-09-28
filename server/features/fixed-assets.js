@@ -18,6 +18,7 @@ import {
   disposalResult, schedule, monthlyDepreciation,
 } from '../lib/depreciation.js';
 
+import { atomic } from '../lib/atomicRoute.js';
 export default function registerFixedAssets(ctx) {
   const {
     app, mongoose, IS_PROD, log, BUSINESS_TYPE, tenantScope, logAudit,
@@ -103,7 +104,7 @@ export default function registerFixedAssets(ctx) {
   });
 
   // ── ACQUIRE ───────────────────────────────────────────────────────────────
-  app.post('/api/fixed-assets', verifyToken, ...canPost, async (req, res) => {
+  app.post('/api/fixed-assets', verifyToken, ...canPost, atomic(mongoose, async (req, res) => {
     try {
       const {
         name, accountCode, acquisitionCost, acquisitionDate, salvageValue,
@@ -159,7 +160,7 @@ export default function registerFixedAssets(ctx) {
       log.error?.({ err }, 'POST /api/fixed-assets failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 
   // ── DEPRECIATE ────────────────────────────────────────────────────────────
   // Posts whatever whole months are owed, capped at the remaining depreciable
@@ -250,7 +251,7 @@ export default function registerFixedAssets(ctx) {
   // Removes the asset AND its accumulated depreciation from the books, and
   // books the difference against proceeds as a gain or a loss. Leaving the
   // contra behind would understate assets forever.
-  app.post('/api/fixed-assets/:id/dispose', verifyToken, ...canPost, async (req, res) => {
+  app.post('/api/fixed-assets/:id/dispose', verifyToken, ...canPost, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const asset = await FixedAsset.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) }).lean();
@@ -295,13 +296,13 @@ export default function registerFixedAssets(ctx) {
       log.error?.({ err }, 'POST /api/fixed-assets/:id/dispose failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 
   // ── IMPORT ────────────────────────────────────────────────────────────────
   // Bulk onboarding from the downloaded template. Each row posts its own
   // acquisition entry, and a row that fails is reported rather than aborting
   // the batch - a hundred-row sheet with one bad date should import ninety-nine.
-  app.post('/api/fixed-assets/import', verifyToken, ...canPost, async (req, res) => {
+  app.post('/api/fixed-assets/import', verifyToken, ...canPost, atomic(mongoose, async (req, res) => {
     try {
       const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
       if (rows.length === 0) return res.status(400).json({ success: false, error: 'No rows to import.' });
@@ -381,5 +382,5 @@ export default function registerFixedAssets(ctx) {
       log.error?.({ err }, 'POST /api/fixed-assets/import failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 }

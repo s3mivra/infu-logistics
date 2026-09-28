@@ -213,7 +213,13 @@ describe('users management', () => {
     ran(await req('patch', `/api/users/${uid}`, T.super).send({ role: 'Manager' }));
     ran(await req('delete', `/api/users/${uid}`, T.super));
   });
-  it('PATCH own password', async () => ran(await req('patch', '/api/users/me/password', T.staff).send({ currentPassword: 'pw', newPassword: 'newpassword1' })));
+  it('PATCH own password', async () => {
+    const r = await req('patch', '/api/users/me/password', T.staff).send({ currentPassword: 'pw', newPassword: 'newpassword1' });
+    ran(r);
+    // A password change ends every older token, this device's included; the
+    // response carries the replacement, which is what the app switches to.
+    if (r.body?.token) T.staff = r.body.token;
+  });
 });
 
 describe('shifts + bank deposits + clock', () => {

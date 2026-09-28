@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   canInstall, onInstallAvailabilityChange, promptInstall,
-  getQueuedOrders, flushQueue,
+  getQueuedOrders, flushQueue, getRejectedOrders, dismissRejectedOrder,
 } from './pwa';
 
 /* React hook exposing PWA runtime state to components:
@@ -16,6 +16,9 @@ export function usePwa() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [installable, setInstallable] = useState(canInstall());
   const [queuedCount, setQueuedCount] = useState(getQueuedOrders().length);
+  // Offline orders the server refused. Shown to staff until dismissed - each
+  // may be a sale the customer already paid for that is NOT in the system.
+  const [rejectedOrders, setRejectedOrders] = useState(getRejectedOrders());
 
   useEffect(() => {
     const goOnline = () => setIsOnline(true);
@@ -30,12 +33,21 @@ export function usePwa() {
     };
   }, []);
 
-  const refreshQueue = useCallback(() => setQueuedCount(getQueuedOrders().length), []);
+  const refreshQueue = useCallback(() => {
+    setQueuedCount(getQueuedOrders().length);
+    setRejectedOrders(getRejectedOrders());
+  }, []);
 
   const syncQueue = useCallback(async (sender) => {
     const result = await flushQueue(sender);
     setQueuedCount(getQueuedOrders().length);
+    setRejectedOrders(getRejectedOrders());
     return result;
+  }, []);
+
+  const dismissRejected = useCallback((id) => {
+    dismissRejectedOrder(id);
+    setRejectedOrders(getRejectedOrders());
   }, []);
 
   const install = useCallback(async () => {
@@ -44,5 +56,5 @@ export function usePwa() {
     return accepted;
   }, []);
 
-  return { isOnline, installable, install, queuedCount, refreshQueue, syncQueue };
+  return { isOnline, installable, install, queuedCount, refreshQueue, syncQueue, rejectedOrders, dismissRejected };
 }

@@ -6,6 +6,7 @@
 // meant matching rows by NAME, which breaks the moment two clients share one.
 // Here everything is keyed by account id.
 /* eslint-disable no-unused-vars */
+import { roundMoney } from '../lib/money.js';
 import { ageingBuckets, resolveCreditLimit, withArBalance, DEFAULT_CREDIT_MODE, isReceivableStatus } from '../lib/credit.js';
 
 import { captureError } from '../lib/errorLog.js';
@@ -56,16 +57,44 @@ export default function registerClients(ctx) {
       const globalLimit = globalRow?.value ?? null;
 
       const ids = clients.map(c => String(c._id));
-      // One pass over every relevant order, then bucket in memory - far cheaper
-      // than a query per client once there are more than a handful.
-      const orders = await Order.find({
+      const clientMatch = {
         businessType: BUSINESS_TYPE,
         ...tenantScope(req),
         $or: [{ clientAccountId: { $in: ids } }, { clientId: { $in: ids } }],
-      }, {
-        clientAccountId: 1, clientId: 1, total: 1, status: 1, createdAt: 1,
-        paymentMethod: 1, isComplimentary: 1, arSettled: 1, isParked: 1, arPaidAmount: 1, refundedAmount: 1,
-      }).lean();
+      };
+      // This used to load EVERY order any client had ever placed into memory
+      // on each visit to the Clients screen - years of history to show a few
+      // numbers. Lifetime figures are now summed by the database, and only the
+      // orders still open on account (what ageing and exposure look at) come
+      // back as documents - a set that shrinks as invoices are paid.
+      const [stats, orders] = await Promise.all([
+        Order.aggregate([
+          { $match: clientMatch },
+          { $project: {
+              k: { $cond: [{ $in: ['$clientAccountId', ids] }, '$clientAccountId', '$clientId'] },
+              status: 1, total: 1, createdAt: 1,
+          } },
+          { $group: {
+              _id: '$k',
+              orderCount: { $sum: 1 },
+              completedCount: { $sum: { $cond: [{ $eq: ['$status', 'Completed'] }, 1, 0] } },
+              lifetime: { $sum: { $cond: [{ $eq: ['$status', 'Completed'] }, { $ifNull: ['$total', 0] }, 0] } },
+              lastOrderAt: { $max: '$createdAt' },
+          } },
+        ]),
+        Order.find({
+          ...clientMatch,
+          status: { $nin: ['Cancelled', 'Voided', 'Refunded', 'Parked'] },
+          isParked: { $ne: true },
+          paymentMethod: { $ne: 'Cash' },
+          isComplimentary: { $ne: true },
+          arSettled: { $ne: true },
+        }, {
+          clientAccountId: 1, clientId: 1, total: 1, status: 1, createdAt: 1,
+          paymentMethod: 1, isComplimentary: 1, arSettled: 1, isParked: 1, arPaidAmount: 1, refundedAmount: 1,
+        }).lean(),
+      ]);
+      const statsByClient = new Map(stats.map(s => [String(s._id), s]));
 
       // Open customer deposits per client - money they have paid us ahead of
       // any order, which offsets what they owe.
@@ -109,11 +138,9 @@ export default function registerClients(ctx) {
           .reduce((s, o) => s + Math.max(0, (Number(o.total) || 0) - (Number(o.refundedAmount) || 0)), 0)
           .toFixed(2);
 
-        const completed = list.filter(o => o.status === 'Completed');
-        const lifetime = +completed.reduce((s, o) => s + (Number(o.total) || 0), 0).toFixed(2);
-        const lastOrderAt = list.length
-          ? new Date(Math.max(...list.map(o => new Date(o.createdAt).getTime()))).toISOString()
-          : null;
+        const st = statsByClient.get(String(c._id));
+        const lifetime = roundMoney(st?.lifetime || 0);
+        const lastOrderAt = st?.lastOrderAt ? new Date(st.lastOrderAt).toISOString() : null;
 
         const base = {
           _id: String(c._id),
@@ -123,8 +150,8 @@ export default function registerClients(ctx) {
           isActive: c.isActive !== false,
           paymentMethod: c.paymentMethod,
           source: c.source || 'portal',
-          orderCount: list.length,
-          completedCount: completed.length,
+          orderCount: st?.orderCount || 0,
+          completedCount: st?.completedCount || 0,
           lastOrderAt,
         };
         if (!showMoney) return base;

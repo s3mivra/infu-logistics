@@ -32,7 +32,7 @@ describe('which templates a person gets', () => {
   it('leaves out what they cannot import, and clients unless this is logistics', () => {
     expect(availableTemplates(can, true, 'fb').map(t => t.sheet)).toEqual([
       'Chart of Accounts', 'Suppliers', 'Inventory', 'P&L History', 'Opening Balances', 'Open Receivables', 'Open Payables',
-      'Bills', 'Expenses', 'Fixed Assets',
+      'Open Deposits & Advances', 'Bills', 'Expenses', 'Fixed Assets',
     ]);
     expect(availableTemplates(can, true, 'log').map(t => t.sheet)).toContain('Clients');
     // A manager without accounting rights gets none of the accounting sheets.
@@ -155,6 +155,16 @@ describe('do the books agree', () => {
     expect(checks[1].text).toMatch(/₱500\.00 apart/);
     expect(checks[2]).toMatchObject({ ok: false });        // AP on the balance sheet, no bills listed
     expect(checks[3]).toMatchObject({ ok: null });         // stock is checked after its preview
+  });
+  it('checks each kind of deposit and advance against its own account', () => {
+    const withDeposits = { balancingToCapital: 0, controls: { customerDeposit: 5000, supplierAdvance: 3000, employeeAdvance: 0 } };
+    const checks = bookChecks({ openingBalances: withDeposits, openDeposits: { totals: { customerDeposit: 5000, supplierAdvance: 2500, employeeAdvance: 0 } } });
+    const dep = checks.find(c => /Customer deposits/.test(c.text));
+    const sup = checks.find(c => /Supplier advances/.test(c.text));
+    expect(dep).toMatchObject({ ok: true });
+    expect(sup).toMatchObject({ ok: false });
+    expect(sup.text).toMatch(/₱500.00 apart.*Advances to Suppliers/);
+    expect(checks.some(c => /Employee advances/.test(c.text))).toBe(false); // nothing on either side
   });
   it('with no P&L, expects the balance sheet to balance by itself', () => {
     expect(bookChecks({ openingBalances: { balancingToCapital: 0, controls: {} } })).toEqual([{ ok: true, text: 'The balance sheet balances by itself.' }]);

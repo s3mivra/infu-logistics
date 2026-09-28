@@ -27,7 +27,7 @@ export default function TemplatesCard({ apiFetch, can, isSuperAdmin, businessTyp
     setBusy('Building the workbook…');
     try {
       const XLSX = await import('xlsx');
-      const wb = await buildSetupWorkbook(XLSX, available, apiFetch);
+      const wb = await buildSetupWorkbook(XLSX, available, apiFetch, { businessType });
       if (!wb) { ui.alert('There is nothing here you have permission to import.'); return; }
       XLSX.writeFile(wb, 'Setup-workbook.xlsx');
     } catch {

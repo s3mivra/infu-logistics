@@ -9,6 +9,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+// Fixture resets may clear journal entries, which are otherwise append-only.
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const get = () => request(app).get('/api/admin/storage-overview').set('Authorization', `Bearer ${tok}`);
@@ -26,7 +28,7 @@ const M = (n) => mongoose.model(n);
 const daysAgo = (n) => new Date(Date.now() - n * 86400000);
 
 beforeEach(async () => {
-  for (const n of ['StockCard', 'JournalEntry']) await M(n).deleteMany({});
+  for (const n of ['StockCard', 'JournalEntry']) await withLedgerMaintenance(() => M(n).deleteMany({}));
 });
 
 describe('reporting what is stored', () => {

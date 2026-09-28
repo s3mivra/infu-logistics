@@ -19,7 +19,8 @@ beforeAll(async () => {
   ctx = await bootApp({ businessType: 'log' });
   app = ctx.app;
   await makeUser({ name: 'prodSuper', role: 'superadmin' });
-  await makeUser({ name: 'prodStaff', role: 'staff' });   // no production.approve
+  // Can FILE a production order (inventory.manage) but not approve it.
+  await makeUser({ name: 'prodStaff', role: 'staff', permissions: ['pos.use', 'orders.view', 'inventory.view', 'products.view', 'inventory.manage', 'production.view'] });
   await makeUser({ name: 'prodMgr', role: 'manager' });   // has production.approve by default
   superTok = await loginStaff(app, 'prodSuper');
   staffTok = await loginStaff(app, 'prodStaff');

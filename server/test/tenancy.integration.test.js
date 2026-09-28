@@ -160,8 +160,11 @@ describe('Phase 2b - per-tenant read scoping: DISABLED (tenantScope is now a no-
     await User.updateOne({ name: 'BackfilledCashier' }, { $set: { tenantId: def._id } });
     const tok = (await request(app).post('/api/users/login').send({ name: 'BackfilledCashier', password: 'pw' })).body.token;
 
+    // A real product: a line with nothing behind it is refused for a cashier
+    // (only pricing.approve may ring up an off-menu price).
+    const regProd = await mongoose.model('Product').create({ name: 'Regression Item', category: 'X', basePrice: 10 });
     const create = await request(app).post('/api/orders').set(auth(tok))
-      .send({ items: [{ name: 'Regression Item', price: 10, quantity: 1 }], table: 'Takeout', paymentMethod: 'Cash' });
+      .send({ items: [{ productId: String(regProd._id), name: 'Regression Item', price: 10, quantity: 1 }], table: 'Takeout', paymentMethod: 'Cash' });
     expect(create.status).toBe(200);
 
     const list = await request(app).get('/api/orders').set(auth(tok));

@@ -62,15 +62,30 @@ export function queueClock(type) { // type: 'in' | 'out' | 'break-start' | 'brea
   localStorage.setItem(CLOCK_QUEUE_KEY, JSON.stringify(q));
   return q.length;
 }
+// Replays IN ORDER and stops at the first event that does not go through:
+// sending a clock-out while the clock-in before it failed would record the
+// shift backwards. Only events actually sent are removed, from a fresh read,
+// so one clocked while this was running is not erased.
+let _clockFlushing = false;
 export async function flushClockQueue(sender) {
-  const q = getQueuedClock();
-  if (!q.length) return { sent: 0 };
-  let sent = 0; const survivors = [];
-  for (const e of q) {
-    try { (await sender(e)) ? sent++ : survivors.push(e); } catch { survivors.push(e); }
+  if (_clockFlushing) return { sent: 0, remaining: getQueuedClock().length };
+  _clockFlushing = true;
+  try {
+    const q = getQueuedClock();
+    if (!q.length) return { sent: 0, remaining: 0 };
+    const sentIds = new Set();
+    for (const e of q) {
+      let ok = false;
+      try { ok = !!(await sender(e)); } catch { ok = false; }
+      if (!ok) break;
+      sentIds.add(e.id);
+    }
+    const now = getQueuedClock().filter(e => !sentIds.has(e.id));
+    localStorage.setItem(CLOCK_QUEUE_KEY, JSON.stringify(now));
+    return { sent: sentIds.size, remaining: now.length };
+  } finally {
+    _clockFlushing = false;
   }
-  localStorage.setItem(CLOCK_QUEUE_KEY, JSON.stringify(survivors));
-  return { sent, remaining: survivors.length };
 }
 
 // ── Notifications ────────────────────────────────────────────────────────────
@@ -105,7 +120,19 @@ export function getQueuedOrders() {
 
 // Optional `id` lets the caller reuse a prior idempotency key (e.g. an online
 // submit that failed mid-request) so replay can't duplicate a half-sent order.
+// Queued sales are paid-for orders that exist nowhere else yet. Ask the
+// browser to keep this site's storage rather than clear it under disk
+// pressure (a tablet low on space evicts "best effort" storage first). Asked
+// once per page, when the first order is queued; a refusal changes nothing.
+let persistAsked = false;
+function askToPersist() {
+  if (persistAsked) return;
+  persistAsked = true;
+  try { globalThis.navigator?.storage?.persist?.().catch(() => {}); } catch { /* not supported */ }
+}
+
 export function queueOrder(payload, id) {
+  askToPersist();
   const queue = getQueuedOrders();
   const entryId = id || `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   if (queue.some(e => e.id === entryId)) return queue.length; // already queued - don't double
@@ -114,37 +141,61 @@ export function queueOrder(payload, id) {
   return queue.length;
 }
 
-function setQueue(queue) {
-  localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+// Orders the SERVER refused (not network failures) - kept apart so they stop
+// being retried and a person can see them. Before this, a refusal looked the
+// same as "offline", so a paid sale could sit on the tablet forever, retried
+// every few seconds, with nothing on screen to say it was never recorded.
+const REJECTED_KEY = 'semivra_offline_rejected';
+export function getRejectedOrders() {
+  try { return JSON.parse(localStorage.getItem(REJECTED_KEY) || '[]'); }
+  catch { return []; }
+}
+export function dismissRejectedOrder(id) {
+  localStorage.setItem(REJECTED_KEY, JSON.stringify(getRejectedOrders().filter(e => e.id !== id)));
 }
 
+// What a sender reports for one entry:
+//   'sent'      the server has it - drop it
+//   'rejected'  the server refused it (4xx): stop retrying, show it to a person
+//   anything else (false, 'retry', a throw) - offline or a server fault: keep it
+export const SENT = 'sent';
+export const REJECTED = 'rejected';
+
 /**
- * Replay every queued order through the provided sender.
- * `sender(entry)` receives the full queue entry ({ id, payload, queuedAt }) and
- * must return a truthy value on success (it is awaited). The stable `entry.id`
- * doubles as an idempotency key so a mid-flush network flap can't duplicate an
- * order. Successfully-sent orders are removed; failures stay for the next flush.
- * A simple in-flight guard prevents concurrent flushes racing the same queue.
+ * Replay every queued order through `sender(entry)`.
+ *
+ * The queue is re-read at the END and only the entries this flush actually
+ * settled are removed. It used to overwrite the whole queue with the
+ * survivors it computed at the START - so an order queued while a flush was
+ * in progress was silently erased: a lost sale.
  */
 let _flushing = false;
 export async function flushQueue(sender) {
-  if (_flushing) return { sent: 0, remaining: getQueuedOrders().length };
+  if (_flushing) return { sent: 0, rejected: 0, remaining: getQueuedOrders().length };
   _flushing = true;
   try {
-    const queue = getQueuedOrders();
-    if (queue.length === 0) return { sent: 0, remaining: 0 };
+    const snapshot = getQueuedOrders();
+    if (snapshot.length === 0) return { sent: 0, rejected: 0, remaining: 0 };
+    const settled = new Set();
+    const refused = [];
     let sent = 0;
-    const survivors = [];
-    for (const entry of queue) {
-      try {
-        const ok = await sender(entry);
-        if (ok) { sent++; } else { survivors.push(entry); }
-      } catch {
-        survivors.push(entry);
+    for (const entry of snapshot) {
+      let outcome;
+      try { outcome = await sender(entry); } catch { outcome = 'retry'; }
+      // `true` is accepted as sent for callers written before outcomes existed.
+      if (outcome === SENT || outcome === true) { sent++; settled.add(entry.id); }
+      else if (outcome && typeof outcome === 'object' && outcome.status === REJECTED) {
+        settled.add(entry.id);
+        refused.push({ ...entry, rejectedAt: Date.now(), reason: outcome.reason || 'Refused by the server.' });
       }
     }
-    setQueue(survivors);
-    return { sent, remaining: survivors.length };
+    // Re-read: anything queued during the awaits above is still there.
+    const now = getQueuedOrders().filter(e => !settled.has(e.id));
+    localStorage.setItem(QUEUE_KEY, JSON.stringify(now));
+    if (refused.length) {
+      localStorage.setItem(REJECTED_KEY, JSON.stringify([...getRejectedOrders(), ...refused]));
+    }
+    return { sent, rejected: refused.length, remaining: now.length };
   } finally {
     _flushing = false;
   }

@@ -9,6 +9,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+// Fixture resets may clear journal entries, which are otherwise append-only.
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -29,7 +31,7 @@ beforeEach(async () => {
   // Every collection the backup touches, so one test's seed cannot leak into
   // the next one's counts.
   for (const n of ['Product', 'Inventory', 'Category', 'ModifierGroup', 'AddOn', 'Discount', 'DiscountRule', 'Combo']) {
-    await mongoose.model(n).deleteMany({});
+    await withLedgerMaintenance(() => mongoose.model(n).deleteMany({}));
   }
 });
 
@@ -208,7 +210,7 @@ describe('the rest of the menu, not just products', () => {
 
   async function wipeAll() {
     for (const n of ['Product', 'Inventory', 'Category', 'ModifierGroup', 'AddOn', 'Discount', 'DiscountRule', 'Combo']) {
-      await M(n).deleteMany({});
+      await withLedgerMaintenance(() => M(n).deleteMany({}));
     }
   }
 

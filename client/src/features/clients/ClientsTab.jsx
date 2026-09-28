@@ -20,7 +20,23 @@ import { useRefreshTick } from '../../shared/refreshBus';
 const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 
 export default function ClientsTab() {
-  const { apiFetch, downloadDataset, systemSettings = {} } = useDashboard();
+  const { apiFetch, downloadDataset, systemSettings = {}, can = () => false, isSuperAdmin = false } = useDashboard();
+  // Accounting staff cannot set a credit line, but can ask for one: it goes to
+  // an approver's queue (Ledger → Price Changes). Superadmins edit directly.
+  const requestCreditChange = async (c) => {
+    const lim = prompt(`New credit limit for ${c.name} (blank = no limit). Now: ${c.creditLimit == null ? 'no limit' : '₱' + c.creditLimit.toLocaleString('en-PH')}`, c.creditLimit == null ? '' : String(c.creditLimit));
+    if (lim === null) return;
+    const terms = prompt('Credit terms in days (blank to leave as is):', c.creditTermsDays != null ? String(c.creditTermsDays) : '');
+    if (terms === null) return;
+    const reason = prompt('Why? The approver reads this.');
+    if (!reason || !reason.trim()) return;
+    const body = { creditLimit: lim.trim() === '' ? null : lim.trim(), reason: reason.trim() };
+    if (terms.trim() !== '') body.creditTermsDays = terms.trim();
+    try {
+      const d = await (await apiFetch(`/api/client-accounts/${c._id}/credit-request`, { method: 'POST', body: JSON.stringify(body) })).json();
+      ui.alert(d.success ? (d.applied ? 'Credit line updated.' : (d.message || 'Sent for approval.')) : (d.error || 'Could not send the request.'));
+    } catch { ui.alert('Network error.'); }
+  };
   const [importing, setImporting] = useState(false);
   const [data, setData] = useState({ clients: [], showMoney: false, mode: 'off' });
   const [loading, setLoading] = useState(false);
@@ -303,7 +319,7 @@ export default function ClientsTab() {
                       {expanded === c._id ? <ChevronDown size={13} className="text-fg/65" /> : <ChevronRight size={13} className="text-fg/65" />}
                       {c.name}
                       {!c.isActive && <span className="text-[8px] font-black bg-white/10 text-fg/65 px-1.5 py-0.5 rounded uppercase">Inactive</span>}
-                      {c.overLimit && <span className="text-[8px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">Over</span>}
+                      {c.overLimit && <span className="text-[8px] font-black bg-red-700 text-white px-1.5 py-0.5 rounded uppercase">Over</span>}
                       {c.source === 'pos' && <span className="text-[8px] font-black bg-white/10 text-fg/70 px-1.5 py-0.5 rounded uppercase" title="Auto-promoted repeat walk-in">Walk-in</span>}
                     </span>
                   </td>
@@ -329,6 +345,12 @@ export default function ClientsTab() {
                 {expanded === c._id && (
                   <tr className="bg-page-bg/40">
                     <td colSpan={data.showMoney ? 8 : 4} className="px-4 py-3">
+                      {!isSuperAdmin && can('accounting.manage') && (
+                        <div className="flex justify-end mb-2">
+                          <button onClick={(e) => { e.stopPropagation(); requestCreditChange(c); }}
+                            className="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-white/5 text-fg/80 hover:bg-white/10">Request credit change</button>
+                        </div>
+                      )}
                       {data.showMoney && c.aged && (
                         <div className="flex flex-wrap gap-2 mb-3">
                           {[['Current', c.aged.current], ['31-60', c.aged.d31_60], ['61-90', c.aged.d61_90], ['91+', c.aged.d90_plus]].map(([lbl, amt]) => (

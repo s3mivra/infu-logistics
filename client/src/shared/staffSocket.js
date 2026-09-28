@@ -9,7 +9,7 @@
 import { io } from 'socket.io-client';
 import * as auth from '../features/auth/auth';
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
+import { API_URL } from './apiBase.js';
 
 // transports: WebSocket first, then long-polling as a fallback. It used to be
 // websocket-only with upgrade:false, which meant that if anything between the
@@ -40,10 +40,19 @@ export const socket = io(API_URL, {
 // handshake, so a PIN switch that kept the old connection left the tablet
 // receiving the previous person's live updates. A connection still mid-
 // handshake is left to finish and then renewed, rather than cut off.
+// One pending "reconnect once connected" at a time: called again while a
+// connection is still opening, it used to stack another handler each time,
+// and each one bounced the socket once more when it finally connected.
+let reconnectQueued = false;
 export function reconnectSocket() {
   try {
     if (socket.connected) { socket.disconnect(); socket.connect(); return; }
-    if (socket.active) { socket.once('connect', () => { socket.disconnect(); socket.connect(); }); return; }
+    if (socket.active) {
+      if (reconnectQueued) return;
+      reconnectQueued = true;
+      socket.once('connect', () => { reconnectQueued = false; socket.disconnect(); socket.connect(); });
+      return;
+    }
     socket.connect();
   } catch { /* realtime is a convenience; the page works without it */ }
 }

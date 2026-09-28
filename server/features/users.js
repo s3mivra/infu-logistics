@@ -3,6 +3,12 @@
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
 import { signApproval } from '../lib/approval.js';
+import { hasPermission } from '../lib/authz.js';
+
+// Pay and government numbers on a staff record. Every till lists staff by
+// name, but only someone who manages staff sees what they earn or their SSS /
+// TIN.
+const PRIVATE_STAFF_FIELDS = ['dailyRate', 'commissionRate', 'sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin'];
 
 export default function registerUsers(ctx) {
   const {
@@ -177,6 +183,8 @@ export default function registerUsers(ctx) {
     requireSuperOrAdmin,
     verifyOrderAuth,
     resolvePermissions,
+    requireUserAdmin,
+    guardStaffEscalation,
     PERMISSIONS,
     PERMISSION_KEYS,
     refreshCustomRolePerms,
@@ -224,6 +232,7 @@ app.patch('/api/roles/:id', verifyToken, requireSuperAdmin, async (req, res) => 
     const updates = {};
     if (req.body.name !== undefined) updates.name = String(req.body.name).trim();
     if (Array.isArray(req.body.permissions)) updates.permissions = req.body.permissions.filter((k) => PERMISSION_KEYS.has(k));
+    const before = await Role.findById(req.params.id).lean();
     const role = await Role.findByIdAndUpdate(req.params.id, updates, { returnDocument: 'after' });
     if (!role) return res.status(404).json({ success: false, error: 'Role not found.' });
     await refreshCustomRolePerms?.();
@@ -232,6 +241,13 @@ app.patch('/api/roles/:id', verifyToken, requireSuperAdmin, async (req, res) => 
     // session refresh up to 15 minutes later. (Changing one PERSON's role or
     // permissions already ends their sessions - see PATCH /api/users/:id.)
     emitToAll('permissionsChanged', { role: role.name });
+    // Everyone holding this role now has different permissions than their
+    // token says - end those tokens so they pick the change up at once.
+    if (updates.permissions || updates.name) {
+      const names = [before?.name, role.name].filter(Boolean).map(n => new RegExp(`^${escapeRegex(n)}$`, 'i'));
+      const holders = await User.find({ role: { $in: names } }, { _id: 1 }).lean();
+      for (const h of holders) await revokeUserSessions(h._id);
+    }
     res.json({ success: true, role });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -464,14 +480,24 @@ app.get('/api/users', verifyToken, requireStaff, async (req, res) => {
     const withPin = new Set(
       (await User.find({ pinHash: { $ne: '' } }, { _id: 1 }).lean()).map(u => String(u._id)),
     );
-    res.json({ success: true, users: users.map(u => ({ ...u, hasPin: withPin.has(String(u._id)) })) });
+    const seesPrivate = hasPermission(req.user, 'users.manage');
+    res.json({
+      success: true,
+      users: users.map((u) => {
+        const row = { ...u, hasPin: withPin.has(String(u._id)) };
+        if (!seesPrivate) for (const k of PRIVATE_STAFF_FIELDS) delete row[k];
+        return row;
+      }),
+    });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
-app.post('/api/users', verifyToken, requireSuperAdmin, validate(userCreateSchema), async (req, res) => {
+app.post('/api/users', verifyToken, requireUserAdmin, validate(userCreateSchema), async (req, res) => {
   try {
+    const denied = guardStaffEscalation(req.user, { role: req.body.role, permissions: req.body.permissions });
+    if (denied) return res.status(403).json({ success: false, error: denied });
     const existing = await User.findOne({ name: { $regex: new RegExp(`^${escapeRegex(req.body.name.trim())}$`, 'i') } });
     if (existing) return res.status(400).json({ success: false, error: 'User already exists' });
     
@@ -492,8 +518,12 @@ app.post('/api/users', verifyToken, requireSuperAdmin, validate(userCreateSchema
   }
 });
 
-app.put('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/users/:id', verifyToken, requireUserAdmin, async (req, res) => {
   try {
+    const target = await User.findById(req.params.id).select('role permissions').lean();
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+    const denied = guardStaffEscalation(req.user, { targetUser: target });
+    if (denied) return res.status(403).json({ success: false, error: denied });
     const updateData = { name: req.body.name };
 
     // Only hash and update the password if they actually typed a new one
@@ -509,15 +539,24 @@ app.put('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   }
 });
 
-app.patch('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.patch('/api/users/:id', verifyToken, requireUserAdmin, async (req, res) => {
   try {
     const { name, password, role, permissions, commissionRate } = req.body;
+    const target = await User.findById(req.params.id).select('role permissions').lean();
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+    const denied = guardStaffEscalation(req.user, { targetUser: target, role, permissions });
+    if (denied) return res.status(403).json({ success: false, error: denied });
     const updates = {};
     // The statutory account numbers. Stored as typed - the agencies' formats
     // differ and change, and a validator that guesses wrong would block a
     // legitimate number rather than catch a wrong one.
     for (const key of ['sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin', 'employeeNumber']) {
       if (req.body[key] !== undefined) updates[key] = String(req.body[key] || '').trim().slice(0, 40);
+    }
+    if (req.body.dailyRate !== undefined) {
+      const rate = Number(req.body.dailyRate);
+      if (!Number.isFinite(rate) || rate < 0 || rate > 1_000_000) return res.status(400).json({ success: false, error: 'Daily rate must be a positive amount.' });
+      updates.dailyRate = Math.round(rate * 100) / 100;
     }
 
     // The terminal PIN. Empty clears it, which takes that person out of the
@@ -562,14 +601,19 @@ app.patch('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => 
     // Any privilege change (password/role/permissions) revokes sessions → re-login
     // so the new permission set is minted into a fresh token.
     if (updates.password || updates.role || updates.permissions) await revokeUserSessions(req.params.id);
-    res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user), commissionRate: user.commissionRate, sssNumber: user.sssNumber, philhealthNumber: user.philhealthNumber, pagibigNumber: user.pagibigNumber, tin: user.tin, employeeNumber: user.employeeNumber, hasPin: !!user.pinHash } });
+    res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user), commissionRate: user.commissionRate, dailyRate: user.dailyRate || 0, sssNumber: user.sssNumber, philhealthNumber: user.philhealthNumber, pagibigNumber: user.pagibigNumber, tin: user.tin, employeeNumber: user.employeeNumber, hasPin: !!user.pinHash } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
-app.delete('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/users/:id', verifyToken, requireUserAdmin, async (req, res) => {
   try {
+    // Delete stays idempotent (a missing id is not an error, as before); the
+    // escalation guard only has something to check when the account exists.
+    const target = await User.findById(req.params.id).select('role permissions').lean();
+    const denied = target ? guardStaffEscalation(req.user, { targetUser: target }) : null;
+    if (denied) return res.status(403).json({ success: false, error: denied });
     await User.findByIdAndDelete(req.params.id);
     await revokeUserSessions(req.params.id); // kill any active sessions for the deleted account
     res.json({ success: true });
@@ -600,7 +644,10 @@ app.patch('/api/users/me/password', verifyToken, requireStaff, async (req, res) 
     // Invalidate all existing sessions (other devices), then re-issue one for the
     // current device so the user who just changed their password stays logged in here.
     await revokeUserSessions(user._id);
-    const token = await issueSession(res, user, { userAgent: req.headers['user-agent'] });
+    // Re-read: revoking bumped tokenVersion, and a token minted from the copy
+    // loaded above would carry the old version and be refused immediately.
+    const fresh = await User.findById(user._id);
+    const token = await issueSession(res, fresh, { userAgent: req.headers['user-agent'] });
 
     await AuditLog.create({
       userId: user.name,

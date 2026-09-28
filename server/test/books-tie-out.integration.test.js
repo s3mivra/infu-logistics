@@ -77,6 +77,14 @@ async function runTheBusiness() {
     acquisitionCost: 60000, salvageValue: 6000, usefulLifeMonths: 60,
     acquisitionDate: '2026-01-15', paidFromAccount: '111000',
   });
+  // A second asset that is KEPT, so the fixed-asset register below has a
+  // live balance to tie out - the espresso machine is sold later.
+  const grinder = await auth('post', '/api/fixed-assets').send({
+    name: 'Grinder', accountCode: '140200',
+    acquisitionCost: 24000, salvageValue: 0, usefulLifeMonths: 48,
+    acquisitionDate: '2026-02-01', paidFromAccount: '111000',
+  });
+  if (!grinder.body?.success) throw new Error(`grinder rejected: ${grinder.body?.error}`);
   await auth('post', '/api/fixed-assets/run-depreciation').send({ asOf: '2026-04-30' });
 
   // 4. Something to sell, built on the stock.
@@ -98,6 +106,10 @@ async function runTheBusiness() {
   };
   await sell('Cash');
   await sell('Bank Transfer');   // settles to A/R rather than cash
+  // Collected in hand at pickup: debited to 111000, NOT a receivable. Present
+  // so the subledger tie-out below has something that could wrongly be counted
+  // as A/R - which is exactly what used to happen.
+  await sell('Pickup');
 
   // 6. An expense, paid in cash.
   const exp = await auth('post', '/api/expenses').send({
@@ -187,6 +199,105 @@ describe('the books after a full cycle', () => {
 
     const stranded = withBalance.filter(code => !reported.has(code));
     expect(stranded, `not on any statement: ${stranded.join(', ')}`).toEqual([]);
+  }, 60000);
+
+  // ── Subsidiary ledgers vs their control accounts ────────────────────────
+  //
+  // A trial balance that balances says nothing about whether the A/R aging
+  // schedule agrees with account 120000. They are built from different
+  // sources - the subledger walks Orders, the control account is the sum of
+  // posted journal lines - and the only thing keeping them equal is that both
+  // sides agree on which orders are receivables at all.
+  //
+  // They did not agree. Every A/R query asked for `paymentMethod != 'Cash'`
+  // while the ledger debited Pickup, Manual Delivery and Lalamove straight to
+  // Cash on Hand, so the subledger reported receivables the control account
+  // had never heard of. That is the failure this pair of checks exists for.
+  const controlBalance = async (code) => {
+    const agg = await M('JournalEntry').aggregate([
+      { $unwind: '$lines' },
+      { $match: { 'lines.accountCode': code } },
+      { $group: {
+        _id: null,
+        debit: { $sum: { $ifNull: ['$lines.debit', 0] } },
+        credit: { $sum: { $ifNull: ['$lines.credit', 0] } },
+      } },
+    ]);
+    const r = agg[0] || { debit: 0, credit: 0 };
+    return { debit: r2(r.debit), credit: r2(r.credit), net: r2(r.debit - r.credit) };
+  };
+
+  it('ties the A/R subsidiary ledger to control account 120000', async () => {
+    const res = await auth('get', '/api/reports/ar-aging');
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const subledger = r2(res.body?.totals?.total ?? -1);
+    const control = await controlBalance('120000');
+
+    // Not vacuous: the cycle sold on Bank Transfer, so both sides must be real.
+    expect(control.net, 'nothing reached 120000 - the cycle did not run').toBeGreaterThan(0);
+    expect(subledger, 'the aging schedule is empty').toBeGreaterThan(0);
+
+    expect(
+      Math.abs(subledger - control.net),
+      `A/R subledger ${subledger} vs control account 120000 ${control.net}`,
+    ).toBeLessThanOrEqual(0.01);
+  }, 60000);
+
+  // Net of every account whose code starts with one of these prefixes.
+  const netByPrefix = async (prefixes) => {
+    const agg = await M('JournalEntry').aggregate([
+      { $unwind: '$lines' },
+      { $group: {
+        _id: '$lines.accountCode',
+        debit: { $sum: { $ifNull: ['$lines.debit', 0] } },
+        credit: { $sum: { $ifNull: ['$lines.credit', 0] } },
+      } },
+    ]);
+    return r2(agg.filter(a => prefixes.some(p => String(a._id).startsWith(p)))
+      .reduce((t, a) => t + a.debit - a.credit, 0));
+  };
+
+  it('ties the stock on hand to control account 130000', async () => {
+    // The inventory subledger is each item's quantity at its weighted cost.
+    const items = await M('Inventory').find({}, { stockQty: 1, unitCost: 1 }).lean();
+    const subledger = r2(items.reduce((t, i) => t + (Number(i.stockQty) || 0) * (Number(i.unitCost) || 0), 0));
+    const control = (await controlBalance('130000')).net;
+
+    expect(control, 'nothing reached 130000 - the cycle did not run').toBeGreaterThan(0);
+    expect(
+      Math.abs(subledger - control),
+      `stock valuation ${subledger} vs control account 130000 ${control}`,
+    ).toBeLessThanOrEqual(0.05);
+  }, 60000);
+
+  it('ties the fixed-asset register to its control accounts', async () => {
+    // Register: net book value of everything not yet disposed.
+    const assets = await M('FixedAsset').find({ status: { $ne: 'Disposed' } }).lean();
+    const subledger = r2(assets.reduce((t, a) =>
+      t + (Number(a.acquisitionCost) || 0) - (Number(a.accumulatedDepreciation) || 0), 0));
+    // Ledger: cost accounts (140xxx) less accumulated depreciation (150xxx,
+    // which carries a credit balance, so the debit-minus-credit sum nets it).
+    const control = await netByPrefix(['140', '150']);
+
+    expect(subledger, 'no live asset in the register').toBeGreaterThan(0);
+    expect(
+      Math.abs(subledger - control),
+      `fixed-asset register ${subledger} vs ledger 140xxx/150xxx ${control}`,
+    ).toBeLessThanOrEqual(0.01);
+  }, 60000);
+
+  it('ties the A/P subsidiary ledger to control account 220000', async () => {
+    const res = await auth('get', '/api/reports/ap-aging');
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const subledger = r2(res.body?.totals?.total ?? -1);
+    const control = await controlBalance('220000');
+    // A/P is a credit-balance account, so the control figure is credit - debit.
+    const controlNet = r2(control.credit - control.debit);
+
+    expect(
+      Math.abs(subledger - controlNet),
+      `A/P subledger ${subledger} vs control account 220000 ${controlNet}`,
+    ).toBeLessThanOrEqual(0.01);
   }, 60000);
 });
 

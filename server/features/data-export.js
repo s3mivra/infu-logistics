@@ -12,6 +12,7 @@
 //
 // Rows are returned as JSON (headers + arrays) and the client turns them into
 // a workbook, which keeps xlsx off the server entirely.
+import { businessDateStr } from '../lib/businessTime.js';
 import { captureError } from '../lib/errorLog.js';
 import {
   DATASETS, accountBalanceRows, ACCOUNT_BALANCE_COLUMNS,
@@ -248,7 +249,7 @@ export default function registerDataExport(ctx) {
           if (!debitLine) continue;
           const credLine = (e.lines || []).find(l => (l.credit || 0) > 0);
           rows.push([
-            new Date(e.date).toISOString().slice(0, 10), e.reference || '',
+            businessDateStr(e.date), e.reference || '',
             debitLine.accountCode, debitLine.accountName || '',
             Math.round((debitLine.debit || 0) * 100) / 100,
             credLine?.accountName || '', e.description || '',

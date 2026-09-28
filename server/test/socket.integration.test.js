@@ -5,9 +5,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { io as ioClient } from 'socket.io-client';
-import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { bootApp, makeUser, makeClient, loginStaff, loginClient } from './helpers/harness.js';
 
-let ctx, app, server, port, adminTok, productId;
+let ctx, app, server, port, adminTok, financeTok, clientTok, productId;
 
 const connect = (opts = {}) => new Promise((resolve, reject) => {
   const s = ioClient(`http://127.0.0.1:${port}`, { transports: ['websocket'], reconnection: false, ...opts });
@@ -22,6 +22,10 @@ beforeAll(async () => {
   server = ctx.server;
   await makeUser({ name: 'sk_admin', role: 'admin' });
   adminTok = await loginStaff(app, 'sk_admin');
+  await makeUser({ name: 'sk_finance', role: 'finance' });
+  financeTok = await loginStaff(app, 'sk_finance');
+  await makeClient({ username: 'sk_client' });
+  clientTok = await loginClient(app, 'sk_client');
 
   const Inventory = mongoose.model('Inventory');
   const Product = mongoose.model('Product');
@@ -51,6 +55,38 @@ describe('socket.io real-time', () => {
 
     const evt = await Promise.race([received, new Promise((_, rej) => setTimeout(() => rej(new Error('no broadcast')), 5000))]);
     expect(evt).toBeTruthy();
+    s.close();
+  });
+
+  it("a client-portal token does NOT receive other customers' orders", async () => {
+    // A customer's JWT is valid too, and used to land in the staff 'cashier'
+    // room - every order, live, with names and totals.
+    const s = await connect({ auth: { token: clientTok } });
+    let leaked = false;
+    s.on('newOrder', () => { leaked = true; });
+    const r = await request(app).post('/api/orders').set('Authorization', `Bearer ${adminTok}`)
+      .send({ items: [{ productId, name: 'SK Brew', price: 100, quantity: 1 }], table: 'Takeout', paymentMethod: 'Cash' });
+    expect(r.status).toBe(200);
+    await new Promise((res) => setTimeout(res, 800));
+    expect(leaked).toBe(false);
+    s.close();
+  });
+
+  it('a finance user gets ledger updates (the room follows accounting.view, not the admin role)', async () => {
+    const s = await connect({ auth: { token: financeTok } });
+    const got = new Promise((resolve) => s.once('erpUpdated', resolve));
+    // A manual journal entry fires emitToMgr('erpUpdated'). Finance does not
+    // approve its own entries, so this one is saved for approval (202) - that
+    // refreshes the ledger screens too.
+    const r = await request(app).post('/api/journal').set('Authorization', `Bearer ${financeTok}`).send({
+      description: 'socket probe', lines: [
+        { accountCode: '111000', accountName: 'Cash on Hand', debit: 10, credit: 0 },
+        { accountCode: '310000', accountName: "Owner's Capital", debit: 0, credit: 10 },
+      ],
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(202);
+    const evt = await Promise.race([got, new Promise((_, rej) => setTimeout(() => rej(new Error('finance got no ledger update')), 5000))]);
+    expect(evt).toBeDefined();
     s.close();
   });
 

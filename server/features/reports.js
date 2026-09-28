@@ -1,12 +1,16 @@
 ﻿// reports routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { atomic } from '../lib/atomicRoute.js';
+import { roundMoney } from '../lib/money.js';
+import { buildCashFlow } from '../lib/cashFlow.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { bucketFor, resolveClientKey, RECEIVABLE_STATUSES, isReceivableStatus } from '../lib/credit.js';
 import { captureError } from '../lib/errorLog.js';
 import { sectionAncestor } from '../lib/chartOfAccounts.js';
 import { buildBalanceSheet } from '../lib/consolidate.js';
+import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 
 export default function registerReports(ctx) {
   const {
@@ -1104,7 +1108,10 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, requi
 });
 
 // ── SELLER COMMISSIONS ────────────────────────────────────────────────────────
-// Per-seller (Order.cashier, matched against User.name) commission over a date
+// Per-seller commission over a date. The seller is the order's salesperson
+// (picked at the POS, or the client's assigned one) and, for orders that
+// predate salespeople, whoever rang it up (Order.cashier), matched against
+// User.name.
 // range: sales total × that user's commissionRate. Complimentary orders are
 // excluded - same convention as profit-by-category - since no revenue actually
 // came in to take a commission from. Every user with any sales in range is
@@ -1122,7 +1129,10 @@ app.get('/api/reports/commissions', verifyToken, ...canViewReports, requirePermi
     const [agg, users] = await Promise.all([
       Order.aggregate([
         { $match: match },
-        { $group: { _id: '$cashier', salesTotal: { $sum: '$total' }, orderCount: { $sum: 1 } } },
+        { $group: {
+            _id: { $cond: [{ $gt: [{ $strLenCP: { $ifNull: ['$salesperson', ''] } }, 0] }, '$salesperson', '$cashier'] },
+            salesTotal: { $sum: '$total' }, orderCount: { $sum: 1 },
+        } },
       ]),
       User.find({}, { name: 1, userCode: 1, commissionRate: 1 }).lean(),
     ]);
@@ -1144,6 +1154,46 @@ app.get('/api/reports/commissions', verifyToken, ...canViewReports, requirePermi
       })
       .sort((a, b) => b.commissionEarned - a.commissionEarned);
     res.json({ success: true, sellers, totalCommission: +sellers.reduce((s, x) => s + x.commissionEarned, 0).toFixed(2) });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// ── SALES BY CHANNEL (wholesale / retail) ────────────────────────────────────
+// Orders placed before channels were recorded count as wholesale when their
+// buyer's account carries a "wholesale" segment today.
+app.get('/api/reports/sales-by-channel', verifyToken, ...canViewReports, requirePermission('screen.reports.saleschannel'), async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
+    const orders = await Order.find({
+      businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true },
+      createdAt: { $gte: dayStart(start), $lte: dayEnd(end) },
+    }, { channel: 1, clientId: 1, clientAccountId: 1, subtotal: 1, discount: 1, total: 1, items: 1, refundedAmount: 1 }).limit(50000).lean();
+    const ids = [...new Set(orders.map(o => o.clientAccountId || o.clientId).filter(id => id && mongoose.Types.ObjectId.isValid(String(id))))];
+    const wholesaleIds = new Set((await ClientAccount.find({ _id: { $in: ids }, segments: { $regex: /wholesale/i } }, { _id: 1 }).lean()).map(c => String(c._id)));
+    const acc = {};
+    for (const o of orders) {
+      const ch = o.channel === 'Wholesale' || wholesaleIds.has(String(o.clientAccountId || o.clientId || '')) ? 'Wholesale' : 'Retail';
+      const a = acc[ch] || (acc[ch] = { channel: ch, orders: 0, units: 0, gross: 0, discount: 0, net: 0, products: new Map() });
+      a.orders += 1;
+      a.gross += Number(o.subtotal) || 0;
+      a.discount += Number(o.discount) || 0;
+      a.net += (Number(o.total) || 0) - (Number(o.refundedAmount) || 0);
+      for (const it of o.items || []) {
+        const q = Number(it.quantity) || 0;
+        a.units += q;
+        const p = a.products.get(it.name) || { name: it.name, qty: 0, sales: 0 };
+        p.qty += q; p.sales += (Number(it.price) || 0) * q;
+        a.products.set(it.name, p);
+      }
+    }
+    const totalNet = Object.values(acc).reduce((s, a) => s + a.net, 0);
+    const channels = ['Retail', 'Wholesale'].map(ch => acc[ch] || { channel: ch, orders: 0, units: 0, gross: 0, discount: 0, net: 0, products: new Map() }).map(a => ({
+      channel: a.channel, orders: a.orders, units: a.units,
+      gross: roundMoney(a.gross), discount: roundMoney(a.discount), net: roundMoney(a.net),
+      share: totalNet > 0 ? roundMoney((a.net / totalNet) * 100) : 0,
+      topProducts: [...a.products.values()].sort((x, y) => y.sales - x.sales).slice(0, 10).map(p => ({ ...p, sales: roundMoney(p.sales) })),
+    }));
+    res.json({ success: true, channels, totalNet: roundMoney(totalNet) });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
@@ -1305,7 +1355,8 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, require
       if (end) { match.createdAt.$lte = dayEnd(end); }
     }
     const orders = await Order.find(match, {
-      orderNumber: 1, paymentMethod: 1, createdAt: 1, customerName: 1, clientId: 1, clientAccountId: 1, items: 1,
+      orderNumber: 1, paymentMethod: 1, createdAt: 1, completedAt: 1, customerName: 1, clientId: 1, clientAccountId: 1, items: 1,
+      billingNumber: 1, orNumber: 1, drNumber: 1, deliveryReceipts: 1, discount: 1,
     }).sort({ createdAt: 1 }).lean();
 
     const clientRefIds = [...new Set(orders.map(o => o.clientId || o.clientAccountId).filter(Boolean))];
@@ -1328,14 +1379,37 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, require
       const refId = o.clientId || o.clientAccountId || '';
       const customerId = (clientCodeById[String(refId)] || WALK_IN_CUSTOMER_CODE).toUpperCase();
       const customerName = (o.customerName || 'WALK-IN').toUpperCase();
-      for (const it of (o.items || [])) {
+      // The document-level fields the daily sales report asks for: posting date
+      // (when the sale completed and reached the books), document date (when
+      // the order was taken), and the billing / delivery / invoice numbers.
+      const docFields = {
+        postingDate: o.completedAt || o.createdAt, documentDate: o.createdAt,
+        billingNumber: o.billingNumber || '', orNumber: o.orNumber || '',
+        drNumbers: (o.deliveryReceipts || []).map(d => d.drNumber).join(', ') || o.drNumber || '',
+      };
+      // Each line's discount: its own (product/cashier) percent first, then its
+      // share of any order-level discount, spread by what is left of each line.
+      const lineInfo = (o.items || []).map((it) => {
         const qty = Number(it.quantity) || 0;
-        const lineTotal = (Number(it.price) || 0) * qty + (it.selectedAddOns || []).reduce((s, a) => s + (Number(a.price) || 0), 0) * qty;
+        const gross = (Number(it.price) || 0) * qty + (it.selectedAddOns || []).reduce((s, a) => s + (Number(a.price) || 0), 0) * qty;
+        const pct = Math.max(Number(it.productDiscountPercent) || 0, Number(it.discountPercent) || 0);
+        return { gross, own: Math.round(gross * pct) / 100 };
+      });
+      const ownTotal = lineInfo.reduce((s, l) => s + l.own, 0);
+      const orderLevel = Math.max(0, (Number(o.discount) || 0) - ownTotal);
+      const base = lineInfo.reduce((s, l) => s + (l.gross - l.own), 0);
+      for (const [idx, it] of (o.items || []).entries()) {
+        const qty = Number(it.quantity) || 0;
+        const lineTotal = lineInfo[idx].gross;
+        const share = base > 0 ? orderLevel * (lineInfo[idx].gross - lineInfo[idx].own) / base : 0;
+        const lineDiscount = Math.round((lineInfo[idx].own + share) * 100) / 100;
         const isCombo = it.isCombo && Array.isArray(it.comboItems) && it.comboItems.length > 0;
         rows.push({
           date: o.createdAt, orderNumber: o.orderNumber, paymentMethod: o.paymentMethod,
-          customerId, customerName,
+          customerId, customerName, ...docFields,
           itemCode: (it.productCode || '').toUpperCase(), itemName: (it.name || '').toUpperCase(), quantity: qty, lineTotal,
+          unitPrice: qty ? Math.round((lineTotal / qty) * 100) / 100 : 0,
+          grossSales: lineTotal, discount: lineDiscount, netSales: Math.round((lineTotal - lineDiscount) * 100) / 100,
           isCombo,
         });
         // For a promo/combo, list the products it includes as indented sub-rows.
@@ -1345,7 +1419,8 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, require
           for (const comp of it.comboItems) {
             rows.push({
               date: o.createdAt, orderNumber: o.orderNumber, paymentMethod: o.paymentMethod,
-              customerId, customerName,
+              customerId, customerName, ...docFields,
+              unitPrice: 0, grossSales: 0, discount: 0, netSales: 0,
               itemCode: (codeByProductId[String(comp.productId)] || '').toUpperCase(),
               itemName: (comp.name || '').toUpperCase() + (comp.sizeName ? ` (${comp.sizeName})` : ''),
               quantity: (Number(comp.quantity) || 1) * qty, lineTotal: 0,
@@ -1356,7 +1431,76 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, require
       }
     }
     const grandTotal = rows.reduce((s, r) => s + r.lineTotal, 0);
-    res.json({ success: true, rows, grandTotal });
+    const totals = rows.reduce((t, r) => ({ gross: t.gross + (r.grossSales || 0), discount: t.discount + (r.discount || 0), net: t.net + (r.netSales || 0) }), { gross: 0, discount: 0, net: 0 });
+    res.json({ success: true, rows, grandTotal, totals: { gross: roundMoney(totals.gross), discount: roundMoney(totals.discount), net: roundMoney(totals.net) } });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// ── STATEMENT OF CASH FLOWS (direct method) ──────────────────────────────────
+// Read from the ledger, like the P&L and balance sheet: every entry that moved
+// cash, classified by what was on the other side of it (lib/cashFlow.js).
+// Opening cash is every cash line dated before the range; the closing figure
+// is checked against the ledger's own cash balance at the end of it.
+app.get('/api/reports/cash-flow', verifyToken, ...canViewReports, requirePermission('screen.reports.cashflow'), async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
+    const from = dayStart(start), to = dayEnd(end);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) return res.status(400).json({ success: false, error: 'Invalid date range.' });
+    const CASH = /^11[1-5]/;
+    const cashBalanceBefore = async (when, inclusive) => {
+      const agg = await JournalEntry.aggregate([
+        { $match: { date: inclusive ? { $lte: when } : { $lt: when }, 'lines.accountCode': CASH } },
+        { $unwind: '$lines' },
+        { $match: { 'lines.accountCode': CASH } },
+        { $group: { _id: null, dr: { $sum: { $ifNull: ['$lines.debit', 0] } }, cr: { $sum: { $ifNull: ['$lines.credit', 0] } } } },
+      ]);
+      return roundMoney((agg[0]?.dr || 0) - (agg[0]?.cr || 0));
+    };
+    const [openingCash, ledgerClosing, entries] = await Promise.all([
+      cashBalanceBefore(from, false),
+      cashBalanceBefore(to, true),
+      JournalEntry.find({ date: { $gte: from, $lte: to }, 'lines.accountCode': CASH }, { lines: 1 }).lean(),
+    ]);
+    const cf = buildCashFlow({ entries, openingCash });
+    res.json({ success: true, period: { start: from, end: to }, ...cf, ledgerClosingCash: ledgerClosing, ties: Math.abs(ledgerClosing - cf.closingCash) < 0.01 });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// ── DAILY SALES SUMMARY: one row per sales document ─────────────────────────
+// Posting date, document date, customer number and name, billing / delivery /
+// invoice numbers and the amount - the summary the daily sales report calls
+// for, beside the detailed line report above. Filtered by POSTING date (when
+// the sale reached the books), which is what the day's deposit ties to.
+app.get('/api/reports/sales-documents', verifyToken, ...canViewReports, requirePermission('screen.reports.salesline'), async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
+    const from = dayStart(start), to = dayEnd(end);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return res.status(400).json({ success: false, error: 'Invalid date range.' });
+    const orders = await Order.find({
+      businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true },
+      $or: [{ completedAt: { $gte: from, $lte: to } }, { completedAt: null, createdAt: { $gte: from, $lte: to } }],
+    }, {
+      orderNumber: 1, createdAt: 1, completedAt: 1, customerName: 1, clientId: 1, clientAccountId: 1, paymentMethod: 1,
+      billingNumber: 1, orNumber: 1, drNumber: 1, deliveryReceipts: 1, subtotal: 1, discount: 1, total: 1, vatAmount: 1,
+    }).sort({ completedAt: 1, createdAt: 1 }).limit(20000).lean();
+    const refIds = [...new Set(orders.map(o => o.clientId || o.clientAccountId).filter(Boolean))].filter(id => mongoose.Types.ObjectId.isValid(String(id)));
+    const accounts = refIds.length ? await ClientAccount.find({ _id: { $in: refIds } }, { clientCode: 1, name: 1 }).lean() : [];
+    const codeById = Object.fromEntries(accounts.map(c => [String(c._id), c.clientCode]));
+    const nameById = Object.fromEntries(accounts.map(c => [String(c._id), c.name]));
+    const rows = orders.map(o => ({
+      postingDate: o.completedAt || o.createdAt, documentDate: o.createdAt,
+      customerNumber: (codeById[String(o.clientId || o.clientAccountId || '')] || WALK_IN_CUSTOMER_CODE).toUpperCase(),
+      // A sale on a client's account is theirs, whatever the till typed as the name.
+      customerName: (nameById[String(o.clientId || o.clientAccountId || '')] || o.customerName || 'WALK-IN').toUpperCase(),
+      orderNumber: o.orderNumber, billingNumber: o.billingNumber || '', orNumber: o.orNumber || '',
+      drNumbers: (o.deliveryReceipts || []).map(d => d.drNumber).join(', ') || o.drNumber || '',
+      paymentMethod: o.paymentMethod || '',
+      gross: roundMoney(o.subtotal || 0), discount: roundMoney(o.discount || 0), amount: roundMoney(o.total || 0), vat: roundMoney(o.vatAmount || 0),
+    }));
+    const total = roundMoney(rows.reduce((s, r) => s + r.amount, 0));
+    res.json({ success: true, rows, total, count: rows.length });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
@@ -1367,6 +1511,98 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, require
 // excluded). 410000 is booked gross-of-discount, so an explicit "less: sales
 // discounts" line is returned and the figure reconciles to cash received.
 // Aggregate-based - no in-memory full scan. No schema/journal changes (report only).
+// The report and the accrual below read the SAME figure, so what the books
+// carry is what the return will show.
+// Only NON-VAT sales count: an order stamped with a VAT rate was a VAT sale
+// (it owes output VAT, never this tax), so a month in which the business
+// registered for VAT part-way through is taxed only on the days before. And
+// money handed back on a partial refund was never a receipt, so it comes off.
+async function percentageTaxBetween(req, startDate, endDate) {
+  const agg = await Order.aggregate([
+    { $match: { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, vatRate: { $in: [0, null] }, createdAt: { $gte: startDate, $lte: endDate } } },
+    { $group: {
+        _id: null,
+        netCollected: { $sum: { $subtract: [{ $ifNull: ['$total', 0] }, { $ifNull: ['$refundedAmount', 0] }] } },
+        discounts:    { $sum: { $ifNull: ['$discount', 0] } },
+        orders:       { $sum: 1 },
+    } },
+  ]);
+  const a = agg[0] || { netCollected: 0, discounts: 0, orders: 0 };
+  return { a, tax: computePercentageTax({ netCollected: a.netCollected, discounts: a.discounts }) };
+}
+
+// ── ACCRUE PERCENTAGE TAX FOR A MONTH ─────────────────────────────────────
+// Books the month's 3% percentage tax: DR 745000 Percentage Tax Expense /
+// CR 230400 Percentage Tax Payable, dated the last day of the month.
+//
+// It posts the DIFFERENCE between what the month owes now and what has
+// already been accrued for it. So running it again after a sale in that month
+// was voided corrects the books (a negative difference reverses the excess),
+// and running it with nothing changed posts nothing. Refused for a closed
+// month. Whether VAT applies is decided per sale (see percentageTaxBetween),
+// not by today's setting, so a month from before VAT registration can still
+// be accrued after it.
+//
+// Runs as one transaction that first bumps a per-month lock counter: two
+// clicks at once used to both read "nothing accrued yet" and post twice.
+app.post('/api/reports/percentage-tax/accrue', verifyToken, requireStaff, requirePermission('accounting.manage'), atomic(mongoose, async (req, res) => {
+  try {
+    const m = /^(\d{4})-(\d{2})$/.exec(String(req.body?.month || ''));
+    if (!m) return res.status(400).json({ success: false, error: 'Give the month as YYYY-MM.' });
+    const year = Number(m[1]); const month = Number(m[2]);
+    if (month < 1 || month > 12) return res.status(400).json({ success: false, error: 'Give the month as YYYY-MM.' });
+
+    const startDate = new Date(year, month - 1, 1, 0, 0, 0, 0);
+    const endDate = new Date(year, month, 0, 23, 59, 59, 999);      // last day of the month
+    if (endDate > new Date()) {
+      return res.status(400).json({ success: false, error: 'A month can only be accrued once it has ended.' });
+    }
+    const lock = await periodLockFor(endDate);
+    if (lock) return res.status(423).json({ success: false, error: `${m[1]}-${m[2]} is closed. Reopen it to accrue, or accrue before closing.` });
+
+    const refBase = `PCT-${m[1]}-${m[2]}`;
+    await mongoose.model('Counter').findOneAndUpdate({ _id: `LOCK-${refBase}` }, { $inc: { seq: 1 } }, { upsert: true });
+    const { a, tax } = await percentageTaxBetween(req, startDate, endDate);
+    if (!a.orders) {
+      const vatRow = await Settings.findOne({ key: 'vatEnabled' }).lean();
+      if (vatRow?.value === true || vatRow?.value === 'true') {
+        return res.status(400).json({ success: false, error: 'This business is VAT-registered and had no non-VAT sales that month, so it owes no 3% percentage tax for it.' });
+      }
+    }
+    const prior = await JournalEntry.aggregate([
+      { $match: { reference: { $regex: `^${refBase}` } } },
+      { $unwind: '$lines' },
+      { $match: { 'lines.accountCode': '230400' } },
+      { $group: { _id: null, cr: { $sum: { $ifNull: ['$lines.credit', 0] } }, dr: { $sum: { $ifNull: ['$lines.debit', 0] } } } },
+    ]);
+    const alreadyAccrued = Math.round(((prior[0]?.cr || 0) - (prior[0]?.dr || 0)) * 100) / 100;
+    const delta = Math.round((tax.taxDue - alreadyAccrued) * 100) / 100;
+    if (Math.abs(delta) < 0.01) {
+      return res.json({ success: true, posted: false, taxDue: tax.taxDue, alreadyAccrued, note: 'Already up to date - nothing to post.' });
+    }
+
+    const priorCount = await JournalEntry.countDocuments({ reference: { $regex: `^${refBase}` } });
+    const reference = priorCount ? `${refBase}-ADJ${priorCount}` : refBase;
+    const amt = Math.abs(delta);
+    const lines = delta > 0
+      ? [{ accountCode: '745000', accountName: 'Percentage Tax Expense', debit: amt, credit: 0 },
+         { accountCode: '230400', accountName: 'Percentage Tax Payable', debit: 0, credit: amt }]
+      : [{ accountCode: '230400', accountName: 'Percentage Tax Payable', debit: amt, credit: 0 },
+         { accountCode: '745000', accountName: 'Percentage Tax Expense', debit: 0, credit: amt }];
+    const entry = await JournalEntry.create({
+      date: endDate, reference,
+      description: `${delta > 0 ? 'Percentage tax accrued' : 'Percentage tax accrual reduced'} for ${m[1]}-${m[2]} (3% of ₱${tax.netCollected.toLocaleString('en-PH', { minimumFractionDigits: 2 })} gross receipts)`,
+      lines, totalDebit: amt, totalCredit: amt,
+      postedBy: req.user?.name || '',
+    });
+    await logAudit(req, { action: 'accrue', entity: 'PercentageTax', entityId: reference, after: { month: `${m[1]}-${m[2]}`, taxDue: tax.taxDue, alreadyAccrued, posted: delta } });
+    emitToMgr?.('erpUpdated');
+    res.json({ success: true, posted: true, reference, amount: delta, taxDue: tax.taxDue, alreadyAccrued, entry });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+}));
+
 app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, requirePermission('screen.reports.percentagetax'), async (req, res) => {
   try {
     const { start, end } = req.query;
@@ -1382,9 +1618,12 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, requirePe
     // A VAT-registered business owes 12% VAT and is NOT liable for the 3%
     // percentage tax (NIRC §116) - the two are mutually exclusive. Returning a
     // figure here while VAT is on would invite someone to pay a tax they do not
-    // owe, so the report reports its own inapplicability instead.
+    // owe, so the report reports its own inapplicability instead - unless the
+    // range still holds non-VAT sales (the days before VAT registration),
+    // which do owe it.
+    const { a, tax } = await percentageTaxBetween(req, startDate, endDate);
     const vatRow = await Settings.findOne({ key: 'vatEnabled' }).lean();
-    if (vatRow?.value === true || vatRow?.value === 'true') {
+    if ((vatRow?.value === true || vatRow?.value === 'true') && !a.orders) {
       return res.json({
         success: true,
         notApplicable: true,
@@ -1394,18 +1633,6 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, requirePe
         rate: PERCENTAGE_TAX_RATE, taxDue: 0, lines: [],
       });
     }
-
-    const agg = await Order.aggregate([
-      { $match: { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: startDate, $lte: endDate } } },
-      { $group: {
-          _id: null,
-          netCollected: { $sum: { $ifNull: ['$total', 0] } },
-          discounts:    { $sum: { $ifNull: ['$discount', 0] } },
-          orders:       { $sum: 1 },
-      } },
-    ]);
-    const a = agg[0] || { netCollected: 0, discounts: 0, orders: 0 };
-    const tax = computePercentageTax({ netCollected: a.netCollected, discounts: a.discounts });
 
     res.json({
       success: true,
@@ -1668,7 +1895,7 @@ app.get('/api/reports/ar-aging', verifyToken, ...canViewReports, requirePermissi
     const rows = await Order.find({
       businessType: BUSINESS_TYPE, ...tenantScope(req),
       status: { $in: RECEIVABLE_STATUSES },
-      paymentMethod: { $ne: 'Cash' },
+      paymentMethod: AR_PAYMENT_METHOD_FILTER,
       isComplimentary: { $ne: true },
       createdAt: { $lte: asOf },
     }, {
@@ -1825,7 +2052,7 @@ app.get('/api/reports/collections', verifyToken, ...canViewReports, requirePermi
     const dailyMap = new Map();
     for (const r of rows) {
       const d = (basis === 'deposit' ? r.depositDate : r.collectionDate);
-      const k = new Date(d).toISOString().slice(0, 10);
+      const k = businessDateStr(d);
       dailyMap.set(k, Math.round(((dailyMap.get(k) || 0) + r.amount) * 100) / 100);
     }
 
@@ -2146,7 +2373,7 @@ app.get('/api/reports/supplier-payments', verifyToken, ...canViewReports, requir
 
     const dailyMap = new Map();
     for (const p of payments) {
-      const k = new Date(p.date).toISOString().slice(0, 10);
+      const k = businessDateStr(p.date);
       dailyMap.set(k, Math.round(((dailyMap.get(k) || 0) + p.amount) * 100) / 100);
     }
 

@@ -41,7 +41,10 @@ beforeAll(async () => {
   await User.create([
     { name: 'MoneyOwner', password: pw, userCode: 'ADN-A8001', role: 'superadmin' },
     { name: 'MoneyAdmin', password: pw, userCode: 'ADN-A8002', role: 'admin' },
-    { name: 'MoneyStaff', password: pw, userCode: 'ADN-A8003', role: 'staff' },
+    // Recording spoilage needs inventory.waste. An explicit list is exact, so it
+    // is named here rather than left to the boot migration that adds floor
+    // actions to stored lists - that raced this user's creation.
+    { name: 'MoneyStaff', password: pw, userCode: 'ADN-A8003', role: 'staff', permissions: ['pos.use', 'orders.view', 'inventory.view', 'products.view', 'inventory.manage', 'inventory.waste'] },
   ]);
   ownerToken = await login('MoneyOwner', 'pw');
   adminToken = await login('MoneyAdmin', 'pw');
@@ -86,7 +89,7 @@ describe('Batch 2 - spoilage commits a balanced journal entry inside a transacti
       .post(`/api/inventory/spoilage/${item._id}`)
       .set('Authorization', `Bearer ${staffToken}`)
       .send({ qty: 100, reason: 'Expired', note: 'integration test' });
-    expect(res.status).toBe(200);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
 
     const after = await Inventory.findById(item._id).lean();
     expect(after.stockQty).toBe(900); // 1000 − 100
@@ -141,7 +144,7 @@ describe('Batch 2 - percentage-tax report', () => {
     const res = await request(app)
       .get('/api/reports/percentage-tax?start=2026-02-01&end=2026-02-28')
       .set('Authorization', `Bearer ${ownerToken}`);
-    expect(res.status).toBe(200);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body.orders).toBe(1);              // voided order excluded
     expect(res.body.grossSales).toBe(1000);
     expect(res.body.discounts).toBe(100);
@@ -186,7 +189,7 @@ describe('Batch 3 - journal CSV export is bounded + streamed', () => {
     const res = await request(app)
       .get(`/api/journal/export?start=${iso(start)}&end=${iso(end)}`)
       .set('Authorization', `Bearer ${ownerToken}`);
-    expect(res.status).toBe(200);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.headers['content-type']).toMatch(/text\/csv/);
     expect(res.text.startsWith('Date,Reference,Description,AccountCode,AccountName,Debit,Credit')).toBe(true);
   });
@@ -214,7 +217,7 @@ describe('Batch 3 - shift start enforces a valid starting cash', () => {
       .post('/api/shifts/start')
       .set('Authorization', `Bearer ${staffToken}`)
       .send({ startingCash: 0 });
-    expect(res.status).toBe(200);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body.shift.startingCash).toBe(0);
   });
 });

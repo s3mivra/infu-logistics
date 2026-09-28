@@ -2,7 +2,7 @@
 # Run `make` or `make help` to list available commands.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup install dev test build deploy stop logs restart status health backup restore prune clean
+.PHONY: help setup install dev test build deploy stop logs restart status health backup restore prune clean restore-drill backup-status
 
 help:           ## Show this help message
 	@echo ""
@@ -68,3 +68,12 @@ prune:          ## Delete backups older than 30 days
 
 clean:          ## Remove client dist + server node_modules + backups (DESTRUCTIVE)
 	@read -r -p "Delete dist/, node_modules/, backups/? Type 'yes': " ok && [ "$$ok" = "yes" ] && rm -rf client/dist client/node_modules server/node_modules backups && echo "Cleaned." || echo "Aborted."
+
+# Prove the latest backup restores (into a throwaway container; live data is only read).
+restore-drill:
+	@bash platform/restore-drill.sh
+
+# When did the last backup, offsite copy and restore drill succeed?
+backup-status:
+	@for f in LAST_SUCCESS LAST_FAILURE LAST_OFFSITE_SYNC LAST_RESTORE_DRILL; do printf '%-20s ' $$f; cat platform/backups/$$f 2>/dev/null || cat backups/$$f 2>/dev/null || echo never; done
+

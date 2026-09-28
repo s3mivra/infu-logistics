@@ -22,6 +22,8 @@
 // into a row. Fetching lives in the route (it needs models and request scope);
 // everything here is testable without a database.
 
+import { businessDateStr } from './businessTime.js';
+
 const money = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const round4 = (n) => Math.round((Number(n) || 0) * 1e4) / 1e4;
 const round6 = (n) => Math.round((Number(n) || 0) * 1e6) / 1e6;
@@ -67,7 +69,9 @@ const packLabel = (pack, disp) => {
   if (u === 'L' && pack < 1) return `${trim(pack * 1000)}ml`;
   return `${trim(pack)}${u}`;
 };
-const day = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
+// The business's calendar date - toISOString() gave the UTC one, a day early
+// for anything stamped before 08:00 in Manila.
+const day = (d) => (d && !Number.isNaN(new Date(d).getTime()) ? businessDateStr(d) : '');
 const yes = (b) => (b ? 'Yes' : 'No');
 
 // `key` is what the client asks for; `label` names the file and the button.
@@ -89,7 +93,7 @@ const round9 = (n) => Math.round((Number(n) || 0) * 1e9) / 1e9;
 const isoDay = (d) => {
   if (!d) return '';
   const t = new Date(d);
-  return Number.isNaN(t.getTime()) ? '' : t.toISOString().slice(0, 10);
+  return Number.isNaN(t.getTime()) ? '' : businessDateStr(t);
 };
 // Pack size written from BASE units, not the stored display unit, so it
 // parses back identically however the item was set up: 1000 g -> "1kg",
@@ -419,6 +423,7 @@ export const DATASETS = {
         { name: 'amount', required: true, note: 'The invoice total, in pesos.', example: '12000' },
         { name: 'expenseAccountCode', required: true, note: 'Which account this is charged to when approved. Without it the bill can never be approved - see the Accounts sheet.', example: '510000' },
         { name: 'dueDate', note: 'YYYY-MM-DD. When the supplier expects payment.', example: '2026-04-15' },
+        { name: 'supplierInvoiceNo', note: "The supplier's own invoice number. The same one cannot be entered twice.", example: 'INV-88120' },
       ],
     },
     columns: ['Bill No', 'Supplier', 'Description', 'Amount', 'Paid', 'Outstanding', 'Status', 'Due Date', 'Source'],
@@ -592,6 +597,22 @@ export const DATASETS = {
     },
   },
 
+  openDeposits: {
+    label: 'Open Deposits & Advances', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/open-deposits/import',
+      intro: 'Money paid ahead that is still unused on the switch-over day: customer deposits and credits you owe back in goods, and advances and credits you hold with suppliers and staff. Each lands on the Advances screen (or the client / supplier credit balance), ready to apply to their next order or bill. They do not post: the opening balance already holds them, so each kind should add up to its account there.',
+      columns: [
+        { name: 'kind', required: true, note: 'Customer deposit (260200) · Customer credit (260100) · Supplier advance (170200) · Supplier credit (160100) · Employee advance (170100).', example: 'Customer deposit' },
+        { name: 'name', required: true, note: 'Customer kinds: a client account name (a credit MUST match one; a deposit that does not is kept as a walk-in deposit). Supplier kinds: must match a supplier. Employee: the person.', example: 'Reyes Hardware' },
+        { name: 'reference', required: true, note: 'Your receipt, OR or voucher number - it is what stops the same row being carried in twice.', example: 'OR-10233' },
+        { name: 'date', note: 'YYYY-MM-DD, when the money was paid. Defaults to the day of import.', example: '2026-09-15' },
+        { name: 'amountRemaining', required: true, note: 'What is STILL unused - after anything already applied.', example: '5000' },
+        { name: 'note', note: 'What it is for.', example: 'Deposit on October bulk order' },
+      ],
+    },
+  },
+
   // ── Ledger. Export only: importing posted rows would let a spreadsheet
   //    rewrite history, and the balanced-entry guard exists precisely to stop
   //    that happening by accident.
@@ -721,8 +742,25 @@ export function buildValidValues({ expenseCategories = [], paymentMethods = [], 
   add('checkVouchers', 'Status', statuses.voucher, '');
   add('bills', 'Supplier', suppliers, 'Must match an existing supplier name.');
   add('purchaseOrders', 'Supplier', suppliers, 'Must match an existing supplier name.');
+  add('openDeposits', 'kind', OPEN_DEPOSIT_KINDS.map(k => k.label), 'Which register the row goes to - and which opening balance it must add up to.');
+  add('openDeposits', 'name', suppliers, 'For the supplier kinds: must match a supplier name. Customer kinds match a client account.');
 
   return table;
+}
+
+// The kinds of prepaid money carried in at switch-over, each with the control
+// account its total must match. Order matters only for display.
+export const OPEN_DEPOSIT_KINDS = [
+  { key: 'customerDeposit', label: 'Customer deposit', account: '260200', side: 'credit' },
+  { key: 'customerCredit',  label: 'Customer credit',  account: '260100', side: 'credit' },
+  { key: 'supplierAdvance', label: 'Supplier advance', account: '170200', side: 'debit' },
+  { key: 'supplierCredit',  label: 'Supplier credit',  account: '160100', side: 'debit' },
+  { key: 'employeeAdvance', label: 'Employee advance', account: '170100', side: 'debit' },
+];
+// "customer deposit", "Customer Deposits", "customer-deposit" -> the kind.
+export function openDepositKind(raw) {
+  const s = String(raw ?? '').trim().toLowerCase().replace(/[-_]+/g, ' ').replace(/s$/, '');
+  return OPEN_DEPOSIT_KINDS.find(k => k.label.toLowerCase() === s) || null;
 }
 
 export const VALID_VALUE_COLUMNS = ['Dataset', 'Column', 'Accepted Values', 'Notes'];

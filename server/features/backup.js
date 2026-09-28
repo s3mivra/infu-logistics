@@ -16,6 +16,7 @@
 // short-lived tokens; restoring them would hand back sessions that should have
 // died with the old database.
 import { captureError } from '../lib/errorLog.js';
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 const EXCLUDED = new Set(['RefreshSession', 'QRSession']);
 
@@ -145,7 +146,9 @@ export default function registerBackup(ctx) {
       const scope = scopeFor(Model, req);
       let cleared = 0;
       if (replace) {
-        const del = await Model.deleteMany(scope);
+        // A superadmin restore replacing the books is declared ledger
+        // maintenance - journal entries are otherwise append-only.
+        const del = await withLedgerMaintenance(() => Model.deleteMany(scope));
         cleared = del.deletedCount || 0;
       }
 

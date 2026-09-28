@@ -122,7 +122,7 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
                 <button onClick={() => setExpanded(expanded === sale._id ? null : sale._id)} className="flex-1 min-w-0 text-left flex items-center gap-2">
                   <ChevronRight size={14} className={`text-fg/70 shrink-0 transition-transform ${expanded === sale._id ? 'rotate-90' : ''}`} />
                   <div className="min-w-0">
-                    <p className="font-bold text-fg text-sm truncate">{sale.name}</p>
+                    <p className="font-bold text-fg text-sm truncate" title={String((sale.name) ?? '')}>{sale.name}</p>
                     <p className="text-[10px] text-fg/70 flex items-center gap-1 mt-0.5">
                       <Calendar size={9} />{fmtDate(sale.startsAt)} - {fmtDate(sale.endsAt)}
                       <span className="mx-1">·</span>{sale.rules?.length || 0} rule{sale.rules?.length !== 1 ? 's' : ''}
@@ -265,7 +265,7 @@ export default function ProductsTab({ ctx }) {
     fetchOrders, fetchPnl, fetchRfFunds, fetchRfTxs, fetchShiftHistory,
     fetchStockHistory, filteredOrders, formData, getEstimatedStock, globalAddOns,
     groupedArchives, handleImageUpload, handleInlinePriceUpdate, handleRestockSubmit, handleSaveAddOn,
-    handleSaveCategory, handleSaveProduct, handleVoidOrder, historyItemName, historyModalOpen,
+    handleSaveCategory, handleSaveProduct, busyForms, handleVoidOrder, historyItemName, historyModalOpen,
     historyPage, historySubTab, importModal, importRows, importSubmitting,
     invBadgeCount, invForm, invItemsPerPage, invPage, invSubTab,
     inventory, isPosOpen, isStatusMenuOpen, isSuperAdmin, can, itemDisplay,
@@ -317,6 +317,8 @@ export default function ProductsTab({ ctx }) {
     resetProductForm,
     prodSearch, setProdSearch, prodFilters, setProdFilters, filteredProducts, prodFiltersActive, resetProdFilters,
   } = ctx;
+  // Menu Setup opens with products.view; changing anything needs products.manage.
+  const canManage = !!can?.('products.manage');
 
   // One recipe line, made safe to show in the editor.
   //
@@ -521,6 +523,11 @@ export default function ProductsTab({ ctx }) {
                 )}
               </div>
             </div>
+            {!canManage && (
+              <p className="mb-4 text-xs text-fg/80 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
+                View only. Changing the menu needs the "Manage menu / products" permission.
+              </p>
+            )}
 
             {/* Quick add - for the items that are just a name and a price. */}
             {can('products.manage') && (
@@ -547,7 +554,7 @@ export default function ProductsTab({ ctx }) {
                 true round-trip, so rebuilding a database does not mean
                 rebuilding the menu by hand. Recipes re-link to stock by
                 ingredient NAME, since inventory ids change on a rebuild. */}
-            <div className="flex flex-wrap items-center gap-2 mb-5 p-3 bg-page-bg border border-white/10 rounded-xl">
+            {canManage && (<div className="flex flex-wrap items-center gap-2 mb-5 p-3 bg-page-bg border border-white/10 rounded-xl">
               <div className="mr-auto min-w-0">
                 <p className="text-[11px] font-black uppercase tracking-widest text-fg/65">Menu Backup</p>
                 <p className="text-[10px] text-fg/70 mt-0.5">Download the whole menu, restore it after a rebuild.</p>
@@ -561,12 +568,12 @@ export default function ProductsTab({ ctx }) {
                 <input type="file" accept="application/json,.json" className="hidden"
                   onChange={e => { openMenuRestore(e.target.files?.[0]); e.target.value = ''; }} />
               </label>
-            </div>
+            </div>)}
 
             {/* Recipe workbook import. Separate from the backup above: that is a
                 round-trip of what the system already holds, this reads the
                 barista sheets a human typed. Always review-then-commit. */}
-            <div className="flex flex-wrap items-center gap-2 mb-5 p-3 bg-page-bg border border-white/10 rounded-xl">
+            {canManage && (<div className="flex flex-wrap items-center gap-2 mb-5 p-3 bg-page-bg border border-white/10 rounded-xl">
               <div className="mr-auto min-w-0">
                 <p className="text-[11px] font-black uppercase tracking-widest text-fg/65">Recipe Workbook</p>
                 <p className="text-[10px] text-fg/70 mt-0.5">Read drinks and bulk recipes from the barista sheets.</p>
@@ -576,7 +583,7 @@ export default function ProductsTab({ ctx }) {
                 <input type="file" accept=".xlsx,.xls" className="hidden"
                   onChange={e => { openRecipeSheet(e.target.files?.[0]); e.target.value = ''; }} />
               </label>
-            </div>
+            </div>)}
 
             {/* The coded menu sheet. F&B only: it describes drinks with sizes
                 and recipes, which is not how a logistics catalogue is built. */}
@@ -736,7 +743,7 @@ export default function ProductsTab({ ctx }) {
                           <div key={d.name} className="px-3 py-2 border-b border-white/5 last:border-0">
                             <div className="flex items-center justify-between gap-2">
                               <div className="min-w-0">
-                                <p className="text-xs font-bold text-fg truncate">{d.name}</p>
+                                <p className="text-xs font-bold text-fg truncate" title={String((d.name) ?? '')}>{d.name}</p>
                                 <p className="text-[10px] text-fg/70">
                                   {d.category} · {d.baseSizeName || 'no size'} · {(d.baseRecipe || []).length} ingredient(s)
                                 </p>
@@ -1053,6 +1060,7 @@ export default function ProductsTab({ ctx }) {
                     </p>
                     {/* The two buttons are one group, so a narrow screen moves them
                         together instead of splitting them across lines. */}
+                    {can('products.manage') && (
                     <div className="flex items-center gap-2 ml-auto">
                       <button onClick={() => openEdit(p)}
                         className="h-9 px-3.5 bg-white/10 text-fg rounded-lg text-xs font-bold hover:bg-brand hover:text-on-brand transition inline-flex items-center gap-1.5 whitespace-nowrap">
@@ -1065,6 +1073,7 @@ export default function ProductsTab({ ctx }) {
                         <Copy size={13} /> New like this
                       </button>
                     </div>
+                    )}
                   </div>
                 </div>
                 );
@@ -1096,7 +1105,7 @@ export default function ProductsTab({ ctx }) {
             </div>
             
             {/* 2. Manage Categories */}
-            <div className="mt-8 border-t border-white/10 pt-6">
+            {canManage && (<div className="mt-8 border-t border-white/10 pt-6">
               <h3 className="text-xl font-bold mb-4 text-fg border-b border-white/10 pb-2">Manage Categories & Routing</h3>
               {can('products.manage') && (
               <form onSubmit={handleSaveCategory} className="flex flex-wrap gap-3 mb-6">
@@ -1125,7 +1134,7 @@ export default function ProductsTab({ ctx }) {
                     </>
                   )}
                 </select>
-                <button type="submit" className="bg-accent text-on-brand font-bold px-6 py-2 rounded-lg hover:bg-opacity-90 transition shadow-md">
+                <button type="submit" disabled={!!busyForms?.category} className="disabled:opacity-50 disabled:cursor-not-allowed bg-accent text-on-brand font-bold px-6 py-2 rounded-lg hover:bg-opacity-90 transition shadow-md">
                   {editingCategory ? 'Update' : 'Add'}
                 </button>
                 {editingCategory && (
@@ -1150,10 +1159,10 @@ export default function ProductsTab({ ctx }) {
                   </div>
                 ))}
               </div>
-            </div>
+            </div>)}
 
             {/* 3. MANAGE GLOBAL ADD-ONS - attaching an add-on to a product needs one to exist first */}
-            <div className="mt-8 border-t border-white/10 pt-6">
+            {canManage && (<div className="mt-8 border-t border-white/10 pt-6">
               <h3 className="text-xl font-bold mb-4 text-fg border-b border-white/10 pb-2">Manage Add-Ons</h3>
               {isSuperAdmin && (
               <form onSubmit={handleSaveAddOn} className="flex flex-wrap gap-3 mb-6">
@@ -1188,7 +1197,7 @@ export default function ProductsTab({ ctx }) {
                     <option value="Milks">Milks</option>
                   </>)}
                 </select>
-                <button type="submit" className="bg-brand text-on-brand font-bold px-6 py-2 rounded-lg hover:bg-brand-dark transition shadow-md">{addOnForm._id ? 'Save' : 'Add'}</button>
+                <button type="submit" disabled={!!busyForms?.addon} className="disabled:opacity-50 disabled:cursor-not-allowed bg-brand text-on-brand font-bold px-6 py-2 rounded-lg hover:bg-brand-dark transition shadow-md">{addOnForm._id ? 'Save' : 'Add'}</button>
                 {addOnForm._id && (
                   <button type="button" onClick={() => setAddOnForm(emptyAddOn)}
                     className="bg-white/5 text-fg/65 font-bold px-4 py-2 rounded-lg hover:bg-white/10 transition">Cancel</button>
@@ -1262,7 +1271,7 @@ export default function ProductsTab({ ctx }) {
               {can('products.manage') && globalAddOns.length > 0 && (
                 <LinkAddOns addOns={globalAddOns} products={products} categories={categories} apiFetch={apiFetch} onDone={fetchData} />
               )}
-            </div>
+            </div>)}
           </div>
 
           {/* ════════════ PRODUCT EDITOR ════════════
@@ -1729,7 +1738,7 @@ export default function ProductsTab({ ctx }) {
                     className="bg-red-500/10 text-danger font-bold py-2.5 px-3 rounded-xl hover:bg-red-500/20 transition border border-red-500/20"><Trash2 size={18} /></button>
                 )}
                 <button type="button" onClick={closeEditor} className="px-4 py-2.5 rounded-xl text-sm font-bold text-fg/80 hover:text-fg hover:bg-white/5">Cancel</button>
-                <button type="submit" className="bg-brand hover:bg-brand-dark text-on-brand font-black py-2.5 px-6 rounded-xl uppercase tracking-wider text-sm shadow-lg">
+                <button type="submit" disabled={!!busyForms?.product} className="disabled:opacity-50 disabled:cursor-not-allowed bg-brand hover:bg-brand-dark text-on-brand font-black py-2.5 px-6 rounded-xl uppercase tracking-wider text-sm shadow-lg">
                   {editingProduct ? 'Save changes' : 'Save product'}
                 </button>
               </footer>
@@ -1739,7 +1748,7 @@ export default function ProductsTab({ ctx }) {
           </div>
 
           {/* ════════════ MODIFIER GROUPS MANAGEMENT - fb only ════════════ */}
-          {BUSINESS_TYPE !== 'log' && <div className="bg-surface border border-white/10 shadow-md rounded-xl p-4 sm:p-6">
+          {BUSINESS_TYPE !== 'log' && canManage && <div className="bg-surface border border-white/10 shadow-md rounded-xl p-4 sm:p-6">
             <h3 className="text-xl font-bold mb-1 text-fg">Modifier Groups</h3>
             <p className="text-xs text-fg/70 mb-4">Required choices on a product (e.g. "Choose your milk"). Attach them to products in the form above.</p>
             <div className="flex flex-col lg:flex-row gap-6">
@@ -1807,7 +1816,7 @@ export default function ProductsTab({ ctx }) {
           </div>}
 
           {/* ════════════ COMBOS / BUNDLES (PRODUCT PROMOS) ════════════ */}
-          <div className="bg-surface border border-white/10 shadow-md rounded-xl p-4 sm:p-6">
+          {canManage && (<div className="bg-surface border border-white/10 shadow-md rounded-xl p-4 sm:p-6">
             <h3 className="text-xl font-bold mb-1 text-fg">Product Promos &amp; Combos</h3>
             <p className="text-xs text-fg/70 mb-4">Fixed-price bundles of existing products (e.g. "Budget Meal: Americano + Pandesal = ₱99"). Sold as one line; stock is deducted per component.</p>
             <div className="flex flex-col lg:flex-row gap-6">
@@ -1873,10 +1882,11 @@ export default function ProductsTab({ ctx }) {
                 </div>
               </div>
             </div>
-          </div>
+          </div>)}
         </div>
 
-        <SalesSection apiFetch={apiFetch} products={products} isSuperAdmin={isSuperAdmin} />
+        {/* Creating a sale is superadmin-only on the server. */}
+        {isSuperAdmin && <SalesSection apiFetch={apiFetch} products={products} isSuperAdmin={isSuperAdmin} />}
     </>
   );
 }

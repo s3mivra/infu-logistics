@@ -6,6 +6,7 @@
 import { captureError } from '../lib/errorLog.js';
 import { hasPermission } from '../lib/authz.js';
 
+import { atomic } from '../lib/atomicRoute.js';
 export default function registerRequisitions(ctx) {
   const {
     app,
@@ -142,6 +143,7 @@ export default function registerRequisitions(ctx) {
           description: description.trim(), categoryCode: categoryCode || '760000',
           preparedBy,
         });
+        await attachBudgetCheck(req, slip);
         await logAudit(req, { action: 'create', entity: 'RequisitionSlip', entityId: slip._id, after: { slipNumber, type, amount: amt } });
         return res.json({ success: true, slip });
       }
@@ -177,6 +179,7 @@ export default function registerRequisitions(ctx) {
         lines: cleanLines, estTotal, notes: notes || '',
         preparedBy,
       });
+      await attachBudgetCheck(req, slip);
       await logAudit(req, { action: 'create', entity: 'RequisitionSlip', entityId: slip._id, after: { slipNumber, type, estTotal } });
       res.json({ success: true, slip });
     } catch (err) {
@@ -189,12 +192,41 @@ export default function registerRequisitions(ctx) {
   // Executes the underlying movement, THEN marks the slip Approved with who
   // approved it - if the movement fails (e.g. fund balance moved since
   // filing), the slip stays Pending and nothing is half-done.
-  app.post('/api/requisition-slips/:id/approve', verifyToken, ...canApproveReq, async (req, res) => {
+  // Budget availability, checked when the slip is filed and shown to whoever
+  // approves it. A slip with no budget set for its account is not held up.
+  const attachBudgetCheck = async (req, slip) => {
+    try {
+      if (typeof ctx.checkSlipBudget !== 'function') return;
+      slip.budgetCheck = await ctx.checkSlipBudget(req, slip, { excludeId: slip._id });
+      if (slip.budgetCheck.length) await slip.save();
+    } catch (err) { log.error?.({ err }, 'budget check failed'); }
+  };
+
+  app.post('/api/requisition-slips/:id/approve', verifyToken, ...canApproveReq, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const slip = await RequisitionSlip.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
       if (!slip) return res.status(404).json({ success: false, error: 'Not found' });
       if (slip.status !== 'Pending') return res.status(409).json({ success: false, error: `Only a Pending slip can be approved (this one is ${slip.status}).` });
+
+      // Over budget: approved only when the approver says so, and why. Checked
+      // again now - the month may have moved on since the slip was filed.
+      if (slip.type === 'petty-cash' || slip.type === 'procurement') {
+        const check = typeof ctx.checkSlipBudget === 'function' ? await ctx.checkSlipBudget(req, slip, { excludeId: slip._id }) : [];
+        slip.budgetCheck = check;
+        const over = check.filter(c => c.over);
+        if (over.length) {
+          const reason = String(req.body?.overBudgetReason || '').trim();
+          if (req.body?.acceptOverBudget !== true || !reason) {
+            return res.status(409).json({
+              success: false, overBudget: true, budgetCheck: check,
+              error: `Over budget: ${over.map(c => `${c.accountName} has ₱${(c.available || 0).toFixed(2)} left this month, this asks for ₱${(c.requested || 0).toFixed(2)}`).join('; ')}. Approve anyway with a reason, or reject it.`,
+            });
+          }
+          slip.overBudgetAcceptedBy = req.user?.name || '';
+          slip.overBudgetReason = reason.slice(0, 500);
+        }
+      }
 
       if (slip.type === 'new-fund') {
         const dup = await RevolvingFund.findOne({ name: { $regex: `^${slip.fundName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, isActive: true });
@@ -384,7 +416,7 @@ export default function registerRequisitions(ctx) {
       log.error?.({ err }, 'POST /api/requisition-slips/:id/approve failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 
   // ── REJECT ────────────────────────────────────────────────────────────────
   app.post('/api/requisition-slips/:id/reject', verifyToken, ...canApproveReq, async (req, res) => {

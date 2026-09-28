@@ -6,7 +6,7 @@ import { useDashboard } from '../dashboard/DashboardContext';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import * as ui from '../../shared/ui';
 
-import { todayStr } from '../../shared/businessDay.js';
+import { monthStartStr, todayStr } from '../../shared/businessDay.js';
 import { useRefreshTick } from '../../shared/refreshBus';
 // Payroll - what the work cost, and what each person took home.
 //
@@ -124,7 +124,7 @@ export default function PayrollTab() {
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             {liabilities.map(l => (
               <div key={l.accountCode}>
-                <p className="text-[10px] text-fg/75 truncate">{l.accountName}</p>
+                <p className="text-[10px] text-fg/75 truncate" title={String((l.accountName) ?? '')}>{l.accountName}</p>
                 <p className={`text-sm font-black tabular-nums ${l.outstanding > 0 ? 'text-warning' : 'text-fg/65'}`}>
                   {peso(l.outstanding)}
                 </p>
@@ -217,6 +217,33 @@ function DraftModal({ apiFetch, onClose, onDone }) {
   const [saving, setSaving] = useState(false);
 
   const setLine = (i, k, v) => setLines(prev => prev.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
+
+  // Days clocked in, approved paid leave and approved overtime for the period,
+  // at each person's daily rate - a starting point, still editable line by line.
+  const [filling, setFilling] = useState(false);
+  const fillFromTimesheet = async () => {
+    if (!periodStart || !periodEnd) return ui.alert('Set the pay period first.');
+    setFilling(true);
+    try {
+      const d = await (await apiFetch(`/api/payroll/timesheet?start=${periodStart}&end=${periodEnd}`)).json();
+      if (!d.success) return ui.alert(d.error || 'Could not read the timesheet.');
+      if (!d.rows.length) return ui.alert('Nobody clocked in, took leave or worked overtime in that period.');
+      const kept = lines.filter(l => String(l.employeeName).trim() && !d.rows.some(r => r.name === l.employeeName));
+      setLines([...kept, ...d.rows.map(r => ({
+        ...blankLine(), employeeName: r.name, employeeId: r.userId, grossPay: r.suggestedGross ? String(r.suggestedGross) : '',
+        notes: [
+          `${r.daysWorked} day(s) worked`,
+          r.paidLeaveDays ? `${r.paidLeaveDays} paid leave` : '',
+          r.unpaidLeaveDays ? `${r.unpaidLeaveDays} unpaid leave` : '',
+          r.overtimeHours ? `${r.overtimeHours}h overtime` : '',
+        ].filter(Boolean).join(', '),
+      }))]);
+      const missing = d.rows.filter(r => r.missingRate).map(r => r.name);
+      if (missing.length) ui.alert(`Filled. No daily rate on file for ${missing.join(', ')} - enter their gross by hand, or set the rate on their staff record.`);
+      else ui.toast('Filled from the timesheet. Check each line before saving.', { tone: 'success' });
+    } catch { ui.alert('Network error.'); }
+    finally { setFilling(false); }
+  };
   const totals = lines.reduce((acc, l) => ({
     gross: acc.gross + num(l.grossPay),
     net: acc.net + Math.max(0, netOf(l)),
@@ -325,10 +352,16 @@ function DraftModal({ apiFetch, onClose, onDone }) {
         </div>
 
         <div className="flex items-center justify-between gap-4 mt-3">
+          <div className="flex gap-2 flex-wrap">
           <button onClick={() => setLines(prev => [...prev, blankLine()])}
             className="flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">
             <Plus size={11} /> Add employee
           </button>
+          <button onClick={fillFromTimesheet} disabled={filling}
+            className="flex items-center gap-1.5 text-[10px] border border-brand/40 text-brand hover:bg-brand/10 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-50">
+            {filling ? 'Reading…' : 'Fill from timesheet'}
+          </button>
+          </div>
           <p className="text-xs text-fg/65">
             Gross <span className="font-black text-fg tabular-nums">{peso(totals.gross)}</span>
             <span className="mx-2 text-fg/65">·</span>
@@ -405,7 +438,7 @@ function printPayslip(run, line, settings) {
 // not accept a lump sum: every one of them wants the amount against the
 // individual's own account number, which is why the numbers are on the run.
 function RemittanceModal({ apiFetch, onClose }) {
-  const monthStart = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1).toISOString().slice(0, 10); };
+  const monthStart = () => monthStartStr();
   const [agency, setAgency] = useState('sss');
   const [range, setRange] = useState({ start: monthStart(), end: todayStr() });
   const [data, setData] = useState(null);

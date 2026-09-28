@@ -14,6 +14,7 @@ import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { arBalance, isFullySettled } from '../lib/credit.js';
 
+import { atomic } from '../lib/atomicRoute.js';
 export default function registerAdvances(ctx) {
   const {
     app,
@@ -100,7 +101,7 @@ export default function registerAdvances(ctx) {
   // employee/supplier: real cash leaves, so this issues a Check Voucher exactly
   // like a bill payment does. customer: cash comes IN, so no voucher - the
   // deposit is a liability, not a disbursement.
-  app.post('/api/advances', verifyToken, ...canPostAcct, async (req, res) => {
+  app.post('/api/advances', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
     try {
       const { type, payeeId, amount, purpose, sourceAccount, referenceNumber, date, clientId: rawClientId } = req.body || {};
       let { payeeName } = req.body || {};
@@ -181,7 +182,7 @@ export default function registerAdvances(ctx) {
       log.error?.({ err }, 'POST /api/advances failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 
   // ── LIQUIDATE ────────────────────────────────────────────────────────────────
   // Clears part (or all) of an advance against what it was actually for. The
@@ -199,7 +200,7 @@ export default function registerAdvances(ctx) {
   // the ledger said it was partly paid - the two stopped agreeing.
   // A bill liquidation does the same for the bill: it records a payment, so the
   // A/P aging and the bill's own status agree with 220000.
-  app.post('/api/advances/:id/liquidate', verifyToken, ...canPostAcct, async (req, res) => {
+  app.post('/api/advances/:id/liquidate', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const advance = await Advance.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
@@ -339,7 +340,7 @@ export default function registerAdvances(ctx) {
       log.error?.({ err }, 'POST /api/advances/:id/liquidate failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 
   // ── CANCEL ───────────────────────────────────────────────────────────────────
   // Reverses the ORIGINAL issue entry and closes the advance. Only allowed
@@ -347,7 +348,7 @@ export default function registerAdvances(ctx) {
   // applied, the remainder has to be cleared through liquidate (cash-return)
   // instead, so the ledger keeps a record of what actually happened rather
   // than pretending the advance never existed.
-  app.post('/api/advances/:id/cancel', verifyToken, ...canPostAcct, async (req, res) => {
+  app.post('/api/advances/:id/cancel', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const { reason } = req.body || {};
@@ -388,5 +389,5 @@ export default function registerAdvances(ctx) {
       log.error?.({ err }, 'POST /api/advances/:id/cancel failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 }
