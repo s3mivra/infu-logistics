@@ -7,12 +7,12 @@
 // Never publish it on a public interface, even behind a login form.
 
 import express from 'express';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import fs from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
 import readline from 'node:readline';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -616,9 +616,33 @@ app.post('/api/update/apply', requireAuth, async (req, res) => {
       }
     }),
   );
+  const platformServices = await ensurePlatformServices();
   const selfUpdate = await maybeUpdateControlPlane();
-  res.json({ ok: true, tenants: results, controlPlane: selfUpdate });
+  res.json({ ok: true, tenants: results, platformServices, controlPlane: selfUpdate });
 });
+
+// Background services added to the platform after it was installed (the
+// scheduled backup job, and the offsite copy once it is set up) were never
+// started by an update: "Update all apps" recreates the tenants and the panel,
+// nothing else. A server installed before the backup job existed therefore
+// never took a single backup. This starts whichever of them is not running -
+// on every update and when the panel boots - and never touches one that is
+// (--no-recreate), nor the database or the router (--no-deps).
+async function ensurePlatformServices() {
+  if (LOCAL_MODE) return { started: false, reason: 'local mode' };
+  const out = {};
+  const up = async (label, args) => {
+    try {
+      await docker(['compose', '-f', PLATFORM_COMPOSE, ...args, 'up', '-d', '--no-deps', '--no-recreate', label], { timeout: 5 * 60_000 });
+      out[label] = 'running';
+    } catch (err) {
+      out[label] = `failed: ${String(err.stderr || err.message).slice(-300)}`;
+    }
+  };
+  await up('backup', []);
+  if (await readOffsiteEnv()) await up('backup-offsite', ['--profile', 'offsite']);
+  return out;
+}
 
 // The panel updates itself too. "Update all apps" pulls new code, but this
 // process runs from its own image (/app), so a change to the panel used to
@@ -1253,6 +1277,213 @@ app.post('/api/tenants/:slug/wipe', requireAuth, passwordAttemptLimiter, async (
   }
 });
 
+// ── BACKUP DOWNLOAD & RESTORE ────────────────────────────────────────────────
+// The scheduled backups live on this server, so if the server is lost they go
+// with it. These let the operator take a copy of any client's data off the
+// server from the panel, see and download the scheduled archives, and put a
+// client's data back - from a file on their computer or from one of this
+// server's archives. No SSH.
+//
+// Everything runs mongodump / mongorestore INSIDE the mongo container (the
+// mongo:7 image ships them), with archives passed over stdin/stdout, so the
+// panel needs no database driver and no port is ever opened.
+const MONGO_CONTAINER = 'semivra-platform-mongo-1';
+const ARCHIVE_NAME_RE = /^(semivra|pre-restore)-[A-Za-z0-9_.-]+\.archive\.gz$/;
+const UPLOAD_MAX_BYTES = 4 * 1024 * 1024 * 1024;
+const restoring = new Set();
+const toolUri = () => (MONGO_AUTH
+  ? `mongodb://${encodeURIComponent(MONGO_ROOT_USER)}:${encodeURIComponent(MONGO_ROOT_PASSWORD)}@localhost:27017/?authSource=admin&directConnection=true`
+  : 'mongodb://localhost:27017/?directConnection=true');
+const fileStamp = () => new Date().toISOString().replace(/\.\d+Z$/, '').replace(/[:T]/g, '-');
+
+// Run a mongo tool in the mongo container. stdin can come from a file and
+// stdout can go to one - archives never pass through memory whole.
+function mongoTool(args, { stdinFile, stdoutFile, timeout = 60 * 60_000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('docker', ['exec', '-i', MONGO_CONTAINER, ...args]);
+    let stderr = '';
+    child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-20_000); });
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeout);
+    const writing = stdoutFile ? new Promise((ok, fail) => {
+      const out = createWriteStream(stdoutFile);
+      child.stdout.pipe(out);
+      out.on('finish', ok); out.on('error', fail);
+    }) : (child.stdout.resume(), Promise.resolve());
+    if (stdinFile) {
+      const input = createReadStream(stdinFile);
+      input.on('error', (err) => child.kill() && reject(err));
+      input.pipe(child.stdin);
+    } else child.stdin.end();
+    child.stdin.on('error', () => {}); // the tool may exit before reading it all; its exit code says why
+    child.on('error', (err) => { clearTimeout(timer); reject(err); });
+    child.on('close', async (code) => {
+      clearTimeout(timer);
+      await writing.catch(() => {});
+      if (code === 0) resolve({ stderr });
+      else reject(new Error(stderr.trim().split('\n').slice(-6).join('\n') || `${args[0]} exited with code ${code}`));
+    });
+  });
+}
+const mongoEval = async (script) => (await docker([...mongoshExec(), '--eval', script], { timeout: 10 * 60_000 })).trim();
+
+// Dump one client's database to a file and prove it reads back before it is
+// handed over - an unreadable backup is worse than none, because it is trusted.
+async function dumpTenant(slug, file) {
+  await mongoTool(['mongodump', `--uri=${toolUri()}`, `--db=semivra_${slug}`, '--archive', '--gzip', '--quiet'], { stdoutFile: file });
+  await mongoTool(['mongorestore', `--uri=${toolUri()}`, '--archive', '--gzip', '--dryRun', '--quiet'], { stdinFile: file });
+}
+
+// Download one client's data as a single file.
+app.get('/api/tenants/:slug/backup', requireAuth, async (req, res) => {
+  const slug = req.params.slug;
+  if (!(await listSlugs()).includes(slug)) return res.status(404).json({ error: 'No such tenant.' });
+  const tmp = path.join(os.tmpdir(), `download-${slug}-${crypto.randomBytes(6).toString('hex')}.archive.gz`);
+  try {
+    await dumpTenant(slug, tmp);
+    res.download(tmp, `${slug}-${fileStamp()}.archive.gz`, () => { fs.rm(tmp, { force: true }).catch(() => {}); });
+  } catch (err) {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    res.status(500).json({ error: `Could not make the backup: ${String(err.message).slice(-1500)}` });
+  }
+});
+
+// The archives on this server: the scheduled ones (every client) and the
+// safety copies taken before a restore.
+app.get('/api/backups', requireAuth, async (_req, res) => {
+  try {
+    const names = (await fs.readdir(BACKUP_DIR).catch(() => [])).filter((n) => ARCHIVE_NAME_RE.test(n));
+    const files = await Promise.all(names.map(async (name) => {
+      const st = await fs.stat(path.join(BACKUP_DIR, name));
+      return { name, bytes: st.size, at: st.mtimeMs, kind: name.startsWith('pre-restore-') ? 'before-restore' : 'scheduled' };
+    }));
+    res.json({ files: files.sort((a, b) => b.at - a.at) });
+  } catch (err) {
+    res.status(500).json({ error: String(err.message).slice(-500) });
+  }
+});
+app.get('/api/backups/:name', requireAuth, async (req, res) => {
+  const name = req.params.name;
+  if (!ARCHIVE_NAME_RE.test(name)) return res.status(400).json({ error: 'Not a backup file.' });
+  const file = path.join(BACKUP_DIR, name);
+  try { await fs.access(file); } catch { return res.status(404).json({ error: 'That backup is not on this server.' }); }
+  res.download(file, name);
+});
+
+// Put a client's data back. From an uploaded file (the body, as
+// application/octet-stream) or ?from=<archive on this server>.
+//
+//   1. the archive must read end to end
+//   2. it is restored into a STAGING database first - the live one is not
+//      touched until the backup has proven to hold exactly one client's books
+//   3. a safety copy of the current data is saved (listed with the backups),
+//      so a restore can itself be undone
+//   4. the client's API is stopped for the swap, the staging collections are
+//      renamed into place, and the API started again - seconds of downtime
+//
+// A file from another server or another client works: whatever client it was
+// taken from, its data lands in THIS client's database.
+app.post('/api/tenants/:slug/restore', requireAuth, passwordAttemptLimiter, async (req, res) => {
+  const slug = req.params.slug;
+  if (!(await listSlugs()).includes(slug)) return res.status(404).json({ error: 'No such tenant.' });
+  if (!safeEqual(req.get('x-danger-password') || '', CP_DANGER_PASSWORD)) return res.status(403).json({ error: 'Second password is wrong.' });
+  if (req.get('x-confirm-slug') !== slug) return res.status(400).json({ error: `Type "${slug}" to confirm.` });
+  if (restoring.has(slug)) return res.status(409).json({ error: 'A restore for this client is already running.' });
+  restoring.add(slug);
+
+  const from = String(req.query.from || '');
+  let source = '';
+  let upload = '';
+  const staging = `restage_${crypto.randomBytes(4).toString('hex')}_`;
+  let stagingDb = '';
+  let apiStopped = false;
+  try {
+    if (from) {
+      if (!ARCHIVE_NAME_RE.test(from)) return res.status(400).json({ error: 'Not a backup file.' });
+      source = path.join(BACKUP_DIR, from);
+      try { await fs.access(source); } catch { return res.status(404).json({ error: 'That backup is not on this server.' }); }
+    } else {
+      upload = path.join(os.tmpdir(), `upload-${slug}-${crypto.randomBytes(6).toString('hex')}.archive.gz`);
+      let bytes = 0;
+      await new Promise((ok, fail) => {
+        const out = createWriteStream(upload);
+        req.on('data', (chunk) => {
+          bytes += chunk.length;
+          if (bytes > UPLOAD_MAX_BYTES) { req.destroy(); fail(new Error('The file is larger than 4 GB.')); }
+        });
+        req.pipe(out);
+        out.on('finish', ok); out.on('error', fail); req.on('error', fail);
+      });
+      if (!bytes) return res.status(400).json({ error: 'Choose a backup file to restore.' });
+      source = upload;
+    }
+
+    // 1. Readable?
+    try {
+      await mongoTool(['mongorestore', `--uri=${toolUri()}`, '--archive', '--gzip', '--dryRun', '--quiet'], { stdinFile: source });
+    } catch (err) {
+      return res.status(400).json({ error: `That file is not a readable backup: ${String(err.message).slice(-400)}` });
+    }
+
+    // 2. Into staging. A server archive holds every client - only this one's
+    //    database is taken from it.
+    await mongoTool([
+      'mongorestore', `--uri=${toolUri()}`, '--archive', '--gzip', '--quiet',
+      // Only client databases, ever - never admin, config or local, which a
+      // whole-server archive also carries and which must not be overwritten.
+      from ? `--nsInclude=semivra_${slug}.*` : '--nsInclude=semivra_*.*',
+      '--nsFrom=semivra_$db$.$coll$', `--nsTo=${staging}$db$.$coll$`,
+    ], { stdinFile: source });
+    const found = JSON.parse(await mongoEval(`print(JSON.stringify(db.adminCommand({ listDatabases: 1, nameOnly: true }).databases.map(d => d.name).filter(n => n.startsWith(${JSON.stringify(staging)}))))`) || '[]');
+    if (found.length === 0) {
+      return res.status(400).json({ error: from ? `That server backup has no data for ${slug} - it was taken before this client existed.` : 'That file has no client data in it.' });
+    }
+    if (found.length > 1) {
+      stagingDb = found[0];
+      await mongoEval(`${JSON.stringify(found)}.forEach(n => db.getSiblingDB(n).dropDatabase())`);
+      stagingDb = '';
+      return res.status(400).json({ error: `That file holds ${found.length} clients' data (${found.map((n) => n.slice(staging.length)).join(', ')}). Use one client's backup - the Download backup button makes one - or restore from a server backup, which takes out just this client.` });
+    }
+    stagingDb = found[0];
+    const summary = JSON.parse(await mongoEval(`const s = db.getSiblingDB(${JSON.stringify(stagingDb)}); print(JSON.stringify({ users: s.users.countDocuments({}), orders: s.orders.countDocuments({}), journalentries: s.journalentries.countDocuments({}), collections: s.getCollectionNames().filter(c => !c.startsWith('system.')).length }))`));
+    if (!summary.users) {
+      await mongoEval(`db.getSiblingDB(${JSON.stringify(stagingDb)}).dropDatabase()`);
+      stagingDb = '';
+      return res.status(400).json({ error: 'That backup has no staff accounts in it, so it is not a Libellus client backup. Nothing was changed.' });
+    }
+
+    // 3. Safety copy of what is there now.
+    const safety = `pre-restore-${slug}-${fileStamp()}.archive.gz`;
+    await fs.mkdir(BACKUP_DIR, { recursive: true });
+    await dumpTenant(slug, path.join(BACKUP_DIR, safety));
+
+    // 4. Swap.
+    await docker([...composeArgs(slug), 'stop', 'api'], { timeout: 180_000 });
+    apiStopped = true;
+    const live = `semivra_${slug}`;
+    await mongoEval(`
+      const live = db.getSiblingDB(${JSON.stringify(live)});
+      live.getCollectionNames().filter(c => !c.startsWith('system.')).forEach(c => live.getCollection(c).drop());
+      const src = db.getSiblingDB(${JSON.stringify(stagingDb)});
+      src.getCollectionNames().filter(c => !c.startsWith('system.')).forEach(c => {
+        const r = db.adminCommand({ renameCollection: ${JSON.stringify(stagingDb)} + '.' + c, to: ${JSON.stringify(live)} + '.' + c, dropTarget: true });
+        if (!r.ok) throw new Error('moving ' + c + ': ' + r.errmsg);
+      });
+      src.dropDatabase();
+      print('ok');`);
+    stagingDb = '';
+    await docker([...composeArgs(slug), 'start', 'api'], { timeout: 180_000 });
+    apiStopped = false;
+    res.json({ ok: true, safetyCopy: safety, ...summary });
+  } catch (err) {
+    res.status(500).json({ error: `Restore failed: ${String(err.message).slice(-1500)}` });
+  } finally {
+    if (stagingDb) await mongoEval(`db.getSiblingDB(${JSON.stringify(stagingDb)}).dropDatabase()`).catch(() => {});
+    if (apiStopped) await docker([...composeArgs(slug), 'start', 'api'], { timeout: 180_000 }).catch(() => {});
+    if (upload) await fs.rm(upload, { force: true }).catch(() => {});
+    restoring.delete(slug);
+  }
+});
+
 // ── error analytics ──────────────────────────────────────────────────────────
 // Each tenant's API writes 5xx events to a capped `errorevents` collection in
 // its OWN database. We aggregate them here for a cross-client view. Queried via
@@ -1313,6 +1544,14 @@ app.delete('/api/tenants/:slug', requireAuth, passwordAttemptLimiter, async (req
     res.status(500).json({ error: String(err.stderr || err.message).slice(-4000) });
   }
 });
+
+// Once the panel is up (including right after it updated itself), make sure
+// the platform's background services are running.
+setTimeout(() => {
+  ensurePlatformServices()
+    .then((r) => console.log('[platform] background services:', JSON.stringify(r)))
+    .catch((err) => console.error('[platform] could not start background services:', err.message));
+}, 15_000);
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[control-plane] listening on ${PORT} · domain=${DOMAIN} · localMode=${LOCAL_MODE}`);

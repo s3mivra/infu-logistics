@@ -340,10 +340,13 @@
             <li><strong>Resources</strong> - raise or lower how much memory/CPU priority that client gets, if they're growing or you're consolidating.</li>
             <li><strong>Stop / Start</strong> - temporarily take a client offline (e.g. non-paying, or maintenance) without deleting anything.</li>
             <li><strong>Logs</strong> - a live technical readout of what that client's app has been doing. Mostly useful when troubleshooting with support.</li>
+            <li><strong>Download backup</strong> - all of that client's data as one file, checked to read back before it downloads. Keep it somewhere other than this server (your computer, Google Drive): if the server is ever lost, this is what brings the client back.</li>
+            <li><strong>Restore</strong> (red) - puts a client's data back from a backup: a file from Download backup (from this server or another one), or one of this server's daily backups. The current data is saved first as a "before restore" copy, so a restore can be undone. The app is offline for a few seconds.</li>
             <li><strong>Wipe data</strong> (red) - erases that client's orders/inventory/history but keeps their login and settings. Irreversible.</li>
             <li><strong>Delete</strong> (red) - removes the client entirely: their app, their data, their web address. Irreversible.</li>
           </ul>
-          <p>Both red actions ask you to type the client's name and a second password to confirm, specifically so they can't happen by accident.</p>
+          <p>The red actions ask you to type the client's name and a second password to confirm, specifically so they can't happen by accident.</p>
+          <p><strong>If the server is lost:</strong> install the platform on the new server, create each client again with the same name, then use <strong>Restore</strong> on each one with its downloaded backup file. Every day's backups are also listed under Platform health → <em>download backups</em>.</p>
 
           <h3 id="doc-billing">Billing</h3>
           <p>The Billing page is a simple paid/unpaid tracker, one row per client, reset every calendar month. It does not charge anyone or move any money - you still collect payment however you normally do (bank transfer, e-wallet, cash), and just click <strong>Mark Paid</strong> here once you've confirmed it landed. Set a monthly fee per client so you have a number to check against; it's just a note for you, not something enforced automatically.</p>
@@ -451,6 +454,46 @@
       <div style="margin-top:16px;display:flex;justify-content:flex-end;gap:8px">
         <button class="ghost" id="os_cancel">Cancel</button>
         <button id="os_save">Save &amp; start</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="backupsModal" class="modal-overlay hide">
+    <div class="modal" style="max-width:680px">
+      <h2>Backups on this server</h2>
+      <p class="muted" style="margin:0 0 14px">The daily backups hold every client. "Before restore" copies are saved automatically each time a client's data is restored. Download them to keep a copy off this server - if the server is lost, anything only here is lost with it.</p>
+      <div id="bk_list" style="max-height:50vh;overflow:auto"></div>
+      <p class="err" id="bk_err"></p>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end;gap:8px">
+        <button class="ghost" id="bk_close">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="restoreModal" class="modal-overlay hide">
+    <div class="modal">
+      <h2 id="rs_title">Restore</h2>
+      <p class="muted" style="margin:0 0 14px">Replaces this client's data with the backup's. The current data is saved first (listed under Backups), so this can be undone. The app is offline for a few seconds while it swaps. Staff sign in with the logins that were in the backup.</p>
+      <label for="rs_source">Restore from</label>
+      <select id="rs_source">
+        <option value="file">A backup file on this computer</option>
+        <option value="server">A backup on this server</option>
+      </select>
+      <div id="rs_filebox" style="margin-top:10px">
+        <input id="rs_file" type="file" accept=".gz">
+        <p class="muted" style="margin:4px 0 0">One client's file, from its Download backup button - from this server or another.</p>
+      </div>
+      <div id="rs_serverbox" class="hide" style="margin-top:10px">
+        <select id="rs_server"></select>
+      </div>
+      <label for="rs_confirm" style="margin-top:10px">Type the client name to confirm</label>
+      <input id="rs_confirm" autocomplete="off">
+      <label for="rs_pw" style="margin-top:10px">Second password</label>
+      <input id="rs_pw" type="password" autocomplete="off">
+      <p class="err" id="rs_err"></p>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end;gap:8px">
+        <button class="ghost" id="rs_cancel">Cancel</button>
+        <button class="danger" id="rs_go">Restore</button>
       </div>
     </div>
   </div>
@@ -623,7 +666,8 @@ async function refreshBackupHealth() {
       + (h.problems.length ? '<ul style="padding-left:18px">' + h.problems.map((p) => '<li style="margin:6px 0"><span class="err">' + esc(p.text) + '</span> '
           + (p.action && HEALTH_ACTIONS[p.action] ? HEALTH_ACTIONS[p.action](p) : '') + '</li>').join('') + '</ul>' : '')
       + '<div class="muted">last backup ' + when(h.lastSuccess) + ' · offsite ' + (h.offsiteConfigured ? when(h.lastOffsite) : 'not set up') + ' · restore drill ' + (h.drillRunning ? 'running…' : when(h.lastDrill))
-      + (h.offsiteConfigured ? ' · <a href="#" data-health="key">recovery key</a> · <a href="#" data-health="offsite">change offsite</a>' : '') + '</div></div>';
+      + (h.offsiteConfigured ? ' · <a href="#" data-health="key">recovery key</a> · <a href="#" data-health="offsite">change offsite</a>' : '')
+      + ' · <a href="#" data-health="backups">download backups</a></div></div>';
   } catch { el.innerHTML = ''; }
 }
 function openOffsite() {
@@ -651,6 +695,7 @@ document.addEventListener('click', async (ev) => {
   ev.preventDefault();
   const what = t.dataset.health;
   if (what === 'offsite') return openOffsite();
+  if (what === 'backups') return openBackups();
   if (what === 'key') {
     try { const d = await api('/api/backup/offsite-key'); openPasswordModal('Offsite backups', d.recoveryKey, { title: 'Offsite recovery key', note: 'Needed to read the offsite copies back. Keep it off this server.' }); }
     catch (e) { alert(e.message); }
@@ -703,6 +748,8 @@ async function refresh() {
           <button class="ghost" data-act="stop" data-slug="${t.slug}">Stop</button>
           <button class="ghost" data-act="start" data-slug="${t.slug}">Start</button>
           <button class="ghost" data-act="logs" data-slug="${t.slug}">Logs</button>
+          <button class="ghost" data-act="backup" data-slug="${t.slug}" title="Download all of this client's data as one file - keep it off this server">Download backup</button>
+          <button class="danger" data-act="restore" data-slug="${t.slug}" title="Put this client's data back from a backup">Restore</button>
           <button class="danger" data-act="wipe" data-slug="${t.slug}">Wipe data</button>
           <button class="danger" data-act="destroy" data-slug="${t.slug}">Delete</button>
         </div>
@@ -717,7 +764,14 @@ async function refresh() {
 async function act(slug, action, btn) {
   const label = btn.textContent; btn.disabled = true; btn.textContent = '…';
   try {
-    if (action === 'logs') {
+    if (action === 'backup') {
+      btn.textContent = 'Preparing…';
+      await downloadWithAuth(`/api/tenants/${encodeURIComponent(slug)}/backup`, `${slug}.archive.gz`);
+    }
+    else if (action === 'restore') {
+      openRestore(slug);
+    }
+    else if (action === 'logs') {
       const t = LAST_TENANTS.find((x) => x.slug === slug);
       openLogs(slug, 'Logs - ' + (t?.businessName || slug));
     }
@@ -757,6 +811,92 @@ async function act(slug, action, btn) {
   } catch (e) { showLog('Error: ' + e.message); }
   finally { btn.disabled = false; btn.textContent = label; refresh(); }
 }
+
+// Downloads need the session token, which a plain link cannot send.
+async function downloadWithAuth(url, fallbackName) {
+  const res = await fetch(url, { headers: { Authorization: 'Bearer ' + TOKEN } });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || ('HTTP ' + res.status)); }
+  const m = /filename="?([^";]+)"?/.exec(res.headers.get('content-disposition') || '');
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = m ? m[1] : fallbackName;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
+}
+
+async function openBackups() {
+  $('bk_err').textContent = '';
+  $('bk_list').innerHTML = '<p class="muted">Loading…</p>';
+  $('backupsModal').classList.remove('hide');
+  try {
+    const { files } = await api('/api/backups');
+    $('bk_list').innerHTML = files.length ? files.map((f) => `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06)">
+        <div><div>${esc(f.name)}</div><div class="muted">${f.kind === 'before-restore' ? 'before restore' : 'daily - every client'} · ${new Date(f.at).toLocaleString()} · ${fmtBytes(f.bytes)}</div></div>
+        <button class="ghost small" data-bk="${esc(f.name)}">Download</button>
+      </div>`).join('') : '<p class="muted">No backups on this server yet. The daily backup runs a few minutes after the platform starts. You can still download any client\'s data with its Download backup button.</p>';
+  } catch (e) { $('bk_list').innerHTML = ''; $('bk_err').textContent = e.message; }
+}
+$('bk_close').addEventListener('click', () => $('backupsModal').classList.add('hide'));
+$('bk_list').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-bk]');
+  if (!b) return;
+  const label = b.textContent; b.disabled = true; b.textContent = 'Downloading…';
+  try { await downloadWithAuth('/api/backups/' + encodeURIComponent(b.dataset.bk), b.dataset.bk); }
+  catch (err) { $('bk_err').textContent = err.message; }
+  finally { b.disabled = false; b.textContent = label; }
+});
+
+let RESTORE_SLUG = '';
+async function openRestore(slug) {
+  RESTORE_SLUG = slug;
+  const t = LAST_TENANTS.find((x) => x.slug === slug);
+  $('rs_title').textContent = 'Restore ' + (t?.businessName || slug) + ' (' + slug + ')';
+  ['rs_confirm', 'rs_pw', 'rs_file'].forEach((id) => { $(id).value = ''; });
+  $('rs_err').textContent = '';
+  $('rs_source').value = 'file';
+  $('rs_filebox').classList.remove('hide'); $('rs_serverbox').classList.add('hide');
+  $('rs_server').innerHTML = '<option value="">Loading…</option>';
+  $('restoreModal').classList.remove('hide');
+  try {
+    const { files } = await api('/api/backups');
+    // Daily archives (this client is taken out of them) and this client's own
+    // before-restore copies.
+    const usable = files.filter((f) => f.kind === 'scheduled' || f.name.startsWith('pre-restore-' + slug + '-'));
+    $('rs_server').innerHTML = usable.length
+      ? usable.map((f) => `<option value="${esc(f.name)}">${new Date(f.at).toLocaleString()} - ${f.kind === 'before-restore' ? 'before restore' : 'daily'} (${fmtBytes(f.bytes)})</option>`).join('')
+      : '<option value="">No backups on this server yet</option>';
+  } catch (e) { $('rs_server').innerHTML = '<option value="">' + esc(e.message) + '</option>'; }
+}
+$('rs_source').addEventListener('change', () => {
+  const server = $('rs_source').value === 'server';
+  $('rs_filebox').classList.toggle('hide', server);
+  $('rs_serverbox').classList.toggle('hide', !server);
+});
+$('rs_cancel').addEventListener('click', () => $('restoreModal').classList.add('hide'));
+$('rs_go').addEventListener('click', async () => {
+  const slug = RESTORE_SLUG;
+  const fromServer = $('rs_source').value === 'server';
+  const file = $('rs_file').files[0];
+  const name = $('rs_server').value;
+  $('rs_err').textContent = '';
+  if (fromServer ? !name : !file) { $('rs_err').textContent = fromServer ? 'Choose a backup.' : 'Choose a backup file.'; return; }
+  if ($('rs_confirm').value !== slug) { $('rs_err').textContent = `Type "${slug}" to confirm.`; return; }
+  if (!$('rs_pw').value) { $('rs_err').textContent = 'Enter the second password.'; return; }
+  const btn = $('rs_go'); btn.disabled = true; btn.textContent = 'Restoring…';
+  try {
+    const d = await api(`/api/tenants/${encodeURIComponent(slug)}/restore` + (fromServer ? '?from=' + encodeURIComponent(name) : ''), {
+      method: 'POST',
+      body: fromServer ? '' : file,
+      headers: { 'Content-Type': 'application/octet-stream', 'x-danger-password': $('rs_pw').value, 'x-confirm-slug': $('rs_confirm').value },
+    });
+    $('restoreModal').classList.add('hide');
+    showLog(`Restored ${slug}: ${d.users} staff account(s), ${d.orders} order(s), ${d.journalentries} journal entr(ies) across ${d.collections} collections.\n\nThe data it replaced was saved as ${d.safetyCopy} (Platform health → download backups).`);
+    refresh();
+  } catch (e) { $('rs_err').textContent = e.message; }
+  finally { btn.disabled = false; btn.textContent = 'Restore'; $('rs_pw').value = ''; }
+});
 
 $('tenantList').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-act]');
