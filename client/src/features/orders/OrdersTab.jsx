@@ -11,7 +11,7 @@ function IconSelect({ value, onChange, options, className = '' }) {
   return (
     <div className={`relative ${className}`}>
       <button type="button" onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-2 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg/80 font-bold text-sm outline-none focus:border-brand/60 transition">
+        className="w-full flex items-center gap-2 bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg/80 font-bold text-sm outline-none focus:border-brand/60 transition min-w-0">
         {selected?.Icon && <selected.Icon size={16} className="text-brand-text shrink-0" />}
         <span className="flex-1 text-left truncate">{selected?.label}</span>
         <ChevronDown size={14} className={`text-fg/70 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
@@ -150,6 +150,7 @@ export default function OrdersTab({ ctx }) {
   // UI-only hint for the walk-in picker below - not persisted; the real
   // guest-vs-regular classification comes from whether a customer name is entered.
   const [walkInMode, setWalkInMode] = React.useState('guest');
+  const [noteOpen, setNoteOpen] = React.useState(false);
   // Payment-QR display (set in Settings > Branding). The overlay itself lives
   // at dashboard level so it can be opened from anywhere payment is settled -
   // the order card here, and the partial-fulfil modal, which is mounted
@@ -517,12 +518,14 @@ export default function OrdersTab({ ctx }) {
 
                   {/* Customer info - capped on a tall form so the cart and the
                       Place Order button always keep their room; it scrolls instead. */}
-                  <div className="px-4 pt-4 pb-3 border-b border-white/10 bg-page-bg/60 shrink-0 lg:shrink lg:min-h-[120px] space-y-2 lg:max-h-[45%] lg:overflow-y-auto custom-scrollbar">
+                  <div className="px-3 pt-3 pb-2.5 border-b border-white/10 bg-page-bg/60 shrink-0 space-y-2">
                     {/* Client account picker - when set, server applies that client's per-product discount overrides.
                        "Guest"/"Regular" walk-in are UI hints only, not stored state - the actual
                        guest-vs-regular classification is driven by whether a customer name is
                        entered (see the name field below); a regular walk-in who racks up 3
                        Completed orders gets auto-promoted to their own CUS-1000-Axxxx client code. */}
+                    {/* Who and how, side by side - one row instead of two. */}
+                    <div className="grid grid-cols-2 gap-2">
                     <IconSelect
                       value={posClientId ? posClientId : (walkInMode === 'regular' ? '__regular__' : '')}
                       onChange={id => {
@@ -547,51 +550,7 @@ export default function OrdersTab({ ctx }) {
                         ...(clientAccounts || []).map(c => ({ value: String(c._id), label: `${c.name || c.username} (${c.clientCode})`, Icon: Users })),
                       ]}
                     />
-                    {/* Live pricing preview for the selected client - resolved via the
-                        SAME server logic checkout uses, so this is the real price, not
-                        a guess. Empty once the picker fetch lands = this client has no
-                        discount on anything currently in view. */}
-                    {posClientId && (() => {
-                      const pcts = Object.values(posBuyerDiscounts || {});
-                      const best = pcts.length ? Math.max(...pcts) : 0;
-                      return best > 0 ? (
-                        <div className="flex items-center gap-1.5 bg-accent/10 border border-accent/20 rounded-lg px-2.5 py-1.5">
-                          <Tag size={11} className="text-brand-text flex-shrink-0" />
-                          <span className="text-[10px] text-brand-text font-bold">Pricing applied - up to {best}% off for this client</span>
-                        </div>
-                      ) : null;
-                    })()}
-                    {/* Salesperson credited with the sale (logistics). Blank follows the
-                        client's assigned rep, else the cashier. */}
-                    {BUSINESS_TYPE === 'log' && salesStaff.length > 0 && (() => {
-                      const rep = posClientId ? (clientAccounts || []).find(a => String(a._id) === posClientId)?.assignedSalesperson : '';
-                      return (
-                        <select value={posSalesperson} onChange={e => setPosSalesperson(e.target.value)} aria-label="Salesperson"
-                          className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg text-xs font-bold outline-none focus:border-brand/60 transition">
-                          <option value="">{rep ? `Salesperson: ${rep} (client's rep)` : 'Salesperson: me'}</option>
-                          {salesStaff.map(n => <option key={n} value={n}>Salesperson: {n}</option>)}
-                        </select>
-                      );
-                    })()}
-                    {/* Which branch this device is ringing up as - only shown once there's
-                        more than one location to choose between (Inventory → Places & Categories). */}
-                    {(stockLocations || []).filter(l => l.isActive !== false).length > 1 && (
-                      <select value={posBranch} onChange={e => setPosBranch(e.target.value)}
-                        title="Which branch is this sale for? (Analytics can compare branches once orders are tagged)"
-                        className="w-full bg-brand/10 border border-brand/30 rounded-xl px-3 py-2 text-brand-text font-bold text-xs uppercase tracking-wider outline-none focus:border-brand/60 transition">
-                        <option value="">No Branch Set</option>
-                        {stockLocations.filter(l => l.isActive !== false).map(l => (
-                          <option key={l._id} value={l.name}>{l.name}</option>
-                        ))}
-                      </select>
-                    )}
-                    <input type="text"
-                      placeholder={BUSINESS_TYPE === 'fb' && posTable === 'Dine-In' && !posClientId
-                        ? 'Customer name (blank = Walk-in)'
-                        : 'Customer / Driver Name *'}
-                      value={posCustomerName} onChange={e => setPosCustomerName(e.target.value)}
-                      className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-fg/70 outline-none focus:border-brand/60 text-sm transition" />
-                    <IconSelect value={posTable} onChange={setPosTable} options={BUSINESS_TYPE === 'log' ? [
+                    <IconSelect className="min-w-0" value={posTable} onChange={setPosTable} options={BUSINESS_TYPE === 'log' ? [
                       { value: 'Walk In', label: 'Walk In', Icon: Footprints },
                       { value: 'Pickup', label: 'Pickup', Icon: Package },
                       { value: 'Manual Delivery', label: 'Manual Delivery', Icon: Bike },
@@ -606,6 +565,54 @@ export default function OrdersTab({ ctx }) {
                       { value: 'Grab Delivery', label: 'Grab Delivery', Icon: Car },
                       { value: 'Foodpanda', label: 'Foodpanda', Icon: Smartphone },
                     ]} />
+                    </div>
+                    {/* Live pricing preview for the selected client - resolved via the
+                        SAME server logic checkout uses, so this is the real price, not
+                        a guess. Empty once the picker fetch lands = this client has no
+                        discount on anything currently in view. */}
+                    {posClientId && (() => {
+                      const pcts = Object.values(posBuyerDiscounts || {});
+                      const best = pcts.length ? Math.max(...pcts) : 0;
+                      return best > 0 ? (
+                        <div className="flex items-center gap-1.5 bg-accent/10 border border-accent/20 rounded-lg px-2.5 py-1.5">
+                          <Tag size={11} className="text-brand-text flex-shrink-0" />
+                          <span className="text-[10px] text-brand-text font-bold">Pricing applied - up to {best}% off for this client</span>
+                        </div>
+                      ) : null;
+                    })()}
+                    {/* Which branch this device is ringing up as - only shown once there's
+                        more than one location to choose between (Inventory → Places & Categories). */}
+                    {(stockLocations || []).filter(l => l.isActive !== false).length > 1 && (
+                      <select value={posBranch} onChange={e => setPosBranch(e.target.value)}
+                        title="Which branch is this sale for? (Analytics can compare branches once orders are tagged)"
+                        className="w-full bg-brand/10 border border-brand/30 rounded-xl px-3 py-2 text-brand-text font-bold text-xs uppercase tracking-wider outline-none focus:border-brand/60 transition">
+                        <option value="">No Branch Set</option>
+                        {stockLocations.filter(l => l.isActive !== false).map(l => (
+                          <option key={l._id} value={l.name}>{l.name}</option>
+                        ))}
+                      </select>
+                    )}
+                    <div className="flex gap-2">
+                    {/* Salesperson credited with the sale (logistics). Blank follows the
+                        client's assigned rep, else the cashier. */}
+                    {BUSINESS_TYPE === 'log' && salesStaff.length > 0 && (() => {
+                      const rep = posClientId ? (clientAccounts || []).find(a => String(a._id) === posClientId)?.assignedSalesperson : '';
+                      return (
+                        <div className="flex-1 min-w-0"><select value={posSalesperson} onChange={e => setPosSalesperson(e.target.value)} aria-label="Salesperson"
+                          className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg text-xs font-bold outline-none focus:border-brand/60 transition min-w-0">
+                          <option value="">{rep ? `Salesperson: ${rep} (client's rep)` : 'Salesperson: me'}</option>
+                          {salesStaff.map(n => <option key={n} value={n}>Salesperson: {n}</option>)}
+                        </select></div>
+                      );
+                    })()}
+                    <input type="text"
+                      placeholder={BUSINESS_TYPE === 'fb' && posTable === 'Dine-In' && !posClientId
+                        ? 'Customer name (blank = Walk-in)'
+                        : 'Customer / Driver Name *'}
+                      value={posCustomerName} onChange={e => setPosCustomerName(e.target.value)}
+                      aria-label="Customer name"
+                      className="flex-1 min-w-0 bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold placeholder-fg/70 outline-none focus:border-brand/60 text-sm transition" />
+                    </div>
                     {(posTable === 'Manual Delivery' || posTable === 'Pickup' || posTable === 'Lalamove') && (
                       <div className="space-y-2 border border-brand/20 rounded-xl p-2.5 bg-brand/5">
                         <input type="tel" placeholder="Phone Number *" value={posCustomerPhone} onChange={e => setPosCustomerPhone(e.target.value)}
@@ -634,10 +641,17 @@ export default function OrdersTab({ ctx }) {
                           className="w-20 bg-page-bg border border-white/10 rounded-lg px-2.5 py-1.5 text-fg text-xs font-bold outline-none focus:border-brand/50" />
                       </label>
                     )}
-                    <textarea rows={2} maxLength={300} aria-label="Order note"
+                    {!noteOpen && !posNotes ? (
+                      <button type="button" onClick={() => setNoteOpen(true)}
+                        className="text-[11px] font-bold text-brand-text hover:underline px-1">
+                        + Add note
+                      </button>
+                    ) : (
+                    <textarea rows={2} maxLength={300} aria-label="Order note" autoFocus={noteOpen && !posNotes}
                       placeholder={BUSINESS_TYPE === 'log' ? 'Order note (optional) - delivery window, gate, who receives' : 'Order note (optional) - e.g. birthday, serve together'}
                       value={posNotes} onChange={e => setPosNotes(e.target.value)}
                       className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg text-xs placeholder-fg/70 outline-none focus:border-brand/60 resize-none transition" />
+                    )}
                   </div>
 
                   {/* Threshold sale banners */}
@@ -671,7 +685,7 @@ export default function OrdersTab({ ctx }) {
                       return (
                         <div key={idx} className="bg-page-bg/50 p-3 rounded-xl border border-white/10 flex justify-between items-start">
                           <div className="flex-1 pr-2 min-w-0">
-                            <p className="font-bold text-fg/90 text-sm truncate leading-tight" title={String((item.name) ?? '')}>{item.name}</p>
+                            <p className="font-bold text-fg/90 text-sm leading-tight line-clamp-2 break-words" title={String((item.name) ?? '')}>{item.name}</p>
                             {item.selectedAddOns.map((a, i) => (
                               <p key={i} className="text-[10px] text-fg/70 flex gap-1 min-w-0"><span className="truncate" title={a.name}>+ {a.name}</span><span className="shrink-0 tabular-nums">₱{a.price}</span></p>
                             ))}
@@ -681,8 +695,10 @@ export default function OrdersTab({ ctx }) {
                               <span className="font-black text-sm text-fg w-6 text-center">{item.quantity}</span>
                               <button onClick={() => setPosCart(posCart.map((c, i) => i === idx ? {...c, quantity: c.quantity + 1} : c))}
                                 className="w-8 h-8 bg-white/10 hover:bg-brand/30 rounded-lg text-fg font-black flex items-center justify-center transition text-base active:scale-90">+</button>
-                              <div className="relative ml-1">
+                              <label className="relative ml-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-fg/65">
+                                Disc
                                 <input
+                                  aria-label="Line discount percent"
                                   type="number" min="0" max="100" step="1"
                                   placeholder="0"
                                   value={item.discountPercent || ''}
@@ -690,7 +706,7 @@ export default function OrdersTab({ ctx }) {
                                   className="w-14 bg-white/5 border border-white/10 rounded-lg pl-2 pr-5 py-1 text-fg text-xs font-bold outline-none focus:border-brand/60 placeholder-fg/70 tabular-nums"
                                 />
                                 <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-fg/65 text-[10px] font-bold pointer-events-none">%</span>
-                              </div>
+                              </label>
                             </div>
                           </div>
                           <div className="flex flex-col items-end gap-1 shrink-0">

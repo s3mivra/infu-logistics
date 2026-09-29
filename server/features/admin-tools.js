@@ -1078,6 +1078,11 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
       // balance would be money nobody's books hold.
       deleted.supplierCreditsCleared = (await Supplier.updateMany({ creditBalance: { $ne: 0 } }, { $set: { creditBalance: 0 } })).modifiedCount;
     }
+    // The same for clients, who are never purged: their credit balance is
+    // backed by 260100 Client Credit Balance, which a ledger purge removes.
+    if (selected.has('ledger')) {
+      deleted.clientCreditsCleared = (await ClientAccount.updateMany({ creditBalance: { $ne: 0 } }, { $set: { creditBalance: 0 } })).modifiedCount;
+    }
     if (selected.has('requisitions')) await del('requisitionSlips', RequisitionSlip);
     if (selected.has('eod')) await del('eodRecords', EODRecord, false);
     if (selected.has('orders')) {

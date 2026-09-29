@@ -947,12 +947,23 @@ const runStartupTasks = async () => {
         if (existsByName) { PM_DEFAULTS[s.name] = existsByName.code; continue; }
         // Otherwise take the preferred code if free, else next available.
         const existsByCode = await Account.findOne({ code: s.preferred }).lean();
-        const codeToUse = existsByCode ? await nextFreeCodeUnder(s.parent) : s.preferred;
+        let codeToUse = existsByCode ? await nextFreeCodeUnder(s.parent) : s.preferred;
         if (!codeToUse) continue;
-        await Account.create({
-          code: codeToUse, name: s.name, type: parentMeta.type, parent: s.parent,
-          custom: true, normalBalance: /^[15679]/.test(codeToUse) ? 'Debit' : 'Credit',
-        });
+        // A setup import running at the same moment can take the code between
+        // choosing it and creating it; choose again rather than fail.
+        for (let attempt = 1; ; attempt++) {
+          try {
+            await Account.create({
+              code: codeToUse, name: s.name, type: parentMeta.type, parent: s.parent,
+              custom: true, normalBalance: /^[15679]/.test(codeToUse) ? 'Debit' : 'Credit',
+            });
+            break;
+          } catch (err) {
+            if (!(err?.code === 11000 && (err?.keyPattern?.code || /code_1/.test(String(err?.message)))) || attempt >= 5) throw err;
+            codeToUse = await nextFreeCodeUnder(s.parent);
+            if (!codeToUse) throw err;
+          }
+        }
         PM_DEFAULTS[s.name] = codeToUse;
         seededAccts++;
       }

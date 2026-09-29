@@ -116,6 +116,7 @@ describe('suppliers in the purge', () => {
   it('are kept by a default purge and cleared when chosen, with their catalogs', async () => {
     const Supplier = mongoose.model('Supplier');
     await Supplier.create({ name: 'Lauriat Beverages', creditBalance: 1500, catalog: [{ itemName: 'LB ROSE', unitCost: 340 }] });
+    await mongoose.model('ClientAccount').create({ clientCode: 'CL-PURGE', username: 'purgeclient', password: 'x', name: 'Purge Client', creditBalance: 800 });
 
     const cats = await request(app).get('/api/admin/purge-data/categories').set(auth(superToken));
     const sup = cats.body.categories.find(c => c.key === 'suppliers');
@@ -128,6 +129,8 @@ describe('suppliers in the purge', () => {
     const kept = await Supplier.findOne({ name: 'Lauriat Beverages' }).lean();
     expect(kept).toBeTruthy();
     expect(kept.creditBalance).toBe(0);
+    // Clients are never purged, but their credit balance goes with the ledger too.
+    expect((await mongoose.model('ClientAccount').findOne({ clientCode: 'CL-PURGE' }).lean()).creditBalance).toBe(0);
 
     const chosen = await request(app).post('/api/admin/purge-data').set(auth(superToken))
       .send({ confirmPhrase: 'PURGE', categories: ['suppliers'] });

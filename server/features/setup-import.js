@@ -145,16 +145,31 @@ export default function registerSetupImport(ctx) {
             created.push({ row: i + 1, yourCode, code: parent, name: ACCOUNTS[parent].name, parent, parentName: ACCOUNTS[parent].name, same: true });
             continue;
           }
-          const code = nextFree(parent);
+          let code = nextFree(parent);
           if (!code) throw new Error(`No free code left under ${parent}.`);
-          const acct = await Account.create({
-            code, name, type: ACCOUNTS[parent].type, parent, custom: true,
-            normalBalance: normalBalanceForCode(code), externalCode: yourCode,
-            // Under cash, bank, receivable or payable an account would otherwise
-            // appear as a way to pay at the till. A bank account carried in from
-            // the old books is not a tender until someone decides it is.
-            isActive: !PAYMENT_PARENTS.has(parent),
-          });
+          let acct;
+          // The startup seeding (payment-method sub-accounts) can take a code
+          // between choosing it and creating it: re-read what is taken, choose
+          // again, rather than lose the row to a duplicate-key error.
+          for (let attempt = 1; ; attempt++) {
+            try {
+              acct = await Account.create({
+                code, name, type: ACCOUNTS[parent].type, parent, custom: true,
+                normalBalance: normalBalanceForCode(code), externalCode: yourCode,
+                // Under cash, bank, receivable or payable an account would otherwise
+                // appear as a way to pay at the till. A bank account carried in from
+                // the old books is not a tender until someone decides it is.
+                isActive: !PAYMENT_PARENTS.has(parent),
+              });
+              break;
+            } catch (err) {
+              if (!(err?.code === 11000 && (err?.keyPattern?.code || /code_1/.test(String(err?.message)))) || attempt >= 5) throw err;
+              taken.add(code);
+              for (const a of await Account.find({}, { code: 1 }).lean()) taken.add(a.code);
+              code = nextFree(parent);
+              if (!code) throw err;
+            }
+          }
           taken.add(code);
           byExternal.set(yourCode.toLowerCase(), acct);
           created.push({ row: i + 1, yourCode, code, name, parent, parentName: ACCOUNTS[parent].name });

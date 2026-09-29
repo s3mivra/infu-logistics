@@ -1691,6 +1691,26 @@ const restoreStockMoves = async (moves, { session, reference, remarks, asBatch =
   return +value.toFixed(2);
 };
 
+// An exchange folds its swap into the order total (total += new - returned)
+// and also logs the return in refundHistory. A partial refund leaves the total
+// alone and adds to refundedAmount. Mixing the two used to count an exchange's
+// return twice: a replacement could never be refunded ("already fully
+// refunded"), and a refund's share was measured against lines already swapped
+// away. These give both routes the same view: the gross of what is still on
+// the order, and what has been paid back outside exchanges.
+const exchangedQtyByLine = (order) => {
+  const m = new Map();
+  for (const h of order.refundHistory || []) {
+    if (!String(h.reason || '').startsWith('EXCHANGE:')) continue;
+    for (const it of h.items || []) m.set(Number(it.itemIndex), (m.get(Number(it.itemIndex)) || 0) + (Number(it.qty) || 0));
+  }
+  return m;
+};
+const liveGross = (order, addOnTotal) => {
+  const gone = exchangedQtyByLine(order);
+  return order.items.reduce((s, it, i) => s + ((Number(it.price) || 0) + addOnTotal(it)) * Math.max(0, (Number(it.quantity) || 0) - (gone.get(i) || 0)), 0);
+};
+
 const completeOrderOnce = async (req, res, mayRetry) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -3621,11 +3641,11 @@ const partialRefundOnce = async (req, res, mayRetry) => {
 
     // Proportional revenue share (see comment above) - never re-derives VAT/discount.
     const addOnTotal = (it) => (it.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
-    const orderGross = order.items.reduce((s, it) => s + ((Number(it.price) || 0) + addOnTotal(it)) * (Number(it.quantity) || 0), 0);
+    const orderGross = liveGross(order, addOnTotal);
     const refundGross = validatedItems.reduce((s, { qty, item }) => s + ((Number(item.price) || 0) + addOnTotal(item)) * qty, 0);
     const fraction = orderGross > 0 ? refundGross / orderGross : 0;
     const baseForRefund = order.isComplimentary ? (order.subtotal || 0) : (order.total || 0);
-    const alreadyRefunded = (order.refundHistory || []).reduce((s, r) => s + (r.amount || 0), 0);
+    const alreadyRefunded = Number(order.refundedAmount) || 0;   // exchanges are already netted into order.total
     const remainingRefundable = +(baseForRefund - alreadyRefunded).toFixed(2);
     if (remainingRefundable <= 0.005) return await fail(400, 'This order has already been fully refunded.');
     const refundAmount = Math.max(0, Math.min(+(baseForRefund * fraction).toFixed(2), remainingRefundable));
@@ -3835,11 +3855,11 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
 
     // --- Money: returned value (proportional, same as partial-refund) ---
     const addOnTotal = (it) => (it.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
-    const orderGross = order.items.reduce((s, it) => s + ((Number(it.price) || 0) + addOnTotal(it)) * (Number(it.quantity) || 0), 0);
+    const orderGross = liveGross(order, addOnTotal);
     const returnGross = validatedReturns.reduce((s, { qty, item }) => s + ((Number(item.price) || 0) + addOnTotal(item)) * qty, 0);
     const returnFraction = orderGross > 0 ? returnGross / orderGross : 0;
     const baseForRefund = order.isComplimentary ? (order.subtotal || 0) : (order.total || 0);
-    const alreadyRefunded = (order.refundHistory || []).reduce((s, r) => s + (r.amount || 0), 0);
+    const alreadyRefunded = Number(order.refundedAmount) || 0;   // exchanges are already netted into order.total
     const remainingRefundable = Math.max(0, +(baseForRefund - alreadyRefunded).toFixed(2));
     const returnValue = Math.max(0, Math.min(+(baseForRefund * returnFraction).toFixed(2), remainingRefundable));
 
@@ -3947,6 +3967,10 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
     // --- Inventory / COGS - replacement side: a REAL deduction, like a normal sale ---
     let newCogs = 0;
     const newItemsLog = [];
+    // What the replacements take, against the lines they are added as - so a
+    // later return of a replacement gives back exactly this (Order.stockMoves).
+    const replacementMoves = [];
+    let replacementLine = order.items.length;
     const deduct = async (invId, qtyUsed, label) => {
       const updated = await Inventory.findOneAndUpdate(
         { _id: invId, stockQty: { $gte: qtyUsed } },
@@ -3960,9 +3984,10 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
         await updated.save({ session });
       }
       newCogs += (updated.unitCost || 0) * qtyUsed;
+      replacementMoves.push({ invId: String(updated._id), qty: +qtyUsed.toFixed(6), unitCost: updated.unitCost || 0, lineIndex: replacementLine });
       await StockCard.create([{
         inventoryId: updated._id, itemName: updated.itemName, type: 'Sale',
-        reference, qtyChange: -qtyUsed, balanceAfter: updated.stockQty,
+        reference, qtyChange: -qtyUsed, balanceAfter: updated.stockQty, unitCost: updated.unitCost || 0,
         remarks: `Exchange replacement: ${label}`,
       }], { session });
     };
@@ -3991,6 +4016,13 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
         itemStatus: 'Received', selectedAddOns: [],
       });
       newItemsLog.push({ productId: String(product._id), name: product.name, qty });
+      replacementLine += 1;
+    }
+    // Only an order that already records its stock moves gets these added: for
+    // an older order, a partial record would make a later full reversal skip
+    // the original lines (it would trust the record and find only these).
+    if (hasStockMoves(order) && replacementMoves.length) {
+      order.stockMoves = [...order.stockMoves, ...replacementMoves];
     }
 
     if (returnCogs > 0.005 || newCogs > 0.005) {

@@ -147,6 +147,42 @@ describe('giving it back', () => {
   });
 });
 
+describe('exchanges', () => {
+  it('a replacement is recorded too, so returning it later gives back what it took', async () => {
+    const flatWhite = await M('Product').create({
+      name: 'Flat White', category: 'Coffee', basePrice: 150,
+      baseRecipe: [
+        { invId: String(beans._id), name: 'BEANS', qty: 36, unit: 'g', packBase: 1 },
+        { invId: String(milk._id), name: 'MILK', qty: 150, unit: 'ml', packBase: 1 },
+        { invId: String(cup._id), name: 'CUP', qty: 1, unit: 'pcs', packBase: 1 },
+      ],
+    });
+    const o = await sell(1);
+    const ex = await as('post', `/api/orders/${o._id}/exchange`).send({
+      returnItems: [{ itemIndex: 0, qty: 1 }],
+      newItems: [{ productId: String(flatWhite._id), quantity: 1 }],
+      reason: 'Wanted a flat white', inventoryAction: 'Restock',
+    });
+    expect(ex.status, JSON.stringify(ex.body)).toBe(200);
+    // The latte came back; the flat white went out.
+    expect(await stock(beans)).toBe(1000 - 36);
+    expect(await stock(milk)).toBe(5000 - 150);
+    const saved = await M('Order').findById(o._id).lean();
+    expect(saved.stockMoves.filter(m => m.lineIndex === 1)).toHaveLength(3);
+
+    // The flat white's recipe changes, then it is refunded: it gives back what it took.
+    await M('Product').updateOne({ _id: flatWhite._id }, { $set: { 'baseRecipe.0.qty': 50 } });
+    const r = await as('post', `/api/orders/${o._id}/partial-refund`).send({ items: [{ itemIndex: 1, qty: 1 }], reason: 'Changed mind', inventoryAction: 'Restock' });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    // The customer paid 150 for it, so 150 comes back - not a share of the
+    // latte that was already swapped away (it used to be refused outright).
+    expect(r.body.refundAmount).toBe(150);
+    expect(await stock(beans)).toBe(1000);
+    expect(await stock(milk)).toBe(5000);
+    expect(await stock(cup)).toBe(100);
+  });
+});
+
 describe('races and replays', () => {
   it('two tills selling the last cup: exactly one goes through', async () => {
     await M('Inventory').updateOne({ _id: cup._id }, { $set: { stockQty: 1 } });
