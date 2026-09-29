@@ -192,6 +192,15 @@ export default function registerSetupImport(ctx) {
         if (!meta) { problems.push(`Row ${i + 1}: "${raw || '(no code)'}" is not an account - add it to the Chart of Accounts sheet.`); return; }
         if (!isPnlType(meta.type)) { problems.push(`Row ${i + 1}: ${raw} ${meta.name} is a ${meta.type} account - it belongs on the Opening Balances sheet.`); return; }
         bad.forEach(b => problems.push(`Row ${i + 1}: ${b} is not an amount.`));
+        // Every line goes in as the positive figure the statement shows. An
+        // income line printed in brackets under expenses - "Misc. non-operating
+        // income (200,752)" - copied as a negative was posted as a loss: net
+        // income came out short by twice the amount, with nothing to say why.
+        const negative = Object.entries(months).filter(([, amount]) => amount < 0);
+        if (negative.length) {
+          problems.push(`Row ${i + 1}: ${raw} ${meta.name} has negative amounts (${negative.map(([m, a]) => `month ${m}: ${a}`).join(', ')}). Enter every amount as a positive number - an income line shown in brackets on the statement is still entered positive, on its income account.`);
+          return;
+        }
         const year = parseInt(text(r.year), 10);
         if (!(year >= 1990 && year <= 2100)) { problems.push(`Row ${i + 1}: give the year the figures are for (e.g. 2026).`); return; }
         for (const [m, amount] of Object.entries(months)) {

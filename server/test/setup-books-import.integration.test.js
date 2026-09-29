@@ -72,6 +72,15 @@ describe('refusals leave nothing behind', () => {
     expect(res.body.problems.join('\n')).toMatch(/B-999999/);
     expect(await M('JournalEntry').countDocuments({ reference: /^PNLH-/ })).toBe(0);
   });
+
+  it('refuses a negative amount - an income shown in brackets is entered positive', async () => {
+    // "Misc. non-operating income (18,622)" copied as -18,622 would post the
+    // income as a loss and understate net income by twice the amount.
+    const res = await importRows('pnl-history', [...PNL, { code: '830000', year: 2026, jan: '-18,622' }]);
+    expect(res.status).toBe(400);
+    expect(res.body.problems.join('\n')).toMatch(/negative amounts.*positive number/);
+    expect(await M('JournalEntry').countDocuments({ reference: /^PNLH-/ })).toBe(0);
+  });
 });
 
 describe('carrying the books in', () => {
