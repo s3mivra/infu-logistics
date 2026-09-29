@@ -15,6 +15,9 @@ export const TEMPLATES = [
   { key: 'suppliers', sheet: 'Suppliers', perm: (can) => can('procurement.manage') },
   { key: 'clients', sheet: 'Clients', perm: (can, su) => su, logOnly: true },
   { key: 'inventory', sheet: 'Inventory', perm: (can, su) => su, preview: true },
+  // After Inventory: its products are what the tiers price. Prices for products
+  // the Inventory preview has not created yet wait and apply once it is confirmed.
+  { key: 'priceTiers', sheet: 'Price Tiers', perm: (can, su) => su },
   { key: 'pnlHistory', sheet: 'P&L History', perm: books },
   { key: 'openingBalances', sheet: 'Opening Balances', perm: books },
   { key: 'openReceivables', sheet: 'Open Receivables', perm: books },
@@ -41,6 +44,7 @@ export const endpointFor = (key) => ({
   bills: 'bills/import',
   expenses: 'expenses/import',
   fixedAssets: 'fixed-assets/import',
+  priceTiers: 'setup/price-tiers/import',
 }[key]);
 
 const isBlank = (v) => v === '' || v === null || v === undefined;

@@ -31,7 +31,7 @@ const sheets = {
 describe('which templates a person gets', () => {
   it('leaves out what they cannot import, and clients unless this is logistics', () => {
     expect(availableTemplates(can, true, 'fb').map(t => t.sheet)).toEqual([
-      'Chart of Accounts', 'Suppliers', 'Inventory', 'P&L History', 'Opening Balances', 'Open Receivables', 'Open Payables',
+      'Chart of Accounts', 'Suppliers', 'Inventory', 'Price Tiers', 'P&L History', 'Opening Balances', 'Open Receivables', 'Open Payables',
       'Open Deposits & Advances', 'Bills', 'Expenses', 'Fixed Assets',
     ]);
     expect(availableTemplates(can, true, 'log').map(t => t.sheet)).toContain('Clients');

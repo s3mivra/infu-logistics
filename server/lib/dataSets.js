@@ -566,6 +566,20 @@ export const DATASETS = {
     },
   },
 
+  priceTiers: {
+    label: 'Price Tiers', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/price-tiers/import',
+      intro: 'What each customer class pays for each product - the same layout Pricing Control exports. One row per product; after Code, Product and List Price, add one column per tier headed with the tier name (Dealer, Satellite, ...), and fill in its price. A blank cell means that tier has no price of its own for the product. Tiers are created if they do not exist. Products come from the Inventory sheet, so prices for products not created yet wait and are applied the moment the Inventory preview is confirmed.',
+      columns: [
+        { name: 'Code', required: true, note: 'The product code - for stock-based products, the item code from the Inventory sheet. Matched first; the name is only a fallback.', example: 'X-1' },
+        { name: 'Product', note: 'The product name. Used when a row has no code.', example: 'Sample Product' },
+        { name: 'List Price', note: 'For reading only - the product keeps its own price (the Inventory sheet SRP, or Catalog Setup).', example: '100' },
+        { name: 'Dealer Price', note: 'One column per tier, headed with the tier name - rename this one and add as many as you need. A client tagged with that tier pays this price.', example: '90' },
+      ],
+    },
+  },
+
   openReceivables: {
     label: 'Open Receivables', templateOnly: true, importable: true, columns: [],
     importSpec: {

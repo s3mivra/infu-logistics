@@ -48,7 +48,7 @@ describe('every importable dataset describes its own template', () => {
   it('finds the ones that claim to be importable', () => {
     // If this list shrinks, something lost its importSpec.
     expect(IMPORTABLE.map(([k]) => k).sort()).toEqual(
-      ['accounts', 'bills', 'clients', 'expenses', 'fixedAssets', 'inventory', 'openDeposits', 'openPayables', 'openReceivables', 'openingBalances', 'pnlHistory', 'products', 'suppliers'],
+      ['accounts', 'bills', 'clients', 'expenses', 'fixedAssets', 'inventory', 'openDeposits', 'openPayables', 'openReceivables', 'openingBalances', 'pnlHistory', 'priceTiers', 'products', 'suppliers'],
     );
   });
 

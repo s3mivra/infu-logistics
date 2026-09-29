@@ -9,6 +9,7 @@ import { withOptionalTransaction } from '../lib/txn.js';
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { basePerPack } from '../lib/units.js';
+import { applyPendingTierPrices } from '../lib/tierPriceImport.js';
 // Action permissions. Each route below changes data, and was guarded only by
 // "is staff" - so a plain staff account could, through the API, do what the
 // permission catalogue reserves for a role that holds the matching
@@ -2320,6 +2321,13 @@ async function runInventoryImport(req, res, attempt) {
 
     await session.commitTransaction();
     session.endSession();
+    // Tier prices from a setup workbook wait for the products this import has
+    // just created (lib/tierPriceImport.js). A failure here must not undo a
+    // committed import - the prices stay waiting for the next one.
+    try {
+      const tierPrices = await applyPendingTierPrices({ PriceTier: mongoose.model('PriceTier'), Product, Settings: mongoose.model('Settings'), scope: { businessType: BUSINESS_TYPE, ...tenantScope(req) } });
+      if (tierPrices.applied) summary.tierPricesApplied = tierPrices.applied;
+    } catch (err) { log?.error?.({ err }, 'Waiting tier prices could not be applied'); }
     emitToMgr('erpUpdated');
     emitToAll('menuUpdated');
     res.json({ success: true, summary });

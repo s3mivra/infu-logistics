@@ -8690,7 +8690,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
                         setActiveTab(item.id);
                         setNavMode(group.mode);
                         if (item.sub) setLedgerSubTab(item.sub);
-                        if (item.id === 'analytics') { fetchAnalytics(); fetchTurnover(); fetchSalesTrend(); }
+                        // Analytics loads itself when it opens (AnalyticsTab).
                       }}
                       className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
                         ${active ? 'bg-brand text-on-brand shadow-sm' : 'text-fg/75 hover:text-fg hover:bg-white/5'}`}

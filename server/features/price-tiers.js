@@ -9,6 +9,7 @@
 // categories, because renaming a tier changes what every tagged client pays.
 import { captureError } from '../lib/errorLog.js';
 import { resolveTierPrice } from '../lib/priceTiers.js';
+import { readTierRows, applyTierEntries, holdTierEntries } from '../lib/tierPriceImport.js';
 
 export default function registerPriceTiers(ctx) {
   const {
@@ -25,6 +26,7 @@ export default function registerPriceTiers(ctx) {
     verifyToken,
     requireStaff,
     requireSuperAdmin,
+    Settings,
   } = ctx;
 
   const cleanName = (v) => String(v == null ? '' : v).trim().slice(0, 60);
@@ -218,6 +220,30 @@ export default function registerPriceTiers(ctx) {
       if (entries.length) await AuditLog.insertMany(entries);
 
       res.json({ success: true, tier });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  // ── IMPORT A PRICE LIST (setup workbook "Price Tiers" sheet) ──────────────────
+  // Code | Product | List Price | one column per tier - the Pricing Control
+  // export's own layout. See lib/tierPriceImport.js. Prices for products that
+  // do not exist yet (the setup workbook makes them from its Inventory sheet,
+  // confirmed after this runs) wait and are applied when they are created.
+  app.post('/api/setup/price-tiers/import', verifyToken, requireSuperAdmin, async (req, res) => {
+    try {
+      const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+      if (!rows.length) return res.status(400).json({ success: false, error: 'No rows to import.' });
+      const { entries, problems, tierNames } = readTierRows(rows);
+      if (problems.length) return res.status(400).json({ success: false, error: `Nothing was imported. ${problems.length} problem(s) to fix first.`, problems: problems.slice(0, 50) });
+      if (!tierNames.length) return res.status(400).json({ success: false, error: 'No tier columns - add one column per tier after Code, Product and List Price, headed with the tier name.' });
+      if (!entries.length) return res.status(400).json({ success: false, error: 'Every tier column was blank - nothing to import.' });
+      const scope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+      const { results, waiting } = await applyTierEntries(entries, { PriceTier, Product, scope });
+      await holdTierEntries(waiting, { Settings });
+      await logAudit(req, { action: 'import', entity: 'PriceTier', entityId: 'price-list', after: { tiers: results, waiting: waiting.length } });
+      const applied = results.reduce((s, r) => s + r.prices, 0);
+      const notes = [`${applied} price(s) set across ${results.length} tier(s).`];
+      if (waiting.length) notes.push(`${waiting.length} price(s) are for products not created yet - they are applied automatically once those products exist (confirm the Inventory preview).`);
+      res.json({ success: true, created: applied, tiers: results, waiting: waiting.length, note: notes.join(' ') });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 

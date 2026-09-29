@@ -80,6 +80,14 @@ export default function AnalyticsTab({ ctx }) {
     turnoverData, fetchTurnover,
     salesTrendData, salesTrendPeriod, setSalesTrendPeriod, fetchSalesTrend,
   } = ctx;
+  // Load fresh figures every time this tab opens, however it was reached -
+  // the sidebar, Go to, the phone menu, or a reload that lands here. It used
+  // to load only from a desktop-sidebar click, so any other way in showed an
+  // empty page until Load Analytics was pressed.
+  useEffect(() => {
+    fetchAnalytics?.(); fetchTurnover?.(); fetchSalesTrend?.();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   // Layout switch: A = KPI Grid (current), B = Ledger-style (Stage 2).
   const [analyticsLayout, setAnalyticsLayout] = useState('a');
