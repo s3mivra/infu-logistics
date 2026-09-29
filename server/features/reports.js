@@ -1197,6 +1197,47 @@ app.get('/api/reports/sales-by-channel', verifyToken, ...canViewReports, require
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
+// ── SALES BY CUSTOMER ─────────────────────────────────────────────────────────
+// Completed sales totalled per buyer, largest first, with what each still owes.
+// A buyer is their client account when the order has one; otherwise the name
+// on the order, so walk-in sales stay together under WALK-IN.
+app.get('/api/reports/sales-by-customer', verifyToken, ...canViewReports, requirePermission('screen.reports.salescustomer'), async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
+    const orders = await Order.find({
+      businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true },
+      createdAt: { $gte: dayStart(start), $lte: dayEnd(end) },
+    }, { customerName: 1, clientId: 1, clientAccountId: 1, subtotal: 1, discount: 1, total: 1, refundedAmount: 1, items: 1, createdAt: 1, paymentMethod: 1, arSettled: 1, amountPaid: 1 }).limit(100000).lean();
+    const ids = [...new Set(orders.map(o => String(o.clientAccountId || o.clientId || '')).filter(id => mongoose.Types.ObjectId.isValid(id)))];
+    const accounts = new Map((await ClientAccount.find({ _id: { $in: ids } }, { name: 1, clientCode: 1, segments: 1 }).lean()).map(c => [String(c._id), c]));
+    const acc = new Map();
+    for (const o of orders) {
+      const id = String(o.clientAccountId || o.clientId || '');
+      const account = accounts.get(id);
+      const key = account ? `acct:${id}` : `name:${String(o.customerName || 'WALK-IN').trim().toUpperCase() || 'WALK-IN'}`;
+      const row = acc.get(key) || {
+        customerId: account ? id : '', customerNumber: String(account?.clientCode || '').toUpperCase(),
+        customer: account?.name || (String(o.customerName || '').trim().toUpperCase() || 'WALK-IN'),
+        segments: account?.segments || [],
+        orders: 0, units: 0, gross: 0, discount: 0, net: 0, lastSale: null,
+      };
+      row.orders += 1;
+      row.units += (o.items || []).reduce((s, it) => s + (Number(it.quantity) || 0), 0);
+      row.gross += Number(o.subtotal) || 0;
+      row.discount += Number(o.discount) || 0;
+      row.net += (Number(o.total) || 0) - (Number(o.refundedAmount) || 0);
+      if (!row.lastSale || o.createdAt > row.lastSale) row.lastSale = o.createdAt;
+      acc.set(key, row);
+    }
+    const totalNet = [...acc.values()].reduce((s, r) => s + r.net, 0);
+    const customers = [...acc.values()]
+      .map(r => ({ ...r, gross: roundMoney(r.gross), discount: roundMoney(r.discount), net: roundMoney(r.net), share: totalNet > 0 ? roundMoney((r.net / totalNet) * 100) : 0 }))
+      .sort((a, b) => b.net - a.net);
+    res.json({ success: true, customers, totalNet: roundMoney(totalNet), orders: orders.length });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 // ── SALES BY PAYMENT METHOD ───────────────────────────────────────────────────
 app.get('/api/reports/sales-by-payment', verifyToken, ...canViewReports, requirePermission('screen.reports.payments'), async (req, res) => {
   try {

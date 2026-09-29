@@ -1600,6 +1600,8 @@ app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, atomic(
     if (!fund || !fund.isActive) return res.status(404).json({ success: false, error: 'Fund not found.' });
 
     const { amount, description, categoryCode } = req.body;
+    const payee = String(req.body.payee || '').trim().slice(0, 120);
+    const refNo = String(req.body.refNo || '').trim().slice(0, 60);
     const amt = Number(amount);
     if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Amount must be a positive number.' });
     if (!description?.trim()) return res.status(400).json({ success: false, error: 'Description is required.' });
@@ -1625,13 +1627,13 @@ app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, atomic(
     });
 
     await issueCheckVoucher(req, {
-      payeeType: 'other', payeeName: description.trim() || `Petty cash: ${fund.name}`,
+      payeeType: 'other', payeeName: payee || description.trim() || `Petty cash: ${fund.name}`,
       amount: amt, purpose: 'petty-cash', sourceAccount: '114000',
       notes: `Paid out of ${fund.name}`, journalEntryRef: je.reference || '',
     });
     const tx = await RevolvingFundTx.create({
       fundId: fund._id, type: 'disbursement', amount: amt,
-      description, categoryCode: expCode,
+      description, categoryCode: expCode, payee, refNo,
       performedBy: req.user?.name,
       balanceAfter: fund.currentBalance,
       journalRef: je._id,
@@ -1662,6 +1664,121 @@ app.get('/api/revolving-funds/:id/transactions', verifyToken, ...canViewAcct, as
     const txs   = await RevolvingFundTx.find({ fundId: req.params.id })
       .sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit);
     res.json({ success: true, txs, total, page, pages: Math.ceil(total / limit) });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ── VALIDATION ────────────────────────────────────────────────────────────────
+// Spending from a fund posts at once (see /disburse), but the fund is not
+// topped up again until every spend has been checked against its receipt.
+// Validated: the receipt supports it. Rejected: it does not - the amount comes
+// back off the expense and is owed by the person who spent it (Advances to
+// Employees), to be settled like any other advance.
+const txForValidation = async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.txId || '')) { res.status(400).json({ success: false, error: 'Invalid transaction.' }); return null; }
+  const tx = await RevolvingFundTx.findOne({ _id: req.params.txId, fundId: req.params.id });
+  if (!tx || tx.type !== 'disbursement') { res.status(404).json({ success: false, error: 'Spend not found in this fund.' }); return null; }
+  if (tx.validation?.status !== 'Unvalidated') { res.status(409).json({ success: false, error: `This spend is already ${tx.validation?.status || 'settled'}.` }); return null; }
+  // Nobody checks their own receipts.
+  if (tx.performedBy && tx.performedBy === req.user?.name && String(req.user?.role || '').toLowerCase() !== 'superadmin') {
+    res.status(403).json({ success: false, error: 'Someone other than the person who spent it has to validate this.' }); return null;
+  }
+  return tx;
+};
+
+app.post('/api/revolving-funds/:id/transactions/:txId/validate', verifyToken, ...canPostAcct, async (req, res) => {
+  try {
+    const tx = await txForValidation(req, res); if (!tx) return;
+    tx.validation = { status: 'Validated', by: req.user?.name || '', at: new Date(), reason: '', reversalRef: '' };
+    await tx.save();
+    await logAudit(req, { action: 'validate', entity: 'RevolvingFundTx', entityId: tx._id, after: { amount: tx.amount, description: tx.description } });
+    res.json({ success: true, tx });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.post('/api/revolving-funds/:id/transactions/:txId/reject', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
+  try {
+    const reason = String(req.body?.reason || '').trim();
+    if (!reason) return res.status(400).json({ success: false, error: 'Say why the receipt is not accepted.' });
+    const tx = await txForValidation(req, res); if (!tx) return;
+    // Stock bought from the fund is on the shelf; taking it off the books
+    // here would leave the stock count and the ledger disagreeing.
+    if (!/^[5-9]/.test(String(tx.categoryCode || ''))) {
+      return res.status(400).json({ success: false, error: 'This spend bought stock. Return or adjust the stock instead of rejecting the receipt.' });
+    }
+    const fund = await RevolvingFund.findById(tx.fundId, { name: 1 }).lean();
+    const expName = acctMeta(tx.categoryCode)?.name || tx.categoryCode;
+    const reference = await mkSeqRef('RF-REJ');
+    await JournalEntry.create({
+      date: new Date(),
+      description: `Revolving fund receipt rejected (${fund?.name || 'fund'}): ${tx.description} - owed by ${tx.performedBy || 'the custodian'}. ${reason}`,
+      lines: [
+        { accountCode: '170100', accountName: 'Advances to Employees', debit: tx.amount, credit: 0 },
+        { accountCode: tx.categoryCode, accountName: expName, debit: 0, credit: tx.amount },
+      ],
+      totalDebit: tx.amount, totalCredit: tx.amount, reference,
+    });
+    tx.validation = { status: 'Rejected', by: req.user?.name || '', at: new Date(), reason: reason.slice(0, 500), reversalRef: reference };
+    await tx.save();
+    await logAudit(req, { action: 'reject', entity: 'RevolvingFundTx', entityId: tx._id, after: { amount: tx.amount, reason, reference } });
+    emitToMgr('erpUpdated');
+    res.json({ success: true, tx, reference });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+}));
+
+// ── LIQUIDATION REPORT ────────────────────────────────────────────────────────
+// The revolving-fund liquidation sheet the office already fills in by hand:
+// every spend in the period with its payee, account, particulars and amount,
+// the share of the fund still left after each one, and the total to
+// replenish. Oldest first, the way the sheet reads. Defaults to the last 7 days.
+app.get('/api/revolving-funds/:id/liquidation', verifyToken, ...canViewAcct, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id || '')) return res.status(400).json({ success: false, error: 'Invalid fund.' });
+    const fund = await RevolvingFund.findById(req.params.id).lean();
+    if (!fund) return res.status(404).json({ success: false, error: 'Fund not found.' });
+    const end = req.query.end ? dayEnd(req.query.end) : new Date();
+    const start = req.query.start ? dayStart(req.query.start) : new Date(end.getTime() - 6 * 86400000);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+      return res.status(400).json({ success: false, error: 'Give a valid start and end date.' });
+    }
+    const txs = await RevolvingFundTx.find({ fundId: fund._id, type: 'disbursement', date: { $gte: start, $lte: end } })
+      .sort({ date: 1, createdAt: 1 }).lean();
+    const float = Number(fund.initialAmount) || 0;
+    let remaining = float;
+    const rows = txs.map((t) => {
+      remaining = +(remaining - t.amount).toFixed(2);
+      const meta = acctMeta(t.categoryCode);
+      return {
+        _id: t._id, date: t.date, refNo: t.refNo || '', payee: t.payee || '',
+        account: `${t.categoryCode}${meta ? ` - ${meta.name}` : ''}`,
+        particulars: t.description, amount: t.amount,
+        pctRemaining: float ? +(remaining / float).toFixed(5) : 0,
+        runningBalance: remaining,
+        spentBy: t.performedBy || '',
+        status: t.validation?.status || 'Validated',
+        validatedBy: t.validation?.by || '', reason: t.validation?.reason || '',
+      };
+    });
+    const sum = (list) => +list.reduce((s, r) => s + r.amount, 0).toFixed(2);
+    res.json({
+      success: true,
+      fund: { _id: fund._id, name: fund.name, float, currentBalance: fund.currentBalance },
+      period: { start, end },
+      rows,
+      totals: {
+        spent: sum(rows),
+        validated: sum(rows.filter(r => r.status === 'Validated')),
+        unvalidated: sum(rows.filter(r => r.status === 'Unvalidated')),
+        rejected: sum(rows.filter(r => r.status === 'Rejected')),
+        // What the fund needs to be whole again, whatever the period shows.
+        toReplenish: +(float - fund.currentBalance).toFixed(2),
+      },
+    });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

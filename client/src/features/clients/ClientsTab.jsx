@@ -1,5 +1,6 @@
 ﻿import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { Users, Search, ChevronDown, ChevronRight, RefreshCw, AlertCircle, Upload, FileText, Download } from 'lucide-react';
+import { Users, Search, ChevronDown, ChevronRight, RefreshCw, AlertCircle, Upload, FileText, Download, Link2 } from 'lucide-react';
+import ClientLinks from './ClientLinks';
 import * as ui from '../../shared/ui';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import { socket } from '../../shared/staffSocket.js';
@@ -38,6 +39,7 @@ export default function ClientsTab() {
     } catch { ui.alert('Network error.'); }
   };
   const [importing, setImporting] = useState(false);
+  const [showLinks, setShowLinks] = useState(false);
   const [data, setData] = useState({ clients: [], showMoney: false, mode: 'off' });
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState('');
@@ -256,6 +258,12 @@ export default function ClientsTab() {
             className="bg-surface border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-fg text-sm placeholder-fg/70 outline-none focus:border-brand/60 transition w-full sm:w-64"
           />
         </div>
+        {can('clients.links') && (
+          <button onClick={() => setShowLinks(v => !v)} aria-expanded={showLinks}
+            className={`flex items-center gap-1.5 text-[10px] px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider transition ${showLinks ? 'bg-brand text-on-brand' : 'border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5'}`}>
+            <Link2 size={13} /> Links
+          </button>
+        )}
         <button onClick={() => downloadDataset?.('clients')}
           className="flex items-center gap-1.5 text-[10px] bg-brand/10 hover:bg-brand/20 text-brand-text px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider transition">
           <Download size={13} /> Export
@@ -276,6 +284,8 @@ export default function ClientsTab() {
           <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
+
+      {showLinks && can('clients.links') && <ClientLinks apiFetch={apiFetch} />}
 
       {!data.showMoney && (
         <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-fg/70 text-xs font-bold">

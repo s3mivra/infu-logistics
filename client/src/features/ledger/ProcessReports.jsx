@@ -160,6 +160,48 @@ export function SalesByChannelReport({ apiFetch }) {
   );
 }
 
+// ── SALES BY CUSTOMER ───────────────────────────────────────────────────────
+export function SalesByCustomerReport({ apiFetch }) {
+  const [start, setStart] = useState(monthStart());
+  const [end, setEnd] = useState(ymd(new Date()));
+  const { data, loading, load } = useLoader(apiFetch, `/api/reports/sales-by-customer?start=${start}&end=${end}`);
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const exportIt = () => exportSheet(`Sales by Customer ${start} to ${end}`, data.customers.map(c => ({
+    'Customer No.': c.customerNumber, Customer: c.customer, Orders: c.orders, Units: c.units,
+    Gross: c.gross, Discount: c.discount, Net: c.net, 'Share %': c.share, 'Last sale': c.lastSale ? ymd(c.lastSale) : '',
+  })));
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <p className="text-xs text-fg/65">Completed sales totalled per customer, largest first. Sales without a client account are grouped by the name on the order.</p>
+      <RangeBar {...{ start, end, setStart, setEnd, loading }} onLoad={load} extra={data?.customers?.length > 0 && <button type="button" onClick={exportIt} className={btnGhost}><Download size={14} /> Excel</button>} />
+      {!data ? <Empty>{loading ? 'Loading…' : 'Run the report.'}</Empty> : data.customers.length === 0 ? <Empty>No completed sales in these dates.</Empty> : (
+        <Card className="overflow-x-auto">
+          <table className="w-full text-left text-xs min-w-[640px]">
+            <thead className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
+              <tr><th className={th}>Customer</th><th className={`${th} text-right`}>Orders</th><th className={`${th} text-right`}>Units</th><th className={`${th} text-right`}>Gross</th><th className={`${th} text-right`}>Discount</th><th className={`${th} text-right`}>Net</th><th className={`${th} text-right`}>Share</th><th className={th}>Last sale</th></tr>
+            </thead>
+            <tbody>
+              {data.customers.map(c => (
+                <tr key={c.customerId || c.customer} className="border-b border-white/5">
+                  <td className={td}>{c.customerNumber && <span className="font-mono text-fg/70 mr-1">{c.customerNumber}</span>}<span className="font-bold text-fg">{c.customer}</span></td>
+                  <td className={`${td} text-right tabular-nums`}>{c.orders}</td>
+                  <td className={`${td} text-right tabular-nums`}>{c.units}</td>
+                  <td className={`${td} text-right font-mono`}>{peso(c.gross)}</td>
+                  <td className={`${td} text-right font-mono text-danger`}>{peso(c.discount)}</td>
+                  <td className={`${td} text-right font-mono font-black`}>{peso(c.net)}</td>
+                  <td className={`${td} text-right tabular-nums`}>{c.share}%</td>
+                  <td className={`${td} text-fg/70`}>{c.lastSale ? ymd(c.lastSale) : ''}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot><tr className="font-black"><td className={td}>Total</td><td className={`${td} text-right tabular-nums`}>{data.orders}</td><td className={td} colSpan={3} /><td className={`${td} text-right font-mono`}>{peso(data.totalNet)}</td><td className={td} colSpan={2} /></tr></tfoot>
+          </table>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 // ── BUDGET vs ACTUAL, and setting the budget ────────────────────────────────
 export function BudgetReport({ apiFetch, can }) {
   const now = new Date();

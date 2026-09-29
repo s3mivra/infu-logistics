@@ -53,6 +53,14 @@ describe('reading the workbook', () => {
     expect(steps[0].sheetRows).toEqual([3]);
   });
 
+  it('keeps a real row that happens to read like the example, anywhere below row 2', async () => {
+    // Filled in over the example: the business's own first row sits on row 2
+    // and matches nothing; a later row that equals the example is still data.
+    const filled = { Suppliers: [['name', 'contactPerson', 'phone'], ['Acme Coffee', 'Ben', '0918'], ['Example Supplier', 'Ana', '0917']] };
+    const steps = await readSetupWorkbook(XLSX, book(filled), availableTemplates(can, true, 'fb'), server());
+    expect(steps.map(s => [s.sheet, s.count, s.skippedExample])).toEqual([['Suppliers', 2, 0]]);
+  });
+
   it('finds nothing in a workbook of empty sheets', async () => {
     const steps = await readSetupWorkbook(XLSX, book({ Suppliers: [['name']], Bills: [['supplier']] }), availableTemplates(can, true, 'fb'), server());
     expect(steps).toEqual([]);

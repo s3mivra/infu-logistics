@@ -141,6 +141,8 @@ export default function registerRequisitions(ctx) {
           slipNumber, type: 'petty-cash', status: 'Pending',
           fundId: fund._id, fundName: fund.name, amount: amt,
           description: description.trim(), categoryCode: categoryCode || '760000',
+          payee: String(req.body.payee || '').trim().slice(0, 120),
+          refNo: String(req.body.refNo || '').trim().slice(0, 60),
           preparedBy,
         });
         await attachBudgetCheck(req, slip);
@@ -281,6 +283,17 @@ export default function registerRequisitions(ctx) {
         const fund = await RevolvingFund.findById(slip.fundId);
         if (!fund || !fund.isActive) return res.status(404).json({ success: false, error: 'Fund no longer exists or was closed.' });
 
+        // Validate -> approve -> pay: the fund is topped up only for spending
+        // whose receipts have been checked (Revolving Funds -> liquidation).
+        const unchecked = await RevolvingFundTx.find({ fundId: fund._id, 'validation.status': 'Unvalidated' }, { amount: 1 }).lean();
+        if (unchecked.length) {
+          const total = unchecked.reduce((s, t) => s + (t.amount || 0), 0);
+          return res.status(409).json({
+            success: false, needsValidation: true,
+            error: `${unchecked.length} spend(s) from ${fund.name} totalling ₱${total.toFixed(2)} have not been validated against their receipts yet. Validate or reject them first.`,
+          });
+        }
+
         const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
         const srcCode = (acctMeta(slip.categoryCode) && isCashLike(slip.categoryCode)) ? slip.categoryCode : '111000';
         const srcName = acctMeta(srcCode)?.name || 'Cash on Hand';
@@ -353,7 +366,7 @@ export default function registerRequisitions(ctx) {
           reference,
         });
         await issueCheckVoucher(req, {
-          payeeType: 'other', payeeName: slip.description || `Petty cash: ${fund.name}`,
+          payeeType: 'other', payeeName: slip.payee || slip.description || `Petty cash: ${fund.name}`,
           amount: slip.amount, purpose: 'petty-cash', sourceAccount: '114000',
           referenceNumber: slip.slipNumber || '',
           notes: `Paid out of ${fund.name}`,
@@ -361,7 +374,7 @@ export default function registerRequisitions(ctx) {
         });
         const tx = await RevolvingFundTx.create({
           fundId: fund._id, type: 'disbursement', amount: slip.amount,
-          description: slip.description, categoryCode: expCode,
+          description: slip.description, categoryCode: expCode, payee: slip.payee || '', refNo: slip.refNo || '',
           performedBy: slip.preparedBy, balanceAfter: fund.currentBalance,
           journalRef: je._id,
         });

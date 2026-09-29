@@ -741,7 +741,7 @@ export default function AdminDashboard() {
   const [rfNewForm, setRfNewForm] = useState({ name: '', initialAmount: '', description: '', sourceAccount: '111000' });
   const [rfNewSubmitting, setRfNewSubmitting] = useState(false);
   const [rfDisbModal, setRfDisbModal] = useState(false);
-  const [rfDisbForm, setRfDisbForm] = useState({ amount: '', description: '', categoryCode: '760000' });
+  const [rfDisbForm, setRfDisbForm] = useState({ amount: '', description: '', categoryCode: '760000', payee: '', refNo: '' });
   const [rfDisbSubmitting, setRfDisbSubmitting] = useState(false);
   const [rfReplModal, setRfReplModal] = useState(false);
   const [rfReplForm, setRfReplForm] = useState({ amount: '', note: '', sourceAccount: '111000' });
@@ -3664,7 +3664,6 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
   };
   // ── REVOLVING FUND FETCHERS ─────────────────────────────────────────────────
   const fetchRfFunds = async () => {
-    if (activeAdmin?.role !== 'superadmin') return;
     setRfLoading(true);
     try {
       const res = await apiFetch('/api/revolving-funds');
@@ -3675,7 +3674,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
   };
 
   const fetchRfTxs = async (fundId, page = 1) => {
-    if (activeAdmin?.role !== 'superadmin') return;
+    if (activeAdmin?.role !== 'superadmin' && !auth.can('accounting.view')) return;
     try {
       const res = await apiFetch(`/api/revolving-funds/${fundId}/transactions?page=${page}&limit=20`);
       const data = await res.json();
@@ -3741,12 +3740,12 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
       const res = await apiFetch(`/api/revolving-funds/${rfActiveFund._id}/disburse`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: amt, description: rfDisbForm.description.trim(), categoryCode: rfDisbForm.categoryCode }),
+        body: JSON.stringify({ amount: amt, description: rfDisbForm.description.trim(), categoryCode: rfDisbForm.categoryCode, payee: (rfDisbForm.payee || '').trim(), refNo: (rfDisbForm.refNo || '').trim() }),
       });
       const data = await res.json();
       if (!data.success) return ui.alert(data.error || 'Failed to disburse.');
       setRfDisbModal(false);
-      setRfDisbForm({ amount: '', description: '', categoryCode: '760000' });
+      setRfDisbForm({ amount: '', description: '', categoryCode: '760000', payee: '', refNo: '' });
       setRfFunds(prev => prev.map(f => f._id === data.fund._id ? data.fund : f));
       setRfActiveFund(data.fund);
       await fetchRfTxs(rfActiveFund._id, 1);

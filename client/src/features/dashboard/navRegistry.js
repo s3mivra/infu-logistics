@@ -127,6 +127,7 @@ export const REPORT_TAB_GROUPS = [
     ['salessummary', 'Sales Summary', BarChart3],
     ['salesline', 'Daily Sales Report', FileText],
     ['saleschannel', 'Sales by Channel', BarChart2],
+    ['salescustomer', 'Sales by Customer', Users],
     ['payments', 'By Payment', Banknote],
     ['profitcat', 'By Category', BarChart2],
     ['menueng', 'Menu Engineering', TrendingUp],

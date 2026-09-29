@@ -13,9 +13,16 @@ import { roundMoney, toCentavos } from './money.js';
 // A peso either way is rounding on a supplier's invoice, not a dispute.
 export const MATCH_TOLERANCE = 1;
 
-export function threeWayMatch({ po, receivedValue, invoiceAmount, tolerance = MATCH_TOLERANCE }) {
+// `delivery` is what arrived in the delivery being billed (Bill.deliveryLines).
+// With it, the PO price is checked against that delivery alone: a PO received
+// in two parts raises two bills, and the second invoice must not be compared
+// with both deliveries together. Without it (bills raised before deliveries
+// were recorded) the whole PO's receipts are used, as before.
+export function threeWayMatch({ po, receivedValue, invoiceAmount, delivery, tolerance = MATCH_TOLERANCE }) {
   const issues = [];
-  const lines = (po?.lines || []).filter((l) => l.receivedQty != null);
+  const lines = Array.isArray(delivery) && delivery.length
+    ? delivery.map((d) => ({ receivedQty: d.qty, unitCost: d.unitCost }))
+    : (po?.lines || []).filter((l) => l.receivedQty != null);
   const poValue = roundMoney(lines.reduce((s, l) => s + (Number(l.receivedQty) || 0) * (Number(l.unitCost) || 0), 0));
   for (const l of po?.lines || []) {
     const got = Number(l.receivedQty) || 0;

@@ -74,6 +74,18 @@ describe('sales documents, channel and salesperson', () => {
     expect((await as(tok.cashier, 'get', `/api/reports/sales-by-channel?start=${today}&end=${today}`)).status).toBe(403);
   });
 
+  it('sales by customer totals each buyer, largest first', async () => {
+    const r = await as(tok.boss, 'get', `/api/reports/sales-by-customer?start=${today}&end=${today}`);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const bulk = r.body.customers.find(c => c.customerNumber === 'PR-W');
+    expect(bulk).toMatchObject({ customer: 'Bulk Buyer', orders: 1, net: 1000, share: 50 });
+    expect(r.body.totalNet).toBe(2000);
+    const nets = r.body.customers.map(c => c.net);
+    expect(nets).toEqual([...nets].sort((a, b) => b - a));
+    expect((await as(tok.cashier, 'get', `/api/reports/sales-by-customer?start=${today}&end=${today}`)).status).toBe(403);
+    expect((await as(tok.boss, 'get', '/api/reports/sales-by-customer')).status).toBe(400);
+  });
+
   it('a salesperson named at the till must be on the staff list', async () => {
     const bad = await as(tok.cashier, 'post', '/api/orders').send({
       items: [{ productId, name: 'Crate', price: 500, quantity: 1 }], paymentMethod: 'Cash', table: 'Takeout', salesperson: 'Nobody Here',

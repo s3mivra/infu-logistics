@@ -13,7 +13,7 @@ export default function RevolvingFundDisburseModal() {
         <div className="bg-surface border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
             <div>
-              <h2 className="text-fg font-black text-lg">Request Disbursement</h2>
+              <h2 className="text-fg font-black text-lg">Record a Spend</h2>
               <p className="text-fg/65 text-xs font-bold uppercase tracking-widest mt-0.5">
                 {rfActiveFund.name} · Available: <span className="text-brand-text">₱{rfActiveFund.currentBalance.toFixed(2)}</span>
               </p>
@@ -33,6 +33,20 @@ export default function RevolvingFundDisburseModal() {
                 onChange={e => setRfDisbForm({...rfDisbForm, description: e.target.value})}
                 className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-danger/60 placeholder-fg/70"/>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Payee</label>
+                <input type="text" placeholder="e.g. LALAMOVE" value={rfDisbForm.payee || ''}
+                  onChange={e => setRfDisbForm({...rfDisbForm, payee: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-danger/60 placeholder-fg/70"/>
+              </div>
+              <div>
+                <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">OR / Ref. No.</label>
+                <input type="text" placeholder="From the receipt" value={rfDisbForm.refNo || ''}
+                  onChange={e => setRfDisbForm({...rfDisbForm, refNo: e.target.value})}
+                  className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-danger/60 placeholder-fg/70"/>
+              </div>
+            </div>
             <div>
               <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Expense Category</label>
               <select value={rfDisbForm.categoryCode} onChange={e => setRfDisbForm({...rfDisbForm, categoryCode: e.target.value})}
@@ -48,16 +62,17 @@ export default function RevolvingFundDisburseModal() {
               </select>
             </div>
             <div className="bg-danger/10 border border-danger/20 rounded-xl p-3 text-xs text-danger">
-              This files a Requisition Slip - nothing moves yet. Once someone approves it
-              (Ledger → Approvals), it deducts from the fund and posts:<br/>
-              <span className="font-bold">DR Expense / CR Petty Cash / Revolving Fund</span>
+              Recorded straight away: it comes out of the fund and posts
+              <span className="font-bold"> DR Expense / CR Petty Cash / Revolving Fund</span>.
+              Keep the receipt - someone else checks it on the Liquidation Report, and
+              the fund is topped up only once every spend has been checked.
             </div>
           </div>
           <div className="px-5 py-4 border-t border-white/10 shrink-0 flex gap-3">
             <button onClick={() => setRfDisbModal(false)} className="flex-1 bg-white/5 text-fg/65 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
             <button onClick={submitRfDisb} disabled={rfDisbSubmitting}
               className="flex-1 bg-danger text-fg rounded-xl py-3 font-bold text-sm hover:bg-danger/90 transition disabled:opacity-50">
-              {rfDisbSubmitting ? 'Filing…' : 'File Requisition Slip'}
+              {rfDisbSubmitting ? 'Saving…' : 'Record Spend'}
             </button>
           </div>
         </div>

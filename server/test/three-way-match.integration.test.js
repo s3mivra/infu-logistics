@@ -77,6 +77,23 @@ describe('three-way match', () => {
     expect(tb.debits).toBeCloseTo(tb.credits, 2);
   });
 
+  it('a PO received in two parts matches each delivery against itself', async () => {
+    const po = (await as(tok.super, 'post', '/api/purchase-orders').send({
+      supplier: 'Metro Packaging', supplierId,
+      lines: [{ invId: String(inv._id), itemName: 'Cups', itemCode: 'CUP', unit: 'pcs', orderedQty: 10, unitCost: 50 }],
+    })).body.purchaseOrder;
+    const first = (await as(tok.super, 'post', `/api/purchase-orders/${po._id}/receive`).send({ received: [{ index: 0, receivedQty: 6 }] })).body.bill;
+    const m1 = await as(tok.clerk, 'post', `/api/bills/${first._id}/invoice`).send({ supplierInvoiceNo: invoiceNo(), invoiceAmount: 300 });
+    expect(m1.body.match).toMatchObject({ status: 'Matched', poValue: 300 });
+    const second = (await as(tok.super, 'post', `/api/purchase-orders/${po._id}/receive`).send({ received: [{ index: 0, receivedQty: 4 }] })).body.bill;
+    expect(second.amount).toBe(200);
+    const m2 = await as(tok.clerk, 'post', `/api/bills/${second._id}/invoice`).send({ supplierInvoiceNo: invoiceNo(), invoiceAmount: 200 });
+    // It used to be compared with both deliveries together (P500) and flagged.
+    expect(m2.body.match).toMatchObject({ status: 'Matched', poValue: 200, receivedValue: 200 });
+    const ok = await as(tok.clerk, 'post', `/api/bills/${second._id}/approve`).send({});
+    expect(ok.status).toBe(200);
+  });
+
   it('an over-receipt is an exception even when the money agrees', async () => {
     const bill = await receive({ ordered: 10, received: 12 });
     const r = await as(tok.super, 'post', `/api/bills/${bill._id}/invoice`).send({ supplierInvoiceNo: invoiceNo(), invoiceAmount: 600 });

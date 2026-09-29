@@ -14,9 +14,10 @@ import { dateStr, monthStartStr, todayStr } from '../../shared/businessDay.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import TemplatesCard from './TemplatesCard';
 import ManualJournalApprovals from './ManualJournalApprovals';
-import { CashFlowReport, SalesByChannelReport, BudgetReport, ExceptionsReport, ClosingChecklist } from './ProcessReports';
+import { CashFlowReport, SalesByChannelReport, SalesByCustomerReport, BudgetReport, ExceptionsReport, ClosingChecklist } from './ProcessReports';
 import Attachments from '../../shared/Attachments';
 import RangePresets from '../../shared/RangePresets';
+import RevolvingFundLiquidation from './RevolvingFundLiquidation';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 // ── LedgerTab - extracted from AdminDashboard.jsx ──
@@ -1155,6 +1156,7 @@ It posts only what is not already accrued for that month.`)) return;
   useEffect(() => {
     if (!allowedPages.includes(LEDGER_ALIAS[ledgerSubTab] || ledgerSubTab)) return;
     if (ledgerSubTab === 'trial') loadTrial();
+    if (ledgerSubTab === 'revolving') fetchRfFunds();
     if (ledgerSubTab === 'salessummary' && !salesSummary) fetchSalesSummary();
     if (ledgerSubTab === 'salesline' && !salesLineItems) fetchSalesLineItems();
     if (ledgerSubTab === 'backdate' && !bdHistory) fetchBdHistory(1);
@@ -4627,6 +4629,7 @@ It posts only what is not already accrued for that month.`)) return;
 
           {ledgerSubTab === 'cashflow' && <CashFlowReport apiFetch={apiFetch} />}
           {ledgerSubTab === 'saleschannel' && <SalesByChannelReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'salescustomer' && <SalesByCustomerReport apiFetch={apiFetch} />}
           {ledgerSubTab === 'budget' && <BudgetReport apiFetch={apiFetch} can={can} />}
           {ledgerSubTab === 'exceptions' && <ExceptionsReport apiFetch={apiFetch} />}
           {ledgerSubTab === 'closing' && <ClosingChecklist apiFetch={apiFetch} can={can} />}
@@ -5179,6 +5182,11 @@ It posts only what is not already accrued for that month.`)) return;
                     </div>
                   )}
                 </div>
+              )}
+
+              {rfActiveFund && (
+                <RevolvingFundLiquidation key={rfActiveFund._id} apiFetch={apiFetch} fund={rfActiveFund}
+                  onChanged={() => { fetchRfFunds(); fetchRfTxs(rfActiveFund._id, 1); }} />
               )}
             </div>
           )}

@@ -696,6 +696,35 @@ app.post('/api/client-accounts/:id/reset-password', verifyToken, requireSuperAdm
   }
 });
 
+// ── Client links, to copy ─────────────────────────────────────────────────────
+// For the office: every client's portal sign-in link, and the onboarding link
+// an admin has already issued, while it is still valid. Nothing here creates,
+// renews or changes a link - an onboarding link sets the client's username and
+// password, so issuing one stays with the superadmin (onboard-link above).
+app.get('/api/client-accounts/links', verifyToken, requireStaff, requirePermission('clients.links'), async (req, res) => {
+  try {
+    const now = new Date();
+    const clients = await ClientAccount.find({}, { name: 1, clientCode: 1, username: 1, isActive: 1, onboardingToken: 1, onboardingTokenExpiresAt: 1 })
+      .sort({ name: 1 }).lean();
+    res.json({
+      success: true,
+      signInPath: '/client-login',
+      clients: clients.map(c => {
+        const live = c.onboardingToken && c.onboardingTokenExpiresAt && c.onboardingTokenExpiresAt > now;
+        return {
+          _id: c._id, name: c.name, clientCode: c.clientCode || '',
+          // A placeholder (_pos_…, _pending_…) cannot be typed at a login box.
+          hasLogin: !!c.username && !String(c.username).startsWith('_'), isActive: c.isActive !== false,
+          onboardingPath: live ? `/client-onboard/${c.onboardingToken}` : null,
+          onboardingExpiresAt: live ? c.onboardingTokenExpiresAt : null,
+        };
+      }),
+    });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 // ── Self-service onboarding link (#10) ────────────────────────────────────────
 // Generate: superadmin-only, from the Command Center. The client then opens
 // the link with NO auth at all (that's the point - they don't have a login

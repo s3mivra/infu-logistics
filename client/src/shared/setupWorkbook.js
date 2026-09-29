@@ -69,7 +69,9 @@ export async function readSetupWorkbook(XLSX, wb, available, apiFetch) {
     let skippedExample = 0;
     grid.slice(1).forEach((row, i) => {
       if (!row.some((v) => !isBlank(v))) return;
-      if (example && header.every((_, c) => cellText(row[c]) === (example[c] ?? ''))) { skippedExample++; return; }
+      // Only row 2 is the example. A real row further down that happens to
+      // read the same is data, and dropping it lost a whole year of sales.
+      if (i === 0 && example && header.every((_, c) => cellText(row[c]) === (example[c] ?? ''))) { skippedExample++; return; }
       kept.push({ row, sheetRow: i + 2 });
     });
     if (!kept.length) continue;

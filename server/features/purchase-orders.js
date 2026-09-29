@@ -621,6 +621,7 @@ export default function registerPurchaseOrders(ctx) {
             ? `Delivery received on ${po.poNumber} (balance beyond the prepayment)`
             : `Delivery received on ${po.poNumber}`,
           amount: posted.payableTotal,
+          deliveryLines: deltas.map(d => ({ itemName: d.line.itemName || '', qty: d.delta, unitCost: Number(d.line.unitCost) || 0 })),
           createdBy: req.user?.name || '',
         }).catch((err) => { captureError(req, err); return null; }); // a bill-creation failure shouldn't roll back a receipt that already posted
       }

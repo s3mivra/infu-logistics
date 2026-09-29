@@ -24,6 +24,9 @@ export const PERMISSIONS = [
   { key: 'orders.manage',      group: 'Sales',       label: 'Manage orders (edit/status)' },
   { key: 'orders.delete',      group: 'Sales',       label: 'Void / delete orders' },
   { key: 'orders.comp',        group: 'Sales',       label: 'Make an order complimentary (with an approver named)' },
+  // Copy only: the sign-in link, and an onboarding link an admin already
+  // issued. Issuing one stays superadmin-only - it sets a client's login.
+  { key: 'clients.links',      group: 'Sales',       label: 'Copy client links (portal sign-in and issued onboarding links)' },
   { key: 'inventory.view',     group: 'Inventory',   label: 'View inventory' },
   { key: 'inventory.manage',   group: 'Inventory',   label: 'Manage inventory (count/restock)' },
   { key: 'inventory.delete',   group: 'Inventory',   label: 'Delete inventory items' },
@@ -107,7 +110,7 @@ export const SCREENS = [
     ['tenancy', 'Tenancy Health'], ['bookshealth', 'Books Health'], ['exportall', 'Export All'],
   ] },
   { tab: 'reports', label: 'Reports', parent: 'reports.view', pages: [
-    ['salessummary', 'Sales Summary'], ['salesline', 'Daily Sales Report'], ['saleschannel', 'Sales by Channel'], ['payments', 'By Payment'],
+    ['salessummary', 'Sales Summary'], ['salesline', 'Daily Sales Report'], ['saleschannel', 'Sales by Channel'], ['salescustomer', 'Sales by Customer'], ['payments', 'By Payment'],
     ['profitcat', 'By Category'], ['menueng', 'Menu Engineering'],
     ['arreport', 'A/R Report'], ['collections', 'Collections'],
     ['apreport', 'A/P Report'], ['supplierpay', 'Supplier Payments'], ['checkvouchers', 'Check Vouchers'], ['advances', 'Advances'],
@@ -150,13 +153,13 @@ export function withScreens(list) {
 export const ROLE_DEFAULT_PERMISSIONS = {
   // Shop administrator: runs operations & config and can VIEW the books, but
   // cannot post journal entries (that's finance/superadmin) or manage staff.
-  admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp',
+  admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'clients.links',
             'inventory.view', 'inventory.manage', 'inventory.delete', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage', 'procurement.delete',
             'accounting.view', 'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'],
   // Operations lead: full ops (incl. building rosters), no books/settings/staff.
-  manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp',
+  manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'clients.links',
             'inventory.view', 'inventory.manage', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage',

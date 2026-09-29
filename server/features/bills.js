@@ -259,7 +259,7 @@ export default function registerBills(ctx) {
       if (dupe) return res.status(409).json({ success: false, error: duplicateMessage(dupe, invoiceNo), duplicateOf: dupe.billNumber });
 
       const po = bill.purchaseOrderId ? await PurchaseOrder.findById(bill.purchaseOrderId).lean() : null;
-      const result = threeWayMatch({ po, receivedValue: bill.amount, invoiceAmount });
+      const result = threeWayMatch({ po, receivedValue: bill.amount, invoiceAmount, delivery: bill.deliveryLines });
       bill.supplierInvoiceNo = invoiceNo;
       bill.supplierInvoiceKey = normalizeInvoiceNo(invoiceNo);
       bill.supplierInvoiceAmount = invoiceAmount;

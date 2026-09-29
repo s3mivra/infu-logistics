@@ -3195,6 +3195,10 @@ const BillSchema = new mongoose.Schema({
   // number, so the same invoice cannot be entered twice for one supplier.
   supplierInvoiceKey:    { type: String, default: '', index: true },
   supplierInvoiceAmount: { type: Number, default: null },
+  // What arrived in the delivery this bill is for. A PO received in parts
+  // raises one bill per delivery, and each bill's invoice is matched against
+  // its own delivery - not against everything received on the PO so far.
+  deliveryLines: [{ _id: false, itemName: String, qty: Number, unitCost: Number }],
   supplierInvoiceDate:   { type: Date, default: null },
   match: {
     status:        { type: String, enum: ['Unmatched', 'Matched', 'Exception', 'Accepted'], default: 'Unmatched' },
@@ -4297,9 +4301,31 @@ const RevolvingFundTxSchema = new mongoose.Schema({
   date:        { type: Date, default: Date.now },
   balanceAfter:{ type: Number },                       // snapshot of fund balance after this tx
   journalRef:  { type: mongoose.Schema.Types.ObjectId, ref: 'JournalEntry' },
+  // For the liquidation report: who was paid and their OR / invoice number.
+  payee:       { type: String, default: '' },
+  refNo:       { type: String, default: '' },
+  // Every spend is checked against its receipt before the fund may be topped
+  // up. Deliberately NO schema default: mongoose would stamp 'Unvalidated'
+  // onto every historic row as it loads, and those were settled long ago. A
+  // row without a status is treated as validated.
+  validation: {
+    status:      { type: String, enum: ['Unvalidated', 'Validated', 'Rejected'] },
+    by:          { type: String, default: '' },
+    at:          { type: Date },
+    reason:      { type: String, default: '' },
+    reversalRef: { type: String, default: '' },         // the JE that moved a rejected spend off the books
+  },
 }, { timestamps: true });
+// Set on creation rather than by default (see above), so every path that
+// spends from a fund - the Revolving Funds screen, an approved petty-cash
+// slip, stock paid for out of a fund - lands in the validation queue.
+RevolvingFundTxSchema.pre('validate', function () {
+  if (this.isNew && this.type === 'disbursement' && !this.validation?.status) {
+    this.set('validation.status', 'Unvalidated');
+  }
+});
 
-const RevolvingFundTx = mongoose.model('RevolvingFundTx', RevolvingFundTxSchema);
+const RevolvingFundTx =mongoose.model('RevolvingFundTx', RevolvingFundTxSchema);
 
 // ── REQUISITION SLIPS ─────────────────────────────────────────────────────────
 // A gate in front of two kinds of money/stock movement that used to happen
@@ -4337,6 +4363,9 @@ const RequisitionSlipSchema = new mongoose.Schema({
   amount: { type: Number, default: 0 },
   description: { type: String, default: '' },
   categoryCode: { type: String, default: '' },
+  // petty-cash only: carried onto the fund spend for the liquidation report.
+  payee: { type: String, default: '' },
+  refNo: { type: String, default: '' },
 
   // procurement fields
   supplier: { type: String, default: '' },

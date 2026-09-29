@@ -7,6 +7,16 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, makeClient, loginStaff, loginClient, trialBalance } from './helpers/harness.js';
+// Replenishment now waits for every spend to be checked against its receipt
+// (see revolving-fund-liquidation.integration.test.js); these tests are about
+// the approval gate, so they check the receipts first.
+const validateSpends = async (app, fundId, token) => {
+  const open = await mongoose.model('RevolvingFundTx').find({ fundId, 'validation.status': 'Unvalidated' }).lean();
+  for (const t of open) {
+    const r = await request(app).post(`/api/revolving-funds/${fundId}/transactions/${t._id}/validate`).set('Authorization', `Bearer ${token}`).send({});
+    if (r.status !== 200) throw new Error(JSON.stringify(r.body));
+  }
+};
 
 let ctx, app;
 const tok = {};
@@ -195,6 +205,7 @@ describe('finance: every money endpoint posts a balanced double-entry', () => {
     const RevolvingFund = mongoose.model('RevolvingFund');
     expect((await RevolvingFund.findById(fundId).lean()).currentBalance).toBeCloseTo(900, 2);
 
+    await validateSpends(app, fundId, tok.super);
     const rep = await auth('post', `/api/requisition-slips/${filed.body.slip._id}/approve`, tok.super).send({});
     expect(rep.status).toBe(200);
 
