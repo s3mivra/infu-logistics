@@ -49,7 +49,7 @@ afterAll(async () => { await ctx.stop(); });
 beforeEach(async () => {
   await Promise.all([
     M('PurchaseOrder').deleteMany({}), M('Bill').deleteMany({}),
-    withLedgerMaintenance(() => M('JournalEntry').deleteMany({})), M('StockCard').deleteMany({}),
+    withLedgerMaintenance(() => M('JournalEntry').deleteMany({})), withLedgerMaintenance(() => M('StockCard').deleteMany({})),
     M('Supplier').deleteMany({}), M('Inventory').deleteMany({}),
     M('Settings').deleteMany({ key: { $in: ['vatEnabled', 'vatRate', 'vatInclusive'] } }),
   ]);

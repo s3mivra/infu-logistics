@@ -48,7 +48,7 @@ afterAll(async () => { await ctx.stop(); });
 beforeEach(async () => {
   await Promise.all([
     M('PurchaseOrder').deleteMany({}), M('Bill').deleteMany({}), M('Advance').deleteMany({}),
-    withLedgerMaintenance(() => M('JournalEntry').deleteMany({})), M('StockCard').deleteMany({}),
+    withLedgerMaintenance(() => M('JournalEntry').deleteMany({})), withLedgerMaintenance(() => M('StockCard').deleteMany({})),
     M('Supplier').deleteMany({}), M('Inventory').deleteMany({}),
   ]);
   supplier = await M('Supplier').create({ name: 'Acme Supply' });

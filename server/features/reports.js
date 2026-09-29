@@ -1879,6 +1879,28 @@ app.get('/api/reports/books-health', verifyToken, ...canViewReports, async (req,
       check('checks', 'Checks on hand', checksOnHand, glOf('115000'), 'Checks received and not yet cleared should equal Checks on Hand.'),
     ];
 
+    // Stock card vs stock on hand. The stock card is the movement ledger behind
+    // every balance (append-only, see StockCardSchema): each item's balance
+    // should equal the sum of its movements. A difference means stock moved
+    // without a movement being written - the kind of drift no money check
+    // sees, because the value can still tie.
+    const cardTotals = await StockCard.aggregate([
+      { $group: { _id: '$inventoryId', total: { $sum: { $ifNull: ['$qtyChange', 0] } } } },
+    ]);
+    const cardOf = new Map(cardTotals.map(c => [String(c._id), c.total]));
+    const stockItems = await Inventory.find(scope, { itemName: 1, stockQty: 1, unit: 1 }).lean();
+    const drifting = stockItems
+      .map(i => ({ itemName: i.itemName, unit: i.unit || '', onHand: +(Number(i.stockQty) || 0).toFixed(4), cardTotal: +(Number(cardOf.get(String(i._id))) || 0).toFixed(4) }))
+      .map(i => ({ ...i, difference: +(i.onHand - i.cardTotal).toFixed(4) }))
+      .filter(i => Math.abs(i.difference) > 0.001);
+    checks.push({
+      key: 'stockCard', label: 'Stock card vs stock on hand', count: true,
+      documents: stockItems.length, ledger: stockItems.length - drifting.length,
+      difference: drifting.length, ok: drifting.length === 0,
+      detail: drifting.slice(0, 50),
+      fix: 'Each item stock balance should equal the sum of its stock card. Count the items listed and post the difference as a stock count.',
+    });
+
     // The accounting equation, from the ledger alone.
     let assets = 0, liabilities = 0, equity = 0, income = 0, expenses = 0;
     for (const [code, amount] of gl) {

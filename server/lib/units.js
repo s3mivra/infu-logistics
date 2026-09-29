@@ -46,6 +46,16 @@ export function resolveUnit(displayUnit) {
   return { base: u, mult: 1 };
 }
 
+// Base units in ONE pack of an item - what one unit sold takes off the shelf.
+// packSize is in display units (0.377 for a 377 g can shown in kg) and
+// unitMultiplier is base units per display unit (1000 g per kg), so a 377 g
+// can is 377 g. With no pack the item is sold by its display unit.
+export function basePerPack(item = {}) {
+  const mult = Number(item.unitMultiplier) > 0 ? Number(item.unitMultiplier) : 1;
+  const pack = Number(item.packSize);
+  return pack > 0 ? +(pack * mult).toFixed(6) : mult;
+}
+
 // Convert a display-unit quantity to its base-unit value.
 // Example: displayToBase(1, 'L') => 1000 (ml)
 export function displayToBase(qty, displayUnit) {

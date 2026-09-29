@@ -11,6 +11,7 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 import { businessDateStr } from '../lib/businessTime.js';
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const auth = (p) => request(app).get(p).set('Authorization', `Bearer ${tok}`);
@@ -25,7 +26,7 @@ beforeAll(async () => {
 afterAll(async () => { await ctx.stop(); });
 
 const StockCard = () => mongoose.model('StockCard');
-beforeEach(async () => { await StockCard().deleteMany({}); });
+beforeEach(async () => { await withLedgerMaintenance(() => StockCard().deleteMany({})); });
 
 const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d; };
 // The business's own calendar date, which is what the endpoint's range is cut

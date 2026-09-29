@@ -111,3 +111,28 @@ describe('purge data', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('suppliers in the purge', () => {
+  it('are kept by a default purge and cleared when chosen, with their catalogs', async () => {
+    const Supplier = mongoose.model('Supplier');
+    await Supplier.create({ name: 'Lauriat Beverages', creditBalance: 1500, catalog: [{ itemName: 'LB ROSE', unitCost: 340 }] });
+
+    const cats = await request(app).get('/api/admin/purge-data/categories').set(auth(superToken));
+    const sup = cats.body.categories.find(c => c.key === 'suppliers');
+    expect(sup).toMatchObject({ defaultOn: false });
+
+    // The ledger goes, suppliers stay: their credit balance goes with the ledger.
+    const ledgerOnly = await request(app).post('/api/admin/purge-data').set(auth(superToken))
+      .send({ confirmPhrase: 'PURGE', categories: ['ledger'] });
+    expect(ledgerOnly.body.success).toBe(true);
+    const kept = await Supplier.findOne({ name: 'Lauriat Beverages' }).lean();
+    expect(kept).toBeTruthy();
+    expect(kept.creditBalance).toBe(0);
+
+    const chosen = await request(app).post('/api/admin/purge-data').set(auth(superToken))
+      .send({ confirmPhrase: 'PURGE', categories: ['suppliers'] });
+    expect(chosen.body.success).toBe(true);
+    expect(chosen.body.deleted.suppliers).toBeGreaterThanOrEqual(1);
+    expect(await Supplier.countDocuments({})).toBe(0);
+  });
+});

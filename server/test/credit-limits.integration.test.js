@@ -79,7 +79,7 @@ beforeEach(async () => {
 describe('mode: off', () => {
   it('lets a client buy on account with no limit at all', async () => {
     await owe(50000);
-    const res = await placeOrder(9999);
+    const res = await placeOrder(10000);
     expect(res.status).toBeLessThan(300);
   });
 });
@@ -150,7 +150,7 @@ describe('mode: both', () => {
     // ₱500 limit to a client deliberately set to zero credit.
     await setMode('both', 500);
     await setClientLimit(0);
-    expect((await placeOrder(1)).status).toBe(409);
+    expect((await placeOrder(100)).status).toBe(409);
   });
 });
 

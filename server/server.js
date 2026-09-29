@@ -25,7 +25,7 @@ import pinoHttp from 'pino-http';
 import { assertBalanced, debitAccountFor, suggestedSettleAccount } from './lib/ledger.js';
 import { createIdempotencyMiddleware } from './lib/idempotency.js';
 import { ACCOUNTS, EXPENSE_CATEGORIES, CODE_MAP } from './lib/chartOfAccounts.js';
-import { resolveUnit, displayToBase, effectiveDisplay, UNIT_TO_BASE, unitTypeOf } from './lib/units.js';
+import { resolveUnit, displayToBase, effectiveDisplay, UNIT_TO_BASE, unitTypeOf, basePerPack } from './lib/units.js';
 import { title, code, lower, freeText, zTitle, zText, zMoneyLoose, zMoneyStrict, MONEY_MAX } from './lib/normalize.js';
 import { addBatch, consumeBatches, consumeSpecificBatch, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
 import { stripQueryOperators, forwardAsyncErrors } from './lib/requestSafety.js';
@@ -292,7 +292,41 @@ async function resolveLinkedInventory(product, productCode, session) {
 // "…500ML") and converted into the inventory item's base unit (inv.unit). NOTE:
 // unitCost is per base unit, so COGS = baseUnitsPerSale × unitCost. Falls back to
 // one full display unit (unitMultiplier) only when no weight token is present.
+// A product the stock import made for a packed item sold one DISPLAY unit
+// per sale (1 kg = 1000 g) instead of one pack (a 377 g can): its one recipe
+// line, linked to its own stock item, carried qty = the item's unitMultiplier.
+// Each can sold took 2.65 cans off the shelf. Put those lines right - one pack
+// per unit sold. Only that exact shape is touched: a recipe someone wrote by
+// hand, one with more than one line, or one already carrying packBase is left
+// alone. Safe to run again: a repaired line no longer matches.
+async function repairPackRecipes() {
+  const Inventory = mongoose.model('Inventory');
+  const Product = mongoose.model('Product');
+  const packed = await Inventory.find({ packSize: { $gt: 0 } }, { itemCode: 1, packSize: 1, unitMultiplier: 1 }).lean();
+  let fixed = 0;
+  for (const inv of packed) {
+    const perPack = basePerPack(inv);
+    const oldQty = Number(inv.unitMultiplier) > 0 ? Number(inv.unitMultiplier) : 1;
+    if (Math.abs(perPack - oldQty) < 1e-9 || !inv.itemCode) continue;
+    const res = await Product.updateMany(
+      {
+        productCode: inv.itemCode,
+        baseRecipe: { $size: 1 },
+        'baseRecipe.0.invId': { $in: [String(inv._id), inv._id] },
+        'baseRecipe.0.qty': oldQty,
+        'baseRecipe.0.packBase': { $exists: false },
+      },
+      { $set: { 'baseRecipe.0.qty': perPack, 'baseRecipe.0.packBase': perPack } },
+    );
+    fixed += res.modifiedCount || 0;
+  }
+  return fixed;
+}
+
 function baseUnitsPerSale(product, invItem) {
+  // A pack size recorded on the item is the answer; the name is only read
+  // for items from before packSize existed.
+  if (Number(invItem?.packSize) > 0) return basePerPack(invItem);
   const src = `${product?.name || ''} ${product?.baseSize || ''} ${invItem?.itemName || ''}`;
   const mt = src.match(/(\d+(?:\.\d+)?)\s*(mg|kg|g|ml|cl|l|pcs|pc|pack|unit)\b/i);
   const invBaseFactor = UNIT_TO_BASE[(invItem?.unit || '').toLowerCase()] || 1;
@@ -1072,6 +1106,18 @@ const runStartupTasks = async () => {
       log.error({ err }, 'Floor-action permission migration failed');
     }
 
+    // Once: products made for packed items sold a whole display unit per sale.
+    try {
+      const done = await Settings.findOne({ key: 'packRecipeFixV1' }).lean();
+      if (!done) {
+        const fixed = await repairPackRecipes();
+        await Settings.findOneAndUpdate({ key: 'packRecipeFixV1' }, { key: 'packRecipeFixV1', value: true }, { upsert: true });
+        if (fixed) log.info({ fixed }, '✅ Packed-item products now sell one pack per unit');
+      }
+    } catch (err) {
+      log.error({ err }, 'Packed-item recipe repair failed');
+    }
+
     // Load custom-role → permissions into the authz resolver (function is hoisted).
     await refreshCustomRolePerms();
 };
@@ -1573,6 +1619,21 @@ items: [{
   complimentaryAmount: { type: Number, default: 0 },
   complimentaryCost:   { type: Number, default: 0 },
   complimentaryReferenceNumber: { type: String, default: '' },
+  // Exactly what this sale took from stock, in base units, at the cost it was
+  // taken at - written when the stock leaves (completion, each partial
+  // fulfilment, a backdated sale). A void, refund or exchange gives back THESE
+  // quantities: re-reading the product's recipe at that time returned the
+  // wrong amount once the recipe had changed, and valued it at today's cost.
+  // lineIndex is the order line it belongs to, so a partial refund can take
+  // back its share. Orders from before this field existed have none, and are
+  // reversed from the recipe as before.
+  stockMoves: [{
+    _id: false,
+    invId: String,
+    qty: Number,          // base units taken (positive)
+    unitCost: Number,     // cost per base unit at the time
+    lineIndex: Number,
+  }],
   voidReason: { type: String, default: '' },
   // Attribution - who actually voided / cancelled the order. Captured from the
   // verified JWT, never the request body. Distinct from `cashier` (which is the
@@ -1991,6 +2052,10 @@ const CrossTransferSchema = new mongoose.Schema({
   itemCode:       { type: String, default: '' },
   stockCategory:  { type: String, default: '' },
   reference:    { type: String, index: true },
+  // Inbound only: when the sending branch confirmed it took the goods off its
+  // own stock. Until then the receiver keeps asking (hub.js releasePending) -
+  // a failed call used to be dropped, leaving the goods counted at both ends.
+  releaseConfirmedAt: { type: Date, default: null },
   // Groups all line-items sent in the same "send" action.
   shipmentRef:  { type: String, index: true },
   // Which expiry batch was picked when sending (internal use only, not shown to customers).
@@ -2231,6 +2296,20 @@ StockCardSchema.index({ reference: 1 });
 // history view.
 StockCardSchema.index({ date: -1 });
 StockCardSchema.index({ inventoryId: 1, date: -1 });
+// The stock card is the movement ledger behind every stock balance, so it is
+// append-only like the journal (lib/ledgerGuard.js): a wrong movement is
+// corrected by a new one, never by editing or deleting the old. Only declared
+// maintenance - the superadmin's data purge, a backup restore, a test
+// resetting its fixture - may rewrite it.
+StockCardSchema.pre(LEDGER_WRITE_OPS, { query: true, document: false }, function () {
+  if (!inLedgerMaintenance()) throw refuseLedgerRewrite(`stock card ${this.op || 'update'}`);
+});
+StockCardSchema.pre('deleteOne', { document: true, query: false }, function () {
+  if (!inLedgerMaintenance()) throw refuseLedgerRewrite('stock card deleteOne');
+});
+StockCardSchema.pre('save', function () {
+  if (!this.isNew && !inLedgerMaintenance()) throw refuseLedgerRewrite('stock card save');
+});
 const StockCard = mongoose.model('StockCard', StockCardSchema);
 
 // --- SHIFT MANAGEMENT SCHEMA ---
@@ -4883,7 +4962,7 @@ if (!IS_TEST) {
 // Exported for in-process integration tests (supertest + socket.io-client). Importing
 // the module still connects to MONGO_URI; tests point that at an in-memory MongoDB.
 // `server` (the http.Server) is exported so socket tests can listen on an ephemeral port.
-export { app, server, runStartupTasks, scheduleMidnightArchive, migrateHubClearingAccount };
+export { app, server, runStartupTasks, scheduleMidnightArchive, migrateHubClearingAccount, repairPackRecipes };
 
 const shutdown = async (signal, exitCode = 0) => {
   log.info({ signal }, 'Shutting down gracefully');

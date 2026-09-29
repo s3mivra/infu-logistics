@@ -8,6 +8,7 @@ import { loadVatConfig } from '../lib/vatSettings.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
+import { basePerPack } from '../lib/units.js';
 // Action permissions. Each route below changes data, and was guarded only by
 // "is staff" - so a plain staff account could, through the API, do what the
 // permission catalogue reserves for a role that holds the matching
@@ -774,7 +775,16 @@ app.post('/api/stock-transfers', verifyToken, requireStaff, requirePermission('i
     if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ success: false, error: 'Transfer quantity must be greater than zero.' });
     const [from, to] = await Promise.all([Inventory.findById(fromItemId), Inventory.findById(toItemId)]);
     if (!from || !to) return res.status(404).json({ success: false, error: 'Source or destination item not found.' });
-    if (qty > (from.stockQty || 0) + 1e-6) return res.status(400).json({ success: false, error: `Only ${from.stockQty} ${from.unit || ''} on hand at source.` });
+    // qtyBase leaves one item and arrives at the other unchanged, so both must
+    // count in the same base unit: 500 g of beans is not 500 ml or 500 pieces.
+    const baseOf = (it) => String(it.unit || 'pcs').trim().toLowerCase();
+    if (baseOf(from) !== baseOf(to)) {
+      return res.status(400).json({ success: false, error: `${from.itemName} is counted in ${from.unit || 'pcs'} and ${to.itemName} in ${to.unit || 'pcs'} - a transfer needs both in the same unit.` });
+    }
+    if (baseOf(from) === 'pcs' && !Number.isInteger(qty)) return res.status(400).json({ success: false, error: 'Transfer whole pieces only.' });
+    // Stock held for a client's order is not free to move.
+    const free = (from.stockQty || 0) - (from.reservedQty || 0);
+    if (qty > free + 1e-6) return res.status(400).json({ success: false, error: `Only ${+free.toFixed(6)} ${from.unit || ''} free to move at source${from.reservedQty ? ` (${from.reservedQty} held for client orders)` : ''}.` });
     // Early feedback only - release() re-validates against stock as of that moment,
     // which is authoritative (this item's batches can change between request and release).
     let pinnedExpiry = null;
@@ -846,7 +856,11 @@ app.post('/api/stock-transfers/:id/release', verifyToken, requireStaff, requireP
         const from = await Inventory.findById(t.fromItemId).session(session);
         const to = await Inventory.findById(t.toItemId).session(session);
         if (!from || !to) throw Object.assign(new Error('Source or destination item no longer exists.'), { httpStatus: 404 });
-        if (t.qtyBase > (from.stockQty || 0) + 1e-6) throw Object.assign(new Error(`Only ${from.stockQty} ${from.unit || ''} on hand at source now.`), { httpStatus: 400 });
+        if (String(from.unit || 'pcs').toLowerCase() !== String(to.unit || 'pcs').toLowerCase()) {
+          throw Object.assign(new Error(`${from.itemName} and ${to.itemName} are counted in different units - a transfer needs both in the same unit.`), { httpStatus: 400 });
+        }
+        const free = (from.stockQty || 0) - (from.reservedQty || 0);
+        if (t.qtyBase > free + 1e-6) throw Object.assign(new Error(`Only ${+free.toFixed(6)} ${from.unit || ''} free to move at source now.`), { httpStatus: 400 });
 
         from.stockQty = +(from.stockQty - t.qtyBase).toFixed(6);
         to.stockQty = +(to.stockQty + t.qtyBase).toFixed(6);
@@ -1031,6 +1045,18 @@ app.post('/api/inventory', verifyToken, requireStaff, permit('inventory.manage')
         catch (e) { log?.error?.({ err: e, fundId: String(fund._id) }, 'Failed to release revolving-fund hold after item creation failed'); }
       }
       throw createErr;
+    }
+
+    // The opening quantity is the item's first movement. Without this row the
+    // stock card started from nothing while the item held stock, so its
+    // history never added up to its balance.
+    if ((Number(newItem.stockQty) || 0) > 0) {
+      await StockCard.create({
+        inventoryId: newItem._id, itemName: newItem.itemName, type: 'Initial',
+        reference: `NEW-${newItem.itemCode || newItem._id}`, qtyChange: newItem.stockQty,
+        balanceAfter: newItem.stockQty, unitCost: newItem.unitCost || 0,
+        remarks: 'Opening stock (item created)',
+      });
     }
 
     // --- AUTO-JOURNAL FOR PURCHASING INVENTORY ---
@@ -1628,12 +1654,19 @@ app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmi
       return res.status(400).json({ success: false, error: 'Invalid batch index.' });
     }
     const [removed] = item.expiryBatches.splice(idx, 1);
-    const removedQty = Number(removed?.qty || 0);
-    const unitCost   = Number(removed?.unitCost || item.unitCost || 0);
+    // What actually comes off: the batch, or what is left on hand if that is
+    // less. The stock card, the journal and the balance all use this one figure
+    // - the balance used to be floored at zero while the card and the journal
+    // still recorded the whole batch.
+    const onHand = Math.max(0, Number(item.stockQty || 0));
+    const removedQty = +Math.min(Number(removed?.qty || 0), onHand).toFixed(6);
+    // Valued at the item's average cost - the basis its stock value (and the
+    // Inventory account) carries - not the batch's own purchase cost.
+    const unitCost   = Number(item.unitCost || 0);
     item.expiryDate = soonestExpiry(item.expiryBatches);
     // Removing a batch means that stock is physically gone - decrement stockQty and
     // book it as a variance/write-off so the ledger and stock card stay truthful.
-    item.stockQty = +Math.max(0, Number(item.stockQty || 0) - removedQty).toFixed(4);
+    item.stockQty = +(Number(item.stockQty || 0) - removedQty).toFixed(6);
     await item.save();
 
     const delRef = await mkSeqRef('INV-BATCHDEL');
@@ -2159,7 +2192,9 @@ async function runInventoryImport(req, res, attempt) {
               { upsert: true, returnDocument: 'after', session }
             );
             // Base recipe links the product to its OWN stock item (1:1).
-            const baseRecipe = [{ invId: existing._id, name: existing.itemName, qty: existing.unitMultiplier || mult, cost: existing.unitCost || 0, unit: existing.unit || baseUnit }];
+            // One unit sold is one pack of it (see basePerPack).
+            const perSale = basePerPack({ unitMultiplier: existing.unitMultiplier || mult, packSize: existing.packSize });
+            const baseRecipe = [{ invId: existing._id, name: existing.itemName, qty: perSale, packBase: perSale, cost: existing.unitCost || 0, unit: existing.unit || baseUnit }];
             // basePrice must never appear in both $set and $setOnInsert - Mongo
             // rejects an update that targets the same path from two operators.
             // A valid SRP always wins (goes in $set); only fall back to
@@ -2260,7 +2295,8 @@ async function runInventoryImport(req, res, attempt) {
             // Explicitly link the product's base recipe to its OWN stock item (1:1),
             // so the menu shows the stock item as the base material and each sale
             // deducts it directly - no reliance on the code/name fallback.
-            const baseRecipe = [{ invId: item._id, name: item.itemName, qty: mult, cost: item.unitCost || 0, unit: baseUnit }];
+            const perSale = basePerPack({ unitMultiplier: mult, packSize: item.packSize });
+            const baseRecipe = [{ invId: item._id, name: item.itemName, qty: perSale, packBase: perSale, cost: item.unitCost || 0, unit: baseUnit }];
             await Product.create([{
               productCode: item.itemCode,
               name: item.itemName,
@@ -2273,7 +2309,8 @@ async function runInventoryImport(req, res, attempt) {
             }], { session });
           } else if (productExists && !(productExists.baseRecipe || []).some(r => r.invId)) {
             // Existing menu entry with no linked stock - backfill the link.
-            const baseRecipe = [{ invId: item._id, name: item.itemName, qty: mult, cost: item.unitCost || 0, unit: baseUnit }];
+            const perSale = basePerPack({ unitMultiplier: mult, packSize: item.packSize });
+            const baseRecipe = [{ invId: item._id, name: item.itemName, qty: perSale, packBase: perSale, cost: item.unitCost || 0, unit: baseUnit }];
             productExists.baseRecipe = baseRecipe;
             await productExists.save({ session });
           }

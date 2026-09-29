@@ -10,6 +10,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -27,7 +28,7 @@ afterAll(async () => { await ctx.stop(); });
 
 let beans, water, latte;
 beforeEach(async () => {
-  for (const n of ['AddOn', 'Product', 'Inventory', 'Order', 'StockCard']) await M(n).deleteMany({});
+  for (const n of ['AddOn', 'Product', 'Inventory', 'Order', 'StockCard']) await withLedgerMaintenance(() => M(n).deleteMany({}));
   beans = await M('Inventory').create({ itemCode: 'BEAN', itemName: 'ESPRESSO BEANS', unit: 'g', stockQty: 1000, unitCost: 1.2 });
   // A stock item that happens to share a name with a non-stock line. It must
   // never be drained by one.

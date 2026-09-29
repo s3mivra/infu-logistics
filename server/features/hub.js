@@ -63,6 +63,7 @@ export default function registerHub(ctx) {
     acctMeta,
     Settings,
     requirePermission,
+    log,
   } = ctx;
 
   // This deployment's own branch code ("AC-A001"), set in Settings. Two branches
@@ -563,13 +564,46 @@ export default function registerHub(ctx) {
     transfer.receivedAt = new Date();
     await transfer.save();
 
-    const link = await LinkedBusiness.findOne({ businessType: BUSINESS_TYPE, partnerSlug: transfer.partnerSlug, status: 'active' }).lean();
-    if (link) {
-      try { await partnerCall(link, '/api/hub/internal/transfer-release', { reference: transfer.reference }); } catch {}
-    }
+    // The sender takes the goods off its stock once THIS side has committed
+    // (the call used to run inside this transaction: a failed commit after it
+    // left the goods gone from both ends). releasePending retries until the
+    // sender confirms, so a dropped call no longer leaves them counted twice.
+    scheduleReleaseSweep();
 
     res.json({ ok: true, transfer });
   }));
+
+  // Ask each sender to release the goods this side received and it has not
+  // yet confirmed. Safe to repeat: the sender answers "already released".
+  const releasePending = async () => {
+    const pending = await CrossTransfer.find({
+      businessType: BUSINESS_TYPE, direction: 'inbound', status: 'Received', releaseConfirmedAt: null,
+    }).limit(200);
+    for (const t of pending) {
+      const link = await LinkedBusiness.findOne({ businessType: BUSINESS_TYPE, partnerSlug: t.partnerSlug, status: 'active' }).lean();
+      if (!link) continue;
+      try {
+        const r = await partnerCall(link, '/api/hub/internal/transfer-release', { reference: t.reference });
+        if (r && r.ok !== false) {
+          await CrossTransfer.updateOne({ _id: t._id }, { $set: { releaseConfirmedAt: new Date() } });
+        }
+      } catch (err) {
+        log?.warn?.({ err, reference: t.reference }, 'Hub transfer release not confirmed yet - will retry');
+      }
+    }
+  };
+  let sweepTimer = null;
+  const scheduleReleaseSweep = (delayMs = 1500) => {
+    if (sweepTimer) return;
+    sweepTimer = setTimeout(() => {
+      sweepTimer = null;
+      releasePending().catch(err => log?.error?.({ err }, 'Hub release sweep failed'));
+    }, delayMs);
+    sweepTimer.unref?.();
+  };
+  // And periodically, for a partner that was offline at the time.
+  const releaseInterval = setInterval(() => scheduleReleaseSweep(0), 10 * 60 * 1000);
+  releaseInterval.unref?.();
 
   // Internal: sender decrements stock after receiver accepted + posts JE
   app.post('/api/hub/internal/transfer-release', requireLinkToken, atomic(mongoose, async (req, res) => {
@@ -581,7 +615,10 @@ export default function registerHub(ctx) {
     if (item) {
       const releasedValue = (item.unitCost || 0) * transfer.qtyBase;
 
-      item.stockQty = Math.max(0, item.stockQty - transfer.qtyBase);
+      // Exactly what left - the receiver already has it. Flooring this at zero
+      // made the stock card say the whole shipment went while stock fell by
+      // less; a negative balance now shows the shortfall to be counted.
+      item.stockQty = +(item.stockQty - transfer.qtyBase).toFixed(6);
       await item.save();
 
       // Same schema fix as the inbound card above - and negative, because

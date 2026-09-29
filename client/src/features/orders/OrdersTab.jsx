@@ -513,10 +513,11 @@ export default function OrdersTab({ ctx }) {
                 </div>
 
                 {/* RIGHT COLUMN: Cart Dock */}
-                <div className="w-full lg:w-[380px] flex flex-col shrink-0 h-[560px] lg:h-full bg-surface border border-white/10 rounded-2xl overflow-hidden shadow-xl min-h-0">
+                <div className="w-full lg:w-[380px] flex flex-col shrink-0 lg:h-full bg-surface border border-white/10 rounded-2xl overflow-hidden shadow-xl lg:min-h-0">
 
-                  {/* Customer info */}
-                  <div className="px-4 pt-4 pb-3 border-b border-white/10 bg-page-bg/60 shrink-0 space-y-2">
+                  {/* Customer info - capped on a tall form so the cart and the
+                      Place Order button always keep their room; it scrolls instead. */}
+                  <div className="px-4 pt-4 pb-3 border-b border-white/10 bg-page-bg/60 shrink-0 lg:shrink lg:min-h-[120px] space-y-2 lg:max-h-[45%] lg:overflow-y-auto custom-scrollbar">
                     {/* Client account picker - when set, server applies that client's per-product discount overrides.
                        "Guest"/"Regular" walk-in are UI hints only, not stored state - the actual
                        guest-vs-regular classification is driven by whether a customer name is
@@ -655,7 +656,7 @@ export default function OrdersTab({ ctx }) {
                   })}
 
                   {/* Cart items */}
-                  <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar min-h-0">
+                  <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar min-h-[140px] max-h-[50vh] lg:max-h-none">
                     {posCart.length === 0 ? (
                       <div className="h-full flex flex-col items-center justify-center gap-2 text-fg/65">
                         <ShoppingCart size={36} className="opacity-40" />

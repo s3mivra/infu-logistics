@@ -126,7 +126,7 @@ const theOldImport = () => request(app).post('/api/inventory/import').set({ Auth
   .send({ items: [{ itemCode: 'G60001', itemName: '12OZ ICED CUPS', displayUnit: 'pcs', qty: 5200, unitCost: 0.064, packSize: 50 }] });
 
 describe('correcting stock an earlier import got wrong', () => {
-  beforeEach(async () => { await withLedgerMaintenance(() => M('JournalEntry').deleteMany({})); await M('StockCard').deleteMany({}); });
+  beforeEach(async () => { await withLedgerMaintenance(() => M('JournalEntry').deleteMany({})); await withLedgerMaintenance(() => M('StockCard').deleteMany({})); });
 
   it('sets the real count and cost, and takes the pack off', async () => {
     await theOldImport();
@@ -168,7 +168,7 @@ describe('correcting stock an earlier import got wrong', () => {
 });
 
 describe('a stock sheet that changes a price', () => {
-  beforeEach(async () => { await withLedgerMaintenance(() => M('JournalEntry').deleteMany({})); await M('StockCard').deleteMany({}); });
+  beforeEach(async () => { await withLedgerMaintenance(() => M('JournalEntry').deleteMany({})); await withLedgerMaintenance(() => M('StockCard').deleteMany({})); });
 
   it('moves the books with the stock, against capital rather than the P&L', async () => {
     // Syrup counted again, and the supplier's new price typed into the same row.

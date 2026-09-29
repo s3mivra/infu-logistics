@@ -25,6 +25,7 @@ import { checkApproval, orderIsPaid } from '../lib/approval.js';
 import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 
 import { atomic } from '../lib/atomicRoute.js';
+import { stockMovesFrom, movesToReturn, hasStockMoves } from '../lib/stockMoves.js';
 export default function registerOrders(ctx) {
   const {
     app,
@@ -958,6 +959,11 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       if (!Number.isFinite(Number(item.quantity)) || Number(item.quantity) > 100000) {
         throw Object.assign(new Error(`Invalid quantity for item: ${item.name || item.productId}`), { status: 400 });
       }
+      // Logistics sells whole packs - the same rule the amend route applies.
+      // 1.5 cartons would take 1.5 packs of stock that cannot physically leave.
+      if (BUSINESS_TYPE === 'log' && !Number.isInteger(Number(item.quantity))) {
+        throw Object.assign(new Error(`Whole units only for ${item.name || item.productId}.`), { status: 400 });
+      }
       if (item.price === undefined || !(Number(item.price) >= 0)) {
         throw Object.assign(new Error(`Invalid price for item: ${item.name || item.productId}`), { status: 400 });
       }
@@ -1643,6 +1649,48 @@ app.put('/api/orders/:id', verifyToken, requireStaff, permitAny('pos.use', 'orde
 // the correct fix, the same trade void/refund already make elsewhere in this
 // file. Validation paths `return res.status(...)`, a truthy Response object -
 // only the explicit `true` retry signal from the catch block counts.
+// Give back stock a sale took, exactly as recorded on the order
+// (lib/stockMoves.js). Each item gets its quantity back at the cost it left
+// at, and its average cost is re-blended in the same atomic update, so the
+// stock value keeps agreeing with the Inventory account the journal credits.
+// Returns the value given back (what the COGS reversal should be).
+// asBatch: record the returned goods as their own expiry batch even on an
+// item that tracks none - what a partial refund and an exchange always did.
+const restoreStockMoves = async (moves, { session, reference, remarks, asBatch = false }) => {
+  let value = 0;
+  const cards = [];
+  for (const m of moves) {
+    const restored = await Inventory.findOneAndUpdate(
+      { _id: m.invId },
+      [{ $set: {
+        unitCost: { $cond: [
+          { $gt: [{ $add: [{ $max: ['$stockQty', 0] }, m.qty] }, 0] },
+          { $divide: [
+            { $add: [{ $multiply: [{ $max: ['$stockQty', 0] }, { $ifNull: ['$unitCost', 0] }] }, m.qty * m.unitCost] },
+            { $add: [{ $max: ['$stockQty', 0] }, m.qty] },
+          ] },
+          m.unitCost,
+        ] },
+        stockQty: { $round: [{ $add: ['$stockQty', m.qty] }, 6] },
+      } }],
+      { session, returnDocument: 'after', updatePipeline: true },
+    );
+    if (!restored) continue;   // the item was deleted since; nothing to put back
+    if (asBatch || (restored.expiryBatches || []).length > 0) {
+      restored.expiryBatches = addBatch(restored.expiryBatches || [], { qty: m.qty, receivedAt: new Date(), reference, unitCost: m.unitCost });
+      restored.expiryDate = soonestExpiry(restored.expiryBatches);
+      await restored.save({ session });
+    }
+    value += m.qty * m.unitCost;
+    cards.push({
+      inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+      reference, qtyChange: m.qty, balanceAfter: restored.stockQty, unitCost: m.unitCost, remarks,
+    });
+  }
+  if (cards.length) await StockCard.insertMany(cards, { session });
+  return +value.toFixed(2);
+};
+
 const completeOrderOnce = async (req, res, mayRetry) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -1907,8 +1955,11 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       productsById.forEach(p => productMap.set(String(p._id), p));
       productsByName.forEach(p => productMap.set(`name:${p.name}`, p));
 
-      for (const item of order.items) {
-        if (item.price === undefined || item.quantity === undefined) return { valid: false, error: "Line item missing price or quantity." };
+      for (const [lineIndex, item] of order.items.entries()) {
+        if (item.price === undefined || item.quantity === undefined) {
+          await session.abortTransaction(); session.endSession();
+          return res.status(400).json({ success: false, error: 'Line item missing price or quantity.' });
+        }
 
         // COMBO / BUNDLE: deduct each component product's recipe.
         if (item.isCombo && Array.isArray(item.comboItems) && item.comboItems.length) {
@@ -1940,6 +1991,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
                 stockCardBatch.push({
                   inventoryId: updated._id, itemName: updated.itemName, type: 'Sale',
                   reference: mkRef('', order.orderNumber), qtyChange: -deductQty, balanceAfter: updated.stockQty,
+                  unitCost: updated.unitCost || 0, lineIndex,
                   remarks: `Sold via Combo (${item.name} → ${comp.name})`
                 });
                 totalCogs += (linkInv.unitCost * deductQty);
@@ -1969,6 +2021,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               stockCardBatch.push({
                 inventoryId: invItem._id, itemName: invItem.itemName, type: 'Sale',
                 reference: mkRef('', order.orderNumber), qtyChange: -deductQty, balanceAfter: invItem.stockQty,
+                unitCost: invItem.unitCost || 0, lineIndex,
                 remarks: `Sold via Combo (${item.name} → ${comp.name})`
               });
               totalCogs += (invItem.unitCost * deductQty);
@@ -2016,6 +2069,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
             stockCardBatch.push({
               inventoryId: updated._id, itemName: updated.itemName, type: 'Sale',
               reference: mkRef('', order.orderNumber), qtyChange: -deductQty, balanceAfter: updated.stockQty,
+              unitCost: updated.unitCost || 0, lineIndex,
               remarks: `Sold (${item.name})`
             });
             totalCogs += (linkInv.unitCost * deductQty);
@@ -2053,6 +2107,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
             reference: mkRef('', order.orderNumber),
             qtyChange: -deductQty,
             balanceAfter: invItem.stockQty,
+            unitCost: invItem.unitCost || 0, lineIndex,
             remarks: `Sold via ${item.name}`
           });
           totalCogs += (invItem.unitCost * deductQty);
@@ -2088,6 +2143,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               stockCardBatch.push({
                 inventoryId: invItem._id, itemName: invItem.itemName, type: 'Sale',
                 reference: mkRef('', order.orderNumber), qtyChange: -deductQty, balanceAfter: invItem.stockQty,
+                unitCost: invItem.unitCost || 0, lineIndex,
                 remarks: `Sold via Add-on (${selectedAddOn.name})`
               });
               totalCogs += (invItem.unitCost * deductQty);
@@ -2121,6 +2177,8 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       if (stockCardBatch.length > 0) {
         await StockCard.insertMany(stockCardBatch, { session });
       }
+      // What this sale took, for a void or refund to give back exactly.
+      order.stockMoves = stockMovesFrom(stockCardBatch);
 
       const reference = mkRef('', order.orderNumber);
       const lines = [];
@@ -2446,71 +2504,53 @@ const voidOrderOnce = async (req, res, mayRetry) => {
     }
 
     let totalCogs = 0;
-    const voidProducts = await loadProductsById(order.items.map(i => i.productId), session);
-    for (const item of order.items) {
-      let product = voidProducts.get(String(item.productId)) || null;
-      if (!product) continue;
+    if (hasStockMoves(order)) {
+      // Give back exactly what the sale took, at the cost it was taken at.
+      const moves = movesToReturn(order);
+      totalCogs = reason === 'Restock'
+        ? await restoreStockMoves(moves, { session, reference: mkRef('VOID', order.orderNumber), remarks: `Voided (${reason})` })
+        : +moves.reduce((sum, m) => sum + m.value, 0).toFixed(2);
+    } else {
+      // An order from before stock moves were recorded: rebuilt from the recipe.
+      const voidProducts = await loadProductsById(order.items.map(i => i.productId), session);
+      for (const item of order.items) {
+        let product = voidProducts.get(String(item.productId)) || null;
+        if (!product) continue;
 
-      let recipeToUse = product.baseRecipe || [];
-      const sizeMatch = item.name.match(/\(([^)]+)\)$/);
-      if (sizeMatch) {
-        const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
-        if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
-      }
+        let recipeToUse = product.baseRecipe || [];
+        const sizeMatch = item.name.match(/\(([^)]+)\)$/);
+        if (sizeMatch) {
+          const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
+          if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
+        }
 
-      // LOGISTICS 1:1 FALLBACK - mirror the sale: reverse the linked stocked good.
-      if (!recipeToUse.some(r => r.invId)) {
-        const linkInv = await resolveLinkedInventory(product, item.productCode, session);
-        if (linkInv) {
-          const qtyUsed = item.quantity * baseUnitsPerSale(product, linkInv);
-          if (reason === 'Restock') {
-            const restored = await Inventory.findOneAndUpdate(
-              { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, returnDocument: 'after' }
-            );
-            if (restored) {
-              totalCogs += (restored.unitCost * qtyUsed);
-              await StockCard.create([{
-                inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
-                reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty, remarks: `Voided (${reason})`
-              }], { session });
+        // LOGISTICS 1:1 FALLBACK - mirror the sale: reverse the linked stocked good.
+        if (!recipeToUse.some(r => r.invId)) {
+          const linkInv = await resolveLinkedInventory(product, item.productCode, session);
+          if (linkInv) {
+            const qtyUsed = item.quantity * baseUnitsPerSale(product, linkInv);
+            if (reason === 'Restock') {
+              const restored = await Inventory.findOneAndUpdate(
+                { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, returnDocument: 'after' }
+              );
+              if (restored) {
+                totalCogs += (restored.unitCost * qtyUsed);
+                await StockCard.create([{
+                  inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+                  reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty, remarks: `Voided (${reason})`
+                }], { session });
+              }
+            } else {
+              totalCogs += (linkInv.unitCost * qtyUsed);
             }
-          } else {
-            totalCogs += (linkInv.unitCost * qtyUsed);
           }
         }
-      }
 
-      for (const ing of recipeToUse) {
-        const invId = await resolveIngInvId(ing, session);
-        if (!invId) continue;
-        const qtyUsed = ing.qty * item.quantity;
-
-        if (reason === 'Restock') {
-          const restored = await Inventory.findOneAndUpdate(
-            { _id: invId },
-            { $inc: { stockQty: qtyUsed } },
-            { session, returnDocument: 'after' }
-          );
-          if (!restored) continue;
-          totalCogs += (restored.unitCost * qtyUsed);
-          await StockCard.create([{
-            inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
-            reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty, remarks: `Voided (${reason})`
-          }], { session });
-        } else {
-          const invItem = await Inventory.findById(invId).session(session);
-          if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
-        }
-      }
-
-      for (const selectedAddOn of (item.selectedAddOns || [])) {
-        // Resolve recipe from product add-on OR modifier-group option (symmetric with sale deduction)
-        const resolvedRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
-        if (!resolvedRecipe?.length) continue;
-        for (const ing of resolvedRecipe) {
+        for (const ing of recipeToUse) {
           const invId = await resolveIngInvId(ing, session);
           if (!invId) continue;
           const qtyUsed = ing.qty * item.quantity;
+
           if (reason === 'Restock') {
             const restored = await Inventory.findOneAndUpdate(
               { _id: invId },
@@ -2521,12 +2561,39 @@ const voidOrderOnce = async (req, res, mayRetry) => {
             totalCogs += (restored.unitCost * qtyUsed);
             await StockCard.create([{
               inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
-              reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty,
-              remarks: `Voided Add-on (${selectedAddOn.name}) (${reason})`
+              reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty, remarks: `Voided (${reason})`
             }], { session });
           } else {
             const invItem = await Inventory.findById(invId).session(session);
             if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
+          }
+        }
+
+        for (const selectedAddOn of (item.selectedAddOns || [])) {
+          // Resolve recipe from product add-on OR modifier-group option (symmetric with sale deduction)
+          const resolvedRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
+          if (!resolvedRecipe?.length) continue;
+          for (const ing of resolvedRecipe) {
+            const invId = await resolveIngInvId(ing, session);
+            if (!invId) continue;
+            const qtyUsed = ing.qty * item.quantity;
+            if (reason === 'Restock') {
+              const restored = await Inventory.findOneAndUpdate(
+                { _id: invId },
+                { $inc: { stockQty: qtyUsed } },
+                { session, returnDocument: 'after' }
+              );
+              if (!restored) continue;
+              totalCogs += (restored.unitCost * qtyUsed);
+              await StockCard.create([{
+                inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+                reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty,
+                remarks: `Voided Add-on (${selectedAddOn.name}) (${reason})`
+              }], { session });
+            } else {
+              const invItem = await Inventory.findById(invId).session(session);
+              if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
+            }
           }
         }
       }
@@ -3055,6 +3122,11 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     };
 
     // Units to fulfill this round per line, clamped to what's still outstanding.
+    // Units are counted whole: half a carton cannot leave the warehouse.
+    if ((fulfill || []).some(f => !Number.isInteger(Number(f.qty)) || Number(f.qty) < 0)) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'Fulfil whole units only.' });
+    }
     const wantMap = new Map((fulfill || []).map(f => [Number(f.index), Math.max(0, Number(f.qty) || 0)]));
     const deltas = [];
     let grossValue = 0, discountValue = 0, netValue = 0;
@@ -3071,18 +3143,24 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     const deltaValue = netValue; // net cash collectible for this round
     if (deltas.length === 0 || deltaValue <= 0) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Nothing to fulfill this round.' }); }
 
-    // Deduct inventory + COGS for the units fulfilled now. Handles combos (deduct
-    // each component's stock) and normal logistics 1:1 lines.
+    // Deduct inventory + COGS for the units fulfilled now, the way a full sale
+    // does: combos per component, a normal line by its recipe and add-ons, and
+    // the logistics 1:1 link only for a product with no recipe.
     let totalCogs = 0; const stockCardBatch = [];
-    const deductInv = async (invId, qty, label) => {
+    const deductInv = async (invId, qty, label, lineIndex) => {
       const upd = await Inventory.findOneAndUpdate(
         { _id: invId, stockQty: { $gte: qty } },
         { $inc: { stockQty: -qty } },
         { session, returnDocument: 'after' }
       );
       if (!upd) { await session.abortTransaction(); session.endSession(); res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for ${label}.` }); return null; }
+      if ((upd.expiryBatches || []).length > 0) {
+        const r = consumeBatches(upd.expiryBatches, qty);
+        upd.expiryBatches = r.batches; upd.expiryDate = soonestExpiry(r.batches);
+        await upd.save({ session });
+      }
       totalCogs += (upd.unitCost || 0) * qty;
-      stockCardBatch.push({ inventoryId: upd._id, itemName: upd.itemName, type: 'Sale', reference: mkRef('', order.orderNumber), qtyChange: -qty, balanceAfter: upd.stockQty, remarks: label });
+      stockCardBatch.push({ inventoryId: upd._id, itemName: upd.itemName, type: 'Sale', reference: mkRef('', order.orderNumber), qtyChange: -qty, balanceAfter: upd.stockQty, unitCost: upd.unitCost || 0, lineIndex, remarks: label });
       return upd;
     };
     for (const { i, want } of deltas) {
@@ -3098,7 +3176,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
             const linkInv = await resolveLinkedInventory(compProduct, compProduct.productCode, session);
             if (linkInv) {
               const deduct = (comp.quantity || 1) * want * baseUnitsPerSale(compProduct, linkInv);
-              if (!(await deductInv(linkInv._id, deduct, `Partial fulfillment combo (${it.name} → ${comp.name})`))) return;
+              if (!(await deductInv(linkInv._id, deduct, `Partial fulfillment combo (${it.name} → ${comp.name})`, i))) return;
             }
             continue;
           }
@@ -3106,21 +3184,50 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
             const invId = await resolveIngInvId(ing, session);
             if (!invId) continue;
             const deduct = ing.qty * (comp.quantity || 1) * want;
-            if (!(await deductInv(invId, deduct, `Partial fulfillment combo (${it.name} → ${comp.name})`))) return;
+            if (!(await deductInv(invId, deduct, `Partial fulfillment combo (${it.name} → ${comp.name})`, i))) return;
           }
         }
         continue;
       }
-      // NORMAL line: logistics 1:1 link.
+      // NORMAL line: its recipe (the size's, when it has one) and its add-ons.
+      // Only a product with no recipe falls back to the 1:1 stock link. This
+      // used to take the 1:1 link alone, so a product whose stock is reached
+      // through its recipe - a bundle, anything named apart from its stock
+      // item - left the warehouse without a single unit coming off.
       const product = it.productId
         ? await Product.findById(it.productId).session(session)
-        : await Product.findOne({ name: it.name }).session(session);
-      const linkInv = await resolveLinkedInventory(product, it.productCode, session);
-      if (!linkInv) continue;
-      const deduct = want * baseUnitsPerSale(product, linkInv);
-      if (!(await deductInv(linkInv._id, deduct, `Partial fulfillment (${it.name})`))) return;
+        : await Product.findOne({ name: it.name.replace(/\s*\(.*?\)\s*/g, '').trim() }).session(session);
+      if (!product) continue;
+      let recipeToUse = product.baseRecipe || [];
+      const sizeMatch = it.name.match(/\(([^)]+)\)$/);
+      if (sizeMatch) {
+        const sizeObj = product.sizes?.find(sz => sz.name === sizeMatch[1]);
+        if (sizeObj?.recipe?.length) recipeToUse = sizeObj.recipe;
+      }
+      if (!recipeToUse.some(r => r.invId)) {
+        const linkInv = await resolveLinkedInventory(product, it.productCode, session);
+        if (linkInv) {
+          const deduct = want * baseUnitsPerSale(product, linkInv);
+          if (!(await deductInv(linkInv._id, deduct, `Partial fulfillment (${it.name})`, i))) return;
+        }
+      }
+      for (const ing of recipeToUse) {
+        const invId = await resolveIngInvId(ing, session);
+        if (!invId) continue;
+        if (!(await deductInv(invId, ing.qty * want, `Partial fulfillment (${it.name})`, i))) return;
+      }
+      for (const selectedAddOn of (it.selectedAddOns || [])) {
+        const addOnRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
+        for (const ing of addOnRecipe || []) {
+          const invId = await resolveIngInvId(ing, session);
+          if (!invId) continue;
+          if (!(await deductInv(invId, ing.qty * want, `Partial fulfillment add-on (${selectedAddOn.name})`, i))) return;
+        }
+      }
     }
     if (stockCardBatch.length) await StockCard.insertMany(stockCardBatch, { session });
+    // Each round adds what it took to the order's record (Order.stockMoves).
+    order.stockMoves = [...(order.stockMoves || []), ...stockMovesFrom(stockCardBatch)];
 
     const goodsTotal = +order.items.reduce((s, it) => s + lineUnit(it).net * (it.quantity || 0), 0).toFixed(2);
     const cash = debitAccountFor(paymentMethod || order.paymentMethod || 'Cash');
@@ -3338,69 +3445,78 @@ const refundOnce = async (req, res, mayRetry) => {
     const invAction = inventoryAction === 'Restock' || inventoryAction === 'Spoilage' ? inventoryAction : 'None';
     if (isFullRefund && invAction !== 'None' && !order.isComplimentary) {
       let totalCogs = 0;
-      const refundProducts = await loadProductsById(order.items.map(i => i.productId), session);
-      for (const item of order.items) {
-        const product = refundProducts.get(String(item.productId)) || null;
-        if (!product) continue;
+      if (hasStockMoves(order)) {
+        // Give back exactly what the sale took, at the cost it was taken at.
+        const moves = movesToReturn(order);
+        totalCogs = invAction === 'Restock'
+          ? await restoreStockMoves(moves, { session, reference, remarks: `Refunded (Restock): ${order.orderNumber}` })
+          : +moves.reduce((sum, m) => sum + m.value, 0).toFixed(2);
+      } else {
+        // An order from before stock moves were recorded: rebuilt from the recipe.
+        const refundProducts = await loadProductsById(order.items.map(i => i.productId), session);
+        for (const item of order.items) {
+          const product = refundProducts.get(String(item.productId)) || null;
+          if (!product) continue;
 
-        let recipeToUse = product.baseRecipe || [];
-        const sizeMatch = item.name.match(/\(([^)]+)\)$/);
-        if (sizeMatch) {
-          const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
-          if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
-        }
+          let recipeToUse = product.baseRecipe || [];
+          const sizeMatch = item.name.match(/\(([^)]+)\)$/);
+          if (sizeMatch) {
+            const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
+            if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
+          }
 
-        // LOGISTICS 1:1 FALLBACK - product has no recipe: reverse the linked stocked good.
-        if (!recipeToUse.some(r => r.invId)) {
-          const linkInv = await resolveLinkedInventory(product, item.productCode, session);
-          if (linkInv) {
-            const qtyUsed = item.quantity * baseUnitsPerSale(product, linkInv);
-            if (invAction === 'Restock') {
-              const restored = await Inventory.findOneAndUpdate(
-                { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, returnDocument: 'after' }
-              );
-              if (restored) {
+          // LOGISTICS 1:1 FALLBACK - product has no recipe: reverse the linked stocked good.
+          if (!recipeToUse.some(r => r.invId)) {
+            const linkInv = await resolveLinkedInventory(product, item.productCode, session);
+            if (linkInv) {
+              const qtyUsed = item.quantity * baseUnitsPerSale(product, linkInv);
+              if (invAction === 'Restock') {
+                const restored = await Inventory.findOneAndUpdate(
+                  { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, returnDocument: 'after' }
+                );
+                if (restored) {
+                  totalCogs += (restored.unitCost * qtyUsed);
+                  await StockCard.create([{
+                    inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+                    reference, qtyChange: qtyUsed, balanceAfter: restored.stockQty,
+                    remarks: `Refunded (Restock): ${item.name}`
+                  }], { session });
+                }
+              } else {
+                totalCogs += (linkInv.unitCost * qtyUsed);
+              }
+            }
+          }
+
+          // Collect every ingredient line: base recipe + add-on / modifier-option recipes.
+          const recipes = [{ recipe: recipeToUse, label: item.name }];
+          for (const selectedAddOn of (item.selectedAddOns || [])) {
+            const resolvedRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
+            if (resolvedRecipe?.length) recipes.push({ recipe: resolvedRecipe, label: `Add-on (${selectedAddOn.name})` });
+          }
+
+          for (const { recipe, label } of recipes) {
+            for (const ing of recipe) {
+              const invId = await resolveIngInvId(ing, session);
+              if (!invId) continue;
+              const qtyUsed = ing.qty * item.quantity;
+              if (invAction === 'Restock') {
+                const restored = await Inventory.findOneAndUpdate(
+                  { _id: invId },
+                  { $inc: { stockQty: qtyUsed } },
+                  { session, returnDocument: 'after' }
+                );
+                if (!restored) continue;
                 totalCogs += (restored.unitCost * qtyUsed);
                 await StockCard.create([{
                   inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
                   reference, qtyChange: qtyUsed, balanceAfter: restored.stockQty,
-                  remarks: `Refunded (Restock): ${item.name}`
+                  remarks: `Refunded (Restock): ${label}`
                 }], { session });
+              } else {
+                const invItem = await Inventory.findById(invId).session(session);
+                if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
               }
-            } else {
-              totalCogs += (linkInv.unitCost * qtyUsed);
-            }
-          }
-        }
-
-        // Collect every ingredient line: base recipe + add-on / modifier-option recipes.
-        const recipes = [{ recipe: recipeToUse, label: item.name }];
-        for (const selectedAddOn of (item.selectedAddOns || [])) {
-          const resolvedRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
-          if (resolvedRecipe?.length) recipes.push({ recipe: resolvedRecipe, label: `Add-on (${selectedAddOn.name})` });
-        }
-
-        for (const { recipe, label } of recipes) {
-          for (const ing of recipe) {
-            const invId = await resolveIngInvId(ing, session);
-            if (!invId) continue;
-            const qtyUsed = ing.qty * item.quantity;
-            if (invAction === 'Restock') {
-              const restored = await Inventory.findOneAndUpdate(
-                { _id: invId },
-                { $inc: { stockQty: qtyUsed } },
-                { session, returnDocument: 'after' }
-              );
-              if (!restored) continue;
-              totalCogs += (restored.unitCost * qtyUsed);
-              await StockCard.create([{
-                inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
-                reference, qtyChange: qtyUsed, balanceAfter: restored.stockQty,
-                remarks: `Refunded (Restock): ${label}`
-              }], { session });
-            } else {
-              const invItem = await Inventory.findById(invId).session(session);
-              if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
             }
           }
         }
@@ -3536,6 +3652,14 @@ const partialRefundOnce = async (req, res, mayRetry) => {
       refundedItemsLog.push({ itemIndex, name: item.name, qty });
       item.refundedQty = +((Number(item.refundedQty) || 0) + qty).toFixed(6);
       if (invAction === 'None') continue;
+      if (hasStockMoves(order)) {
+        // This line's share of exactly what the sale took, at its cost then.
+        const moves = movesToReturn(order, [{ lineIndex: itemIndex, qty }]);
+        totalCogs += invAction === 'Restock'
+          ? await restoreStockMoves(moves, { session, reference, remarks: `Partial refund (Restock): ${item.name}`, asBatch: true })
+          : moves.reduce((sum, m) => sum + m.value, 0);
+        continue;
+      }
 
       const product = partialRefundProducts.get(String(item.productId)) || null;
       if (!product) continue;
@@ -3777,6 +3901,14 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
       returnedItemsLog.push({ itemIndex, name: item.name, qty });
       item.refundedQty = +((Number(item.refundedQty) || 0) + qty).toFixed(6);
       if (invAction === 'None') continue;
+      if (hasStockMoves(order)) {
+        // This line's share of exactly what the sale took, at its cost then.
+        const moves = movesToReturn(order, [{ lineIndex: itemIndex, qty }]);
+        returnCogs += invAction === 'Restock'
+          ? await restoreStockMoves(moves, { session, reference, remarks: `Exchange return (Restock): ${item.name}`, asBatch: true })
+          : moves.reduce((sum, m) => sum + m.value, 0);
+        continue;
+      }
       const product = exchangeReturnProducts.get(String(item.productId)) || null;
       if (!product) continue;
       let recipeToUse = product.baseRecipe || [];

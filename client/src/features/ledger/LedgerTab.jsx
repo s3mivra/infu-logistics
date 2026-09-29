@@ -6487,10 +6487,19 @@ It posts only what is not already accrued for that month.`)) return;
                                 <span className="text-fg font-semibold">{c.label}</span>
                               </span>
                               {!c.ok && <span className="block text-[11px] text-fg/65 mt-1 pl-3.5 leading-snug">{c.fix}</span>}
+                              {/* A count check (the stock card) names the items that do not agree. */}
+                              {!c.ok && c.count && (c.detail || []).length > 0 && (
+                                <ul className="mt-1.5 pl-3.5 space-y-0.5 text-[11px] text-fg/80">
+                                  {c.detail.slice(0, 10).map(d => (
+                                    <li key={d.itemName} className="tabular-nums">{d.itemName}: on hand {d.onHand} {d.unit}, stock card {d.cardTotal} {d.unit} (off by {d.difference})</li>
+                                  ))}
+                                  {c.detail.length > 10 && <li>…and {c.detail.length - 10} more</li>}
+                                </ul>
+                              )}
                             </td>
-                            <td className="py-2.5 text-right font-mono tabular-nums text-fg/85">{money2(c.documents)}</td>
-                            <td className="py-2.5 text-right font-mono tabular-nums text-fg/85">{money2(c.ledger)}</td>
-                            <td className={`py-2.5 text-right font-mono tabular-nums font-bold ${c.ok ? 'text-fg/65' : 'text-danger'}`}>{money2(c.difference)}</td>
+                            <td className="py-2.5 text-right font-mono tabular-nums text-fg/85">{c.count ? `${c.documents} items` : money2(c.documents)}</td>
+                            <td className="py-2.5 text-right font-mono tabular-nums text-fg/85">{c.count ? `${c.ledger} agree` : money2(c.ledger)}</td>
+                            <td className={`py-2.5 text-right font-mono tabular-nums font-bold ${c.ok ? 'text-fg/65' : 'text-danger'}`}>{c.count ? `${c.difference} off` : money2(c.difference)}</td>
                           </tr>
                         ))}
                       </tbody>

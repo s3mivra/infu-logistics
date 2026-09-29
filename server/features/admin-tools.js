@@ -139,6 +139,7 @@ export default function registerAdminTools(ctx) {
     InventoryMovement,
     StockCardSchema,
     StockCard,
+    Supplier,
     ShiftSchema,
     Shift,
     ClockEntrySchema,
@@ -601,20 +602,40 @@ async function createBackdatedSale(payload, actorName) {
     let totalCogs = 0;
     const stockCards = [];
     if (itemized && affectInventory) {
-      for (const item of orderItems) {
+      for (const [lineIndex, item] of orderItems.entries()) {
         const product = item.productId ? await Product.findById(item.productId).session(session) : null;
         if (!product) continue;
-        const linkInv = await resolveLinkedInventory(product, item.productCode, session);
-        if (!linkInv) continue;
-        const deductQty = item.quantity * baseUnitsPerSale(product, linkInv);
-        const updated = await Inventory.findOneAndUpdate(
-          { _id: linkInv._id, stockQty: { $gte: deductQty } },
-          { $inc: { stockQty: -deductQty } },
-          { session, returnDocument: 'after' }
-        );
-        if (!updated) throw fail(400, `Not enough stock of "${linkInv.itemName}" to reduce for this backdated sale. Turn off "reduce inventory" or receive stock first.`);
-        stockCards.push({ inventoryId: updated._id, itemName: updated.itemName, type: 'Sale', reference: mkRef('BACK', orderNumber), qtyChange: -deductQty, balanceAfter: updated.stockQty, remarks: `Backdated sale (${item.name})` });
-        totalCogs += linkInv.unitCost * deductQty;
+        // The same stock a live sale of it takes: its recipe (the size's when
+        // it has one), or the 1:1 linked item for a product with no recipe.
+        // This used the 1:1 link only, so a recipe product's backdated sale
+        // took stock from the wrong place or none at all.
+        let recipe = product.baseRecipe || [];
+        const sizeMatch = String(item.name || '').match(/\(([^)]+)\)$/);
+        if (sizeMatch) {
+          const sz = product.sizes?.find(x => x.name === sizeMatch[1]);
+          if (sz?.recipe?.length) recipe = sz.recipe;
+        }
+        let plan = recipe
+          .filter(r => r.invId && !r.nonStock && mongoose.Types.ObjectId.isValid(String(r.invId)))
+          .map(r => ({ invId: r.invId, qty: +(Number(r.qty) * item.quantity).toFixed(6) }));
+        if (!plan.length) {
+          const linkInv = await resolveLinkedInventory(product, item.productCode, session);
+          if (linkInv) plan = [{ invId: linkInv._id, qty: +(item.quantity * baseUnitsPerSale(product, linkInv)).toFixed(6) }];
+        }
+        for (const { invId, qty: deductQty } of plan) {
+          if (!(deductQty > 0)) continue;
+          const updated = await Inventory.findOneAndUpdate(
+            { _id: invId, stockQty: { $gte: deductQty } },
+            { $inc: { stockQty: -deductQty } },
+            { session, returnDocument: 'after' }
+          );
+          if (!updated) {
+            const inv = await Inventory.findById(invId, { itemName: 1 }).session(session).lean();
+            throw fail(400, `Not enough stock of "${inv?.itemName || 'an ingredient'}" to reduce for this backdated sale. Turn off "reduce inventory" or receive stock first.`);
+          }
+          stockCards.push({ inventoryId: updated._id, itemName: updated.itemName, type: 'Sale', reference: mkRef('BACK', orderNumber), qtyChange: -deductQty, balanceAfter: updated.stockQty, unitCost: updated.unitCost || 0, lineIndex, remarks: `Backdated sale (${item.name})` });
+          totalCogs += (updated.unitCost || 0) * deductQty;
+        }
       }
       if (stockCards.length) await StockCard.insertMany(stockCards, { session });
     }
@@ -632,6 +653,8 @@ async function createBackdatedSale(payload, actorName) {
       customerName: customerName || 'Walk-in (backdated)',
       paymentMethod: method,
       items: orderItems,
+      // What it took, so a void or refund gives back exactly this.
+      stockMoves: stockCards.map(c => ({ invId: String(c.inventoryId), qty: -c.qtyChange, unitCost: c.unitCost || 0, lineIndex: c.lineIndex })),
       subtotal: gross,
       discount,
       discountPercent: pct,
@@ -958,6 +981,9 @@ const PURGE_CATEGORIES = {
   fixedAssets:     { label: 'Fixed Asset Register', defaultOn: false },
   auditLog:        { label: 'Audit Log', defaultOn: true },
   menu:            { label: 'Menu Setup (Products, Categories, Combos, Add-ons, Modifiers, Price Tiers)', defaultOn: false },
+  // Master data, like the menu: off unless asked for, so a routine purge of
+  // transactions never takes the vendor list with it.
+  suppliers:       { label: 'Suppliers (list and their catalogs)', defaultOn: false },
 };
 app.get('/api/admin/purge-data/categories', verifyToken, requireSuperAdmin, async (req, res) => {
   res.json({ success: true, categories: Object.entries(PURGE_CATEGORIES).map(([key, v]) => ({ key, ...v })) });
@@ -1004,7 +1030,8 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
     }
     if (selected.has('inventory')) {
       await del('inventory', Inventory);
-      await del('stockCards', StockCard, false);
+      // Append-only outside maintenance (server.js StockCardSchema).
+      await withLedgerMaintenance(() => del('stockCards', StockCard, false));
       await del('inventoryMovements', InventoryMovement, false);
       await del('backdateQueue', BackdateQueueItem);
     }
@@ -1041,6 +1068,16 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
       await del('advances', Advance);
     }
     if (selected.has('fixedAssets')) await del('fixedAssets', FixedAsset);
+    // Suppliers carry their catalog inside them, so one delete clears both.
+    // No businessType field on Supplier.
+    if (selected.has('suppliers')) {
+      await del('suppliers', Supplier, false);
+    } else if (selected.has('ledger')) {
+      // Kept suppliers, wiped ledger: a supplier's credit balance is backed by
+      // 160100 Supplier Credit Balance, which just went. Left as it was, the
+      // balance would be money nobody's books hold.
+      deleted.supplierCreditsCleared = (await Supplier.updateMany({ creditBalance: { $ne: 0 } }, { $set: { creditBalance: 0 } })).modifiedCount;
+    }
     if (selected.has('requisitions')) await del('requisitionSlips', RequisitionSlip);
     if (selected.has('eod')) await del('eodRecords', EODRecord, false);
     if (selected.has('orders')) {
@@ -1081,7 +1118,7 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
     // (staff + client logins), Account/Settings/PaymentMethodMap (Chart of
     // Accounts + config), Discount/DiscountRule (promo definitions),
     // StorageLocation/StockCategory (inventory taxonomy), Supplier (vendor
-    // master data), ScheduledShift (future planning), Tenant, Counter
+    // master data - unless 'suppliers' is chosen), ScheduledShift (future planning), Tenant, Counter
     // (sequence numbers - left as-is so new records don't reuse old
     // reference/order numbers).
 

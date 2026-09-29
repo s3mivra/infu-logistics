@@ -10,6 +10,16 @@ import { addBatch, soonestExpiry, consumeBatches } from '../lib/expiry.js';
 import { dayStart } from '../lib/reportRange.js';
 
 import { atomic } from '../lib/atomicRoute.js';
+import { basePerPack as itemPackBase } from '../lib/units.js';
+
+// Base units in one unit of a PO line. The line's own pack size wins (a case
+// of 24 bought for an item stocked by the can); without one it is the stock
+// item's pack. Defaulting to 1 display unit instead received a 377 g can as
+// a whole kilo whenever a line reached the server without its pack size.
+const packBaseFor = (line, item) => itemPackBase({
+  unitMultiplier: item?.unitMultiplier,
+  packSize: Number(line?.packSize) > 0 ? Number(line.packSize) : item?.packSize,
+});
 import { splitUpdate } from '../lib/changeApproval.js';
 import { hasPermission } from '../lib/authz.js';
 export default function registerPurchaseOrders(ctx) {
@@ -423,7 +433,7 @@ export default function registerPurchaseOrders(ctx) {
       const item = await Inventory.findById(line.invId);
       if (!item) continue;
 
-      const basePerPack = (Number(line.packSize) || 1) * (Number(item.unitMultiplier) || 1);
+      const basePerPack = packBaseFor(line, item);
       const baseQty = delta * basePerPack;
       if (baseQty <= 0) continue;
 
@@ -696,7 +706,7 @@ export default function registerPurchaseOrders(ctx) {
         if (line.invId && mongoose.Types.ObjectId.isValid(String(line.invId))) {
           const item = await Inventory.findById(line.invId);
           if (item) {
-            const basePerPack = (Number(line.packSize) || 1) * (Number(item.unitMultiplier) || 1);
+            const basePerPack = packBaseFor(line, item);
             const baseQty = qty * basePerPack;
             // Goods can only go back if they are still on the shelf. Letting the
             // count go negative would hide the real problem: stock recorded as
