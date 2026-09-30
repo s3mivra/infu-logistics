@@ -483,7 +483,8 @@ app.post('/api/client-accounts', verifyToken, requireStaff, requirePermission('c
     }
     const hashed = await bcrypt.hash(withLogin ? String(password) : crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
     const token = withLogin ? null : crypto.randomBytes(24).toString('hex');
-    const cleanSegments = Array.isArray(segments) ? [...new Set(segments.map(s => String(s).trim()).filter(Boolean))] : [];
+    // A price tier changes what the client pays - the owner's call, like credit.
+    const cleanSegments = isSuper && Array.isArray(segments) ? [...new Set(segments.map(s => String(s).trim()).filter(Boolean))] : [];
     // Standard customer ID format: CUS-1000-A0000 ("1000" is a fixed segment;
     // "A0000" is the zero-padded sequence - same "prefix-A + digits" convention
     // used for client/product codes elsewhere, just with the fixed segment folded

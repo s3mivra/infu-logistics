@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react';
+import QtyInput from '../../shared/ui/QtyInput';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { usePaymentMethods } from '../../shared/usePaymentMethods';
@@ -1934,7 +1935,8 @@ export default function ClientOrderPage() {
                   >
                     <Minus size={13} />
                   </button>
-                  <span className="text-fg font-black text-sm w-6 text-center tabular-nums">{item.quantity}</span>
+                  <QtyInput value={item.quantity} label={`Quantity of ${item.name}`}
+                    onChange={q => setCart(prev => prev.map(i => i.productId === item.productId ? { ...i, quantity: q } : i))} />
                   <button
                     onClick={() => changeQty(item.productId, 1)}
                     className="w-8 h-8 rounded-lg bg-brand/20 hover:bg-brand/30 text-brand-text flex items-center justify-center transition"

@@ -163,3 +163,29 @@ describe('adding and deleting clients', () => {
     expect((await as(tok.office, 'delete', `/api/client-accounts/${c._id}`)).status).toBe(403);
   });
 });
+
+describe('price tier on a client', () => {
+  it('the owner sets a tier when adding a client, and the list shows it', async () => {
+    const r = await as(tok.owner, 'post', '/api/client-accounts').send({ name: 'Tier Buyer', segments: ['Dealer'] });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const list = await as(tok.owner, 'get', '/api/clients/summary');
+    expect(list.body.clients.find(c => c.name === 'TIER BUYER').segments).toEqual(['Dealer']);
+  });
+
+  it('the owner can change it later', async () => {
+    const c = await M('ClientAccount').findOne({ name: 'TIER BUYER' }).lean();
+    const r = await as(tok.owner, 'patch', `/api/client-accounts/${c._id}`).send({ segments: ['Wholesale'] });
+    expect(r.status).toBe(200);
+    expect((await M('ClientAccount').findById(c._id).lean()).segments).toEqual(['Wholesale']);
+  });
+
+  it('staff adding a client cannot give it a tier, and cannot change one', async () => {
+    await makeUser({ name: 'clTierAdder', role: 'staff', permissions: ['orders.view', 'clients.create'] });
+    const t = await loginStaff(app, 'clTierAdder');
+    const r = await as(t, 'post', '/api/client-accounts').send({ name: 'No Tier Co', segments: ['Dealer'] });
+    expect(r.status).toBe(200);
+    const c = await M('ClientAccount').findById(r.body.client._id).lean();
+    expect(c.segments).toEqual([]);
+    expect((await as(t, 'patch', `/api/client-accounts/${c._id}`).send({ segments: ['Dealer'] })).status).toBe(403);
+  });
+});

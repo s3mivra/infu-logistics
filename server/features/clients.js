@@ -149,6 +149,7 @@ export default function registerClients(ctx) {
           username: c.username,
           isActive: c.isActive !== false,
           paymentMethod: c.paymentMethod,
+          segments: c.segments || [],
           source: c.source || 'portal',
           orderCount: st?.orderCount || 0,
           completedCount: st?.completedCount || 0,

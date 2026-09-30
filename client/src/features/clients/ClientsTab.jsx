@@ -1,6 +1,5 @@
 ﻿import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Users, Search, ChevronDown, ChevronRight, RefreshCw, AlertCircle, Upload, FileText, Download, Link2, UserPlus, Trash2 } from 'lucide-react';
-import ClientLinks from './ClientLinks';
 import * as ui from '../../shared/ui';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import { socket } from '../../shared/staffSocket.js';
@@ -39,12 +38,53 @@ export default function ClientsTab() {
     } catch { ui.alert('Network error.'); }
   };
   const [importing, setImporting] = useState(false);
-  const [showLinks, setShowLinks] = useState(false);
   // Quick invite: only a name. The client opens the link and fills in the
   // rest (phone, email, username, password) themselves.
   // Add a client with its details. The login is never chosen here: the client
   // gets a link and sets their own username and password.
-  const blankClient = { name: '', phone: '', email: '', paymentMethod: 'Cash', contactNotes: '' };
+  const blankClient = { name: '', phone: '', email: '', paymentMethod: 'Cash', contactNotes: '', tier: '' };
+
+  // Price tiers (Dealer, Wholesale, ...). A tier is kept on the client as one of
+  // its segments; only the owner sets it, since it changes what they pay.
+  const [tiers, setTiers] = useState([]);
+  useEffect(() => {
+    apiFetch('/api/price-tiers').then(r => r.json()).then(d => {
+      if (d.success) setTiers((d.tiers || []).filter(t => t.isActive !== false).map(t => t.name));
+    }).catch(() => {});
+  }, [apiFetch]);
+  const tierOf = (c) => (c.segments || []).find(s => tiers.includes(s)) || '';
+  const setClientTier = async (c, tier) => {
+    // Keep any other tags; swap only the tier.
+    const segments = [...(c.segments || []).filter(s => !tiers.includes(s)), ...(tier ? [tier] : [])];
+    try {
+      const d = await (await apiFetch(`/api/client-accounts/${c._id}`, { method: 'PATCH', body: JSON.stringify({ segments }) })).json();
+      if (!d.success) { ui.alert(d.error || 'Could not change the tier.'); return; }
+      ui.toast(tier ? `${c.name} is now on ${tier} pricing.` : `${c.name} is back on list prices.`, { tone: 'success' });
+      load();
+    } catch { ui.alert('Network error.'); }
+  };
+
+  // Each client's own link, shown in their row: the setup link while they have
+  // not chosen a login, the sign-in page once they have.
+  const [links, setLinks] = useState(null);   // clientId -> row from /links
+  const loadLinks = useCallback(async () => {
+    try {
+      const d = await (await apiFetch('/api/client-accounts/links')).json();
+      if (d.success) setLinks({ signInPath: d.signInPath, byId: Object.fromEntries((d.clients || []).map(x => [String(x._id), x])) });
+    } catch { /* the row just shows no link */ }
+  }, [apiFetch]);
+  const copyText = async (text) => {
+    try { await navigator.clipboard.writeText(text); ui.toast('Link copied.', { tone: 'success' }); }
+    catch { ui.alert(text); }
+  };
+  const newSetupLink = async (c) => {
+    try {
+      const d = await (await apiFetch(`/api/client-accounts/${c._id}/onboard-link`, { method: 'POST' })).json();
+      if (!d.success) { ui.alert(d.error || 'Could not make a link.'); return; }
+      await copyText(`${window.location.origin}/client-onboard/${d.token}`);
+      loadLinks();
+    } catch { ui.alert('Network error.'); }
+  };
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState(blankClient);
   const [adding, setAdding] = useState(false);
@@ -54,7 +94,8 @@ export default function ClientsTab() {
     if (!addForm.name.trim()) return;
     setAdding(true);
     try {
-      const d = await (await apiFetch('/api/client-accounts', { method: 'POST', body: JSON.stringify(addForm) })).json();
+      const { tier, ...rest } = addForm;
+      const d = await (await apiFetch('/api/client-accounts', { method: 'POST', body: JSON.stringify({ ...rest, segments: tier ? [tier] : [] }) })).json();
       if (!d.success) { ui.alert(d.error || 'Could not add the client.'); return; }
       const link = d.onboardingPath ? `${window.location.origin}${d.onboardingPath}` : '';
       setAddedLink(link);
@@ -63,7 +104,7 @@ export default function ClientsTab() {
         try { await navigator.clipboard.writeText(link); ui.toast(`${d.client.name} added - link copied, send it to them.`, { tone: 'success' }); }
         catch { ui.toast(`${d.client.name} added. Copy the link below.`); }
       }
-      load();
+      load(); if (links) loadLinks();
     } catch { ui.alert('Network error.'); }
     finally { setAdding(false); }
   };
@@ -160,6 +201,7 @@ export default function ClientsTab() {
   const toggle = async (id) => {
     if (expanded === id) { setExpanded(null); return; }
     setExpanded(id);
+    if (!links && can('clients.links')) loadLinks();
     if (orders[id]) return;
     try {
       const res = await apiFetch(`/api/clients/${id}/orders`);
@@ -331,12 +373,6 @@ export default function ClientsTab() {
             <Link2 size={13} /> New client link
           </button>
         )}
-        {can('clients.links') && (
-          <button onClick={() => setShowLinks(v => !v)} aria-expanded={showLinks}
-            className={`flex items-center gap-1.5 text-[10px] px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider transition ${showLinks ? 'bg-brand text-on-brand' : 'border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5'}`}>
-            <Link2 size={13} /> Links
-          </button>
-        )}
         <button onClick={() => downloadDataset?.('clients')}
           className="flex items-center gap-1.5 text-[10px] bg-brand/10 hover:bg-brand/20 text-brand-text px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider transition">
           <Download size={13} /> Export
@@ -371,6 +407,16 @@ export default function ClientsTab() {
               {[['Cash', 'Cash on Delivery'], ['E-Wallet', 'E-Wallet'], ['Bank Transfer', 'Bank Transfer'], ['Credit Card', 'Credit Card']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </div>
+          {isSuperAdmin && tiers.length > 0 && (
+            <label className="flex items-center gap-2 text-xs font-bold text-fg/70">
+              Price tier
+              <select value={addForm.tier} onChange={e => setAddForm({ ...addForm, tier: e.target.value })} aria-label="Price tier"
+                className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/60">
+                <option value="">List price (no tier)</option>
+                {tiers.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+          )}
           <input value={addForm.contactNotes} onChange={e => setAddForm({ ...addForm, contactNotes: e.target.value })} placeholder="Notes (address, contact person...)" aria-label="Notes" className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm placeholder-fg/70 outline-none focus:border-brand/60" />
           <div className="flex flex-wrap gap-2 items-center">
             <button type="submit" disabled={adding || !addForm.name.trim()}
@@ -411,7 +457,6 @@ export default function ClientsTab() {
           )}
         </form>
       )}
-      {showLinks && can('clients.links') && <ClientLinks apiFetch={apiFetch} />}
 
       {!data.showMoney && (
         <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-fg/70 text-xs font-bold">
@@ -503,18 +548,59 @@ export default function ClientsTab() {
                           )}
                         </div>
                       )}
-                      {data.showMoney && (
-                        <button onClick={() => openStatement(c)}
-                          className="mb-3 flex items-center gap-1.5 text-[10px] bg-brand/10 hover:bg-brand/20 text-brand-text px-3 py-2 rounded-xl font-bold uppercase tracking-wider transition">
-                          <FileText size={13} /> Statement of account
-                        </button>
-                      )}
-                      {can('clients.delete') && orders[c._id] && orders[c._id].length === 0 && (
-                        <button onClick={() => deleteClient(c)}
-                          className="mb-3 ml-2 inline-flex items-center gap-1.5 text-[10px] border border-danger/40 text-danger hover:bg-danger/10 px-3 py-2 rounded-xl font-bold uppercase tracking-wider transition">
-                          <Trash2 size={13} /> Delete client
-                        </button>
-                      )}
+                      {(() => {
+                        const link = links?.byId?.[c._id];
+                        const setupUrl = link?.onboardingPath ? `${window.location.origin}${link.onboardingPath}` : '';
+                        const signInUrl = link?.hasLogin ? `${window.location.origin}${links.signInPath}` : '';
+                        const tier = tierOf(c);
+                        const chip = 'flex items-center gap-1.5 text-[10px] px-3 py-2 rounded-xl font-bold uppercase tracking-wider transition';
+                        return (
+                          <div className="flex flex-wrap items-center gap-2 mb-3">
+                            {/* Price tier */}
+                            {isSuperAdmin && tiers.length > 0 ? (
+                              <label className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-fg/70">
+                                Price tier
+                                <select value={tier} onChange={e => setClientTier(c, e.target.value)} aria-label={`Price tier for ${c.name}`}
+                                  className="bg-white/5 border border-white/10 rounded-xl px-2 py-1.5 text-fg text-xs font-bold normal-case tracking-normal outline-none focus:border-brand/60">
+                                  <option value="">List price</option>
+                                  {tiers.map(t => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                              </label>
+                            ) : tier ? (
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-fg/70 bg-white/5 border border-white/10 rounded-xl px-3 py-2">Tier: {tier}</span>
+                            ) : null}
+                            {/* Their link */}
+                            {can('clients.links') && links && (
+                              setupUrl ? (
+                                <button onClick={() => copyText(setupUrl)} title={`Setup link - good until ${new Date(link.onboardingExpiresAt).toLocaleDateString('en-PH')}`}
+                                  className={`${chip} bg-brand/10 hover:bg-brand/20 text-brand-text`}>
+                                  <Link2 size={13} /> Copy setup link
+                                </button>
+                              ) : signInUrl ? (
+                                <button onClick={() => copyText(signInUrl)} className={`${chip} border border-white/15 text-fg/80 hover:bg-white/5`}>
+                                  <Link2 size={13} /> Copy sign-in link
+                                </button>
+                              ) : isSuperAdmin ? (
+                                <button onClick={() => newSetupLink(c)} className={`${chip} border border-white/15 text-fg/80 hover:bg-white/5`}>
+                                  <Link2 size={13} /> New setup link
+                                </button>
+                              ) : (
+                                <span className="text-[10px] font-bold text-fg/65">Setup link expired - ask the owner for a new one</span>
+                              )
+                            )}
+                            {data.showMoney && (
+                              <button onClick={() => openStatement(c)} className={`${chip} bg-brand/10 hover:bg-brand/20 text-brand-text`}>
+                                <FileText size={13} /> Statement of account
+                              </button>
+                            )}
+                            {can('clients.delete') && orders[c._id] && orders[c._id].length === 0 && (
+                              <button onClick={() => deleteClient(c)} className={`${chip} border border-danger/40 text-danger hover:bg-danger/10 ml-auto`}>
+                                <Trash2 size={13} /> Delete client
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {!orders[c._id] ? (
                         <p className="text-fg/65 text-xs font-bold py-2">Loading orders…</p>
                       ) : orders[c._id].length === 0 ? (

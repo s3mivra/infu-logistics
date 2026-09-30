@@ -1,4 +1,5 @@
 ﻿import React from 'react';
+import QtyInput from '../../shared/ui/QtyInput';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Footprints, Utensils, ShoppingBag, Bike, Car, UserX, UserCheck, Flame } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
@@ -692,7 +693,8 @@ export default function OrdersTab({ ctx }) {
                             <div className="flex items-center gap-2 mt-2">
                               <button onClick={() => setPosCart(posCart.map((c, i) => i === idx ? {...c, quantity: Math.max(1, c.quantity - 1)} : c))}
                                 className="w-8 h-8 bg-white/10 hover:bg-white/15 rounded-lg text-fg font-black flex items-center justify-center transition text-base active:scale-90">−</button>
-                              <span className="font-black text-sm text-fg w-6 text-center">{item.quantity}</span>
+                              <QtyInput value={item.quantity} label={`Quantity of ${item.name}`}
+                                onChange={q => setPosCart(posCart.map((c, i) => i === idx ? {...c, quantity: q} : c))} />
                               <button onClick={() => setPosCart(posCart.map((c, i) => i === idx ? {...c, quantity: c.quantity + 1} : c))}
                                 className="w-8 h-8 bg-white/10 hover:bg-brand/30 rounded-lg text-fg font-black flex items-center justify-center transition text-base active:scale-90">+</button>
                               <label className="relative ml-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-fg/65">
