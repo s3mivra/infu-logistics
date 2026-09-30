@@ -529,7 +529,7 @@ async function maybePromoteBackdateClient(customerName) {
 // Throws an Error with `.httpStatus` set for anything that should reach the
 // client as a 400/423 rather than a 500.
 async function createBackdatedSale(payload, actorName) {
-  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, isComplimentary = false, importRef = '', deliveryFee = 0 } = payload;
+  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, discountAmount = 0, isComplimentary = false, importRef = '', deliveryFee = 0, paymentReference = '', paymentCheckDate = null } = payload;
   const comp = !!isComplimentary;
   const fail = (httpStatus, message) => Object.assign(new Error(message), { httpStatus });
 
@@ -578,7 +578,12 @@ async function createBackdatedSale(payload, actorName) {
     // what is left, the same order the POS applies them in.
     const lineDiscount = comp ? 0 : roundMoney(orderItems.reduce((s, it) => s + roundMoney(it.price * it.quantity * (it.discountPercent || 0) / 100), 0));
     const pct = comp ? 0 : Math.max(0, Math.min(100, Number(discountPercent) || 0));
-    const discount = roundMoney(lineDiscount + (gross - lineDiscount) * pct / 100);
+    // A peso discount as the paper document wrote it (an imported billing
+    // statement's DISCOUNT line). Taken exactly, never turned into a percent,
+    // so the sale lands on the document's own total to the centavo.
+    const afterPct = roundMoney(gross - lineDiscount - (gross - lineDiscount) * pct / 100);
+    const flat = comp ? 0 : Math.min(afterPct, Math.max(0, roundMoney(Number(discountAmount) || 0)));
+    const discount = roundMoney(lineDiscount + (gross - lineDiscount) * pct / 100 + flat);
     // Same gap as the live POS path had (see orders.js): a delivery fee is a
     // flat pass-through add-on, not part of what's discounted/comped, added
     // after. Bulk Excel imports of a delivery business's historical sales
@@ -594,6 +599,17 @@ async function createBackdatedSale(payload, actorName) {
 
     const method = paymentMethod || 'Cash';
     const acct = accountForPaymentMethod(method);
+    // A check is paid by its number (and dated), the same as a live check sale
+    // - without it the deposit can never be matched or a bounce traced.
+    const payRef = String(paymentReference || '').trim().slice(0, 60);
+    let checkDate = null;
+    if (!comp && String(method).trim().toUpperCase() === 'CHECK') {
+      if (!payRef) throw fail(400, 'A check number is required when the sale was paid by check.');
+      if (paymentCheckDate) {
+        checkDate = new Date(paymentCheckDate);
+        if (Number.isNaN(checkDate.getTime())) throw fail(400, 'Invalid check date.');
+      }
+    }
 
     const year = dt.getFullYear();
     const orderNumber = await generateNextSequence(Order, `ORD-${year}`, 'orderNumber', 'ORD');
@@ -652,6 +668,8 @@ async function createBackdatedSale(payload, actorName) {
       cashier: actorName || 'Backdated Entry',
       customerName: customerName || 'Walk-in (backdated)',
       paymentMethod: method,
+      ...(payRef ? { paymentReference: payRef } : {}),
+      ...(checkDate ? { paymentCheckDate: checkDate } : {}),
       items: orderItems,
       // What it took, so a void or refund gives back exactly this.
       stockMoves: stockCards.map(c => ({ invId: String(c.inventoryId), qty: -c.qtyChange, unitCost: c.unitCost || 0, lineIndex: c.lineIndex })),
@@ -671,7 +689,7 @@ async function createBackdatedSale(payload, actorName) {
       deliveryFee: delivery,
       isVatExempt: backdateVat === 0,
       isComplimentary: comp,
-      discountType: comp ? 'Complimentary' : (pct > 0 || lineDiscount > 0 ? 'Promo' : 'None'),
+      discountType: comp ? 'Complimentary' : (pct > 0 || lineDiscount > 0 || flat > 0 ? 'Promo' : 'None'),
       transactionType: 'NORMAL',
       orderNotes: (notes || '').trim().slice(0, 300),
       isBackdated: true,
@@ -821,6 +839,8 @@ app.post('/api/admin/backdate-sale/queue', verifyToken, requireSuperAdmin, async
       docs.push({
         transNo: String(r.transNo || ''), client: String(r.client || ''), date: String(r.date || ''), sheet: String(r.sheet || ''),
         items: (Array.isArray(r.items) ? r.items : []).map(it => ({ code: it.code || '', name: it.name, quantity: it.quantity, price: it.price, productId: it.productId || null, productCode: it.productCode || null })),
+        deliveryFee: Math.max(0, Number(r.deliveryFee) || 0),
+        discountAmount: Math.max(0, Number(r.discountAmount) || 0),
         missingFields: Array.isArray(r.missingFields) ? r.missingFields : ['paymentMethod'],
         status: 'pending',
       });
@@ -861,6 +881,9 @@ app.post('/api/admin/backdate-sale/queue/:id/save', verifyToken, requireSuperAdm
       date: q.date, customerName: q.client, paymentMethod, affectInventory, discountPercent, isComplimentary,
       notes: notes || (q.transNo ? `Imported (queued) - ${q.transNo}` : 'Imported from Excel (queued)'),
       items: q.items,
+      deliveryFee: q.deliveryFee || 0, discountAmount: q.discountAmount || 0,
+      // The sheet's reference, so importing the same file again skips it.
+      importRef: q.transNo || '',
     }, req.user?.name);
     q.status = 'resolved';
     q.resolvedOrderId = result.order._id;

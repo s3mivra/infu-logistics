@@ -197,3 +197,47 @@ describe('backdated sale', () => {
     expect(Math.abs(debits - credits)).toBeLessThanOrEqual(0.01);
   });
 });
+
+describe('a backdated sale paid by check', () => {
+  it('needs the check number', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({ date: LAST_MONTH, amount: 500, paymentMethod: 'Check' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/check number/i);
+  });
+
+  it('keeps the check number and date on the order', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({
+      date: LAST_MONTH, amount: 750, paymentMethod: 'Check', paymentReference: ' 0012345 ', paymentCheckDate: LAST_MONTH,
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const o = await mongoose.model('Order').findById(res.body.order._id).lean();
+    expect(o.paymentMethod).toBe('Check');
+    expect(o.paymentReference).toBe('0012345');
+    expect(o.paymentCheckDate.toISOString().slice(0, 10)).toBe(LAST_MONTH);
+  });
+});
+
+describe('an imported billing statement lands on its own grand total', () => {
+  it('the sheet discount comes off in pesos, exactly', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({
+      date: LAST_MONTH, paymentMethod: 'Cash', importRef: 'GT-1',
+      items: [{ name: 'Beans A', price: 11070.5, quantity: 2 }], discountAmount: 442.82,
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.order.total).toBe(21698.18);
+    expect(res.body.order.discount).toBe(442.82);
+  });
+
+  it('a queued sale keeps the discount and the sheet reference', async () => {
+    const q = await auth('post', '/api/admin/backdate-sale/queue', superTok).send({ items: [{
+      transNo: 'GT-2', client: 'Queued Co', date: LAST_MONTH,
+      items: [{ name: 'Beans B', price: 1000, quantity: 3 }], deliveryFee: 150, discountAmount: 200,
+    }] });
+    expect(q.body.queued).toBe(1);
+    const row = await mongoose.model('BackdateQueueItem').findOne({ transNo: 'GT-2' }).lean();
+    const saved = await auth('post', `/api/admin/backdate-sale/queue/${row._id}/save`, superTok).send({ paymentMethod: 'Cash' });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    expect(saved.body.order.total).toBe(2950);   // 3000 + 150 delivery - 200 discount
+    expect(saved.body.order.importRef).toBe('GT-2');
+  });
+});

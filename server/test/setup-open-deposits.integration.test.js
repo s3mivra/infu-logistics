@@ -40,7 +40,7 @@ beforeAll(async () => {
   await makeUser({ name: 'odSuper', role: 'superadmin' });
   tok = await loginStaff(app, 'odSuper');
   await makeClient({ username: 'Reyes Hardware' });
-  client = await M('ClientAccount').findOne({ name: 'Reyes Hardware' }).lean();
+  client = await M('ClientAccount').findOne({ username: 'Reyes Hardware' }).lean();   // not by name: the startup capitals step may already have renamed it
   supplier = await M('Supplier').create({ name: 'Metro Packaging' });
 }, 120000);
 

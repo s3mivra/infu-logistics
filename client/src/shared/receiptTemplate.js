@@ -109,13 +109,15 @@ export function buildReceiptHTML({
     ...metaRows.filter(r => r && pick(r.value)),
   ].map(r => `<tr><td>${esc(r.label)}</td><td>${r.value}</td></tr>`).join('');
 
-  const itemsHTML = lineItems.map(it => {
+  // A line may carry `printName` (typed at the till): the customer's copy shows
+  // it, the DUPLICATE shows the real product name.
+  const itemsHTML = (copyTag) => lineItems.map(it => {
     const subHTML = (it.subLines || []).map(s =>
       `<tr><td></td><td class="aname">+ ${esc(s.name)}</td><td class="amt">${peso(s.amount)}</td></tr>`
     ).join('');
     return `<tr>
       <td class="qty">${esc(it.qty)}</td>
-      <td class="iname">${esc(it.name)}</td>
+      <td class="iname">${esc(copyTag !== 'DUPLICATE' && it.printName ? it.printName : it.name)}</td>
       <td class="amt">${it.amount == null ? '' : peso(it.amount)}</td>
     </tr>${subHTML}`;
   }).join('');
@@ -204,7 +206,7 @@ ${(duplicate ? ['', 'DUPLICATE'] : ['']).map(copyTag => `
   ${bannerHTML}
   <table class="meta">${metaHTML}</table>
   <div class="dash"></div>
-  <table>${itemsHTML}</table>
+  <table>${itemsHTML(copyTag)}</table>
   ${summaryHTML ? `<div class="dash"></div><table>${summaryHTML}</table>` : ''}
   ${notesHTML}
   ${payHTML}

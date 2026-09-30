@@ -234,7 +234,7 @@ export default function LedgerTab({ ctx }) {
   //    then record it against a past date (optionally reducing today's stock). ──
   const [bd, setBd] = useState({
     date: todayStr(),
-    customerName: '', paymentMethod: 'Cash', notes: '',
+    customerName: '', paymentMethod: 'Cash', notes: '', checkNumber: '', checkDate: '',
     discountPercent: 0, affectInventory: false, isComplimentary: false,
   });
   const [bdCart, setBdCart] = useState([]); // [{ productId, productCode, name, price, quantity }]
@@ -350,6 +350,7 @@ export default function LedgerTab({ ctx }) {
   const submitBackdateCart = async () => {
     if (!bd.date) return ui.alert('Pick the sale date.');
     if (bdCart.length === 0) return ui.alert('Add at least one product to the sale.');
+    if (!bd.isComplimentary && bd.paymentMethod === 'Check' && !bd.checkNumber.trim()) return ui.alert('Enter the check number.');
     const label = bd.isComplimentary ? 'complimentary (₱0)' : `₱${bdTotal.toFixed(2)}`;
     const stockNote = bd.affectInventory ? '\n\nThis WILL reduce current inventory.' : '';
     if (!(await ui.confirm(`Record a backdated sale of ${label} on ${bd.date}?${stockNote}`))) return;
@@ -357,6 +358,7 @@ export default function LedgerTab({ ctx }) {
     try {
       const r = await apiFetch('/api/admin/backdate-sale', { method: 'POST', body: JSON.stringify({
         date: bd.date, customerName: bd.customerName, paymentMethod: bd.paymentMethod, notes: bd.notes,
+        ...(bd.paymentMethod === 'Check' ? { paymentReference: bd.checkNumber.trim(), paymentCheckDate: bd.checkDate || null } : {}),
         discountPercent: bdPct, affectInventory: bd.affectInventory, isComplimentary: bd.isComplimentary,
         items: bdCart.map(x => ({ name: x.name, price: x.price, quantity: x.quantity, discountPercent: bdLinePct(x), productId: x.productId, productCode: x.productCode })),
       }) });
@@ -364,7 +366,7 @@ export default function LedgerTab({ ctx }) {
       if (d.success) {
         ui.alert(`Backdated sale recorded: ${d.order.orderNumber}\nJournal ref: ${d.journalReference}`);
         setBdCart([]);
-        setBd(b => ({ ...b, customerName: '', notes: '', discountPercent: 0, isComplimentary: false }));
+        setBd(b => ({ ...b, customerName: '', notes: '', discountPercent: 0, isComplimentary: false, checkNumber: '', checkDate: '' }));
         fetchERPData();
         fetchBdHistory(1);
       } else ui.alert(d.error || 'Failed to record backdated sale.');
@@ -487,6 +489,36 @@ export default function LedgerTab({ ctx }) {
     return '';
   };
 
+  // The grand total: the first amount BELOW the "DELIVERY FEE" row (the big
+  // merged cell the billing statement puts there), in any column. That is the
+  // figure the customer was billed - after the discount and with the delivery
+  // fee - so it is taken as the sale's total rather than rebuilt from the
+  // item lines, which missed the sheet's DISCOUNT line. Null when the sheet
+  // has no such row.
+  const bdFindGrandTotal = (grid) => {
+    for (let r = 0; r < Math.min(grid.length, 120); r++) {
+      const row = grid[r] || [];
+      if (!row.some(c => ['deliveryfee', 'freight', 'shippingfee', 'deliverycharge'].some(a => bdNorm(c).includes(a)))) continue;
+      for (let r2 = r + 1; r2 < Math.min(grid.length, r + 6); r2++) {
+        // Only a cell that IS an amount ("₱21,698.18", 21698.18) - the same
+        // rows carry the Terms text ("within 24-48 hours"), whose digits
+        // must never be read as a total. Rightmost first: the total sits on
+        // the right, the terms on the left.
+        const row2 = grid[r2] || [];
+        for (let c2 = row2.length - 1; c2 >= 0; c2--) {
+          const v = row2[c2];
+          if (v === '' || v == null) continue;
+          const isAmount = typeof v === 'number' || /^\s*(PHP|Php|₱|P)?\s*-?[\d,]+(\.\d+)?\s*$/.test(String(v));
+          if (!isAmount) continue;
+          const n = bdNumify(typeof v === 'number' ? v : String(v).replace(/^\s*(PHP|Php|P)\s*/, ''));
+          if (n > 0) return n;
+        }
+      }
+      return null;
+    }
+    return null;
+  };
+
   // Parses ONE sheet's grid (array-of-arrays) into { groups, skipped }. Used
   // for both the single-sheet fast path and each sheet picked in the
   // multi-sheet picker below.
@@ -532,6 +564,7 @@ export default function LedgerTab({ ctx }) {
     // add onto the total the same way the live POS delivery fee now does
     // (see POST /api/orders and createBackdatedSale server-side).
     const sheetDeliveryFee = bdNumify(bdFindLabelValueSameRow(grid, ['deliveryfee', 'freight', 'shippingfee', 'deliverycharge']));
+    const sheetGrandTotal = bdFindGrandTotal(grid);
 
     // Transaction/client/date usually only repeat on the FIRST row of a sale
     // (exactly how a flat-columns import lays them out) - carry the
@@ -580,8 +613,13 @@ export default function LedgerTab({ ctx }) {
         const match = (products || []).find(p => (it.code && p.productCode === it.code) || p.name.toLowerCase() === it.name.toLowerCase());
         return { ...it, productId: match?._id || null, productCode: match?.productCode || it.code || null, matched: !!match };
       });
-      const itemsTotal = items.reduce((s, x) => s + x.price * x.quantity, 0);
-      return { ...g, items, deliveryFee: sheetDeliveryFee, total: itemsTotal + sheetDeliveryFee, needsPaymentMethod };
+      const itemsTotal = roundMoney(items.reduce((s, x) => s + x.price * x.quantity, 0));
+      const built = roundMoney(itemsTotal + sheetDeliveryFee);
+      // One sale per sheet carries the sheet's grand total; the gap between
+      // it and the item lines is the sheet's discount, sent as pesos.
+      const oneSale = byTrans.size === 1;
+      const discountAmount = oneSale && sheetGrandTotal != null ? roundMoney(Math.max(0, built - sheetGrandTotal)) : 0;
+      return { ...g, items, deliveryFee: sheetDeliveryFee, discountAmount, total: roundMoney(built - discountAmount), sheetTotal: oneSale ? sheetGrandTotal : null, needsPaymentMethod };
     });
     // A group whose transaction no. or client carries the mark - someone wrote
     // "INV-1042 CANCELLED" rather than annotating each line.
@@ -644,6 +682,7 @@ export default function LedgerTab({ ctx }) {
           body: JSON.stringify({ items: queueGroups.map(g => ({
             transNo: g.transNo, client: g.client, date: g.date, sheet: g.sheet,
             items: g.items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity, code: it.code, productId: it.productId, productCode: it.productCode })),
+            deliveryFee: g.deliveryFee || 0, discountAmount: g.discountAmount || 0,
             missingFields: ['paymentMethod'],
           })) }),
         });
@@ -745,6 +784,7 @@ export default function LedgerTab({ ctx }) {
                 importRef: g.transNo || undefined,
                 affectInventory: bdImportSettings.affectInventory, isComplimentary: false, discountPercent: 0,
                 deliveryFee: g.deliveryFee || undefined,
+                discountAmount: g.discountAmount || undefined,
                 items: g.items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity, productId: it.productId, productCode: it.productCode })),
               }),
             });
@@ -5639,6 +5679,7 @@ It posts only what is not already accrued for that month.`)) return;
                           <optgroup label="In-Store Payments">
                             <option value="Cash">Cash</option>
                             <option value="Bank Transfer">Bank Transfer</option>
+                            <option value="Check">Check</option>
                           </optgroup>
                           <optgroup label="E-Wallets">
                             <option value="GCash">GCash</option>
@@ -5655,6 +5696,20 @@ It posts only what is not already accrued for that month.`)) return;
                           <optgroup label="Credit"><option value="On Account">On Account (A/R)</option></optgroup>
                         </select>
                       </div>
+                      {bd.paymentMethod === 'Check' && !bd.isComplimentary && (<>
+                        <div>
+                          <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Check No. *</label>
+                          <input type="text" value={bd.checkNumber} maxLength={60} placeholder="e.g. 0012345"
+                            onChange={e => setBd({ ...bd, checkNumber: e.target.value })}
+                            className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60 placeholder-fg/65" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Check Date</label>
+                          <input type="date" value={bd.checkDate}
+                            onChange={e => setBd({ ...bd, checkDate: e.target.value })}
+                            className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
+                        </div>
+                      </>)}
                     </div>
 
                     {/* Toggles: reduce inventory (default off) + complimentary */}
@@ -6040,7 +6095,11 @@ It posts only what is not already accrued for that month.`)) return;
                           {bdImportPreview.multiSheet && g.sheet && <span className="text-[9px] bg-white/10 text-fg/75 px-1.5 py-0.5 rounded uppercase tracking-wider">{g.sheet}</span>}
                           {g.transNo && <span>{g.transNo}</span>}
                           <span>{g.date || <span className="text-danger">no date</span>}</span>
+                          {g.discountAmount > 0 && <span title="The sheet's discount - its grand total is below the item lines">less {peso(g.discountAmount)}</span>}
                           <span className="text-brand-text">{peso(g.total)}</span>
+                          {g.sheetTotal != null && Math.abs(g.sheetTotal - g.total) > 0.005 && (
+                            <span className="text-danger" title="The sheet's grand total is higher than its items plus delivery - check the sheet">sheet says {peso(g.sheetTotal)}</span>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2 mb-2">

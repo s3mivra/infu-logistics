@@ -8,6 +8,7 @@
 // dropdowns from it); mutating is superadmin, same bar as stock locations and
 // categories, because renaming a tier changes what every tagged client pays.
 import { captureError } from '../lib/errorLog.js';
+import { requirePermission } from '../lib/authz.js';
 import { resolveTierPrice } from '../lib/priceTiers.js';
 import { readTierRows, applyTierEntries, holdTierEntries } from '../lib/tierPriceImport.js';
 
@@ -72,8 +73,17 @@ export default function registerPriceTiers(ctx) {
   // Renaming a tier re-tags every client carrying the old name, so the tag on the
   // account keeps matching the overrides on products. Without that cascade a
   // rename would silently strip the discount from every client in the tier.
-  app.put('/api/price-tiers/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  // Changing what a tier CHARGES (its percent, its mode) is a price change, so
+  // anyone who may approve price changes (pricing.approve) can do it from
+  // Pricing Control. Renaming, switching a tier off and its note stay with the
+  // owner - a rename re-tags every client in it.
+  const canPrice = [requireStaff, requirePermission('pricing.approve')];
+  app.put('/api/price-tiers/:id', verifyToken, ...canPrice, async (req, res) => {
     try {
+      const isSuper = String(req.user?.role || '').toLowerCase() === 'superadmin';
+      if (!isSuper && ['name', 'isActive', 'note'].some(k => req.body?.[k] !== undefined)) {
+        return res.status(403).json({ success: false, error: 'Only the owner can rename a tier, switch it off or change its note.' });
+      }
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Tier not found.' });
       const tier = await PriceTier.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
       if (!tier) return res.status(404).json({ success: false, error: 'Tier not found.' });
@@ -141,7 +151,7 @@ export default function registerPriceTiers(ctx) {
   // stale rows behind from a product that's since been removed from the form.
   // Only meaningful in 'per_product' mode; storing it either way costs nothing
   // and means switching modes later doesn't lose work already typed in.
-  app.put('/api/price-tiers/:id/products', verifyToken, requireSuperAdmin, async (req, res) => {
+  app.put('/api/price-tiers/:id/products', verifyToken, ...canPrice, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Tier not found.' });
       const tier = await PriceTier.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });

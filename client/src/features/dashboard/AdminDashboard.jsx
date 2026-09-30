@@ -4155,6 +4155,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
         return {
           qty: `${item.quantity}x`,
           name: item.name,
+          printName: item.printName || '',
           amount: (item.price + addOnTotal) * item.quantity,
           subLines: (item.selectedAddOns || []).map(a => ({ name: a.name, amount: Number(a.price || 0) })),
         };
@@ -7399,6 +7400,8 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       return {
         code: item.productCode || '',
         desc: item.name + (item.size ? ` (${item.size})` : '') + (addOnDesc ? ` + ${addOnDesc}` : ''),
+        // The till's print name, on the customer's copy only (billingDocument.js).
+        printDesc: item.printName ? item.printName + (item.size ? ` (${item.size})` : '') + (addOnDesc ? ` + ${addOnDesc}` : '') : '',
         qty: item.quantity,
         unitPrice,
         total: unitPrice * item.quantity,
@@ -7485,9 +7488,12 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     const drNo = order.billingNumber || order.orderNumber || '';
     const dateStr = new Date(order.createdAt || Date.now()).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
 
-    const rows = (order.items || []).map((item, i) => {
+    // The customer's ORIGINAL shows a line's print name when the till gave one;
+    // the office DUPLICATE always shows the real product name.
+    const rowsFor = (original) => (order.items || []).map((item, i) => {
       const addOns = (item.selectedAddOns || []).map(a => a.name).join(', ');
-      const desc = esc(item.name) + (item.size ? ` (${esc(item.size)})` : '') + (addOns ? ` + ${esc(addOns)}` : '');
+      const shown = original && item.printName ? item.printName : item.name;
+      const desc = esc(shown) + (item.size ? ` (${esc(item.size)})` : '') + (addOns ? ` + ${esc(addOns)}` : '');
       return `<tr>
         <td class="n">${i + 1}</td>
         <td class="c">${esc(item.productCode || '')}</td>
@@ -7505,7 +7511,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       '<tr><td class="n">&nbsp;</td><td class="c"></td><td class="d"></td><td class="q"></td><td class="u"></td></tr>'
     ).join('');
 
-    const copy = (label, note) => `
+    const copy = (label, note) => { const rows = rowsFor(label === 'ORIGINAL'); return `
       <section class="dr">
         <div class="copy-tag">${label}<span class="copy-note">${note}</span></div>
         <header>
@@ -7545,7 +7551,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           <div class="sig narrow"><div class="line"></div><div class="cap">Date Received</div></div>
         </div>
         <div class="foot">Received the above goods in good order and condition.</div>
-      </section>`;
+      </section>`; };
 
     win.document.write(`<!DOCTYPE html><html><head><title>Delivery Receipt ${esc(drNo)}</title><style>
       * { box-sizing: border-box; }

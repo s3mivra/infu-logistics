@@ -18,6 +18,7 @@ const parseTermsDays = (v) => {
   return Number.isFinite(n) && n >= 0 ? n : null;
 };
 
+import { releaseCancelledOrderNumber } from '../lib/orderNumbers.js';
 import { captureError } from '../lib/errorLog.js';
 import { splitUpdate } from '../lib/changeApproval.js';
 import { hasPermission, requirePermission } from '../lib/authz.js';
@@ -275,6 +276,11 @@ app.post('/api/client/orders/:id/cancel', verifyClientToken, async (req, res) =>
     }
     order.status = 'Cancelled';
     await order.save();
+    // The latest number goes back for the next order (lib/orderNumbers.js).
+    try {
+      const freed = await releaseCancelledOrderNumber(order._id);
+      if (freed) order.orderNumber = freed.renamedTo;
+    } catch (err) { captureError(req, err); }
     emitToOps('orderUpdated', order);
     emitToMgr('erpUpdated');
     res.json({ success: true, order });

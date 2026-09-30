@@ -210,10 +210,40 @@ app.post('/api/addons', verifyToken, requireSuperAdmin, validate(addonSchema), a
 // requireSuperAdmin: only superadmin can edit add-ons (menu integrity)
 app.patch('/api/addons/:id', verifyToken, requireSuperAdmin, validate(addonSchema), async (req, res) => {
   try {
+    const before = await AddOn.findById(req.params.id).lean();
+    if (!before) return res.status(404).json({ success: false, error: 'Add-on not found' });
     const addon = await AddOn.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!addon) return res.status(404).json({ success: false, error: 'Add-on not found' });
+
+    // Products keep their own copy of an attached add-on (name and price), and
+    // the till charges the product's copy. Without this an edit reached no
+    // product that already had it: a new price was never charged, and a rename
+    // cut the product off from the add-on's recipe. A copy still at the old
+    // price follows the new one; a price set on that one product on purpose is
+    // left alone. The recipe needs nothing - an empty copy already reads the
+    // add-on's own.
+    let productsUpdated = 0;
+    const oldName = before.name;
+    const priceMoved = Number(before.price) !== Number(addon.price);
+    if (priceMoved) {
+      const r = await Product.updateMany(
+        { addOns: { $elemMatch: { name: oldName, price: Number(before.price) } } },
+        { $set: { 'addOns.$[el].price': Number(addon.price) } },
+        { arrayFilters: [{ 'el.name': oldName, 'el.price': Number(before.price) }] },
+      );
+      productsUpdated += r.modifiedCount || 0;
+    }
+    if (addon.name !== oldName) {
+      const r = await Product.updateMany(
+        { 'addOns.name': oldName },
+        { $set: { 'addOns.$[el].name': addon.name } },
+        { arrayFilters: [{ 'el.name': oldName }] },
+      );
+      productsUpdated = Math.max(productsUpdated, r.modifiedCount || 0);
+    }
+
     emitToAll('menuUpdated');
-    res.json({ success: true, addon });
+    res.json({ success: true, addon, productsUpdated });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

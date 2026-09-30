@@ -3,6 +3,7 @@ import { requestContext, currentActor } from './lib/requestContext.js';
 import { roundMoney, toCentavos } from './lib/money.js';
 import { createAutoRestorer } from './lib/autoRestore.js';
 import { uppercasePartyNames } from './lib/partyNames.js';
+import { releaseCancelledOrderNumbers } from './lib/orderNumbers.js';
 import { LEDGER_WRITE_OPS, inLedgerMaintenance, refuseLedgerRewrite, withLedgerMaintenance } from './lib/ledgerGuard.js';
 import express from 'express';
 import { businessDayStart, businessDateStr, businessClosingDateStr, setBusinessTimeZone, isValidTimeZone, DEFAULT_BUSINESS_TZ } from './lib/businessTime.js';
@@ -1552,6 +1553,10 @@ items: [{
     productId: String,
     productCode: String,
     name: String,
+    // A name typed at the till for PRINTING only ("House Blend 1kg" for what
+    // the books call "COMMERCIAL BLEND"). The customer's ORIGINAL copy shows
+    // it; the office DUPLICATE, stock, reports and the ledger keep `name`.
+    printName: { type: String, default: '' },
     price: Number,
     quantity: Number,
     fulfilledQty: { type: Number, default: 0 },        // units fulfilled so far (partial fulfillment)
@@ -2035,6 +2040,10 @@ const BackdateQueueItemSchema = new mongoose.Schema({
     productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', default: null },
     productCode: String,
   }],
+  // The sheet's own money beyond the item lines, so a queued sale is posted
+  // with the same total as one imported straight through.
+  deliveryFee: { type: Number, default: 0 },
+  discountAmount: { type: Number, default: 0 },
   missingFields: [{ type: String }], // e.g. ['paymentMethod']
   status: { type: String, enum: ['pending', 'resolved', 'discarded'], default: 'pending', index: true },
   resolvedOrderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null },
@@ -4081,10 +4090,15 @@ function scheduleMidnightArchive() {
     try {
       // Step A: Force any hanging order to Cancelled - Pending/Preparing/Ready
       //         plus Parked (held unpaid tabs); clear isParked so none linger.
+      const closingIds = (await Order.find(
+        { status: { $in: ['Pending', 'Preparing', 'Ready', 'Parked'] }, isArchived: false }, { _id: 1 },
+      ).lean()).map(o => o._id);
       await Order.updateMany(
-        { status: { $in: ['Pending', 'Preparing', 'Ready', 'Parked'] }, isArchived: false },
-        { $set: { status: 'Cancelled', isParked: false } }
+        { _id: { $in: closingIds } },
+        { $set: { status: 'Cancelled', isParked: false, cancelledBy: 'Midnight auto-close', cancelledAt: new Date() } }
       );
+      // The latest numbers among them go back for tomorrow's first orders.
+      try { await releaseCancelledOrderNumbers(closingIds); } catch (err) { log.error({ err }, 'Order-number release failed'); }
 
       // Step B: Sweep completed/cancelled/voided orders into the archive.
       //         Reserved and Partially Fulfilled carry over to the next day.

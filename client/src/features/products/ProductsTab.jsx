@@ -379,22 +379,37 @@ export default function ProductsTab({ ctx }) {
     setAoNsName(''); setAoNsQty('');
   };
   const emptyAddOn = { name: '', price: '', category: 'Extras', recipe: [] };
-  // "From inventory": the add-on IS a stock item. It takes the item's name and
-  // SRP (both still editable) and each one sold takes one pack off the shelf.
+  // "From inventory": the add-on IS a stock item. It takes the item's name
+  // (editable). Logistics sells it by the pack: its SRP is the price and each
+  // one sold takes one pack. A cafe uses part of it - an extra shot is 18 g of
+  // beans, not the bag - so the amount one add-on uses is typed in (g, ml or
+  // pcs, the unit stock is kept in) and the price is set by hand.
   const [aoFromInv, setAoFromInv] = useState(false);
   const [aoInvItem, setAoInvItem] = useState('');
+  const [aoInvUse, setAoInvUse] = useState('');
+  const byPack = BUSINESS_TYPE === 'log';
+  const invLine = (item, qty) => ({ invId: String(item._id), name: item.itemName, qty, cost: item.unitCost || 0, unit: item.unit || 'pcs', packBase: 1 });
   const pickAoInventory = (id) => {
     setAoInvItem(id);
     const item = inventory.find(i => String(i._id) === String(id));
     if (!item) return;
     const mult = Number(item.unitMultiplier) > 0 ? Number(item.unitMultiplier) : 1;
     const perPack = Number(item.packSize) > 0 ? +(Number(item.packSize) * mult).toFixed(6) : mult;
+    const use = byPack ? perPack : (parseFloat(aoInvUse) > 0 ? parseFloat(aoInvUse) : 0);
     setAddOnForm({
       ...addOnForm,
       name: item.itemName,
-      price: Number(item.srp) > 0 ? item.srp : addOnForm.price,
-      recipe: [{ invId: String(item._id), name: item.itemName, qty: perPack, cost: item.unitCost || 0, unit: item.unit || 'pcs', packBase: 1 }],
+      price: byPack && Number(item.srp) > 0 ? item.srp : addOnForm.price,
+      recipe: use > 0 ? [invLine(item, use)] : [],
     });
+  };
+  // Cafe: the amount one add-on takes from the picked item.
+  const setAoInvAmount = (v) => {
+    setAoInvUse(v);
+    const item = inventory.find(i => String(i._id) === String(aoInvItem));
+    const qty = parseFloat(v);
+    if (!item) return;
+    setAddOnForm({ ...addOnForm, recipe: qty > 0 ? [invLine(item, qty)] : [] });
   };
 
   const setFilter = (key, value) => setProdFilters({ ...prodFilters, [key]: value });
@@ -1185,14 +1200,23 @@ export default function ProductsTab({ ctx }) {
               <form onSubmit={handleSaveAddOn} className="flex flex-wrap gap-3 mb-6">
                 <div className="w-full flex flex-wrap items-center gap-3">
                   <label className="flex items-center gap-2 text-xs font-bold text-fg/80 cursor-pointer select-none">
-                    <input type="checkbox" checked={aoFromInv} onChange={e => { setAoFromInv(e.target.checked); setAoInvItem(''); }} />
+                    <input type="checkbox" checked={aoFromInv} onChange={e => { setAoFromInv(e.target.checked); setAoInvItem(''); setAoInvUse(''); }} />
                     From inventory
                   </label>
                   {aoFromInv && (
                     <SearchSelect value={aoInvItem} onChange={e => pickAoInventory(e.target.value)}
                       className="flex-1 min-w-[200px] bg-white/5 border border-white/10 rounded-lg px-2 py-2 text-xs text-fg outline-none focus:border-brand"
-                      placeholder="Pick a stock item - each one sold takes one pack"
-                      options={inventory.map(inv => ({ value: inv._id, label: inv.itemName, hint: Number(inv.srp) > 0 ? `P${inv.srp}` : (inv.unit || 'pcs') }))} />
+                      placeholder={byPack ? 'Pick a stock item - each one sold takes one pack' : 'Pick a stock item (beans, milk, syrup...)'}
+                      options={inventory.map(inv => ({ value: inv._id, label: inv.itemName, hint: byPack && Number(inv.srp) > 0 ? `P${inv.srp}` : (inv.unit || 'pcs') }))} />
+                  )}
+                  {aoFromInv && !byPack && (
+                    <label className="flex items-center gap-2 text-xs font-bold text-fg/80">
+                      Uses per add-on
+                      <input type="number" step="any" min="0" value={aoInvUse} onChange={e => setAoInvAmount(e.target.value)}
+                        placeholder="e.g. 18" aria-label="Amount one add-on uses"
+                        className="w-20 bg-white/5 border border-white/10 rounded-lg px-2 py-2 text-xs text-fg outline-none focus:border-brand" />
+                      <span className="text-fg/70">{inventory.find(i => String(i._id) === String(aoInvItem))?.unit || 'g'}</span>
+                    </label>
                   )}
                 </div>
                 <input
@@ -1289,7 +1313,8 @@ export default function ProductsTab({ ctx }) {
                       </span>
                     </div>
                     <div className="flex items-center gap-1">
-                      <button onClick={() => setAddOnForm({ _id: a._id, name: a.name, price: a.price, category: a.category || 'Extras', recipe: a.recipe || [] })}
+                      <button onClick={() => { setAoFromInv(false); setAoInvItem(''); setAoInvUse(''); setAddOnForm({ _id: a._id, name: a.name, price: a.price, category: a.category || 'Extras', recipe: a.recipe || [] }); }}
+                        aria-label={`Edit ${a.name}`} title="Edit - a new price reaches every product still at the old one"
                         className="text-fg/70 hover:text-fg bg-white/5 hover:bg-white/10 p-1.5 rounded"><Edit size={16} /></button>
                       <button onClick={() => deleteAddOn(a._id)} className="text-danger bg-red-500/10 p-1.5 rounded"><Trash2 size={16} /></button>
                     </div>

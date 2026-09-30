@@ -165,3 +165,28 @@ describe('an add-on that is a stock item (From inventory)', () => {
     expect(await stock(cookie)).toBe(1000 - 2 * 250);
   });
 });
+
+describe('editing an add-on reaches the products that have it', () => {
+  it('a new price is charged on products still at the old one; a price set on one product stays', async () => {
+    const shot = await M('AddOn').findOne({ name: 'Extra Shot' }).lean();
+    const mocha = await M('Product').create({ name: 'Mocha', category: 'Coffee', basePrice: 150, addOns: [{ name: 'Extra Shot', price: 45, recipe: [] }] });
+    const r = await auth('patch', `/api/addons/${shot._id}`).send({ name: 'Extra Shot', price: 35, category: 'Extras', recipe: shot.recipe });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect((await M('Product').findById(latte._id).lean()).addOns[0].price).toBe(35);   // was 30, the old price
+    expect((await M('Product').findById(mocha._id).lean()).addOns[0].price).toBe(45);   // its own price
+  });
+
+  it('a rename keeps the product linked, so its recipe still comes off stock', async () => {
+    const shot = await M('AddOn').findOne({ name: 'Extra Shot' }).lean();
+    const r = await auth('patch', `/api/addons/${shot._id}`).send({ name: 'Double Shot', price: 30, category: 'Extras', recipe: shot.recipe });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const saved = (await M('AddOn').findById(shot._id).lean()).name;
+    expect((await M('Product').findById(latte._id).lean()).addOns[0].name).toBe(saved);
+    const placed = await auth('post', '/api/orders').send({
+      table: 'Dine-In', paymentMethod: 'Cash', customerName: 'Walk-in',
+      items: [{ productId: String(latte._id), name: 'Latte', price: 130, quantity: 1, selectedAddOns: [{ name: saved, price: 30 }] }],
+    });
+    await auth('put', `/api/orders/${placed.body.order._id}`).send({ status: 'Completed' });
+    expect(await stock(beans)).toBe(1000 - 20 - 18);
+  });
+});

@@ -254,3 +254,22 @@ describe('amending a tier-priced order', () => {
     expect(o.total).toBe(9800);
   });
 });
+
+describe('who may change tier prices', () => {
+  it('someone who may approve price changes can set tier prices and the percent, not rename', async () => {
+    await makeUser({ name: 'tbbPricer', role: 'staff', permissions: ['orders.view', 'products.view', 'pricing.approve'] });
+    const t = await loginStaff(app, 'tbbPricer');
+    const tier = await mongoose.model('PriceTier').create({ name: 'TierPerm', pricingMode: 'per_product', percent: 0 });
+    const prod = await mongoose.model('Product').create({ name: 'TBB Perm Product', category: 'TbbCat', basePrice: 500 });
+    const r1 = await auth('put', `/api/price-tiers/${tier._id}/products`, t).send({ prices: [{ productId: prod._id, price: 450 }] });
+    expect(r1.status, JSON.stringify(r1.body)).toBe(200);
+    expect((await auth('put', `/api/price-tiers/${tier._id}`, t).send({ percent: 10 })).status).toBe(200);
+    expect((await auth('put', `/api/price-tiers/${tier._id}`, t).send({ name: 'Renamed' })).status).toBe(403);
+    expect((await mongoose.model('PriceTier').findById(tier._id).lean()).name).toBe('TierPerm');
+  });
+
+  it('without that permission, no', async () => {
+    const tier = await mongoose.model('PriceTier').create({ name: 'TierPerm2', pricingMode: 'per_product', percent: 0 });
+    expect((await auth('put', `/api/price-tiers/${tier._id}/products`, staffTok).send({ prices: [] })).status).toBe(403);
+  });
+});

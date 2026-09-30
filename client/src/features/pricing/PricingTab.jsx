@@ -94,7 +94,11 @@ export default function PricingTab({ ctx }) {
   const [localPage, setLocalPage] = useState(1);
   const [tierSearch, setTierSearch] = useState('');
   const [tierPage, setTierPage] = useState(1);
-  const tierItemsPerPage = 12;
+  const tierItemsPerPage = 8;
+  // Filters: category, and "has / has no price in this tier" - the second finds
+  // the products a price list still needs filling in.
+  const [tierCat, setTierCat] = useState('');
+  const [tierHas, setTierHas] = useState('');   // '' | 'has:<tierId>' | 'none:<tierId>'
   const [editTierCell, setEditTierCell] = useState(null); // `${tierId}:${productId}` or null
   const [editTierCellVal, setEditTierCellVal] = useState('');
   // The append mini-form for a quantity break, shown while a per_product cell
@@ -251,12 +255,24 @@ export default function PricingTab({ ctx }) {
   const tierFilteredProducts = useMemo(() => {
     const q = tierSearch.trim().toLowerCase();
     let list = pricingTable.products || [];
-    if (q) list = list.filter(p => (p.name || '').toLowerCase().includes(q));
+    if (q) list = list.filter(p => (p.name || '').toLowerCase().includes(q) || (p.productCode || '').toLowerCase().includes(q));
+    if (tierCat) list = list.filter(p => (p.category || '') === tierCat);
+    if (tierHas) {
+      const [mode, tierId] = tierHas.split(':');
+      const t = (pricingTable.tiers || []).find(x => String(x._id) === tierId);
+      if (t) {
+        // A percent tier prices everything, so "has" means an explicit price-list row.
+        const has = (p) => t.pricingMode === 'per_product' && t.prices?.[p._id] != null;
+        list = list.filter(p => (mode === 'has' ? has(p) : !has(p)));
+      }
+    }
     return list;
-  }, [pricingTable.products, tierSearch]);
+  }, [pricingTable.products, pricingTable.tiers, tierSearch, tierCat, tierHas]);
+  const tierCategories = useMemo(() => [...new Set((pricingTable.products || []).map(p => p.category).filter(Boolean))].sort(), [pricingTable.products]);
   const tierTotalPages = Math.max(1, Math.ceil(tierFilteredProducts.length / tierItemsPerPage));
   const tierPagedProducts = tierFilteredProducts.slice((tierPage - 1) * tierItemsPerPage, tierPage * tierItemsPerPage);
   const handleTierSearchChange = (val) => { setTierSearch(val); setTierPage(1); };
+  const tierFiltersOn = !!(tierSearch || tierCat || tierHas);
 
   return (
       <>
@@ -775,13 +791,35 @@ export default function PricingTab({ ctx }) {
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg/70 pointer-events-none" />
                 <input
                   type="text"
-                  placeholder="Search product name…"
+                  placeholder="Search name or code…"
                   value={tierSearch}
                   onChange={e => handleTierSearchChange(e.target.value)}
                   className="bg-page-bg border border-white/10 rounded-lg pl-8 pr-3 py-1.5 text-xs text-fg outline-none focus:border-accent w-56"
                 />
               </div>
               </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <select value={tierCat} onChange={e => { setTierCat(e.target.value); setTierPage(1); }} aria-label="Filter by category"
+                className="bg-page-bg border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-accent">
+                <option value="">All categories</option>
+                {tierCategories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <select value={tierHas} onChange={e => { setTierHas(e.target.value); setTierPage(1); }} aria-label="Filter by tier price"
+                className="bg-page-bg border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-accent">
+                <option value="">Any tier price</option>
+                {(pricingTable.tiers || []).filter(t => t.pricingMode === 'per_product').map(t => (
+                  <optgroup key={t._id} label={t.name}>
+                    <option value={`has:${t._id}`}>Has a {t.name} price</option>
+                    <option value={`none:${t._id}`}>No {t.name} price yet</option>
+                  </optgroup>
+                ))}
+              </select>
+              <span className="text-[11px] text-fg/70 font-bold">{tierFilteredProducts.length} product{tierFilteredProducts.length === 1 ? '' : 's'}</span>
+              {tierFiltersOn && (
+                <button onClick={() => { setTierSearch(''); setTierCat(''); setTierHas(''); setTierPage(1); }}
+                  className="text-[10px] font-bold uppercase tracking-wider text-fg/70 hover:text-fg px-2 py-1.5">Clear</button>
+              )}
             </div>
             <p className="text-[11px] text-fg/70 mb-4 leading-relaxed">
               What each customer class pays, right next to the regular price. Click any cell to edit it.

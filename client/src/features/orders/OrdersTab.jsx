@@ -687,6 +687,13 @@ export default function OrdersTab({ ctx }) {
                         <div key={idx} className="bg-page-bg/50 p-3 rounded-xl border border-white/10 flex justify-between items-start">
                           <div className="flex-1 pr-2 min-w-0">
                             <p className="font-bold text-fg/90 text-sm leading-tight line-clamp-2 break-words" title={String((item.name) ?? '')}>{item.name}</p>
+                            {/* Printing only: the customer's copy shows this name,
+                                the office duplicate and the books keep the product's. */}
+                            <input type="text" value={item.printName || ''} maxLength={120}
+                              onChange={e => setPosCart(posCart.map((c, i) => i === idx ? { ...c, printName: e.target.value } : c))}
+                              placeholder="Print as… (optional)" aria-label={`Print name for ${item.name}`}
+                              title="Shown on the customer's printed copy only. The duplicate keeps the real product name."
+                              className="mt-1 w-full bg-transparent border-b border-dashed border-white/15 focus:border-brand/60 text-[11px] text-fg/80 placeholder-fg/65 outline-none py-0.5" />
                             {item.selectedAddOns.map((a, i) => (
                               <p key={i} className="text-[10px] text-fg/70 flex gap-1 min-w-0"><span className="truncate" title={a.name}>+ {a.name}</span><span className="shrink-0 tabular-nums">₱{a.price}</span></p>
                             ))}

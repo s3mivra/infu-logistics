@@ -126,7 +126,7 @@ describe('suppliers in the purge', () => {
     const ledgerOnly = await request(app).post('/api/admin/purge-data').set(auth(superToken))
       .send({ confirmPhrase: 'PURGE', categories: ['ledger'] });
     expect(ledgerOnly.body.success).toBe(true);
-    const kept = await Supplier.findOne({ name: 'Lauriat Beverages' }).lean();
+    const kept = await Supplier.findOne({ name: /^Lauriat Beverages$/i }).lean();
     expect(kept).toBeTruthy();
     expect(kept.creditBalance).toBe(0);
     // Clients are never purged, but their credit balance goes with the ledger too.

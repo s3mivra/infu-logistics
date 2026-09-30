@@ -6,6 +6,7 @@ import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { title, partyName, MONEY_MAX, roundCentavo } from '../lib/normalize.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
+import { releaseCancelledOrderNumber, releaseCancelledOrderNumbers } from '../lib/orderNumbers.js';
 import { captureError } from '../lib/errorLog.js';
 import { seriesPrefix, normalizePrefix } from '../lib/docSeries.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
@@ -994,6 +995,9 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       if (BUSINESS_TYPE === 'log' && !Number.isInteger(Number(item.quantity))) {
         throw Object.assign(new Error(`Whole units only for ${item.name || item.productId}.`), { status: 400 });
       }
+      // A print name is the till's to set (see the Order schema) - never a
+      // client's or a QR menu's.
+      item.printName = (isClientOrder || req.qrSession) ? '' : String(item.printName || '').replace(/\s+/g, ' ').trim().slice(0, 120);
       if (item.price === undefined || !(Number(item.price) >= 0)) {
         throw Object.assign(new Error(`Invalid price for item: ${item.name || item.productId}`), { status: 400 });
       }
@@ -2355,6 +2359,15 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       try { await write(); } catch (err) { captureError(req, err); }
     }
 
+    // A cancelled order holding the latest number gives it back for the next
+    // order and is kept as <number>-X (lib/orderNumbers.js).
+    if (status === 'Cancelled' && previousStatus !== 'Cancelled') {
+      try {
+        const freed = await releaseCancelledOrderNumber(order._id);
+        if (freed) order.orderNumber = freed.renamedTo;
+      } catch (err) { captureError(req, err); }
+    }
+
     // The receipt's own serial, now that the sale is definitely committed.
     if (status === 'Completed' && wasNotCompleted) await assignOrNumber(order);
     if (status === 'Completed' && wasNotCompleted) {
@@ -2742,10 +2755,14 @@ app.post('/api/orders/archive', verifyToken, requireStaff, permit('orders.delete
     // 1. Force any hanging order to Cancelled - includes Ready (made but never
     //    handed over) and Parked (held unpaid tabs). Parked orders also lose the
     //    isParked flag so they don't linger in the parked list.
+    const openFilter = { status: { $in: ['Pending', 'Preparing', 'Ready', 'Parked'] }, isArchived: false };
+    const closingIds = (await Order.find(openFilter, { _id: 1 }).lean()).map(o => o._id);
     await Order.updateMany(
-      { status: { $in: ['Pending', 'Preparing', 'Ready', 'Parked'] }, isArchived: false },
+      { _id: { $in: closingIds } },
       { $set: { status: 'Cancelled', isParked: false, cancelledBy: req.user?.name || 'EOD Sweep', cancelledAt: new Date() } }
     );
+    // The latest numbers among them go back for tomorrow's first orders.
+    try { await releaseCancelledOrderNumbers(closingIds); } catch (err) { captureError(req, err); }
 
     // 2. Sweep completed/cancelled/voided orders into the archive.
     //    Reserved and Partially Fulfilled stay open - they carry over to the next day.

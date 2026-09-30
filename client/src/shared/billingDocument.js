@@ -133,7 +133,11 @@ export function buildBillingDocHTML({
     ${schedRows.map(r => `<tr><td class="lbl">${esc(r.label)}</td><td>${esc(r.value)}</td></tr>`).join('')}
   </table></div>` : '';
 
-  const itemsHTML = itemColumns
+  // An item may carry `printDesc`, a name typed at the till for printing: the
+  // DUPLICATE (office) copy always shows the real `desc`; every other copy the
+  // printed name.
+  const descFor = (it, copyLabel) => (copyLabel === 'DUPLICATE' || !it.printDesc ? it.desc : it.printDesc);
+  const itemsHTML = (copyLabel) => itemColumns
     ? items.map(it => `<tr>${itemColumns.map(col => {
         const raw = it[col.key];
         const cell = col.money ? money(raw) : esc(raw == null ? '' : raw);
@@ -141,7 +145,7 @@ export function buildBillingDocHTML({
       }).join('')}</tr>`).join('')
     : items.map(it => `<tr>
     <td class="code">${esc(it.code || '')}</td>
-    <td class="desc">${esc(it.desc || '')}</td>
+    <td class="desc">${esc(descFor(it, copyLabel) || '')}</td>
     <td class="qty">${esc(it.qty)}</td>
     <td class="price">${money(it.unitPrice)}</td>
     <td class="total">${money(it.total)}</td>
@@ -260,7 +264,7 @@ ${copies.map(copyLabel => `
 
   <table class="items">
     <thead><tr>${itemHeadHTML}</tr></thead>
-    <tbody>${itemsHTML}</tbody>
+    <tbody>${itemsHTML(copyLabel)}</tbody>
   </table>
 
   <div class="totals-wrap">${totalsHTML}</div>
