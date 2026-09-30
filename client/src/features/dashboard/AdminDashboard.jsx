@@ -2836,7 +2836,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
     }
   };
   const fetchShiftHistory = async (page = 1) => {
-    if (activeAdmin?.role !== 'superadmin') return;
+    if (activeAdmin?.role !== 'superadmin' && !auth.can('shifts.view')) return;
     try {
       const res = await apiFetch(`/api/shifts?page=${page}&limit=${SHIFT_HIST_PAGE_SIZE}`);
       const data = await res.json();

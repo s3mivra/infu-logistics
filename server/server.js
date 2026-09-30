@@ -30,7 +30,7 @@ import { resolveUnit, displayToBase, effectiveDisplay, UNIT_TO_BASE, unitTypeOf,
 import { title, code, lower, freeText, zTitle, zText, zMoneyLoose, zMoneyStrict, MONEY_MAX } from './lib/normalize.js';
 import { addBatch, consumeBatches, consumeSpecificBatch, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
 import { stripQueryOperators, forwardAsyncErrors } from './lib/requestSafety.js';
-import { withFloorActions } from './lib/authz.js';
+import { withFloorActions, withSplitScreens } from './lib/authz.js';
 import { requireStaff, evaluateStaffAccess, evaluateClientAccess, requirePermission, requireAnyPermission, requireUserAdmin, guardStaffEscalation, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS, setCustomRolePermissions } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
 import { computeOrderVat, extractVat, normaliseVatRate, DEFAULT_VAT_RATE } from './lib/vat.js';
@@ -1128,6 +1128,26 @@ const runStartupTasks = async () => {
       }
     } catch (err) {
       log.error({ err }, 'Party-name capitals migration failed');
+    }
+
+    // Once: Payroll, Fixed Assets and Bank Reconciliation got their own
+    // permissions. Whoever could use them through accounting keeps them.
+    try {
+      const done = await Settings.findOne({ key: 'permsSplitScreensV1' }).lean();
+      if (!done) {
+        for (const r of await Role.find().lean()) {
+          const next = withSplitScreens(r.permissions || []);
+          if (next.length !== (r.permissions || []).length) await Role.updateOne({ _id: r._id }, { $set: { permissions: next } });
+        }
+        for (const u of await User.find({ 'permissions.0': { $exists: true } }, { permissions: 1 }).lean()) {
+          const next = withSplitScreens(u.permissions);
+          if (next.length !== u.permissions.length) await User.updateOne({ _id: u._id }, { $set: { permissions: next } });
+        }
+        await Settings.findOneAndUpdate({ key: 'permsSplitScreensV1' }, { key: 'permsSplitScreensV1', value: true }, { upsert: true });
+        log.info('✅ Payroll / fixed-asset / bank-rec permissions given to existing accounting holders');
+      }
+    } catch (err) {
+      log.error({ err }, 'Split-screen permission migration failed');
     }
 
     // Once: products made for packed items sold a whole display unit per sale.

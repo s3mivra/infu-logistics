@@ -34,8 +34,8 @@ export default function registerFixedAssets(ctx) {
     return lock ? `Period ${lock.year}-${String(lock.month).padStart(2, '0')} is closed. Reopen the period first.` : null;
   };
 
-  const canView = [requireStaff, requirePermission('accounting.view')];
-  const canPost = [requireStaff, requirePermission('accounting.manage')];
+  const canView = [requireStaff, requirePermission('assets.view')];
+  const canPost = [requireStaff, requirePermission('assets.manage')];
 
   const money = (n) => Math.round((Number(n) || 0) * 100) / 100;
   const isCashLike = (c) => /^(111|112|113|114)/.test(String(c || ''));

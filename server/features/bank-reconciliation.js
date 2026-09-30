@@ -29,8 +29,8 @@ export default function registerBankReconciliation(ctx) {
   } = ctx;
 
   const enabled = requireModule(Settings, 'bankReconciliation');
-  const canView = [enabled, requireStaff, requirePermission('accounting.view')];
-  const canPost = [enabled, requireStaff, requirePermission('accounting.manage')];
+  const canView = [enabled, requireStaff, requirePermission('bankrec.view')];
+  const canPost = [enabled, requireStaff, requirePermission('bankrec.manage')];
 
   const money = (n) => Math.round((Number(n) || 0) * 100) / 100;
   // Only cash and bank accounts can be reconciled - reconciling Sales Revenue

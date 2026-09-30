@@ -34,8 +34,8 @@ export default function registerPayroll(ctx) {
   } = ctx;
 
   const enabled = requireModule(Settings, 'payroll');
-  const canView = [enabled, requireStaff, requirePermission('accounting.view')];
-  const canPost = [enabled, requireStaff, requirePermission('accounting.manage')];
+  const canView = [enabled, requireStaff, requirePermission('payroll.view')];
+  const canPost = [enabled, requireStaff, requirePermission('payroll.manage')];
 
   const money = (n) => Math.round((Number(n) || 0) * 100) / 100;
   const isCashLike = (c) => /^(111|112|113|114)/.test(String(c || ''));

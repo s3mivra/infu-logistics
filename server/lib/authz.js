@@ -72,6 +72,16 @@ export const PERMISSIONS = [
   // A sale on account beyond the client's credit limit goes through only with
   // this person's approval (their PIN at the till, or their own sale).
   { key: 'credit.approve',     group: 'Accounting', label: "Approve sales over a client's credit limit" },
+  // Screens that used to ride on accounting.view / accounting.manage, split so
+  // each can be given on its own. Everyone who had the accounting permission
+  // gets these once on upgrade (withSplitScreens), so nobody loses a screen.
+  { key: 'payroll.view',       group: 'Payroll',     label: 'View payroll runs & payslips' },
+  { key: 'payroll.manage',     group: 'Payroll',     label: 'Run, approve & pay payroll' },
+  { key: 'assets.view',        group: 'Accounting',  label: 'View fixed assets' },
+  { key: 'assets.manage',      group: 'Accounting',  label: 'Add, depreciate & dispose fixed assets' },
+  { key: 'bankrec.view',       group: 'Accounting',  label: 'View bank reconciliations' },
+  { key: 'bankrec.manage',     group: 'Accounting',  label: 'Reconcile bank statements' },
+  { key: 'shifts.view',        group: 'Reports',     label: 'View shift history & staff time-clock records' },
   { key: 'reports.view',       group: 'Reports',     label: 'View reports' },
   { key: 'analytics.view',     group: 'Reports',     label: 'View analytics dashboard' },
   { key: 'audit.view',         group: 'Reports',     label: 'View audit report' },
@@ -162,7 +172,8 @@ export const ROLE_DEFAULT_PERMISSIONS = {
             'inventory.view', 'inventory.manage', 'inventory.delete', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage', 'procurement.delete',
-            'accounting.view', 'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'],
+            'accounting.view', 'payroll.view', 'assets.view', 'bankrec.view',
+            'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'],
   // Operations lead: full ops (incl. building rosters), no books/settings/staff.
   manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'clients.links', 'clients.invite', 'clients.create',
             'inventory.view', 'inventory.manage', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
@@ -171,7 +182,8 @@ export const ROLE_DEFAULT_PERMISSIONS = {
             'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage'],
   // The books role: view + post accounting, plus read-only ops context.
   finance: ['orders.view', 'inventory.view', 'procurement.view', 'production.view',
-            'accounting.view', 'accounting.manage', 'pricing.approve', 'credit.approve',
+            'accounting.view', 'accounting.manage',
+            'payroll.view', 'payroll.manage', 'assets.view', 'assets.manage', 'bankrec.view', 'bankrec.manage', 'pricing.approve', 'credit.approve',
             'reports.view', 'analytics.view', 'audit.view'],
   cashier: ['pos.use', 'orders.view', 'orders.manage', 'orders.comp', 'inventory.view', 'inventory.waste', 'inventory.count', 'products.view', 'procurement.view'],
   staff:   ['pos.use', 'orders.view', 'orders.comp', 'inventory.view', 'inventory.waste', 'inventory.count', 'products.view'],
@@ -181,6 +193,13 @@ export const ROLE_DEFAULT_PERMISSIONS = {
 // (the routes only asked "is staff"). Applied once to every stored role and
 // per-person list by the startup migration, so nobody loses a floor action on
 // upgrade; after that an admin can take each one away.
+export function withSplitScreens(list = []) {
+  const set = new Set(list);
+  if (set.has('accounting.view')) { set.add('payroll.view'); set.add('assets.view'); set.add('bankrec.view'); }
+  if (set.has('accounting.manage')) { set.add('payroll.manage'); set.add('assets.manage'); set.add('bankrec.manage'); }
+  return [...set];
+}
+
 export function withFloorActions(list = []) {
   const set = new Set(list);
   if (set.has('inventory.view')) { set.add('inventory.waste'); set.add('inventory.count'); }

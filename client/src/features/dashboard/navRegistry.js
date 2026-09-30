@@ -56,15 +56,15 @@ export const NAV_GROUPS = [
       // so it is gated on products.manage like Menu Setup - a hardcoded
       // superadmin check here previously left managers unable to find promos.
       { id: 'pricing', label: 'Pricing Control', icon: DollarSign, perm: 'products.manage', hint: 'Prices, margins, discounts' },
-      { id: 'history', label: 'Shifts & Cash', icon: Clock, superOnly: true, hint: 'Shift history, X-reading' },
+      { id: 'history', label: 'Shifts & Cash', icon: Clock, perm: 'shifts.view', hint: 'Shift history, X-reading' },
       { id: 'audit', label: 'Audit Report', icon: ShieldCheck, perm: 'audit.view', hint: 'Who changed what' },
-      { id: 'fixedassets', label: 'Fixed Assets', icon: Building2, perm: 'accounting.view', hint: 'Register, depreciation' },
+      { id: 'fixedassets', label: 'Fixed Assets', icon: Building2, perm: 'assets.view', hint: 'Register, depreciation' },
       // Optional modules: each appears only where the business has switched it
       // on. A cafe on percentage tax withholds nothing, and a screen it can
       // never use is noise in both the sidebar and the search results.
-      { id: 'bankrec', label: 'Bank Reconciliation', icon: Landmark, perm: 'accounting.view', module: 'bankReconciliation', hint: 'Match the statement' },
+      { id: 'bankrec', label: 'Bank Reconciliation', icon: Landmark, perm: 'bankrec.view', module: 'bankReconciliation', hint: 'Match the statement' },
       { id: 'wht', label: 'Withholding Tax', icon: Receipt, perm: 'accounting.view', module: 'withholdingTax', hint: 'Held for the BIR' },
-      { id: 'payroll', label: 'Payroll', icon: Users, perm: 'accounting.view', module: 'payroll', hint: 'Runs and payslips' },
+      { id: 'payroll', label: 'Payroll', icon: Users, perm: 'payroll.view', module: 'payroll', hint: 'Runs and payslips' },
       // Every staff member files their own; roster managers decide.
       { id: 'timeoff', label: 'Leave & Overtime', icon: CalendarDays, hint: 'File and approve time off' },
     ],

@@ -3,7 +3,7 @@
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
-import { hasPermission } from '../lib/authz.js';
+import { hasPermission, requirePermission } from '../lib/authz.js';
 
 import { atomic } from '../lib/atomicRoute.js';
 export default function registerShifts(ctx) {
@@ -572,7 +572,7 @@ app.get('/api/shifts/current', verifyToken, requireStaff, async (req, res) => {
 });
 
 // --- SHIFT HISTORY ---
-app.get('/api/shifts', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/shifts', verifyToken, requireStaff, requirePermission('shifts.view'), async (req, res) => {
   try {
     const { page = 1, limit: lim = 20, cashier } = req.query;
     const owner = await ownerIdentity();
@@ -696,7 +696,7 @@ app.get('/api/clock/status', verifyToken, requireStaff, async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.get('/api/clock/entries', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/clock/entries', verifyToken, requireStaff, requirePermission('shifts.view'), async (req, res) => {
   try {
     const { page = 1, limit: lim = 30, date, staff } = req.query;
     const owner = await ownerIdentity();
