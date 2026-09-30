@@ -9,7 +9,7 @@ import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
 import { seriesPrefix, normalizePrefix } from '../lib/docSeries.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
-import { resolveTierPercent, resolveTierMarkupPrice } from '../lib/priceTiers.js';
+import { resolveTierPercent, resolveTierUnitPrice } from '../lib/priceTiers.js';
 import { buildSalePriceMap, saleUnitPrice, activeSalesQuery } from '../lib/salePricing.js';
 import { saleRevenueLines, vatShare, vatFromInclusive, deliveryFeeVat, OUTPUT_VAT } from '../lib/vatPosting.js';
 import { loadVatConfig as loadVatConfigShared } from '../lib/vatSettings.js';
@@ -690,7 +690,18 @@ const buildLinePricing = async (req, items, { buyerClientId = '', buyerSegments 
     return p?.vatExempt === true;
   };
   const linePercent = (item) => Math.max(productDiscPct(item), bulkQtyDiscPct(item), clientBulkQtyDiscPct(item), tierBulkQtyDiscPct(item));
-  return { linePercent, productIsExempt };
+  // The buyer's exact tier price for a line sold at the product's own price
+  // (not a size) - see resolveTierUnitPrice. Used when an order is amended.
+  const tierUnitPrice = (item) => {
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    if (!p || item.name !== p.name) return null;
+    return resolveTierUnitPrice(p, _perProductTiers, { buyerClientId, qty: Number(item.quantity || 0) });
+  };
+  const listPriceOf = (item) => {
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    return p ? Number(p.basePrice) || 0 : null;
+  };
+  return { linePercent, productIsExempt, tierUnitPrice, listPriceOf };
 };
 
 // Unit prices come from the catalogue, never from the request.
@@ -718,7 +729,7 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
   const ids = [...new Set(items.map(i => String(i.productId || '')).filter(id => mongoose.Types.ObjectId.isValid(id)))];
   const names = [...new Set(items.filter(i => !i.productId).map(i => i.name).filter(Boolean))];
   const [prods, combos, globalAddOns, groups, sales, quotes] = await Promise.all([
-    Product.find({ $or: [{ _id: { $in: ids } }, { name: { $in: names } }] }, { name: 1, basePrice: 1, baseSize: 1, sizes: 1, addOns: 1, isArchived: 1, isAvailable: 1, clientDiscounts: 1 }).lean(),
+    Product.find({ $or: [{ _id: { $in: ids } }, { name: { $in: names } }] }, { name: 1, basePrice: 1, baseSize: 1, sizes: 1, addOns: 1, isArchived: 1, isAvailable: 1, clientDiscounts: 1, clientBulkBreaks: 1 }).lean(),
     Combo.find({ _id: { $in: ids } }, { name: 1, price: 1 }).lean(),
     AddOn.find({}, { name: 1, price: 1 }).lean(),
     ModifierGroup.find({}, { name: 1, options: 1 }).lean(),
@@ -742,7 +753,7 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
       quoted.set(key, { price: Number(l.quotedPrice), quoteId: String(q._id) });
     }
   }
-  // The buyer's per-product tiers, for a tier priced above list (priceTiers.js).
+  // The buyer's per-product tiers - a tier's set price is the unit price (priceTiers.js).
   const { perProductTiers: markupTiers } = tierBuyerSegments.length
     ? await loadTierContext({ PriceTier, businessType: BUSINESS_TYPE, tenantScope, req, buyerSegments: tierBuyerSegments })
     : { perProductTiers: [] };
@@ -808,11 +819,17 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
     const isBaseSize = sizeName && !size && (sizeName === (product.baseSize || 'Regular') || sizeName === 'Regular');
     if (sizeName && !size && !isBaseSize && selfService) return { error: `${product.name} does not come in ${sizeName}.` };
     const sale = saleUnitPrice(product, saleMap[String(product._id)]);
-    // A tier priced above list is this buyer's price for the product itself
-    // (not a size, and not while it is on sale).
+    // A tier's set price is this buyer's exact price for the product itself
+    // (not a size, and not while it is on sale) - no percent comes off it.
     const tierUnit = !size && sale == null
-      ? resolveTierMarkupPrice(product, markupTiers, { buyerClientId: tierBuyerId, qty: Number(item.quantity) || 0 })
+      ? resolveTierUnitPrice(product, markupTiers, { buyerClientId: tierBuyerId, qty: Number(item.quantity) || 0 })
       : null;
+    if (tierUnit != null) {
+      item._tierPriced = true;
+      // A till that sent the plain list price has not negotiated anything -
+      // the buyer's tier price applies. A different typed price still stands.
+      if (Math.abs(Number(item.price) - (Number(product.basePrice) || 0)) < 0.005) item.price = tierUnit;
+    }
     setPrice(item, item.name, size ? Number(size.price) || 0 : (sale != null ? sale : (tierUnit ?? (Number(product.basePrice) || 0))));
 
     if ((item.selectedAddOns || []).length) {
@@ -1083,8 +1100,9 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       // client/segment/default rate with any qualifying bulk-quantity break
       // (universal, tier-wide, or client-specific), taking whichever is
       // higher (never stacked).
-      // A quoted price is the agreed number - no discount comes off it.
-      const prodPct = item._quoted ? 0 : linePercent(item);
+      // A quoted price, or a tier's set price, is the agreed number - no
+      // discount comes off it.
+      const prodPct = (item._quoted || item._tierPriced) ? 0 : linePercent(item);
       const prodDisc = +(itemBase * prodPct / 100).toFixed(2);
       item.productDiscountPercent = prodPct;
       totalProductDisc += prodDisc;
@@ -1559,7 +1577,7 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
       buyerSegments = acct?.segments || [];
     }
     const changedLines = [...wanted.keys()].map(i => ({ productId: order.items[i].productId, name: order.items[i].name, quantity: wanted.get(i) }));
-    const { linePercent, productIsExempt } = await buildLinePricing(req, [...changedLines, ...newLines], { buyerClientId, buyerSegments });
+    const { linePercent, productIsExempt, tierUnitPrice, listPriceOf } = await buildLinePricing(req, [...changedLines, ...newLines], { buyerClientId, buyerSegments });
 
     const totalBefore = Number(order.total) || 0;
     const changeLog = [];
@@ -1567,11 +1585,24 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
       const it = order.items[i];
       changeLog.push({ name: it.name, from: Number(it.quantity), to: qty });
       it.quantity = qty;
-      if (qty > 0 && !it.isCombo) it.productDiscountPercent = linePercent({ productId: it.productId, name: it.name, quantity: qty });
+      if (qty > 0 && !it.isCombo) {
+        // A line at the product's own price follows the buyer's tier price
+        // exactly; anything else (a size, a sale, a negotiated price) keeps
+        // its price and is re-discounted as before.
+        const line = { productId: it.productId, name: it.name, quantity: qty };
+        const tu = tierUnitPrice(line);
+        const list = listPriceOf(line);
+        const atOwnPrice = list != null && (Math.abs(Number(it.price) - list) < 0.005 || (tu != null && Math.abs(Number(it.price) - tu) < 0.005));
+        if (tu != null && atOwnPrice) { it.price = tu; it.productDiscountPercent = 0; }
+        else it.productDiscountPercent = linePercent(line);
+      }
     }
     for (const line of newLines) {
       changeLog.push({ name: line.name, from: 0, to: line.quantity });
-      order.items.push({ ...line, productDiscountPercent: linePercent(line), vatExempt: productIsExempt(line) });
+      const tu = tierUnitPrice(line);
+      order.items.push(tu != null
+        ? { ...line, price: tu, productDiscountPercent: 0, vatExempt: productIsExempt(line) }
+        : { ...line, productDiscountPercent: linePercent(line), vatExempt: productIsExempt(line) });
     }
     order.items = order.items.filter(it => it.quantity > 0);
     order.markModified('items');

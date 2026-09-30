@@ -40,23 +40,24 @@ export function resolveTierPrice(product, tier, qty = 0) {
   return +(base * (1 - pct / 100)).toFixed(2);
 }
 
-// A tier can charge MORE than the list price (a small-account or far-delivery
-// rate: list ₱780, this client ₱896). The discount pipeline only goes down -
-// a percent off the list price, never below 0% - so such a price was silently
-// dropped back to list. Instead the tier price becomes the buyer's unit price
-// and the discount stays 0%, so it never shows up as a negative "discount" in
-// reports. Returns that unit price, or null when the buyer's best tier price is
-// at or below list (the discount path already handles those).
-// A per-client override on the product wins over any tier, same as the
-// discount resolver, so that buyer keeps list-price-based pricing.
-export function resolveTierMarkupPrice(product, perProductTiers = [], { buyerClientId = '', qty = 0 } = {}) {
+// A price set on a per-product tier IS the buyer's unit price - charged exactly,
+// with 0% discount. It used to be turned into a percent off list and applied
+// back to list, which never lands exactly (₱1400 on a ₱1800 list is 22.2222%
+// off, charged as ₱1399.9964, so a line came out ".02" off), and a price above
+// list could not be expressed at all (a percent is never below 0%) so it fell
+// back to list. Returns the buyer's best tier price for this product at this
+// quantity, or null when no tier of theirs prices it.
+// A price agreed with this one client on the product (a per-client discount or
+// quantity price) wins over any tier, as it always has.
+export function resolveTierUnitPrice(product, perProductTiers = [], { buyerClientId = '', qty = 0 } = {}) {
   if (!product || !perProductTiers.length) return null;
-  if (buyerClientId && (product.clientDiscounts || []).some(d => String(d.clientId) === String(buyerClientId))) return null;
-  const base = Number(product.basePrice) || 0;
+  if (buyerClientId) {
+    const mine = (d) => String(d.clientId) === String(buyerClientId);
+    if ((product.clientDiscounts || []).some(mine) || (product.clientBulkBreaks || []).some(mine)) return null;
+  }
   const prices = perProductTiers.map(t => resolveTierPrice(product, t, qty)).filter(v => v !== null);
   if (!prices.length) return null;
-  const best = Math.min(...prices);   // the buyer's best tier rate
-  return best > base + 0.004 ? +best.toFixed(2) : null;
+  return +Math.min(...prices).toFixed(2);   // the buyer's best tier rate
 }
 
 // Same result, expressed as a discount percent off basePrice - the form the

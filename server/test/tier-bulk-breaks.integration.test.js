@@ -16,6 +16,7 @@ beforeAll(async () => {
   app = ctx.app;
   await makeUser({ name: 'tbbSuper', role: 'superadmin' });
   await makeUser({ name: 'tbbStaff', role: 'staff' });
+  await makeUser({ name: 'tbbMgr', role: 'manager' });
   superTok = await loginStaff(app, 'tbbSuper');
   staffTok = await loginStaff(app, 'tbbStaff');
   cat = await mongoose.model('Category').create({ name: 'TbbCat', department: 'Logistics' });
@@ -207,5 +208,49 @@ describe('a tier priced above the list price', () => {
       table: 'Takeout', paymentMethod: 'Cash',
     });
     expect(res.body.order.total).toBeCloseTo(1000, 2);
+  });
+});
+
+// ₱1400 on a ₱1800 list is 22.2222% off - applied back to list that is
+// ₱1399.9964 a unit, so a line of several came out a few centavos off. The
+// set price is now charged exactly.
+describe('a tier price below list is charged exactly', () => {
+  it('no stray centavos', async () => {
+    const tier = await mongoose.model('PriceTier').create({ name: 'TierExact', pricingMode: 'per_product', percent: 0 });
+    const client = await mongoose.model('ClientAccount').create({
+      clientCode: 'TBB-EXACT', username: 'tbb_exact', name: 'TBB EXACT', password: 'x', paymentMethod: 'Cash', isActive: true, segments: ['TierExact'],
+    });
+    const prod = await mongoose.model('Product').create({ name: 'TBB Exact Product', category: 'TbbCat', basePrice: 1800 });
+    await auth('put', `/api/price-tiers/${tier._id}/products`, superTok).send({ prices: [{ productId: prod._id, price: 1400 }] });
+    const res = await auth('post', '/api/orders', staffTok).send({
+      items: [{ productId: String(prod._id), name: prod.name, price: 1800, quantity: 7 }],
+      table: 'Takeout', paymentMethod: 'Cash', clientAccountId: String(client._id),
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.order.total).toBe(9800);
+    expect(res.body.order.items[0].price).toBe(1400);
+    expect(res.body.order.items[0].productDiscountPercent || 0).toBe(0);
+  });
+});
+
+describe('amending a tier-priced order', () => {
+  it('a changed quantity keeps the exact tier price', async () => {
+    const tier = await mongoose.model('PriceTier').create({ name: 'TierAmend', pricingMode: 'per_product', percent: 0 });
+    const client = await mongoose.model('ClientAccount').create({
+      clientCode: 'TBB-AMEND', username: 'tbb_amend', name: 'TBB AMEND', password: 'x', paymentMethod: 'Cash', isActive: true, segments: ['TierAmend'],
+    });
+    const prod = await mongoose.model('Product').create({ name: 'TBB Amend Product', category: 'TbbCat', basePrice: 1800 });
+    await auth('put', `/api/price-tiers/${tier._id}/products`, superTok).send({ prices: [{ productId: prod._id, price: 1400 }] });
+    const placed = await auth('post', '/api/orders', staffTok).send({
+      items: [{ productId: String(prod._id), name: prod.name, price: 1400, quantity: 2 }],
+      table: 'Takeout', paymentMethod: 'Cash', clientAccountId: String(client._id),
+    });
+    const mgrTok = await loginStaff(app, 'tbbMgr');
+    const r = await auth('post', `/api/orders/${placed.body.order._id}/amend`, mgrTok).send({ changes: [{ index: 0, quantity: 7 }], reason: 'more' });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const o = await mongoose.model('Order').findById(placed.body.order._id).lean();
+    expect(o.items[0].price).toBe(1400);
+    expect(o.items[0].productDiscountPercent || 0).toBe(0);
+    expect(o.total).toBe(9800);
   });
 });
