@@ -62,3 +62,36 @@ describe('client links', () => {
     expect((await as(tok.cashier, 'get', '/api/client-accounts/links')).status).toBe(403);
   });
 });
+
+// A brand-new client from a name only. Safe for office staff: it cannot touch
+// an existing account, and the client picks their own login on the link.
+describe('new client link from a name', () => {
+  it('office staff with the permission create one and get its link', async () => {
+    const r = await as(tok.office, 'post', '/api/client-accounts/invite').send({ name: 'bagong kape' });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.client.onboardingPath).toMatch(/^\/client-onboard\/[0-9a-f]{48}$/);
+    const made = await M('ClientAccount').findById(r.body.client._id).lean();
+    expect(made.name).toBe('Bagong Kape');
+    expect(made.username.startsWith('_pending_')).toBe(true);
+    // The link works, and the client fills in the rest.
+    const token = r.body.client.onboardingPath.split('/').pop();
+    expect((await request(app).get(`/api/client-onboard/${token}`)).body.client.name).toBe('Bagong Kape');
+    const done = await request(app).post(`/api/client-onboard/${token}`).send({ name: 'Bagong Kape', phone: '09171234567', username: 'bagongkape', password: 'secret123' });
+    expect(done.body.success).toBe(true);
+  });
+
+  it('refuses a name that already exists, whatever the case', async () => {
+    const r = await as(tok.office, 'post', '/api/client-accounts/invite').send({ name: 'KASA LOKAL' });
+    expect(r.status).toBe(409);
+    expect(await M('ClientAccount').countDocuments({ name: /kasa lokal/i })).toBe(1);
+  });
+
+  it('needs a name', async () => {
+    expect((await as(tok.office, 'post', '/api/client-accounts/invite').send({ name: '  ' })).status).toBe(400);
+  });
+
+  it('without the permission, cannot create one', async () => {
+    expect((await as(tok.cashier, 'post', '/api/client-accounts/invite').send({ name: 'Sneaky Co' })).status).toBe(403);
+    expect(await M('ClientAccount').exists({ name: 'Sneaky Co' })).toBeFalsy();
+  });
+});

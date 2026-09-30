@@ -725,6 +725,33 @@ app.get('/api/client-accounts/links', verifyToken, requireStaff, requirePermissi
   }
 });
 
+// ── New client from a name only ───────────────────────────────────────────────
+// For whoever may copy client links: creates the client with just a name and
+// returns its 7-day onboarding link. The client sets their own username and
+// password when they redeem it, so the office never chooses a login. Nothing
+// else (credit line, terms, payment method) can be set here.
+app.post('/api/client-accounts/invite', verifyToken, requireStaff, requirePermission('clients.links'), async (req, res) => {
+  try {
+    const cleanName = title(req.body?.name ?? '');
+    if (!cleanName) return res.status(400).json({ success: false, error: 'Client name is required.' });
+    if (await ClientAccount.exists({ name: { $regex: `^${escapeRegex(cleanName)}$`, $options: 'i' } })) {
+      return res.status(409).json({ success: false, error: `"${cleanName}" already exists.` });
+    }
+    const clientCode = await generateNextSequence(ClientAccount, 'CUS-1000', 'clientCode');
+    const password = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
+    const token = crypto.randomBytes(24).toString('hex');
+    const client = await ClientAccount.create({
+      clientCode, username: `_pending_${clientCode.toLowerCase()}`, password, name: cleanName,
+      onboardingToken: token,
+      onboardingTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+    await logAudit(req, { action: 'onboard_link_created', entity: 'ClientAccount', entityId: client._id, after: { clientCode, name: cleanName } });
+    res.json({ success: true, client: { _id: client._id, clientCode, name: cleanName, onboardingPath: `/client-onboard/${token}` } });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 // ── Self-service onboarding link (#10) ────────────────────────────────────────
 // Generate: superadmin-only, from the Command Center. The client then opens
 // the link with NO auth at all (that's the point - they don't have a login

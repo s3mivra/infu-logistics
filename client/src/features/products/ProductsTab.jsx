@@ -379,6 +379,23 @@ export default function ProductsTab({ ctx }) {
     setAoNsName(''); setAoNsQty('');
   };
   const emptyAddOn = { name: '', price: '', category: 'Extras', recipe: [] };
+  // "From inventory": the add-on IS a stock item. It takes the item's name and
+  // SRP (both still editable) and each one sold takes one pack off the shelf.
+  const [aoFromInv, setAoFromInv] = useState(false);
+  const [aoInvItem, setAoInvItem] = useState('');
+  const pickAoInventory = (id) => {
+    setAoInvItem(id);
+    const item = inventory.find(i => String(i._id) === String(id));
+    if (!item) return;
+    const mult = Number(item.unitMultiplier) > 0 ? Number(item.unitMultiplier) : 1;
+    const perPack = Number(item.packSize) > 0 ? +(Number(item.packSize) * mult).toFixed(6) : mult;
+    setAddOnForm({
+      ...addOnForm,
+      name: item.itemName,
+      price: Number(item.srp) > 0 ? item.srp : addOnForm.price,
+      recipe: [{ invId: String(item._id), name: item.itemName, qty: perPack, cost: item.unitCost || 0, unit: item.unit || 'pcs', packBase: 1 }],
+    });
+  };
 
   const setFilter = (key, value) => setProdFilters({ ...prodFilters, [key]: value });
   const selectCls = 'bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-brand';
@@ -1166,6 +1183,18 @@ export default function ProductsTab({ ctx }) {
               <h3 className="text-xl font-bold mb-4 text-fg border-b border-white/10 pb-2">Manage Add-Ons</h3>
               {isSuperAdmin && (
               <form onSubmit={handleSaveAddOn} className="flex flex-wrap gap-3 mb-6">
+                <div className="w-full flex flex-wrap items-center gap-3">
+                  <label className="flex items-center gap-2 text-xs font-bold text-fg/80 cursor-pointer select-none">
+                    <input type="checkbox" checked={aoFromInv} onChange={e => { setAoFromInv(e.target.checked); setAoInvItem(''); }} />
+                    From inventory
+                  </label>
+                  {aoFromInv && (
+                    <SearchSelect value={aoInvItem} onChange={e => pickAoInventory(e.target.value)}
+                      className="flex-1 min-w-[200px] bg-white/5 border border-white/10 rounded-lg px-2 py-2 text-xs text-fg outline-none focus:border-brand"
+                      placeholder="Pick a stock item - each one sold takes one pack"
+                      options={inventory.map(inv => ({ value: inv._id, label: inv.itemName, hint: Number(inv.srp) > 0 ? `P${inv.srp}` : (inv.unit || 'pcs') }))} />
+                  )}
+                </div>
                 <input
                   type="text"
                   placeholder={BUSINESS_TYPE === 'log' ? 'Name (e.g. Custom Grind)' : 'Name (e.g. Popping Boba)'}

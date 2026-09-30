@@ -40,6 +40,32 @@ export default function ClientsTab() {
   };
   const [importing, setImporting] = useState(false);
   const [showLinks, setShowLinks] = useState(false);
+  // Quick invite: only a name. The client opens the link and fills in the
+  // rest (phone, email, username, password) themselves.
+  const [showInvite, setShowInvite] = useState(false);
+  const [inviteName, setInviteName] = useState('');
+  const [inviting, setInviting] = useState(false);
+  const [inviteLink, setInviteLink] = useState('');
+  const createInvite = async (e) => {
+    e.preventDefault();
+    const name = inviteName.trim();
+    if (!name) return;
+    setInviting(true);
+    try {
+      const d = await (await apiFetch('/api/client-accounts/invite', {
+        method: 'POST', body: JSON.stringify({ name }),
+      })).json();
+      const made = d.success && d.client;
+      if (!made) { ui.alert(d.error || 'Could not create the link.'); return; }
+      const link = `${window.location.origin}${made.onboardingPath}`;
+      setInviteLink(link);
+      setInviteName('');
+      try { await navigator.clipboard.writeText(link); ui.toast('Link copied - send it to the client.', { tone: 'success' }); }
+      catch { ui.toast('Copy the link below and send it to the client.'); }
+      load();
+    } catch { ui.alert('Network error.'); }
+    finally { setInviting(false); }
+  };
   const [data, setData] = useState({ clients: [], showMoney: false, mode: 'off' });
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState('');
@@ -259,6 +285,12 @@ export default function ClientsTab() {
           />
         </div>
         {can('clients.links') && (
+          <button onClick={() => { setShowInvite(v => !v); setInviteLink(''); }} aria-expanded={showInvite}
+            className={`flex items-center gap-1.5 text-[10px] px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider transition ${showInvite ? 'bg-brand text-on-brand' : 'bg-brand/10 hover:bg-brand/20 text-brand-text'}`}>
+            <Link2 size={13} /> New client link
+          </button>
+        )}
+        {can('clients.links') && (
           <button onClick={() => setShowLinks(v => !v)} aria-expanded={showLinks}
             className={`flex items-center gap-1.5 text-[10px] px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider transition ${showLinks ? 'bg-brand text-on-brand' : 'border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5'}`}>
             <Link2 size={13} /> Links
@@ -285,6 +317,30 @@ export default function ClientsTab() {
         </button>
       </div>
 
+      {showInvite && can('clients.links') && (
+        <form onSubmit={createInvite} className="bg-surface border border-white/10 rounded-2xl p-4 space-y-3">
+          <p className="text-xs text-fg/70 font-bold">
+            Type the client's name only. They open the link (good for 7 days) and fill in their phone, email, username and password.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <input value={inviteName} onChange={e => setInviteName(e.target.value)} autoFocus
+              placeholder="Client name" aria-label="Client name"
+              className="flex-1 min-w-[180px] bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm placeholder-fg/70 outline-none focus:border-brand/60" />
+            <button type="submit" disabled={inviting || !inviteName.trim()}
+              className="bg-brand text-on-brand font-bold px-4 py-2.5 rounded-xl text-xs uppercase tracking-wider disabled:opacity-50">
+              {inviting ? 'Creating…' : 'Create & copy link'}
+            </button>
+          </div>
+          {inviteLink && (
+            <div className="flex flex-wrap gap-2 items-center">
+              <input readOnly value={inviteLink} onFocus={e => e.target.select()} aria-label="Client link"
+                className="flex-1 min-w-[180px] bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg text-xs" />
+              <button type="button" onClick={() => navigator.clipboard?.writeText(inviteLink).then(() => ui.toast('Link copied.', { tone: 'success' }), () => {})}
+                className="border border-white/15 text-fg/80 hover:bg-white/5 px-3 py-2 rounded-xl text-xs font-bold">Copy again</button>
+            </div>
+          )}
+        </form>
+      )}
       {showLinks && can('clients.links') && <ClientLinks apiFetch={apiFetch} />}
 
       {!data.showMoney && (

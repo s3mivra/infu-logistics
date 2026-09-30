@@ -145,3 +145,23 @@ describe('saving an extra from Menu Setup', () => {
     expect((await M('AddOn').findById(created.body.addon._id).lean()).recipe).toHaveLength(0);
   });
 });
+
+describe('an add-on that is a stock item (From inventory)', () => {
+  it('takes one pack of that item for each one sold', async () => {
+    // A 250 g pack kept in grams, as Manage Add-Ons builds it: qty = one pack.
+    const cookie = await M('Inventory').create({ itemCode: 'CK', itemName: 'COOKIE PACK', unit: 'g', packSize: 250, stockQty: 1000, unitCost: 0.4, srp: 120 });
+    const made = await auth('post', '/api/addons').send({ name: 'COOKIE PACK', price: 120, category: 'Extras',
+      recipe: [{ invId: String(cookie._id), name: 'COOKIE PACK', qty: 250, cost: 0.4, unit: 'g', packBase: 1 }] });
+    expect(made.body.success).toBe(true);
+    const aoName = made.body.addon.name;   // saved as the server spells it
+    await M('Product').updateOne({ _id: latte._id }, { $push: { addOns: { name: aoName, price: 120, recipe: [] } } });
+    const placed = await auth('post', '/api/orders').send({
+      table: 'Dine-In', paymentMethod: 'Cash', customerName: 'Walk-in',
+      items: [{ productId: String(latte._id), name: 'Latte', price: 130, quantity: 2,
+        selectedAddOns: [{ name: aoName, price: 120 }] }],
+    });
+    expect(placed.body.success).toBe(true);
+    await auth('put', `/api/orders/${placed.body.order._id}`).send({ status: 'Completed' });
+    expect(await stock(cookie)).toBe(1000 - 2 * 250);
+  });
+});
