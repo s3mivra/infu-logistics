@@ -3,7 +3,7 @@
 /* eslint-disable no-unused-vars */
 import { resolveCreditLimit, checkCreditAvailable, arBalance, isFullySettled, isReceivableStatus } from '../lib/credit.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
-import { title, MONEY_MAX, roundCentavo } from '../lib/normalize.js';
+import { title, partyName, MONEY_MAX, roundCentavo } from '../lib/normalize.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
@@ -852,7 +852,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // statements and delivery receipts, and it is the key that repeat walk-ins
     // are matched on - so "acme trading corp" and "ACME Trading Corp" must not
     // become two different customers, nor go onto a printed DR in lower case.
-    if (typeof customerName === 'string' && customerName.trim()) customerName = title(customerName);
+    if (typeof customerName === 'string' && customerName.trim()) customerName = partyName(customerName);
 
     // Block QR-originated orders when kitchen has toggled off (staff POS unaffected)
     if (req.qrSession) {
@@ -896,6 +896,10 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // Commissions report pays by this name.
     if (!selfServiceOrder && req.body.salesperson) {
       const name = String(req.body.salesperson).trim().slice(0, 100);
+      // Only the owner credits a sale to someone else; everyone else sells as themselves.
+      if (String(req.user?.role || '').toLowerCase() !== 'superadmin' && name !== cashier) {
+        return res.status(403).json({ success: false, error: 'Only the owner can choose the salesperson.' });
+      }
       if (!(await User.exists({ name }))) return res.status(400).json({ success: false, error: `"${name}" is not on the staff list.` });
     }
     if (selfServiceOrder) {

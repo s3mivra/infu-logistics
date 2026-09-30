@@ -39,13 +39,13 @@ const importBills = (rows) => auth('post', '/api/bills/import').send({ rows });
 describe('importing suppliers', () => {
   it('creates them from the sheet', async () => {
     const res = await importSuppliers([
-      { name: 'Metro Beans', contactPerson: 'Joy Cruz', phone: '0917 555 0100', email: 'JOY@metro.ph', paymentTerms: '30 days' },
-      { name: 'Alaska Distribution', address: 'Quezon City' },
+      { name: 'METRO BEANS', contactPerson: 'JOY CRUZ', phone: '0917 555 0100', email: 'JOY@metro.ph', paymentTerms: '30 days' },
+      { name: 'ALASKA DISTRIBUTION', address: 'Quezon City' },
     ]);
     expect(res.body.created).toBe(2);
     expect(await M('Supplier').countDocuments({})).toBe(2);
 
-    const metro = await M('Supplier').findOne({ name: 'Metro Beans' }).lean();
+    const metro = await M('Supplier').findOne({ name: 'METRO BEANS' }).lean();
     expect(metro.supplierCode).toMatch(/^SUP-/);
     expect(metro.email).toBe('joy@metro.ph');       // normalised, as the form does
     expect(metro.paymentTerms).toBe('30 days');      // the export column now round-trips
@@ -53,18 +53,18 @@ describe('importing suppliers', () => {
 
   it('reads the template’s own column headings', async () => {
     // The person filling the sheet in reads "Name", not `name`.
-    const res = await importSuppliers([{ Name: 'Gokuji Tea', Contact: 'Ken', Terms: 'COD' }]);
+    const res = await importSuppliers([{ Name: 'GOKUJI TEA', Contact: 'Ken', Terms: 'COD' }]);
     expect(res.body.created).toBe(1);
     const s = await M('Supplier').findOne({}).lean();
-    expect(s.name).toBe('Gokuji Tea');
+    expect(s.name).toBe('GOKUJI TEA');
     expect(s.paymentTerms).toBe('COD');
   }, 30000);
 
   it('skips one bad row and keeps the rest', async () => {
     const res = await importSuppliers([
-      { name: 'Good One' },
+      { name: 'GOOD ONE' },
       { name: '' },                 // no name
-      { name: 'Another Good One' },
+      { name: 'ANOTHER GOOD ONE' },
     ]);
     expect(res.body.created).toBe(2);
     expect(res.body.skipped).toHaveLength(1);
@@ -72,7 +72,7 @@ describe('importing suppliers', () => {
   }, 30000);
 
   it('does not overwrite a supplier that already exists', async () => {
-    await importSuppliers([{ name: 'Metro Beans', phone: '111' }]);
+    await importSuppliers([{ name: 'METRO BEANS', phone: '111' }]);
     const res = await importSuppliers([{ name: 'metro beans', phone: '999' }]);
     // Re-importing a corrected sheet is normal; clobbering an edit someone
     // made by hand since is not.
@@ -90,23 +90,23 @@ describe('importing suppliers', () => {
 
 describe('importing open bills', () => {
   beforeEach(async () => {
-    await importSuppliers([{ name: 'Metro Beans' }]);
+    await importSuppliers([{ name: 'METRO BEANS' }]);
   });
 
   it('creates them against the named supplier', async () => {
     const res = await importBills([
-      { supplier: 'Metro Beans', description: 'March beans', amount: 12000, expenseAccountCode: '510000', dueDate: '2026-04-15' },
+      { supplier: 'METRO BEANS', description: 'March beans', amount: 12000, expenseAccountCode: '510000', dueDate: '2026-04-15' },
     ]);
     expect(res.body.created).toBe(1);
     const bill = await M('Bill').findOne({}).lean();
-    expect(bill.supplierName).toBe('Metro Beans');
+    expect(bill.supplierName).toBe('METRO BEANS');
     expect(bill.amount).toBe(12000);
     expect(bill.billNumber).toMatch(/^BILL-/);
   }, 30000);
 
   it('lands them Pending, posting nothing', async () => {
     await importBills([
-      { supplier: 'Metro Beans', description: 'March beans', amount: 12000, expenseAccountCode: '510000' },
+      { supplier: 'METRO BEANS', description: 'March beans', amount: 12000, expenseAccountCode: '510000' },
     ]);
     const bill = await M('Bill').findOne({}).lean();
     expect(bill.status).toBe('Pending');
@@ -117,7 +117,7 @@ describe('importing open bills', () => {
 
   it('says so, rather than letting "imported" read as "posted"', async () => {
     const res = await importBills([
-      { supplier: 'Metro Beans', description: 'March beans', amount: 12000, expenseAccountCode: '510000' },
+      { supplier: 'METRO BEANS', description: 'March beans', amount: 12000, expenseAccountCode: '510000' },
     ]);
     expect(res.body.note).toMatch(/nothing has posted/i);
     expect(res.body.totalAmount).toBe(12000);
@@ -125,7 +125,7 @@ describe('importing open bills', () => {
 
   it('refuses a supplier it has never heard of', async () => {
     const res = await importBills([
-      { supplier: 'Nobody Ltd', description: 'x', amount: 100, expenseAccountCode: '510000' },
+      { supplier: 'NOBODY LTD', description: 'x', amount: 100, expenseAccountCode: '510000' },
     ]);
     expect(res.body.created).toBe(0);
     expect(res.body.skipped[0].error).toMatch(/no supplier named/i);
@@ -135,7 +135,7 @@ describe('importing open bills', () => {
     // Without it the bill can never be approved, which is a dead end better
     // found at import than three weeks later.
     const res = await importBills([
-      { supplier: 'Metro Beans', description: 'March beans', amount: 12000 },
+      { supplier: 'METRO BEANS', description: 'March beans', amount: 12000 },
     ]);
     expect(res.body.created).toBe(0);
     expect(res.body.skipped[0].error).toMatch(/not an account/i);
@@ -143,9 +143,9 @@ describe('importing open bills', () => {
 
   it('keeps the good rows when one is wrong', async () => {
     const res = await importBills([
-      { supplier: 'Metro Beans', description: 'Good', amount: 100, expenseAccountCode: '510000' },
-      { supplier: 'Metro Beans', description: 'Bad', amount: -5, expenseAccountCode: '510000' },
-      { supplier: 'Metro Beans', description: 'Also good', amount: 200, expenseAccountCode: '510000' },
+      { supplier: 'METRO BEANS', description: 'Good', amount: 100, expenseAccountCode: '510000' },
+      { supplier: 'METRO BEANS', description: 'Bad', amount: -5, expenseAccountCode: '510000' },
+      { supplier: 'METRO BEANS', description: 'Also good', amount: 200, expenseAccountCode: '510000' },
     ]);
     expect(res.body.created).toBe(2);
     expect(res.body.skipped).toHaveLength(1);
@@ -154,7 +154,7 @@ describe('importing open bills', () => {
 
   it('still books the payable when one is approved afterwards', async () => {
     await importBills([
-      { supplier: 'Metro Beans', description: 'March beans', amount: 12000, expenseAccountCode: '510000' },
+      { supplier: 'METRO BEANS', description: 'March beans', amount: 12000, expenseAccountCode: '510000' },
     ]);
     const bill = await M('Bill').findOne({}).lean();
     const res = await auth('post', `/api/bills/${bill._id}/approve`).send({});
@@ -173,12 +173,12 @@ describe('importing a client list', () => {
 
   it('creates the records from the sheet', async () => {
     const res = await importClients([
-      { name: 'Kasa Lokal', email: 'AR@kasa.ph', phone: '0917 555 0101', creditLimit: 50000, creditTermsDays: 30, segments: 'wholesale, cafe' },
-      { Name: 'Sari Store', 'Payment Method': 'Account' },
+      { name: 'KASA LOKAL', email: 'AR@kasa.ph', phone: '0917 555 0101', creditLimit: 50000, creditTermsDays: 30, segments: 'wholesale, cafe' },
+      { Name: 'SARI STORE', 'Payment Method': 'Account' },
     ]);
     expect(res.body.created).toBe(2);
 
-    const kasa = await M('ClientAccount').findOne({ name: 'Kasa Lokal' }).lean();
+    const kasa = await M('ClientAccount').findOne({ name: 'KASA LOKAL' }).lean();
     expect(kasa.clientCode).toMatch(/^CUS-1000/);
     expect(kasa.email).toBe('ar@kasa.ph');
     expect(kasa.creditLimit).toBe(50000);
@@ -186,7 +186,7 @@ describe('importing a client list', () => {
   }, 30000);
 
   it('sets no password anyone could use', async () => {
-    await importClients([{ name: 'Kasa Lokal' }]);
+    await importClients([{ name: 'KASA LOKAL' }]);
     const c = await M('ClientAccount').findOne({}).lean();
     // The whole point: a spreadsheet does not get to mint logins. The account
     // exists, and nobody can sign in to it yet.
@@ -198,7 +198,7 @@ describe('importing a client list', () => {
   }, 30000);
 
   it('hands back a link per client instead', async () => {
-    const res = await importClients([{ name: 'Kasa Lokal' }]);
+    const res = await importClients([{ name: 'KASA LOKAL' }]);
     const row = res.body.clients[0];
     // The path the app actually serves, not one that looks plausible.
     expect(row.onboardingPath).toMatch(/^\/client-onboard\/[a-f0-9]{48}$/);
@@ -206,15 +206,15 @@ describe('importing a client list', () => {
   }, 30000);
 
   it('lets the client redeem that link and choose their own credentials', async () => {
-    const res = await importClients([{ name: 'Kasa Lokal' }]);
+    const res = await importClients([{ name: 'KASA LOKAL' }]);
     const token = res.body.clients[0].onboardingPath.split('/').pop();
 
     // The client opens the link: it tells them who it is for, without auth.
     const peek = await request(app).get(`/api/client-onboard/${token}`);
-    expect(peek.body.client.name).toBe('Kasa Lokal');
+    expect(peek.body.client.name).toBe('KASA LOKAL');
 
     const done = await request(app).post(`/api/client-onboard/${token}`)
-      .send({ name: 'Kasa Lokal', username: 'kasalokal', password: 'ChosenByThem1!' });
+      .send({ name: 'KASA LOKAL', username: 'kasalokal', password: 'ChosenByThem1!' });
     expect(done.body.success).toBe(true);
 
     const login = await request(app).post('/api/client-auth/login')
@@ -223,7 +223,7 @@ describe('importing a client list', () => {
   }, 30000);
 
   it('skips a duplicate rather than making a second account', async () => {
-    await importClients([{ name: 'Kasa Lokal' }]);
+    await importClients([{ name: 'KASA LOKAL' }]);
     const res = await importClients([{ name: 'kasa lokal' }]);
     expect(res.body.created).toBe(0);
     expect(res.body.skipped[0].error).toMatch(/already exists/i);
@@ -231,7 +231,7 @@ describe('importing a client list', () => {
 
   it('rejects a bad email without losing the good rows', async () => {
     const res = await importClients([
-      { name: 'Good Client' },
+      { name: 'GOOD CLIENT' },
       { name: 'Bad Email', email: 'not-an-address' },
     ]);
     expect(res.body.created).toBe(1);

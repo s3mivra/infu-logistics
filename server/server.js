@@ -2,6 +2,7 @@
 import { requestContext, currentActor } from './lib/requestContext.js';
 import { roundMoney, toCentavos } from './lib/money.js';
 import { createAutoRestorer } from './lib/autoRestore.js';
+import { uppercasePartyNames } from './lib/partyNames.js';
 import { LEDGER_WRITE_OPS, inLedgerMaintenance, refuseLedgerRewrite, withLedgerMaintenance } from './lib/ledgerGuard.js';
 import express from 'express';
 import { businessDayStart, businessDateStr, businessClosingDateStr, setBusinessTimeZone, isValidTimeZone, DEFAULT_BUSINESS_TZ } from './lib/businessTime.js';
@@ -1115,6 +1116,18 @@ const runStartupTasks = async () => {
       }
     } catch (err) {
       log.error({ err }, 'Floor-action permission migration failed');
+    }
+
+    // Once: client and supplier names saved before they were kept in capitals.
+    try {
+      const done = await Settings.findOne({ key: 'partyNamesUpperV1' }).lean();
+      if (!done) {
+        const changed = await uppercasePartyNames(mongoose);
+        await Settings.findOneAndUpdate({ key: 'partyNamesUpperV1' }, { key: 'partyNamesUpperV1', value: true }, { upsert: true });
+        log.info({ changed }, '✅ Client and supplier names converted to capitals');
+      }
+    } catch (err) {
+      log.error({ err }, 'Party-name capitals migration failed');
     }
 
     // Once: products made for packed items sold a whole display unit per sale.

@@ -1,5 +1,5 @@
 ﻿import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { Users, Search, ChevronDown, ChevronRight, RefreshCw, AlertCircle, Upload, FileText, Download, Link2 } from 'lucide-react';
+import { Users, Search, ChevronDown, ChevronRight, RefreshCw, AlertCircle, Upload, FileText, Download, Link2, UserPlus, Trash2 } from 'lucide-react';
 import ClientLinks from './ClientLinks';
 import * as ui from '../../shared/ui';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
@@ -42,6 +42,41 @@ export default function ClientsTab() {
   const [showLinks, setShowLinks] = useState(false);
   // Quick invite: only a name. The client opens the link and fills in the
   // rest (phone, email, username, password) themselves.
+  // Add a client with its details. The login is never chosen here: the client
+  // gets a link and sets their own username and password.
+  const blankClient = { name: '', phone: '', email: '', paymentMethod: 'Cash', contactNotes: '' };
+  const [showAdd, setShowAdd] = useState(false);
+  const [addForm, setAddForm] = useState(blankClient);
+  const [adding, setAdding] = useState(false);
+  const [addedLink, setAddedLink] = useState('');
+  const addClient = async (e) => {
+    e.preventDefault();
+    if (!addForm.name.trim()) return;
+    setAdding(true);
+    try {
+      const d = await (await apiFetch('/api/client-accounts', { method: 'POST', body: JSON.stringify(addForm) })).json();
+      if (!d.success) { ui.alert(d.error || 'Could not add the client.'); return; }
+      const link = d.onboardingPath ? `${window.location.origin}${d.onboardingPath}` : '';
+      setAddedLink(link);
+      setAddForm(blankClient);
+      if (link) {
+        try { await navigator.clipboard.writeText(link); ui.toast(`${d.client.name} added - link copied, send it to them.`, { tone: 'success' }); }
+        catch { ui.toast(`${d.client.name} added. Copy the link below.`); }
+      }
+      load();
+    } catch { ui.alert('Network error.'); }
+    finally { setAdding(false); }
+  };
+  const deleteClient = async (c) => {
+    if (!(await ui.confirm(`Delete ${c.name}? This can't be undone. A client with orders, deposits or quotes can't be deleted - deactivate it instead.`))) return;
+    try {
+      const d = await (await apiFetch(`/api/client-accounts/${c._id}`, { method: 'DELETE' })).json();
+      if (!d.success) { ui.alert(d.error || 'Could not delete the client.'); return; }
+      ui.toast(`${c.name} deleted.`, { tone: 'success' });
+      setExpanded(null);
+      load();
+    } catch { ui.alert('Network error.'); }
+  };
   const [showInvite, setShowInvite] = useState(false);
   const [inviteName, setInviteName] = useState('');
   const [inviting, setInviting] = useState(false);
@@ -284,6 +319,12 @@ export default function ClientsTab() {
             className="bg-surface border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-fg text-sm placeholder-fg/70 outline-none focus:border-brand/60 transition w-full sm:w-64"
           />
         </div>
+        {can('clients.create') && (
+          <button onClick={() => { setShowAdd(v => !v); setAddedLink(''); }} aria-expanded={showAdd}
+            className={`flex items-center gap-1.5 text-[10px] px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider transition ${showAdd ? 'bg-brand text-on-brand' : 'bg-brand/10 hover:bg-brand/20 text-brand-text'}`}>
+            <UserPlus size={13} /> Add client
+          </button>
+        )}
         {can('clients.invite') && (
           <button onClick={() => { setShowInvite(v => !v); setInviteLink(''); }} aria-expanded={showInvite}
             className={`flex items-center gap-1.5 text-[10px] px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider transition ${showInvite ? 'bg-brand text-on-brand' : 'bg-brand/10 hover:bg-brand/20 text-brand-text'}`}>
@@ -317,6 +358,35 @@ export default function ClientsTab() {
         </button>
       </div>
 
+      {showAdd && can('clients.create') && (
+        <form onSubmit={addClient} className="bg-surface border border-white/10 rounded-2xl p-4 space-y-3">
+          <p className="text-xs text-fg/70 font-bold">
+            New client. They get a link (good for 7 days) to choose their own username and password.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+            <input required value={addForm.name} onChange={e => setAddForm({ ...addForm, name: e.target.value })} placeholder="Client name *" aria-label="Client name" className="bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm placeholder-fg/70 outline-none focus:border-brand/60" />
+            <input value={addForm.phone} onChange={e => setAddForm({ ...addForm, phone: e.target.value })} placeholder="Phone" aria-label="Phone" className="bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm placeholder-fg/70 outline-none focus:border-brand/60" />
+            <input type="email" value={addForm.email} onChange={e => setAddForm({ ...addForm, email: e.target.value })} placeholder="Email" aria-label="Email" className="bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm placeholder-fg/70 outline-none focus:border-brand/60" />
+            <select value={addForm.paymentMethod} onChange={e => setAddForm({ ...addForm, paymentMethod: e.target.value })} aria-label="Payment method" className="bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm placeholder-fg/70 outline-none focus:border-brand/60">
+              {[['Cash', 'Cash on Delivery'], ['E-Wallet', 'E-Wallet'], ['Bank Transfer', 'Bank Transfer'], ['Credit Card', 'Credit Card']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+          <input value={addForm.contactNotes} onChange={e => setAddForm({ ...addForm, contactNotes: e.target.value })} placeholder="Notes (address, contact person...)" aria-label="Notes" className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm placeholder-fg/70 outline-none focus:border-brand/60" />
+          <div className="flex flex-wrap gap-2 items-center">
+            <button type="submit" disabled={adding || !addForm.name.trim()}
+              className="bg-brand text-on-brand font-bold px-4 py-2.5 rounded-xl text-xs uppercase tracking-wider disabled:opacity-50">
+              {adding ? 'Adding…' : 'Add & copy link'}
+            </button>
+            {addedLink && (<>
+              <input readOnly value={addedLink} onFocus={e => e.target.select()} aria-label="Client link"
+                className="flex-1 min-w-[180px] bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg text-xs" />
+              <button type="button" onClick={() => navigator.clipboard?.writeText(addedLink).then(() => ui.toast('Link copied.', { tone: 'success' }), () => {})}
+                className="border border-white/15 text-fg/80 hover:bg-white/5 px-3 py-2 rounded-xl text-xs font-bold">Copy again</button>
+            </>)}
+          </div>
+          <p className="text-[11px] text-fg/65">Credit line and terms are set from the client's credit request, not here.</p>
+        </form>
+      )}
       {showInvite && can('clients.invite') && (
         <form onSubmit={createInvite} className="bg-surface border border-white/10 rounded-2xl p-4 space-y-3">
           <p className="text-xs text-fg/70 font-bold">
@@ -437,6 +507,12 @@ export default function ClientsTab() {
                         <button onClick={() => openStatement(c)}
                           className="mb-3 flex items-center gap-1.5 text-[10px] bg-brand/10 hover:bg-brand/20 text-brand-text px-3 py-2 rounded-xl font-bold uppercase tracking-wider transition">
                           <FileText size={13} /> Statement of account
+                        </button>
+                      )}
+                      {can('clients.delete') && orders[c._id] && orders[c._id].length === 0 && (
+                        <button onClick={() => deleteClient(c)}
+                          className="mb-3 ml-2 inline-flex items-center gap-1.5 text-[10px] border border-danger/40 text-danger hover:bg-danger/10 px-3 py-2 rounded-xl font-bold uppercase tracking-wider transition">
+                          <Trash2 size={13} /> Delete client
                         </button>
                       )}
                       {!orders[c._id] ? (

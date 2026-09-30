@@ -1,7 +1,7 @@
 ﻿// purchase-orders routes - procurement workflow (draft PO → reconcile delivery).
 // Models/helpers/middleware live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { title, lower, freeText, squish } from '../lib/normalize.js';
+import { title, partyName, lower, freeText, squish } from '../lib/normalize.js';
 import { INPUT_VAT } from '../lib/vatPosting.js';
 import { loadVatConfig } from '../lib/vatSettings.js';
 
@@ -53,6 +53,7 @@ export default function registerPurchaseOrders(ctx) {
     requireStaff,
     requireSuperAdmin,
     requirePermission,
+    escapeRegex,
   } = ctx;
 
   // Procurement domain gates (superadmin bypasses inside requirePermission).
@@ -602,8 +603,8 @@ export default function registerPurchaseOrders(ctx) {
       // key off payableTotal, not the delivery's full cost.
       if (posted.payableTotal > 0 && !po.supplierId && String(po.supplier || '').trim()) {
         try {
-          const cleanName = title(po.supplier);
-          let sup = await Supplier.findOne({ name: cleanName, ...tenantScope(req) });
+          const cleanName = partyName(po.supplier);
+          let sup = await Supplier.findOne({ name: { $regex: `^${escapeRegex(cleanName)}$`, $options: 'i' }, ...tenantScope(req) });
           if (!sup) {
             sup = await Supplier.create({
               supplierCode: await mkSeqRef('SUP'),
@@ -929,14 +930,14 @@ export default function registerPurchaseOrders(ctx) {
       const { name, contactPerson = '', phone = '', email = '', address = '', notes = '', tin = '', registeredName = '', isVatRegistered } = req.body || {};
       // Canonicalize before the duplicate check, so "abc trading", "ABC Trading"
       // and "  ABC   Trading " can't all become separate supplier records.
-      const cleanName = title(name);
+      const cleanName = partyName(name);
       if (!cleanName) return res.status(400).json({ success: false, error: 'Supplier name is required.' });
-      const dupe = await Supplier.findOne({ name: cleanName, ...tenantScope(req) }).lean();
+      const dupe = await Supplier.findOne({ name: { $regex: `^${escapeRegex(cleanName)}$`, $options: 'i' }, ...tenantScope(req) }).lean();
       if (dupe) return res.status(409).json({ success: false, error: `Supplier "${cleanName}" already exists.` });
       const supplierCode = await mkSeqRef('SUP');
       const supplier = await Supplier.create({
         supplierCode, name: cleanName,
-        contactPerson: title(contactPerson).slice(0, 200),
+        contactPerson: partyName(contactPerson).slice(0, 200),
         phone: squish(phone).slice(0, 40),
         email: lower(email).slice(0, 200),
         address: freeText(address).slice(0, 300),
@@ -981,7 +982,7 @@ export default function registerPurchaseOrders(ctx) {
         try {
           // Accept the template's own column headings as well as the field
           // names, because the person filling it in reads the heading.
-          const cleanName = title(r.name ?? r.Name ?? r['Supplier Name']);
+          const cleanName = partyName(r.name ?? r.Name ?? r['Supplier Name']);
           if (!cleanName) throw new Error('Supplier name is required.');
           if (seen.has(cleanName.toLowerCase())) throw new Error(`"${cleanName}" already exists.`);
           seen.add(cleanName.toLowerCase());
@@ -989,7 +990,7 @@ export default function registerPurchaseOrders(ctx) {
           const supplierCode = await mkSeqRef('SUP');
           await Supplier.create({
             supplierCode, name: cleanName,
-            contactPerson: title(r.contactPerson ?? r.Contact ?? '').slice(0, 200),
+            contactPerson: partyName(r.contactPerson ?? r.Contact ?? '').slice(0, 200),
             phone: squish(r.phone ?? r.Phone ?? '').slice(0, 40),
             email: lower(r.email ?? r.Email ?? '').slice(0, 200),
             address: freeText(r.address ?? r.Address ?? '').slice(0, 300),
@@ -1014,14 +1015,14 @@ export default function registerPurchaseOrders(ctx) {
       const { name, contactPerson, phone, email, address, notes, isActive, tin, registeredName, isVatRegistered } = req.body || {};
       const update = {};
       if (name !== undefined) {
-        const cleanName = title(name);
+        const cleanName = partyName(name);
         if (!cleanName) return res.status(400).json({ success: false, error: 'Supplier name is required.' });
         // Same canonical-name guard as create, excluding this supplier itself.
-        const dupe = await Supplier.findOne({ name: cleanName, _id: { $ne: req.params.id }, ...tenantScope(req) }).lean();
+        const dupe = await Supplier.findOne({ name: { $regex: `^${escapeRegex(cleanName)}$`, $options: 'i' }, _id: { $ne: req.params.id }, ...tenantScope(req) }).lean();
         if (dupe) return res.status(409).json({ success: false, error: `Supplier "${cleanName}" already exists.` });
         update.name = cleanName;
       }
-      if (contactPerson !== undefined) update.contactPerson = title(contactPerson).slice(0, 200);
+      if (contactPerson !== undefined) update.contactPerson = partyName(contactPerson).slice(0, 200);
       if (phone !== undefined) update.phone = squish(phone).slice(0, 40);
       if (email !== undefined) update.email = lower(email).slice(0, 200);
       if (address !== undefined) update.address = freeText(address).slice(0, 300);

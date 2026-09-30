@@ -159,7 +159,7 @@ describe('supplier payments report', () => {
 
     const row = res.body.payments.find(p => p.amount === 800);
     expect(row).toBeTruthy();
-    expect(row.supplier).toBe('Best Beans');
+    expect(row.supplier.toUpperCase()).toBe('BEST BEANS');   // older rows may still be mixed case
     // Which pot the money came out of - the A/P debit's opposite leg.
     expect(row.paidFromCode).toBe('111000');
     expect(res.body.totalPaid).toBeGreaterThanOrEqual(800);

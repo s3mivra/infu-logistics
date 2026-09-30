@@ -73,12 +73,12 @@ describe('new client link from a name', () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.client.onboardingPath).toMatch(/^\/client-onboard\/[0-9a-f]{48}$/);
     const made = await M('ClientAccount').findById(r.body.client._id).lean();
-    expect(made.name).toBe('Bagong Kape');
+    expect(made.name).toBe('BAGONG KAPE');
     expect(made.username.startsWith('_pending_')).toBe(true);
     // The link works, and the client fills in the rest.
     const token = r.body.client.onboardingPath.split('/').pop();
-    expect((await request(app).get(`/api/client-onboard/${token}`)).body.client.name).toBe('Bagong Kape');
-    const done = await request(app).post(`/api/client-onboard/${token}`).send({ name: 'Bagong Kape', phone: '09171234567', username: 'bagongkape', password: 'secret123' });
+    expect((await request(app).get(`/api/client-onboard/${token}`)).body.client.name).toBe('BAGONG KAPE');
+    const done = await request(app).post(`/api/client-onboard/${token}`).send({ name: 'BAGONG KAPE', phone: '09171234567', username: 'bagongkape', password: 'secret123' });
     expect(done.body.success).toBe(true);
   });
 
@@ -99,5 +99,67 @@ describe('new client link from a name', () => {
   it('without the permission, cannot create one', async () => {
     expect((await as(tok.cashier, 'post', '/api/client-accounts/invite').send({ name: 'Sneaky Co' })).status).toBe(403);
     expect(await M('ClientAccount').exists({ name: 'Sneaky Co' })).toBeFalsy();
+  });
+});
+
+describe('adding and deleting clients', () => {
+  let adder, deleter;
+  beforeAll(async () => {
+    await makeUser({ name: 'clAdder', role: 'staff', permissions: ['orders.view', 'clients.create'] });
+    await makeUser({ name: 'clDeleter', role: 'staff', permissions: ['orders.view', 'clients.delete'] });
+    adder = await loginStaff(app, 'clAdder');
+    deleter = await loginStaff(app, 'clDeleter');
+  });
+
+  it('adds a client with details and hands back a link for the login', async () => {
+    const r = await as(adder, 'post', '/api/client-accounts').send({ name: 'tindahan ni aling nena', phone: '09170000000', paymentMethod: 'Cash', creditLimit: 999999 });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.onboardingPath).toMatch(/^\/client-onboard\//);
+    const c = await M('ClientAccount').findById(r.body.client._id).lean();
+    expect(c.name).toBe('TINDAHAN NI ALING NENA');
+    expect(c.username.startsWith('_pending_')).toBe(true);
+    expect(c.creditLimit).toBeNull();   // credit is not staff's to set here
+  });
+
+  it('staff cannot choose a client login', async () => {
+    const r = await as(adder, 'post', '/api/client-accounts').send({ name: 'Login Picker', username: 'picked', password: 'secret123' });
+    expect(r.status).toBe(403);
+    expect(await M('ClientAccount').exists({ username: 'picked' })).toBeFalsy();
+  });
+
+  it('the owner still can, as before', async () => {
+    const r = await as(tok.owner, 'post', '/api/client-accounts').send({ name: 'Owner Made', username: 'ownermade', password: 'secret123', creditLimit: 5000 });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.onboardingPath).toBeUndefined();
+    expect((await M('ClientAccount').findOne({ username: 'ownermade' }).lean()).creditLimit).toBe(5000);
+  });
+
+  it('adding needs the permission', async () => {
+    expect((await as(tok.cashier, 'post', '/api/client-accounts').send({ name: 'Nope Co' })).status).toBe(403);
+    expect((await as(deleter, 'post', '/api/client-accounts').send({ name: 'Nope Co' })).status).toBe(403);
+  });
+
+  it('deletes a client with no history', async () => {
+    const c = await M('ClientAccount').create({ name: 'Empty Co', clientCode: 'CL-9', username: '_pending_cl-9', password: 'x' });
+    const r = await as(deleter, 'delete', `/api/client-accounts/${c._id}`);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(await M('ClientAccount').exists({ _id: c._id })).toBeFalsy();
+  });
+
+  it('refuses to delete a client that has orders or a credit balance', async () => {
+    const withOrder = await M('ClientAccount').create({ name: 'Busy Co', clientCode: 'CL-10', username: '_pending_cl-10', password: 'x' });
+    await M('Order').collection.insertOne({ clientId: String(withOrder._id), orderNumber: 'T-1', items: [], total: 0 });
+    const r1 = await as(deleter, 'delete', `/api/client-accounts/${withOrder._id}`);
+    expect(r1.status).toBe(409);
+    expect(r1.body.error).toMatch(/orders/);
+    const withCredit = await M('ClientAccount').create({ name: 'Credit Co', clientCode: 'CL-11', username: '_pending_cl-11', password: 'x', creditBalance: 150 });
+    expect((await as(deleter, 'delete', `/api/client-accounts/${withCredit._id}`)).status).toBe(409);
+    expect(await M('ClientAccount').countDocuments({ _id: { $in: [withOrder._id, withCredit._id] } })).toBe(2);
+  });
+
+  it('deleting needs the permission', async () => {
+    const c = await M('ClientAccount').create({ name: 'Keep Co', clientCode: 'CL-12', username: '_pending_cl-12', password: 'x' });
+    expect((await as(adder, 'delete', `/api/client-accounts/${c._id}`)).status).toBe(403);
+    expect((await as(tok.office, 'delete', `/api/client-accounts/${c._id}`)).status).toBe(403);
   });
 });

@@ -20,12 +20,12 @@ const auth = (t) => ({ Authorization: `Bearer ${t}` });
 describe('duplicate submit protection', () => {
   it('three concurrent identical creates produce one record', async () => {
     const Supplier = mongoose.model('Supplier');
-    const before = await Supplier.countDocuments({ name: 'Lag Test Supplier' });
+    const before = await Supplier.countDocuments({ name: 'LAG TEST SUPPLIER' });
     expect(before).toBe(0);
 
     // Exactly the reported scenario: the button is pressed repeatedly because
     // the first response has not come back yet, so all three are in flight.
-    const body = { name: 'Lag Test Supplier', contactPerson: 'Ana', terms: 30 };
+    const body = { name: 'LAG TEST SUPPLIER', contactPerson: 'Ana', terms: 30 };
     const results = await Promise.all([
       request(app).post('/api/suppliers').set(auth(superToken)).send(body),
       request(app).post('/api/suppliers').set(auth(superToken)).send(body),
@@ -33,7 +33,7 @@ describe('duplicate submit protection', () => {
     ]);
 
     // One record, not three - the whole point.
-    expect(await Supplier.countDocuments({ name: 'Lag Test Supplier' })).toBe(1);
+    expect(await Supplier.countDocuments({ name: 'LAG TEST SUPPLIER' })).toBe(1);
 
     // And every caller is told it worked, rather than two of them seeing an
     // error they would have to interpret.
@@ -59,17 +59,17 @@ describe('duplicate submit protection', () => {
   it('different payloads in flight together are both created', async () => {
     const Supplier = mongoose.model('Supplier');
     const [a, b] = await Promise.all([
-      request(app).post('/api/suppliers').set(auth(superToken)).send({ name: 'Concurrent A' }),
-      request(app).post('/api/suppliers').set(auth(superToken)).send({ name: 'Concurrent B' }),
+      request(app).post('/api/suppliers').set(auth(superToken)).send({ name: 'CONCURRENT A' }),
+      request(app).post('/api/suppliers').set(auth(superToken)).send({ name: 'CONCURRENT B' }),
     ]);
     expect(a.status).toBeLessThan(400);
     expect(b.status).toBeLessThan(400);
-    expect(await Supplier.countDocuments({ name: { $in: ['Concurrent A', 'Concurrent B'] } })).toBe(2);
+    expect(await Supplier.countDocuments({ name: { $in: ['CONCURRENT A', 'CONCURRENT B'] } })).toBe(2);
   });
 
   it('an explicit Idempotency-Key replays the original response after it finished', async () => {
     const Supplier = mongoose.model('Supplier');
-    const body = { name: 'Keyed Supplier', contactPerson: 'Cara' };
+    const body = { name: 'KEYED SUPPLIER', contactPerson: 'Cara' };
     const key = 'submit-attempt-0001';
     const first = await request(app).post('/api/suppliers').set({ ...auth(superToken), 'Idempotency-Key': key }).send(body);
     expect(first.status).toBeLessThan(400);
@@ -77,7 +77,7 @@ describe('duplicate submit protection', () => {
     // what protects a reload or a second tab re-submitting the same form.
     const again = await request(app).post('/api/suppliers').set({ ...auth(superToken), 'Idempotency-Key': key }).send(body);
     expect(again.headers['x-idempotent-replay']).toBe('1');
-    expect(await Supplier.countDocuments({ name: 'Keyed Supplier' })).toBe(1);
+    expect(await Supplier.countDocuments({ name: 'KEYED SUPPLIER' })).toBe(1);
   });
 
   it('concurrent orders are collapsed too - the costliest duplicate', async () => {

@@ -1116,7 +1116,8 @@ export default function SuperAdminPanel() {
   const handleClientDelete = async (client) => {
     if (!confirm(`Remove client account "${client.name}"?`)) return;
     try {
-      await apiFetch(`/api/client-accounts/${client._id}`, { method: 'DELETE' });
+      const d = await (await apiFetch(`/api/client-accounts/${client._id}`, { method: 'DELETE' })).json();
+      if (!d.success) { showToast(d.error || 'Could not remove that client.', 'error'); return; }
       showToast(`${client.name} removed.`); fetchClients();
     } catch { showToast('Failed to remove client.', 'error'); }
   };

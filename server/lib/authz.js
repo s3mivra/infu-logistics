@@ -29,6 +29,8 @@ export const PERMISSIONS = [
   { key: 'clients.links',      group: 'Sales',       label: 'Copy client links (portal sign-in and issued onboarding links)' },
   // A brand-new client from a name only; the client picks their own login on
   // the link. Cannot re-issue a link for an existing client.
+  { key: 'clients.create',     group: 'Sales',       label: 'Add clients (details only; the client sets their own login on a link)' },
+  { key: 'clients.delete',     group: 'Sales',       label: 'Delete clients that have no orders, deposits, quotes or balance' },
   { key: 'clients.invite',     group: 'Sales',       label: 'Create client links (new client from a name, they fill in the rest)' },
   { key: 'inventory.view',     group: 'Inventory',   label: 'View inventory' },
   { key: 'inventory.manage',   group: 'Inventory',   label: 'Manage inventory (count/restock)' },
@@ -156,13 +158,13 @@ export function withScreens(list) {
 export const ROLE_DEFAULT_PERMISSIONS = {
   // Shop administrator: runs operations & config and can VIEW the books, but
   // cannot post journal entries (that's finance/superadmin) or manage staff.
-  admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'clients.links', 'clients.invite',
+  admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'clients.links', 'clients.invite', 'clients.create', 'clients.delete',
             'inventory.view', 'inventory.manage', 'inventory.delete', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage', 'procurement.delete',
             'accounting.view', 'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'],
   // Operations lead: full ops (incl. building rosters), no books/settings/staff.
-  manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'clients.links', 'clients.invite',
+  manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'clients.links', 'clients.invite', 'clients.create',
             'inventory.view', 'inventory.manage', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage',

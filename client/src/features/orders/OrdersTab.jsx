@@ -595,7 +595,7 @@ export default function OrdersTab({ ctx }) {
                     <div className="flex gap-2">
                     {/* Salesperson credited with the sale (logistics). Blank follows the
                         client's assigned rep, else the cashier. */}
-                    {BUSINESS_TYPE === 'log' && salesStaff.length > 0 && (() => {
+                    {BUSINESS_TYPE === 'log' && isSuperAdmin && salesStaff.length > 0 && (() => {
                       const rep = posClientId ? (clientAccounts || []).find(a => String(a._id) === posClientId)?.assignedSalesperson : '';
                       return (
                         <div className="flex-1 min-w-0"><select value={posSalesperson} onChange={e => setPosSalesperson(e.target.value)} aria-label="Salesperson"

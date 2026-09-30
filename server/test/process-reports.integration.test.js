@@ -12,8 +12,8 @@ const tok = {};
 const as = (t, m, p) => request(app)[m](p).set('Authorization', `Bearer ${t}`);
 const M = (n) => mongoose.model(n);
 const today = new Date().toISOString().slice(0, 10);
-const sell = async (body = {}) => {
-  const r = await as(tok.cashier, 'post', '/api/orders').send({
+const sell = async (body = {}, t = tok.cashier) => {
+  const r = await as(t, 'post', '/api/orders').send({
     items: [{ productId, name: 'Crate', price: 500, quantity: 2 }], paymentMethod: 'Cash', table: 'Takeout', ...body,
   });
   expect(r.status, JSON.stringify(r.body)).toBe(200);
@@ -87,11 +87,16 @@ describe('sales documents, channel and salesperson', () => {
   });
 
   it('a salesperson named at the till must be on the staff list', async () => {
-    const bad = await as(tok.cashier, 'post', '/api/orders').send({
+    const bad = await as(tok.boss, 'post', '/api/orders').send({
       items: [{ productId, name: 'Crate', price: 500, quantity: 1 }], paymentMethod: 'Cash', table: 'Takeout', salesperson: 'Nobody Here',
     });
     expect(bad.status).toBe(400);
-    const named = await sell({ clientAccountId: wholesaleId, salesperson: 'prBoss' });
+    // Only the owner picks who is credited; a cashier sells as themselves.
+    const notMine = await as(tok.cashier, 'post', '/api/orders').send({
+      items: [{ productId, name: 'Crate', price: 500, quantity: 1 }], paymentMethod: 'Cash', table: 'Takeout', salesperson: 'prBoss',
+    });
+    expect(notMine.status).toBe(403);
+    const named = await sell({ clientAccountId: wholesaleId, salesperson: 'prBoss' }, tok.boss);
     // Named at the till beats the client's assigned rep.
     expect(named.salesperson).toBe('prBoss');
   });

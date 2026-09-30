@@ -57,6 +57,10 @@ export const title = (s) => {
   return words.map((w, i) => titleWord(w, i === 0, i === words.length - 1)).join(' ');
 };
 
+// Names of parties - clients, suppliers, customers, contact people - are kept
+// in ALL CAPS, the way they are written on receipts and the books.
+export const partyName = (s) => upper(s);
+
 // Free text (notes, reasons, addresses) - whitespace-tidied only. Never
 // re-cased: "DO NOT STACK" and a typed paragraph both mean what they say.
 export const freeText = (s) => String(s ?? '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
