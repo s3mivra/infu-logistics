@@ -474,7 +474,10 @@ export default function ClientOrderPage() {
       ]);
       const prodData = await prodRes.json();
       const catData = await catRes.json();
-      setProducts((prodData.products || []).filter(p => !p.isArchived));
+      // A price tier above list is this client's price for the product - show
+      // and send it as the product's own price (the server charges the same).
+      setProducts((prodData.products || []).filter(p => !p.isArchived)
+        .map(p => (p.buyerUnitPrice != null ? { ...p, basePrice: p.buyerUnitPrice } : p)));
       setCategories(catData.categories || []);
     } catch { /* silently retry on socket event */ }
     finally { setLoadingProducts(false); }

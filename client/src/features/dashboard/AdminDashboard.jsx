@@ -615,6 +615,8 @@ export default function AdminDashboard() {
   // checkout), so the POS cart shows their real price live instead of only
   // revealing it after the order is placed. { [productId]: percent }
   const [posBuyerDiscounts, setPosBuyerDiscounts] = useState({});
+  // A client whose tier price is ABOVE list pays that as the unit price.
+  const [posBuyerPrices, setPosBuyerPrices] = useState({});
   // Reserve-only mode: place order with status 'Reserved' (no payment yet).
   // Cashier later promotes Reserved → Pending (pay later) or Preparing (pay now).
   const [posReserveOnly, setPosReserveOnly] = useState(false);
@@ -2390,7 +2392,7 @@ export default function AdminDashboard() {
   // read by Products/Pricing Control too, and leaking one client's special
   // pricing into those unrelated, buyer-agnostic views would be wrong.
   useEffect(() => {
-    if (!posClientId) { setPosBuyerDiscounts({}); return; }
+    if (!posClientId) { setPosBuyerDiscounts({}); setPosBuyerPrices({}); return; }
     let cancelled = false;
     (async () => {
       try {
@@ -2399,7 +2401,12 @@ export default function AdminDashboard() {
         const data = await res.json();
         if (cancelled) return;
         const map = {};
-        (data.products || []).forEach(p => { map[p._id] = p.effectiveDiscountPercent || 0; });
+        const prices = {};
+        (data.products || []).forEach(p => {
+          map[p._id] = p.effectiveDiscountPercent || 0;
+          if (p.buyerUnitPrice != null) prices[p._id] = p.buyerUnitPrice;
+        });
+        setPosBuyerPrices(prices);
         setPosBuyerDiscounts(map);
       } catch { /* non-fatal - cart falls back to no live discount preview */ }
     })();
@@ -2412,7 +2419,10 @@ export default function AdminDashboard() {
   useEffect(() => {
     setPosCart(cart => cart.map(item => {
       const pct = item.productId ? (posBuyerDiscounts[item.productId] || 0) : 0;
-      return item.discountPercent === pct ? item : { ...item, discountPercent: pct };
+      // A line at the product's own price (no size, not on sale) follows the
+      // client's tier price if it is above list, and goes back to list if not.
+      const price = item.listPrice != null ? (posBuyerPrices[item.productId] ?? item.listPrice) : item.price;
+      return item.discountPercent === pct && item.price === price ? item : { ...item, discountPercent: pct, price };
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [posBuyerDiscounts]);
@@ -2442,11 +2452,15 @@ export default function AdminDashboard() {
     // Use active sale price when no size is selected (size pricing overrides base)
     let finalPrice = (posSelectedProduct.activeSalePrice != null ? posSelectedProduct.activeSalePrice : null) ?? posSelectedProduct.basePrice ?? posSelectedProduct.price ?? 0;
     let finalName = posSelectedProduct.name;
+    // The product's own price (no size, not on sale) - it can follow the client's tier.
+    let listPrice = posSelectedProduct.activeSalePrice == null ? finalPrice : null;
+    if (listPrice != null && posBuyerPrices[posSelectedProduct._id] != null) finalPrice = posBuyerPrices[posSelectedProduct._id];
 
     if (posActiveSize !== null) {
       const sizeObj = posSelectedProduct.sizes[posActiveSize];
       finalPrice = sizeObj.price;
       finalName = `${posSelectedProduct.name} (${sizeObj.name})`;
+      listPrice = null;
     }
     
     const productCategory = categories.find(c => c.name === posSelectedProduct.category);
@@ -2463,6 +2477,7 @@ export default function AdminDashboard() {
       productId: posSelectedProduct._id,
       name: finalName,
       price: finalPrice,
+      listPrice,
       quantity: Math.max(1, posItemQty),
       department,
       selectedAddOns: [...posActiveAddOns],

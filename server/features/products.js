@@ -2,6 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { MONEY_MAX } from '../lib/normalize.js';
+import { resolveTierMarkupPrice } from '../lib/priceTiers.js';
 import { captureError } from '../lib/errorLog.js';
 import { parseBulkRecipes, parseDrinkSheet, collectMaterials, buildProductDraft } from '../lib/recipeImport.js';
 import { parseMenuSheet, toImportRows } from '../lib/menuSheet.js';
@@ -367,6 +368,9 @@ app.get('/api/products', async (req, res) => {
       p.effectiveDiscountPercent = resolveEffectiveDiscountPercent(p, {
         buyerClientId, buyerSegments, tierDefaultPct, perProductTiers,
       });
+      // A tier priced above list: this buyer's unit price (see priceTiers.js).
+      const tierUnit = resolveTierMarkupPrice(p, perProductTiers, { buyerClientId });
+      if (tierUnit != null) p.buyerUnitPrice = tierUnit;
       // Only strip raw overrides from non-admin responses. Admin / staff need
       // them to power the edit form and the on-behalf client picker in POS;
       // stripping made the form silently lose overrides on save (the form

@@ -9,7 +9,7 @@ import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
 import { seriesPrefix, normalizePrefix } from '../lib/docSeries.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
-import { resolveTierPercent } from '../lib/priceTiers.js';
+import { resolveTierPercent, resolveTierMarkupPrice } from '../lib/priceTiers.js';
 import { buildSalePriceMap, saleUnitPrice, activeSalesQuery } from '../lib/salePricing.js';
 import { saleRevenueLines, vatShare, vatFromInclusive, deliveryFeeVat, OUTPUT_VAT } from '../lib/vatPosting.js';
 import { loadVatConfig as loadVatConfigShared } from '../lib/vatSettings.js';
@@ -712,13 +712,13 @@ const buildLinePricing = async (req, items, { buyerClientId = '', buyerSegments 
 // A line that matches nothing in the catalogue is a staff-entered open item
 // and keeps its price when staff ring it up; from a client or a QR menu it is
 // refused. Returns { error } or { quoteIds } (quotations to link to the order).
-const resolveCatalogPrices = async (req, items, { selfService, buyerClientId }) => {
+const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, tierBuyerId = '', tierBuyerSegments = [] }) => {
   const Sale = mongoose.model('Sale');
   const Quotation = mongoose.model('Quotation');
   const ids = [...new Set(items.map(i => String(i.productId || '')).filter(id => mongoose.Types.ObjectId.isValid(id)))];
   const names = [...new Set(items.filter(i => !i.productId).map(i => i.name).filter(Boolean))];
   const [prods, combos, globalAddOns, groups, sales, quotes] = await Promise.all([
-    Product.find({ $or: [{ _id: { $in: ids } }, { name: { $in: names } }] }, { name: 1, basePrice: 1, baseSize: 1, sizes: 1, addOns: 1, isArchived: 1, isAvailable: 1 }).lean(),
+    Product.find({ $or: [{ _id: { $in: ids } }, { name: { $in: names } }] }, { name: 1, basePrice: 1, baseSize: 1, sizes: 1, addOns: 1, isArchived: 1, isAvailable: 1, clientDiscounts: 1 }).lean(),
     Combo.find({ _id: { $in: ids } }, { name: 1, price: 1 }).lean(),
     AddOn.find({}, { name: 1, price: 1 }).lean(),
     ModifierGroup.find({}, { name: 1, options: 1 }).lean(),
@@ -742,6 +742,10 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId }) 
       quoted.set(key, { price: Number(l.quotedPrice), quoteId: String(q._id) });
     }
   }
+  // The buyer's per-product tiers, for a tier priced above list (priceTiers.js).
+  const { perProductTiers: markupTiers } = tierBuyerSegments.length
+    ? await loadTierContext({ PriceTier, businessType: BUSINESS_TYPE, tenantScope, req, buyerSegments: tierBuyerSegments })
+    : { perProductTiers: [] };
   const quoteIds = new Set();
   // Self-service lines always take the catalogue price. Staff at the till may
   // ring up a different one (a negotiated price, a quote read off paper) - it
@@ -804,7 +808,12 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId }) 
     const isBaseSize = sizeName && !size && (sizeName === (product.baseSize || 'Regular') || sizeName === 'Regular');
     if (sizeName && !size && !isBaseSize && selfService) return { error: `${product.name} does not come in ${sizeName}.` };
     const sale = saleUnitPrice(product, saleMap[String(product._id)]);
-    setPrice(item, item.name, size ? Number(size.price) || 0 : (sale != null ? sale : Number(product.basePrice) || 0));
+    // A tier priced above list is this buyer's price for the product itself
+    // (not a size, and not while it is on sale).
+    const tierUnit = !size && sale == null
+      ? resolveTierMarkupPrice(product, markupTiers, { buyerClientId: tierBuyerId, qty: Number(item.quantity) || 0 })
+      : null;
+    setPrice(item, item.name, size ? Number(size.price) || 0 : (sale != null ? sale : (tierUnit ?? (Number(product.basePrice) || 0))));
 
     if ((item.selectedAddOns || []).length) {
       for (const a of item.selectedAddOns) {
@@ -974,9 +983,16 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     }
 
     // Re-price every line from the catalogue (see resolveCatalogPrices).
+    const _tierBuyerId = isClientOrder ? String(req.user.clientId || req.user._id || '') : (onBehalfClientId || '');
+    let _tierBuyerSegments = onBehalfSegments;
+    if (isClientOrder && _tierBuyerId) {
+      try { _tierBuyerSegments = (await ClientAccount.findById(_tierBuyerId, { segments: 1 }).lean())?.segments || []; }
+      catch { _tierBuyerSegments = []; }
+    }
     const priced = await resolveCatalogPrices(req, items, {
       selfService: isClientOrder || !!req.qrSession,
       buyerClientId: isClientOrder ? String(req.user.clientId || req.user._id || '') : '',
+      tierBuyerId: _tierBuyerId, tierBuyerSegments: _tierBuyerSegments,
     });
     if (priced.error) return res.status(400).json({ success: false, error: priced.error });
 
