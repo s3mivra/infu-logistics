@@ -396,10 +396,21 @@ app.post('/api/client/password', verifyClientToken, async (req, res) => {
   }
 });
 
-// CRUD for client accounts - superadmin only
-app.get('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res) => {
+// CRUD for client accounts - superadmin only. Reading the list is also open to
+// the till (pos.use / orders.view): the POS customer picker and the invoice's
+// bill-to need it. Staff get only those fields - no contact details, credit
+// settings or login name.
+const TILL_CLIENT_FIELDS = { name: 1, clientCode: 1, paymentMethod: 1, isActive: 1, segments: 1, assignedSalesperson: 1,
+  requiresQuote: 1, isVatRegistered: 1, registeredName: 1, tin: 1, registeredAddress: 1, createdAt: 1 };
+app.get('/api/client-accounts', verifyToken, requireStaff, async (req, res) => {
   try {
-    const clients = await ClientAccount.find({}, { password: 0 }).sort({ createdAt: -1 });
+    const isSuper = String(req.user?.role || '').toLowerCase() === 'superadmin';
+    if (!isSuper && !hasPermission(req.user, 'pos.use') && !hasPermission(req.user, 'orders.view')) {
+      return res.status(403).json({ success: false, error: 'Forbidden: missing permission "pos.use".' });
+    }
+    const clients = isSuper
+      ? await ClientAccount.find({}, { password: 0 }).sort({ createdAt: -1 })
+      : await ClientAccount.find({ isActive: { $ne: false } }, TILL_CLIENT_FIELDS).sort({ name: 1 }).lean();
     res.json({ success: true, clients });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));

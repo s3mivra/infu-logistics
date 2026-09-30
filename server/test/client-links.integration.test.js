@@ -189,3 +189,25 @@ describe('price tier on a client', () => {
     expect((await as(t, 'patch', `/api/client-accounts/${c._id}`).send({ segments: ['Dealer'] })).status).toBe(403);
   });
 });
+
+describe('client list at the till', () => {
+  it('a cashier sees the clients to pick, without their private details', async () => {
+    const r = await as(tok.cashier, 'get', '/api/client-accounts');
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const row = r.body.clients.find(c => c.name === 'Kasa Lokal');
+    expect(row).toBeTruthy();
+    expect(row.clientCode).toBeTruthy();
+    for (const hidden of ['username', 'password', 'phone', 'email', 'creditLimit', 'onboardingToken']) expect(row[hidden]).toBeUndefined();
+  });
+
+  it('the owner still gets the full records', async () => {
+    const r = await as(tok.owner, 'get', '/api/client-accounts');
+    expect(r.body.clients.find(c => c.name === 'Kasa Lokal').username).toBe('kasalokal');
+  });
+
+  it('someone with neither the till nor orders gets nothing', async () => {
+    await makeUser({ name: 'clNobody', role: 'staff', permissions: ['inventory.view'] });
+    const t = await loginStaff(app, 'clNobody');
+    expect((await as(t, 'get', '/api/client-accounts')).status).toBe(403);
+  });
+});

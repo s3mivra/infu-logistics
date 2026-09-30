@@ -2119,7 +2119,7 @@ export default function AdminDashboard() {
     } catch { ui.alert('Failed to update tier rate. Check your connection.'); }
   };
 
-  useEffect(() => { if (isAuthenticated) { fetchDiscounts(); fetchCoa(); if (activeAdmin?.role === 'superadmin') fetchClientAccounts(); fetchPriceTiers(); fetchPricingTable(); fetchClosedPeriods(); fetchPaymentMap(); } }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (isAuthenticated) { fetchDiscounts(); fetchCoa(); if (activeAdmin?.role === 'superadmin' || auth.can('pos.use') || auth.can('orders.view')) fetchClientAccounts(); fetchPriceTiers(); fetchPricingTable(); fetchClosedPeriods(); fetchPaymentMap(); } }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Partial fulfillment (logistics) ────────────────────────────────────────
   const [partialModal, setPartialModal] = useState(null);  // the order being split
