@@ -284,7 +284,7 @@ export default function ClientsTab() {
             className="bg-surface border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-fg text-sm placeholder-fg/70 outline-none focus:border-brand/60 transition w-full sm:w-64"
           />
         </div>
-        {can('clients.links') && (
+        {can('clients.invite') && (
           <button onClick={() => { setShowInvite(v => !v); setInviteLink(''); }} aria-expanded={showInvite}
             className={`flex items-center gap-1.5 text-[10px] px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider transition ${showInvite ? 'bg-brand text-on-brand' : 'bg-brand/10 hover:bg-brand/20 text-brand-text'}`}>
             <Link2 size={13} /> New client link
@@ -317,7 +317,7 @@ export default function ClientsTab() {
         </button>
       </div>
 
-      {showInvite && can('clients.links') && (
+      {showInvite && can('clients.invite') && (
         <form onSubmit={createInvite} className="bg-surface border border-white/10 rounded-2xl p-4 space-y-3">
           <p className="text-xs text-fg/70 font-bold">
             Type the client's name only. They open the link (good for 7 days) and fill in their phone, email, username and password.

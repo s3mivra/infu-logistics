@@ -726,11 +726,11 @@ app.get('/api/client-accounts/links', verifyToken, requireStaff, requirePermissi
 });
 
 // ── New client from a name only ───────────────────────────────────────────────
-// For whoever may copy client links: creates the client with just a name and
+// Needs clients.invite: creates the client with just a name and
 // returns its 7-day onboarding link. The client sets their own username and
 // password when they redeem it, so the office never chooses a login. Nothing
 // else (credit line, terms, payment method) can be set here.
-app.post('/api/client-accounts/invite', verifyToken, requireStaff, requirePermission('clients.links'), async (req, res) => {
+app.post('/api/client-accounts/invite', verifyToken, requireStaff, requirePermission('clients.invite'), async (req, res) => {
   try {
     const cleanName = title(req.body?.name ?? '');
     if (!cleanName) return res.status(400).json({ success: false, error: 'Client name is required.' });

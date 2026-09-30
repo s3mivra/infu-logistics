@@ -16,10 +16,12 @@ beforeAll(async () => {
   app = ctx.app;
   await makeUser({ name: 'clOwner', role: 'superadmin' });
   await makeUser({ name: 'clOffice', role: 'staff', permissions: ['orders.view', 'clients.links'] });
+  await makeUser({ name: 'clInviter', role: 'staff', permissions: ['orders.view', 'clients.invite'] });
   await makeUser({ name: 'clCashier', role: 'staff', permissions: ['orders.view', 'pos.use'] });
   tok.owner = await loginStaff(app, 'clOwner');
   tok.office = await loginStaff(app, 'clOffice');
   tok.cashier = await loginStaff(app, 'clCashier');
+  tok.inviter = await loginStaff(app, 'clInviter');
   fresh = await M('ClientAccount').create({ name: 'Reyes Hardware', clientCode: 'CL-1', username: '_pending_cl-1', password: 'x' });
   onboarded = await M('ClientAccount').create({ name: 'Kasa Lokal', clientCode: 'CL-2', username: 'kasalokal', password: 'x' });
   lapsed = await M('ClientAccount').create({ name: 'Old Link Co', clientCode: 'CL-3', username: '_pos_cl-3', password: 'x', onboardingToken: 'expired-token', onboardingTokenExpiresAt: new Date(Date.now() - 1000) });
@@ -66,8 +68,8 @@ describe('client links', () => {
 // A brand-new client from a name only. Safe for office staff: it cannot touch
 // an existing account, and the client picks their own login on the link.
 describe('new client link from a name', () => {
-  it('office staff with the permission create one and get its link', async () => {
-    const r = await as(tok.office, 'post', '/api/client-accounts/invite').send({ name: 'bagong kape' });
+  it('staff with Create client links create one and get its link', async () => {
+    const r = await as(tok.inviter, 'post', '/api/client-accounts/invite').send({ name: 'bagong kape' });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.client.onboardingPath).toMatch(/^\/client-onboard\/[0-9a-f]{48}$/);
     const made = await M('ClientAccount').findById(r.body.client._id).lean();
@@ -81,13 +83,17 @@ describe('new client link from a name', () => {
   });
 
   it('refuses a name that already exists, whatever the case', async () => {
-    const r = await as(tok.office, 'post', '/api/client-accounts/invite').send({ name: 'KASA LOKAL' });
+    const r = await as(tok.inviter, 'post', '/api/client-accounts/invite').send({ name: 'KASA LOKAL' });
     expect(r.status).toBe(409);
     expect(await M('ClientAccount').countDocuments({ name: /kasa lokal/i })).toBe(1);
   });
 
   it('needs a name', async () => {
-    expect((await as(tok.office, 'post', '/api/client-accounts/invite').send({ name: '  ' })).status).toBe(400);
+    expect((await as(tok.inviter, 'post', '/api/client-accounts/invite').send({ name: '  ' })).status).toBe(400);
+  });
+
+  it('copying links alone is not enough to create one', async () => {
+    expect((await as(tok.office, 'post', '/api/client-accounts/invite').send({ name: 'Copy Only Co' })).status).toBe(403);
   });
 
   it('without the permission, cannot create one', async () => {
