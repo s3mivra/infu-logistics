@@ -273,3 +273,26 @@ describe('who may change tier prices', () => {
     expect((await auth('put', `/api/price-tiers/${tier._id}/products`, staffTok).send({ prices: [] })).status).toBe(403);
   });
 });
+
+describe('the daily sales report shows SRP beside the price after discount', () => {
+  it('a tier client: SRP and its tier price; a regular sale: both the SRP', async () => {
+    const { client, prod } = await tierWithBreak({ tierName: 'TierRpt', flatPrice: 900 });
+    const tierSale = await auth('post', '/api/orders', staffTok).send({
+      items: [{ productId: String(prod._id), name: prod.name, price: 900, quantity: 2 }],
+      table: 'Takeout', paymentMethod: 'Cash', clientAccountId: String(client._id),
+    });
+    const plainSale = await auth('post', '/api/orders', staffTok).send({
+      items: [{ productId: String(prod._id), name: prod.name, price: 1000, quantity: 1 }],
+      table: 'Takeout', paymentMethod: 'Cash',
+    });
+    for (const o of [tierSale, plainSale]) await auth('put', `/api/orders/${o.body.order._id}`, superTok).send({ status: 'Completed' });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const r = await auth('get', `/api/reports/sales-line-items?start=${today}&end=${today}`, superTok);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const tierRow = r.body.rows.find(x => x.orderNumber === tierSale.body.order.orderNumber);
+    const plainRow = r.body.rows.find(x => x.orderNumber === plainSale.body.order.orderNumber);
+    expect(tierRow).toMatchObject({ srp: 1000, unitAfterDiscount: 900, netSales: 1800 });
+    expect(plainRow).toMatchObject({ srp: 1000, unitAfterDiscount: 1000, netSales: 1000 });
+  });
+});

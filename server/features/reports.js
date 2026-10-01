@@ -1415,6 +1415,15 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, require
           .map(p => [String(p._id), p.productCode || '']))
       : {};
 
+    // SRP for a sale made before lines carried it: the product's current SRP,
+    // for a line sold as the product itself (not a size).
+    const oldLineIds = [...new Set(orders.flatMap(o => (o.items || [])
+      .filter(it => it.listPrice == null && it.productId && !it.isCombo).map(it => String(it.productId))))]
+      .filter(id => mongoose.Types.ObjectId.isValid(id));
+    const srpNow = oldLineIds.length
+      ? new Map((await Product.find({ _id: { $in: oldLineIds } }, { name: 1, basePrice: 1 }).lean()).map(p => [String(p._id), p]))
+      : new Map();
+
     const rows = [];
     for (const o of orders) {
       const refId = o.clientId || o.clientAccountId || '';
@@ -1445,12 +1454,22 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, require
         const share = base > 0 ? orderLevel * (lineInfo[idx].gross - lineInfo[idx].own) / base : 0;
         const lineDiscount = Math.round((lineInfo[idx].own + share) * 100) / 100;
         const isCombo = it.isCombo && Array.isArray(it.comboItems) && it.comboItems.length > 0;
+        const netSales = Math.round((lineTotal - lineDiscount) * 100) / 100;
+        // SRP beside what was actually charged: a client on a price tier shows
+        // its SRP and the lower (or higher) price it paid; a sale at SRP shows
+        // the same figure in both. Add-ons are counted in both, as charged.
+        const addOnUnit = (it.selectedAddOns || []).reduce((sum, a) => sum + (Number(a.price) || 0), 0);
+        const old = srpNow.get(String(it.productId || ''));
+        const baseSrp = it.listPrice != null ? Number(it.listPrice)
+          : (old && old.name === it.name ? Number(old.basePrice) || 0 : Number(it.price) || 0);
         rows.push({
           date: o.createdAt, orderNumber: o.orderNumber, paymentMethod: o.paymentMethod,
           customerId, customerName, ...docFields,
           itemCode: (it.productCode || '').toUpperCase(), itemName: (it.name || '').toUpperCase(), quantity: qty, lineTotal,
           unitPrice: qty ? Math.round((lineTotal / qty) * 100) / 100 : 0,
-          grossSales: lineTotal, discount: lineDiscount, netSales: Math.round((lineTotal - lineDiscount) * 100) / 100,
+          srp: roundMoney(baseSrp + addOnUnit),
+          unitAfterDiscount: qty ? Math.round((netSales / qty) * 100) / 100 : 0,
+          grossSales: lineTotal, discount: lineDiscount, netSales,
           isCombo,
         });
         // For a promo/combo, list the products it includes as indented sub-rows.

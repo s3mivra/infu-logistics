@@ -800,6 +800,7 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
         if (selfService) return { error: `The combo "${item.name}" is no longer available.` };
         continue;
       }
+      item.listPrice = Number(combo.price) || 0;
       setPrice(item, item.name, Number(combo.price) || 0);
       continue;
     }
@@ -825,6 +826,7 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
     const tierUnit = !size && sale == null
       ? resolveTierUnitPrice(product, markupTiers, { buyerClientId: tierBuyerId, qty: Number(item.quantity) || 0 })
       : null;
+    item.listPrice = size ? Number(size.price) || 0 : (Number(product.basePrice) || 0);
     if (tierUnit != null) {
       item._tierPriced = true;
       // A till that sent the plain list price has not negotiated anything -
@@ -998,6 +1000,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       // A print name is the till's to set (see the Order schema) - never a
       // client's or a QR menu's.
       item.printName = (isClientOrder || req.qrSession) ? '' : String(item.printName || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+      item.listPrice = null;   // set from the catalogue below, never taken from the request
       if (item.price === undefined || !(Number(item.price) >= 0)) {
         throw Object.assign(new Error(`Invalid price for item: ${item.name || item.productId}`), { status: 400 });
       }
@@ -1562,7 +1565,7 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
           wanted.set(same, (wanted.has(same) ? wanted.get(same) : Number(order.items[same].quantity)) + qty);
         } else {
           newLines.push({
-            productId: String(p._id), productCode: p.productCode, name: p.name, price: Number(p.basePrice) || 0,
+            productId: String(p._id), productCode: p.productCode, name: p.name, price: Number(p.basePrice) || 0, listPrice: Number(p.basePrice) || 0,
             quantity: qty, department: deptOf.get(p.category) || defaultDept, itemStatus: 'Received',
           });
         }

@@ -1558,6 +1558,11 @@ items: [{
     // it; the office DUPLICATE, stock, reports and the ledger keep `name`.
     printName: { type: String, default: '' },
     price: Number,
+    // The product's SRP when it was sold (its size's price for a size, the
+    // combo's price for a combo) - so the sales report can show it beside what
+    // a price tier or discount actually charged. Stamped, not looked up, so a
+    // later SRP change never rewrites an old sale's comparison.
+    listPrice: { type: Number, default: null },
     quantity: Number,
     fulfilledQty: { type: Number, default: 0 },        // units fulfilled so far (partial fulfillment)
     // Cumulative units of THIS line refunded/returned so far, across however many

@@ -311,10 +311,10 @@ export default function LedgerTab({ ctx }) {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body, [], ['TOTAL', '', '', '', '', '', '', '', '', '', '', sliSummary.total]]), 'Daily Sales Summary');
     } else {
       if (!salesLineItems) return ui.alert('Load the report first.');
-      const head = ['Posting Date', 'Document Date', 'Item Code', 'Product Name', 'Customer Number', 'Customer Name', 'Billing Document No.', 'Delivery Receipt No.', 'Sales Invoice / OR No.', 'Unit Price', 'Quantity', 'Gross Sales', 'Discount', 'Net Sales'];
-      const body = salesLineItems.rows.filter(r => !r.isComponent).map(r => [fmtD(r.postingDate || r.date), fmtD(r.documentDate || r.date), r.itemCode, r.itemName, r.customerId, r.customerName, r.billingNumber || '', r.drNumbers || '', r.orNumber || '', r.unitPrice ?? '', r.quantity, r.grossSales ?? r.lineTotal, r.discount ?? 0, r.netSales ?? r.lineTotal]);
+      const head = ['Posting Date', 'Document Date', 'Item Code', 'Product Name', 'Customer Number', 'Customer Name', 'Billing Document No.', 'Delivery Receipt No.', 'Sales Invoice / OR No.', 'SRP', 'Unit Price', 'Price After Discount', 'Quantity', 'Gross Sales', 'Discount', 'Sales After Discount'];
+      const body = salesLineItems.rows.filter(r => !r.isComponent).map(r => [fmtD(r.postingDate || r.date), fmtD(r.documentDate || r.date), r.itemCode, r.itemName, r.customerId, r.customerName, r.billingNumber || '', r.drNumbers || '', r.orNumber || '', r.srp ?? r.unitPrice ?? '', r.unitPrice ?? '', r.unitAfterDiscount ?? r.unitPrice ?? '', r.quantity, r.grossSales ?? r.lineTotal, r.discount ?? 0, r.netSales ?? r.lineTotal]);
       const t = salesLineItems.totals || {};
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body, [], ['TOTAL', '', '', '', '', '', '', '', '', '', '', t.gross ?? salesLineItems.grandTotal, t.discount ?? 0, t.net ?? salesLineItems.grandTotal]]), 'Daily Sales Detail');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body, [], ['TOTAL', '', '', '', '', '', '', '', '', '', '', '', '', t.gross ?? salesLineItems.grandTotal, t.discount ?? 0, t.net ?? salesLineItems.grandTotal]]), 'Daily Sales Detail');
     }
     XLSX.writeFile(wb, `Daily-Sales-${sliView === 'summary' ? 'Summary' : 'Detail'}_${sliRange.start}_to_${sliRange.end}.xlsx`);
   };
@@ -1613,11 +1613,13 @@ It posts only what is not already accrued for that month.`)) return;
                         <th className="py-2">Cust. No.</th><th className="py-2">Customer Name</th>
                         <th className="py-2">Billing / DR / SI</th>
                         <th className="py-2">Item Code</th><th className="py-2">Item</th>
+                        <th className="py-2 text-right">SRP</th>
                         <th className="py-2 text-right">Unit Price</th>
+                        <th className="py-2 text-right" title="What one unit sold for after its price tier and any discount">Price After Disc.</th>
                         <th className="py-2 text-right">Qty</th>
                         <th className="py-2 text-right">Gross</th>
                         <th className="py-2 text-right">Discount</th>
-                        <th className="py-2 text-right">Net</th>
+                        <th className="py-2 text-right">Sales After Disc.</th>
                       </tr>
                     </thead>
                     <tbody className="text-fg/75">
@@ -1632,7 +1634,17 @@ It posts only what is not already accrued for that month.`)) return;
                           <td className={`py-1.5 text-xs ${row.isComponent ? 'text-fg/70 pl-4' : 'text-fg/70'} ${row.isCombo ? 'font-bold' : ''}`}>
                             {row.isComponent ? `↳ ${row.itemName}` : row.itemName}{row.isCombo ? ' (promo)' : ''}
                           </td>
+                          <td className="py-1.5 text-right font-mono">{row.isComponent ? '' : money2(row.srp ?? row.unitPrice ?? 0)}</td>
                           <td className="py-1.5 text-right font-mono">{row.isComponent ? '' : money2(row.unitPrice ?? 0)}</td>
+                          {(() => {
+                            const after = row.unitAfterDiscount ?? row.unitPrice ?? 0;
+                            const srp = row.srp ?? row.unitPrice ?? 0;
+                            const moved = !row.isComponent && Math.abs(after - srp) > 0.005;
+                            return <td className={`py-1.5 text-right font-mono ${moved ? 'text-brand-text font-bold' : ''}`}
+                              title={moved ? `${after < srp ? 'Below' : 'Above'} SRP by ${money2(Math.abs(srp - after))}` : undefined}>
+                              {row.isComponent ? '' : money2(after)}
+                            </td>;
+                          })()}
                           <td className="py-1.5 text-right font-mono">{row.quantity}</td>
                           <td className="py-1.5 text-right font-mono">{row.isComponent ? <span className="text-fg/65 font-normal not-italic">included</span> : money2(row.grossSales ?? row.lineTotal)}</td>
                           <td className="py-1.5 text-right font-mono">{row.isComponent ? '' : money2(row.discount ?? 0)}</td>
@@ -1642,7 +1654,7 @@ It posts only what is not already accrued for that month.`)) return;
                     </tbody>
                     <tfoot>
                       <tr className="font-black text-fg border-t-2 border-white/20">
-                        <td className="py-2" colSpan={9}>Total</td>
+                        <td className="py-2" colSpan={11}>Total</td>
                         <td className="py-2 text-right font-mono">{money2(salesLineItems.totals?.gross ?? salesLineItems.grandTotal)}</td>
                         <td className="py-2 text-right font-mono">{money2(salesLineItems.totals?.discount ?? 0)}</td>
                         <td className="py-2 text-right font-mono text-brand-text">{money2(salesLineItems.totals?.net ?? salesLineItems.grandTotal)}</td>

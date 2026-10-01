@@ -555,6 +555,12 @@ async function createBackdatedSale(payload, actorName) {
     const itemized = Array.isArray(items) && items.length > 0;
     let orderItems = [];
     if (itemized) {
+      // Each line's SRP for the sales report (the sheet's price may be a
+      // dealer's); an unmatched line's own price stands in.
+      const srpIds = items.map(it => it.productId).filter(id => id && mongoose.Types.ObjectId.isValid(String(id)));
+      const srpById = srpIds.length
+        ? new Map((await Product.find({ _id: { $in: srpIds } }, { basePrice: 1 }).lean()).map(p => [String(p._id), Number(p.basePrice) || 0]))
+        : new Map();
       for (const it of items) {
         const price = Number(it.price), qty = Number(it.quantity);
         if (!it.name || !Number.isFinite(price) || price < 0 || !Number.isFinite(qty) || qty <= 0) {
@@ -563,7 +569,8 @@ async function createBackdatedSale(payload, actorName) {
         // A per-line discount, as the paper receipt showed it (a staff meal at
         // 50%, one damaged item at 20%). Bounded 0-100 like every other discount.
         const linePct = Math.max(0, Math.min(100, Number(it.discountPercent) || 0));
-        orderItems.push({ name: String(it.name), price, quantity: qty, productId: it.productId || undefined, productCode: it.productCode || undefined, productDiscountPercent: 0, discountPercent: linePct, itemStatus: 'Served' });
+        const srp = srpById.get(String(it.productId || ''));
+        orderItems.push({ name: String(it.name), price, listPrice: srp != null && srp > 0 ? srp : price, quantity: qty, productId: it.productId || undefined, productCode: it.productCode || undefined, productDiscountPercent: 0, discountPercent: linePct, itemStatus: 'Served' });
       }
     } else {
       const amt = Number(amount);
@@ -1007,6 +1014,13 @@ const PURGE_CATEGORIES = {
   // Master data, like the menu: off unless asked for, so a routine purge of
   // transactions never takes the vendor list with it.
   suppliers:       { label: 'Suppliers (list and their catalogs)', defaultOn: false },
+  // Client accounts. The walk-ins the till promoted on its own (the WALK-IN
+  // badge) go with a routine purge; real client accounts - logins, credit
+  // terms, price tiers - only when asked for. Either way a client that still
+  // has orders, deposits, quotes, reservations or a credit balance after the
+  // purge is kept, so nothing is left naming an account that is gone.
+  walkInClients:   { label: 'Auto-created walk-in clients (WALK-IN badge)', defaultOn: true },
+  clients:         { label: 'All client accounts (logins, credit terms, price tiers)', defaultOn: false },
 };
 app.get('/api/admin/purge-data/categories', verifyToken, requireSuperAdmin, async (req, res) => {
   res.json({ success: true, categories: Object.entries(PURGE_CATEGORIES).map(([key, v]) => ({ key, ...v })) });
@@ -1134,6 +1148,26 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
       deleted.productsMarkedBackInStock = (await Product.updateMany({ ...bizScope, isOutOfStock: true }, { $set: { isOutOfStock: false } })).modifiedCount;
     }
 
+    if (selected.has('clients') || selected.has('walkInClients')) {
+      const ClientAccount = mongoose.model('ClientAccount');
+      const filter = selected.has('clients') ? {} : { source: 'pos' };
+      const candidates = await ClientAccount.find(filter, { _id: 1, creditBalance: 1 }).lean();
+      const ids = candidates.map(c => String(c._id));
+      const oids = candidates.map(c => c._id);
+      const M = (n) => mongoose.model(n);
+      const [ord1, ord2, adv, res, quo] = await Promise.all([
+        M('Order').distinct('clientId', { clientId: { $in: ids } }),
+        M('Order').distinct('clientAccountId', { clientAccountId: { $in: ids } }),
+        M('Advance').distinct('clientId', { clientId: { $in: ids } }),
+        M('Reservation').distinct('clientId', { clientId: { $in: ids } }),
+        M('Quotation').distinct('clientAccountId', { clientAccountId: { $in: oids } }),
+      ]);
+      const busy = new Set([...ord1, ...ord2, ...adv, ...res, ...quo].map(String));
+      const removable = candidates.filter(c => !busy.has(String(c._id)) && !(Math.abs(Number(c.creditBalance) || 0) > 0.004)).map(c => c._id);
+      deleted.clients = (await ClientAccount.deleteMany({ _id: { $in: removable } })).deletedCount;
+      deleted.clientsKeptWithHistory = candidates.length - removable.length;
+    }
+
     // Cached analytics counters - MUST reset alongside Order/Product,
     // whatever fed them, or Analytics keeps showing pre-purge totals forever
     // (they're not derived live, see reports.js).
@@ -1142,7 +1176,8 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
       await del('productStats', ProductStats);
     }
 
-    // Always untouched regardless of selection: User, Role, ClientAccount
+    // Always untouched regardless of selection: User, Role, ClientAccount unless
+    // 'walkInClients' / 'clients' is chosen
     // (staff + client logins), Account/Settings/PaymentMethodMap (Chart of
     // Accounts + config), Discount/DiscountRule (promo definitions),
     // StorageLocation/StockCategory (inventory taxonomy), Supplier (vendor
