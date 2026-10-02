@@ -337,3 +337,45 @@ describe('the money side of a backdated sale', () => {
     expect((await repairBackdatedSalesOnPayables(mongoose)).find(f => f.reference === 'BACKDATE-OLD1')).toBeUndefined();
   });
 });
+
+describe('replacing a sale already imported', () => {
+  const post = (body) => auth('post', '/api/admin/backdate-sale', superTok).send({ date: LAST_MONTH, paymentMethod: 'Cash', ...body });
+  const netOf = async (code) => {
+    const rows = await mongoose.model('JournalEntry').aggregate([{ $unwind: '$lines' }, { $match: { 'lines.accountCode': code } },
+      { $group: { _id: null, d: { $sum: '$lines.debit' }, c: { $sum: '$lines.credit' } } }]);
+    return rows[0] ? Math.round((rows[0].d - rows[0].c) * 100) / 100 : 0;
+  };
+
+  it('a sheet first imported at its subtotal is reversed and recorded at its real total', async () => {
+    const cashBefore = await netOf('111000');
+    const first = await post({ importRef: 'RP-1', items: [{ name: 'Widget', price: 100, quantity: 10 }] });   // 1000 - the wrong figure
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    // Without the option it is still a duplicate.
+    expect((await post({ importRef: 'RP-1', items: [{ name: 'Widget', price: 100, quantity: 10 }], discountAmount: 50 })).status).toBe(409);
+    const again = await post({ importRef: 'RP-1', items: [{ name: 'Widget', price: 100, quantity: 10 }], discountAmount: 50, replaceExisting: true });
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(again.body.order.total).toBe(950);
+
+    const old = await mongoose.model('Order').findById(first.body.order._id).lean();
+    expect(old.status).toBe('Voided');
+    expect(old.importRef).not.toBe('RP-1');
+    // The books carry the sale once, at 950 - not 1000 + 950.
+    expect(Math.round((await netOf('111000') - cashBefore) * 100) / 100).toBe(950);
+  });
+
+  it('gives back the stock the old sale took', async () => {
+    const before = (await mongoose.model('Inventory').findById(inv._id).lean()).stockQty;
+    await post({ importRef: 'RP-2', affectInventory: true, items: [{ name: 'Widget', price: 100, quantity: 4, productId: String(prod._id), productCode: String(inv._id) }] });
+    await post({ importRef: 'RP-2', affectInventory: true, replaceExisting: true, items: [{ name: 'Widget', price: 100, quantity: 3, productId: String(prod._id), productCode: String(inv._id) }] });
+    expect((await mongoose.model('Inventory').findById(inv._id).lean()).stockQty).toBe(before - 3);
+  });
+
+  it('will not replace a sale that already has a collection against it', async () => {
+    const first = await post({ importRef: 'RP-3', paymentMethod: 'On Account', amount: 500 });
+    await mongoose.model('Order').updateOne({ _id: first.body.order._id }, { $push: { arPayments: { amount: 100 } } });
+    const r = await post({ importRef: 'RP-3', paymentMethod: 'On Account', amount: 400, replaceExisting: true });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/collection or refund/);
+    expect((await mongoose.model('Order').findById(first.body.order._id).lean()).status).toBe('Completed');
+  });
+});

@@ -387,7 +387,7 @@ export default function LedgerTab({ ctx }) {
   // etc.) is identical to entering them by hand - just faster for a batch.
   const [bdImportPreview, setBdImportPreview] = useState(null); // { groups: [...], skipped }
   const [bdImporting, setBdImporting] = useState(false);
-  const [bdImportSettings, setBdImportSettings] = useState({ paymentMethod: 'Cash', affectInventory: false });
+  const [bdImportSettings, setBdImportSettings] = useState({ paymentMethod: 'Cash', affectInventory: false, replaceExisting: false });
   // Workbooks with more than one tab pause here so the user can pick which
   // sheet(s) to pull sales from, instead of silently only reading the first.
   const [bdSheetPicker, setBdSheetPicker] = useState(null); // { wb, sheetNames, selected: Set<string> }
@@ -758,6 +758,11 @@ export default function LedgerTab({ ctx }) {
     // mid-import - say which, before anything is posted.
     const badSplits = bdImportPreview.groups.filter(g => g.paymentMethod === 'Split' && !splitReady(g.total, g.payments || []));
     if (badSplits.length) return ui.alert(`Fix the split payment on: ${badSplits.map(g => g.client || g.transNo || 'a sale').join(', ')} - the parts must add up to the sale total, with at least two parts.`);
+    if (bdImportSettings.replaceExisting && !(await ui.confirm({
+      title: 'Replace sales already imported?',
+      message: 'Any sale here whose transaction no. was imported before will be reversed - its journal entries and any stock it took - and recorded again from this sheet. The old one stays in history as Voided.',
+      confirmLabel: 'Import and replace',
+    }))) return;
     setBdImporting(true);
     const total = bdImportPreview.groups.length;
     setBdImportProgress({ done: 0, total });
@@ -785,6 +790,7 @@ export default function LedgerTab({ ctx }) {
               body: JSON.stringify({
                 date: g.date, customerName: g.client, paymentMethod: g.paymentMethod || bdImportSettings.paymentMethod,
                 ...(g.paymentMethod === 'Split' ? { payments: splitPayload(g.payments) } : {}),
+                ...(bdImportSettings.replaceExisting ? { replaceExisting: true } : {}),
                 notes: g.transNo ? `Imported - ${g.transNo}` : 'Imported from Excel',
                 // The sheet's own transaction/invoice number - lets the server skip
                 // this row as a duplicate if it (or an overlapping file) was already
@@ -6109,6 +6115,21 @@ It posts only what is not already accrued for that month.`)) return;
                       <span className="text-xs font-bold text-fg">Reduce current inventory</span>
                       <span className={`w-9 h-5 rounded-full shrink-0 relative transition ${bdImportSettings.affectInventory ? 'bg-amber-500' : 'bg-white/15'}`}>
                         <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${bdImportSettings.affectInventory ? 'left-[18px]' : 'left-0.5'}`}/>
+                      </span>
+                    </button>
+                  </div>
+                  {/* A sheet imported before - say at its subtotal instead of its
+                      grand total - is reversed and recorded again, instead of
+                      skipped as a duplicate. */}
+                  <div className="col-span-2">
+                    <button onClick={() => setBdImportSettings(s => ({ ...s, replaceExisting: !s.replaceExisting }))} aria-pressed={bdImportSettings.replaceExisting}
+                      className={`w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg border transition text-left ${bdImportSettings.replaceExisting ? 'bg-amber-500/10 border-amber-500/40' : 'bg-page-bg border-white/10'}`}>
+                      <span>
+                        <span className="text-xs font-bold text-fg block">Replace sales already imported</span>
+                        <span className="text-[10px] text-fg/70 block">A sale with the same transaction no. is reversed (its entries, and any stock it took) and recorded again from this sheet. Off: it is skipped.</span>
+                      </span>
+                      <span className={`w-9 h-5 rounded-full shrink-0 relative transition ${bdImportSettings.replaceExisting ? 'bg-amber-500' : 'bg-white/15'}`}>
+                        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${bdImportSettings.replaceExisting ? 'left-[18px]' : 'left-0.5'}`}/>
                       </span>
                     </button>
                   </div>

@@ -163,7 +163,7 @@ describe('supplier payments report', () => {
     // Which pot the money came out of - the A/P debit's opposite leg.
     expect(row.paidFromCode).toBe('111000');
     expect(res.body.totalPaid).toBeGreaterThanOrEqual(800);
-    expect(res.body.bySupplier.find(g => g.supplier === 'Best Beans').amount).toBeGreaterThanOrEqual(800);
+    expect(res.body.bySupplier.find(g => String(g.supplier).toUpperCase() === 'BEST BEANS').amount).toBeGreaterThanOrEqual(800);
   });
 
   it('excludes payments outside the range', async () => {

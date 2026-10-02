@@ -529,8 +529,59 @@ async function maybePromoteBackdateClient(customerName) {
 // "Save" action once the missing piece (payment method, today) is supplied.
 // Throws an Error with `.httpStatus` set for anything that should reach the
 // client as a 400/423 rather than a 500.
+// Undo a backdated sale exactly as it was posted, so it can be recorded again:
+// every journal entry it made (the sale, and any later correction of it) is
+// mirrored by one reversing entry dated the same day; the stock it took goes
+// back at the cost it left at; the running sales counters come down; the order
+// is kept, marked Voided, and its sheet reference is released for the new one.
+async function reverseBackdatedSale(old, session, actorName) {
+  const fail = (httpStatus, message) => Object.assign(new Error(message), { httpStatus });
+  const sales = await JournalEntry.find({ description: new RegExp(`^Backdated sale: ${escapeRegex(old.orderNumber)}(\\s|$|\\()`) }).session(session).lean();
+  if (!sales.length) throw fail(409, `${old.orderNumber} has no ledger entry to reverse - void it by hand, then import again.`);
+  const fixes = await JournalEntry.find({ $or: sales.map(j => ({ description: { $regex: escapeRegex(`[fixes ${j.reference}]`) } })) }).session(session).lean();
+  const lines = [...sales, ...fixes].flatMap(j => (j.lines || []).map(l => ({
+    accountCode: l.accountCode, accountName: l.accountName, debit: Number(l.credit) || 0, credit: Number(l.debit) || 0,
+  })));
+  const reference = await mkSeqRef('BDREPL');
+  await JournalEntry.create([{
+    date: new Date(old.createdAt), reference,
+    description: `Reversal: ${old.orderNumber} replaced by a re-import of ${old.importRef}`,
+    lines,
+  }], { session });
+
+  for (const m of (old.stockMoves || [])) {
+    const qty = Number(m.qty) || 0, cost = Number(m.unitCost) || 0;
+    if (!(qty > 0) || !mongoose.Types.ObjectId.isValid(String(m.invId))) continue;
+    const back = await Inventory.findOneAndUpdate(
+      { _id: m.invId },
+      [{ $set: {
+        unitCost: { $cond: [
+          { $gt: [{ $add: [{ $max: ['$stockQty', 0] }, qty] }, 0] },
+          { $divide: [{ $add: [{ $multiply: [{ $max: ['$stockQty', 0] }, { $ifNull: ['$unitCost', 0] }] }, qty * cost] }, { $add: [{ $max: ['$stockQty', 0] }, qty] }] },
+          cost,
+        ] },
+        stockQty: { $round: [{ $add: ['$stockQty', qty] }, 6] },
+      } }],
+      { session, returnDocument: 'after', updatePipeline: true },
+    );
+    if (back) await StockCard.create([{ inventoryId: back._id, itemName: back.itemName, type: 'Adjustment', reference, qtyChange: qty, balanceAfter: back.stockQty, unitCost: cost, remarks: `Replaced by re-import (${old.orderNumber})` }], { session });
+  }
+
+  const comp = !!old.isComplimentary;
+  await TenantStats.findOneAndUpdate(
+    { businessType: BUSINESS_TYPE, shard: Math.floor(Math.random() * STATS_SHARDS) },
+    { $inc: { cumulativeRevenue: comp ? 0 : -(Number(old.total) || 0), cumulativeComp: comp ? -(Number(old.subtotal) || 0) : 0, cumulativeOrderCount: -1, cumulativeNonCompCount: comp ? 0 : -1 } },
+    { session, upsert: true },
+  );
+
+  await Order.updateOne({ _id: old._id }, { $set: {
+    status: 'Voided', voidReason: `Replaced by a re-import of ${old.importRef}`, voidedBy: actorName || 'Backdate import',
+    importRef: `${old.importRef} (replaced ${new Date().toISOString().slice(0, 10)})`,
+  } }, { session });
+}
+
 async function createBackdatedSale(payload, actorName) {
-  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, discountAmount = 0, isComplimentary = false, importRef = '', deliveryFee = 0, paymentReference = '', paymentCheckDate = null, orderNumber: wantedNumber = '', clientId = '', payments: paymentsIn = null } = payload;
+  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, discountAmount = 0, isComplimentary = false, importRef = '', deliveryFee = 0, paymentReference = '', paymentCheckDate = null, orderNumber: wantedNumber = '', clientId = '', payments: paymentsIn = null, replaceExisting = false } = payload;
   const comp = !!isComplimentary;
   const fail = (httpStatus, message) => Object.assign(new Error(message), { httpStatus });
 
@@ -544,14 +595,27 @@ async function createBackdatedSale(payload, actorName) {
   // sale. Manual single-entry backdates never set this, so they're never
   // deduped against each other (nothing to dedupe on).
   const cleanImportRef = String(importRef || '').trim();
+  // With replaceExisting, a sheet imported before (e.g. at the subtotal instead
+  // of its grand total) is reversed and recorded again, in one transaction.
+  let replacing = null;
   if (cleanImportRef) {
     const dupe = await Order.findOne({ businessType: BUSINESS_TYPE, importRef: cleanImportRef, isBackdated: true }).lean();
-    if (dupe) throw fail(409, `Already imported as ${dupe.orderNumber} (ref: ${cleanImportRef}) - skipped duplicate.`);
+    if (dupe && !replaceExisting) throw fail(409, `Already imported as ${dupe.orderNumber} (ref: ${cleanImportRef}) - skipped duplicate.`);
+    if (dupe) {
+      if (dupe.status !== 'Completed') throw fail(409, `${dupe.orderNumber} (ref: ${cleanImportRef}) is ${dupe.status} - it cannot be replaced.`);
+      if ((dupe.arPayments || []).length || Number(dupe.refundedAmount) > 0 || dupe.arSettled) {
+        throw fail(409, `${dupe.orderNumber} (ref: ${cleanImportRef}) already has a collection or refund recorded - reverse that first, then replace it.`);
+      }
+      const oldLock = await periodLockFor(new Date(dupe.createdAt));
+      if (oldLock) throw fail(423, `${dupe.orderNumber} is in ${oldLock.year}-${String(oldLock.month).padStart(2, '0')}, a closed month - it cannot be replaced.`);
+      replacing = dupe;
+    }
   }
 
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
+    if (replacing) await reverseBackdatedSale(replacing, session, actorName);
     // Build the line items - itemized when provided, else a single lump line.
     const itemized = Array.isArray(items) && items.length > 0;
     let orderItems = [];
