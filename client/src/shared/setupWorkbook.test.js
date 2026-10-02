@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as XLSX from 'xlsx';
-import { availableTemplates, readSetupWorkbook, runSetupImport, bookChecks } from './setupWorkbook';
+import { TEMPLATES, availableTemplates, readSetupWorkbook, runSetupImport, bookChecks } from './setupWorkbook';
 
 // The workbook as someone fills it in: a sheet per import, an untouched example
 // row on one of them, and a sheet left empty.
@@ -32,7 +32,7 @@ describe('which templates a person gets', () => {
   it('leaves out what they cannot import, and clients unless this is logistics', () => {
     expect(availableTemplates(can, true, 'fb').map(t => t.sheet)).toEqual([
       'Chart of Accounts', 'Suppliers', 'Inventory', 'Price Tiers', 'P&L History', 'Opening Balances', 'Open Receivables', 'Open Payables',
-      'Open Deposits & Advances', 'Bills', 'Expenses', 'Fixed Assets',
+      'Open Deposits & Advances', 'Bills', 'Expenses', 'Fixed Assets', 'Orders',
     ]);
     expect(availableTemplates(can, true, 'log').map(t => t.sheet)).toContain('Clients');
     // A manager without accounting rights gets none of the accounting sheets.
@@ -176,5 +176,28 @@ describe('do the books agree', () => {
   });
   it('with no P&L, expects the balance sheet to balance by itself', () => {
     expect(bookChecks({ openingBalances: { balancingToCapital: 0, controls: {} } })).toEqual([{ ok: true, text: 'The balance sheet balances by itself.' }]);
+  });
+});
+
+describe('an Orders export brought back', () => {
+  it('finds an older export by its headings, and sends its product lines along', async () => {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      ['Order No', 'OR No', 'Date', 'Customer', 'Status', 'Payment', 'Subtotal', 'Discount', 'Total'],
+      ['ORD-2026-A0742', '', '2026-09-30', 'COSTA VERDE', 'Completed', 'On Account', 126410, 0, 126410],
+    ]), 'Data');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      ['Order No', 'Code', 'Product', 'Qty', 'Unit Price', 'Line Discount %'],
+      ['ORD-2026-A0742', 'P40022', 'BD LYCHEE 2L', 5, 395, 0],
+    ]), 'Order Lines');
+    const steps = await readSetupWorkbook(XLSX, wb, availableTemplates(can, true, 'log'), async () => ({ json: async () => ({ success: false }) }));
+    const orders = steps.find(s => s.key === 'orders');
+    expect(orders.count).toBe(1);
+    expect(orders.lines).toHaveLength(1);
+    expect(orders.lines[0]).toMatchObject({ 'Order No': 'ORD-2026-A0742', Qty: 5 });
+  });
+
+  it('is never written into the setup workbook itself', () => {
+    expect(TEMPLATES.find(t => t.key === 'orders').notInWorkbook).toBe(true);
   });
 });

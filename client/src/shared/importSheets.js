@@ -487,8 +487,15 @@ export const menuImportPayload = (rows) => ({
 // sheet in a multi-sheet workbook, instead of assuming the first.
 export const isStockSheetHeader = (hdr) => {
   const h = (hdr || []).map(x => String(x ?? '').toLowerCase().trim());
+  // A recipe sheet has Product and Qty too - its Ingredient column tells it apart.
+  if (h.includes('ingredient')) return false;
   return (h.includes('product') || h.includes('itemname'))
-    && (h.includes('qty unit') || h.includes('unit cost') || h.includes('unitcost'));
+    && (h.includes('qty unit') || h.includes('unit cost') || h.includes('unitcost')
+      // The pack layout the template itself uses: Pack | Unit | Qty (packs) |
+      // Cost / pack. A Google Sheet laid out that way was refused on pull
+      // ("no Product and Qty Unit / Unit Cost columns") though a file upload
+      // of the very same sheet imported fine.
+      || ['qty', 'qty (packs)', 'qty(packs)', 'qty packs', 'quantity', 'cost / pack', 'cost/pack', 'cost per pack'].some(k => h.includes(k)));
 };
 export const isMenuSheetHeader = (hdr) => {
   const h = (hdr || []).map(x => String(x ?? '').toLowerCase().trim());

@@ -52,7 +52,7 @@ export async function pullSheet(apiFetch, parseImportFile, tabs = 'all') {
   const { workbook, used, skipped, duplicates } = mergeStockTabs(XLSX, wb, tabs);
   if (!workbook) {
     throw new Error(tabs === 'all'
-      ? 'None of the tabs has stock columns (Product, and Qty Unit or Unit Cost). Use the columns from the import template.'
+      ? 'None of the tabs has stock columns (Product, and Qty or Cost / pack). Use the columns from the import template.'
       : `None of the chosen tabs can be imported: ${skipped.map(x => `${x.name} (${x.reason})`).join('; ')}.`);
   }
   // Say what is about to be read when it is not simply "the tabs you chose".

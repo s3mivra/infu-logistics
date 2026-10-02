@@ -610,6 +610,22 @@ export default function ProcurementTab({ ctx }) {
   const updateLine = (idx, patch) => setForm(f => ({ ...f, lines: f.lines.map((l, i) => i === idx ? { ...l, ...patch } : l) }));
   const addLine = () => setForm(f => ({ ...f, lines: [...f.lines, blankLine()] }));
   const removeLine = (idx) => setForm(f => ({ ...f, lines: f.lines.length > 1 ? f.lines.filter((_, i) => i !== idx) : f.lines }));
+  // Another batch of the same product - the same delivery, but a different
+  // expiry (batch 1 expiring in March, batch 2 in May). A line of its own, so
+  // receiving puts each into stock as its own batch with its own date.
+  const addBatch = (idx) => setForm(f => {
+    const src = f.lines[idx];
+    const copy = { ...src, orderedQty: '', expiryDate: '', productionDate: '' };
+    return { ...f, lines: [...f.lines.slice(0, idx + 1), copy, ...f.lines.slice(idx + 1)] };
+  });
+  const sameProduct = (a, b) => (a.purchaseType || 'inventory') === 'inventory' && (b.purchaseType || 'inventory') === 'inventory'
+    && ((a.invId && String(a.invId) === String(b.invId)) || (!a.invId && !b.invId && a.itemName.trim() && a.itemName.trim().toLowerCase() === b.itemName.trim().toLowerCase()));
+  // "Batch 2 of 3" when the same product sits on more than one line.
+  const batchLabel = (idx) => {
+    const l = form.lines[idx];
+    const all = form.lines.map((x, i) => [x, i]).filter(([x]) => sameProduct(x, l));
+    return all.length > 1 ? `Batch ${all.findIndex(([, i]) => i === idx) + 1} of ${all.length}` : '';
+  };
 
   // Autofill a line when an inventory item is picked. item.unitCost is always
   // stored per BASE unit (₱/gram) - never copy it straight across.
@@ -1507,6 +1523,9 @@ export default function ProcurementTab({ ctx }) {
                             placeholder="Type to find an inventory item (or type below)"
                             options={inventory.map(i => ({ value: i._id, label: i.itemName, hint: i.itemCode || '' }))} />
                         ) : <span className="flex-1" />}
+                        {batchLabel(idx) && (
+                          <span className="text-[10px] font-black uppercase tracking-wider text-brand-text bg-brand/10 px-2 py-1 rounded-lg whitespace-nowrap">{batchLabel(idx)}</span>
+                        )}
                         {form.lines.length > 1 && (
                           <button onClick={() => removeLine(idx)} className="p-1.5 rounded-lg text-fg/65 hover:bg-red-500/15 hover:text-danger transition"><Trash2 size={15} /></button>
                         )}
@@ -1581,7 +1600,16 @@ export default function ProcurementTab({ ctx }) {
                           <input type="number" min="0" value={l.lowStockThreshold || ''} onChange={e => updateLine(idx, { lowStockThreshold: e.target.value })} placeholder="e.g. 10" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60" />
                         </div>
                       </div>
-                      <p className="text-right text-fg/70 text-xs font-bold">Line: {money((Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0))}</p>
+                      <div className="flex items-center justify-between gap-2">
+                        {(l.purchaseType || 'inventory') === 'inventory' && (l.invId || l.itemName.trim()) ? (
+                          <button type="button" onClick={() => addBatch(idx)}
+                            title="Same product, a different quantity and expiry - each batch goes into stock with its own date"
+                            className="flex items-center gap-1 text-brand-text text-xs font-bold hover:underline">
+                            <Plus size={13} /> Another batch
+                          </button>
+                        ) : <span />}
+                        <p className="text-right text-fg/70 text-xs font-bold">Line: {money((Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0))}</p>
+                      </div>
                     </div>
                   ))}
                 </div>

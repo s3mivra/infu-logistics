@@ -24,7 +24,7 @@ export function mergeStockTabs(XLSX, wb, tabs) {
     const ws = wb.Sheets[name];
     if (!ws) { skipped.push({ name, reason: 'not in the sheet' }); continue; }
     const hdr = (XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })[0] || []).map(h => String(h ?? '').trim());
-    if (!isStockSheetHeader(hdr)) { skipped.push({ name, reason: 'no Product and Qty Unit / Unit Cost columns' }); continue; }
+    if (!isStockSheetHeader(hdr)) { skipped.push({ name, reason: 'no Product and Qty / Cost columns' }); continue; }
     used.push(name);
     const range = XLSX.utils.decode_range(ws['!ref']);
     const map = hdr.map((h) => {

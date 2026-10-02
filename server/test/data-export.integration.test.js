@@ -54,7 +54,10 @@ describe('the catalogue of what can be exported', () => {
     // spreadsheet rewrite history.
     expect(byKey.journal.importable).toBe(false);
     expect(byKey.stockCards.importable).toBe(false);
-    expect(byKey.orders.importable).toBe(false);
+    // Orders can be brought BACK, but never rewritten: the import only adds a
+    // completed sale that is not in the app yet, through the backdated-sale
+    // path (see /api/orders/import) - an existing order is never touched.
+    expect(byKey.orders.importable).toBe(true);
   });
 });
 

@@ -654,8 +654,36 @@ export const DATASETS = {
   },
 
   orders: {
-    label: 'Orders', model: 'Order', dateField: 'createdAt',
+    label: 'Orders', model: 'Order', dateField: 'createdAt', importable: true,
     sort: { createdAt: -1 },
+    // Named, so the export can be imported straight back (Ledger -> Import),
+    // with each order's product lines on a sheet of their own.
+    sheetName: 'Orders',
+    extraSheets: (docs) => [{
+      name: 'Order Lines',
+      columns: ['Order No', 'Code', 'Product', 'Qty', 'Unit Price', 'Line Discount %'],
+      rows: docs.flatMap(o => (o.items || []).map(it => [
+        o.orderNumber || '', it.productCode || '',
+        (it.name || '') + ((it.selectedAddOns || []).length ? ` + ${(it.selectedAddOns || []).map(a => a.name).join(', ')}` : ''),
+        Number(it.quantity) || 0,
+        money((Number(it.price) || 0) + (it.selectedAddOns || []).reduce((s, a) => s + (Number(a.price) || 0), 0)),
+        Math.max(Number(it.productDiscountPercent) || 0, Number(it.discountPercent) || 0),
+      ])),
+    }],
+    importSpec: {
+      endpoint: '/api/orders/import',
+      intro: 'Brings back an Orders export. Each completed order returns as a sale on its own date, with its own order number, posted to the books. Keep the "Order Lines" sheet with it to bring the products back too. An order already in the app is skipped, so importing twice does nothing.',
+      columns: [
+        { name: 'Order No', required: true, example: 'ORD-2026-A0742' },
+        { name: 'Date', required: true, note: 'YYYY-MM-DD.', example: '2026-09-30' },
+        { name: 'Customer', example: 'COSTA VERDE' },
+        { name: 'Status', note: 'Only Completed is imported.', example: 'Completed' },
+        { name: 'Payment', note: 'See the Valid Values sheet.', example: 'On Account' },
+        { name: 'Subtotal', example: '126410' },
+        { name: 'Discount', example: '0' },
+        { name: 'Total', required: true, example: '126410' },
+      ],
+    },
     // OR No. is what an examiner traces a sale by, and a total with no sight of
     // what was refunded or collected against it cannot be reconciled to the
     // books from the sheet alone.

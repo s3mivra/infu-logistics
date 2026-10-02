@@ -27,6 +27,12 @@ export const TEMPLATES = [
   { key: 'bills', sheet: 'Bills', perm: books },
   { key: 'expenses', sheet: 'Expenses', perm: books },
   { key: 'fixedAssets', sheet: 'Fixed Assets', perm: books },
+  // An Orders export, brought back (Ledger -> Import). Last: its customers are
+  // matched to client accounts, and it posts each sale. Not a sheet of the
+  // setup workbook itself - only read when a file carries it. An export from
+  // before the sheet was named "Orders" is recognised by its header row.
+  { key: 'orders', sheet: 'Orders', perm: (can, su) => su, notInWorkbook: true,
+    altHeader: ['Order No', 'Date', 'Customer', 'Total'], linesSheet: 'Order Lines' },
 ];
 
 export const availableTemplates = (can, isSuperAdmin, businessType) =>
@@ -44,6 +50,7 @@ export const endpointFor = (key) => ({
   bills: 'bills/import',
   expenses: 'expenses/import',
   fixedAssets: 'fixed-assets/import',
+  orders: 'orders/import',
   priceTiers: 'setup/price-tiers/import',
 }[key]);
 
@@ -58,7 +65,15 @@ export const cellText = (v) => (v instanceof Date ? localDate(v) : String(v ?? '
 export async function readSetupWorkbook(XLSX, wb, available, apiFetch) {
   const steps = [];
   for (const t of available) {
-    const ws = wb.Sheets[t.sheet];
+    let ws = wb.Sheets[t.sheet];
+    // An older export names its only sheet "Data" - known by its headings.
+    if (!ws && t.altHeader) {
+      const name = wb.SheetNames.find((n) => {
+        const head = (XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '' })[0] || []).map((h) => String(h ?? '').trim());
+        return t.altHeader.every((h) => head.includes(h));
+      });
+      if (name) ws = wb.Sheets[name];
+    }
     if (!ws) continue;
     const grid = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });   // blank rows kept, so row numbers match the sheet
     if (grid.length < 2) continue;
@@ -79,7 +94,11 @@ export async function readSetupWorkbook(XLSX, wb, available, apiFetch) {
       kept.push({ row, sheetRow: i + 2 });
     });
     if (!kept.length) continue;
-    steps.push({ ...t, header, grid: [grid[0], ...kept.map((k) => k.row)], sheetRows: kept.map((k) => k.sheetRow), count: kept.length, skippedExample });
+    // A companion sheet sent along with it (an Orders export's product lines).
+    const lines = t.linesSheet && wb.Sheets[t.linesSheet]
+      ? XLSX.utils.sheet_to_json(wb.Sheets[t.linesSheet], { defval: '' }).map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v instanceof Date ? localDate(v) : v])))
+      : null;
+    steps.push({ ...t, header, grid: [grid[0], ...kept.map((k) => k.row)], sheetRows: kept.map((k) => k.sheetRow), count: kept.length, skippedExample, ...(lines ? { lines } : {}) });
   }
   return steps;
 }
@@ -109,6 +128,7 @@ export async function runSetupImport(steps, { apiFetch, parseImportFile, onProgr
       // P&L months really posted - otherwise it would be lost altogether.
       openingBalances: { pnlHistory: !!outcome.pnlHistory },
       fixedAssets: { opening: hasOpening },
+      orders: s.lines ? { lines: s.lines } : {},
     }[s.key] || {};
     // "Row 3" from the server counts the rows it was sent; say the sheet's row.
     const sheetRow = (n) => s.sheetRows[(Number(n) || 1) - 1] ?? n;
@@ -192,6 +212,7 @@ export function bookChecks(outcome, { stock = false } = {}) {
 export async function buildSetupWorkbook(XLSX, available, apiFetch, { businessType = 'fb' } = {}) {
   const specs = [];
   for (const t of available) {
+    if (t.notInWorkbook) continue;
     const d = await (await apiFetch(`/api/export/${t.key}?template=1`)).json();
     if (d.success && d.importable) specs.push({ ...t, ...d });
   }

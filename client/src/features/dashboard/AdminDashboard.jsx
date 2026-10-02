@@ -5357,7 +5357,12 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       // A template ships one worked example rather than a bare header row: the
       // shape of a real entry is easier to copy than to describe.
       const dataRows = template && d.example ? [d.example] : d.rows;
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([d.columns, ...dataRows]), 'Data');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([d.columns, ...dataRows]), d.sheetName || 'Data');
+      // A dataset that comes back with more than one sheet (Orders + its lines),
+      // so the file can be imported straight back.
+      if (!template) for (const x of (d.extraSheets || [])) {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([x.columns, ...(x.rows || [])]), x.name);
+      }
 
       if (template) {
         // What each column means, and which ones cannot be left blank.

@@ -529,7 +529,7 @@ async function maybePromoteBackdateClient(customerName) {
 // Throws an Error with `.httpStatus` set for anything that should reach the
 // client as a 400/423 rather than a 500.
 async function createBackdatedSale(payload, actorName) {
-  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, discountAmount = 0, isComplimentary = false, importRef = '', deliveryFee = 0, paymentReference = '', paymentCheckDate = null } = payload;
+  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, discountAmount = 0, isComplimentary = false, importRef = '', deliveryFee = 0, paymentReference = '', paymentCheckDate = null, orderNumber: wantedNumber = '', clientId = '' } = payload;
   const comp = !!isComplimentary;
   const fail = (httpStatus, message) => Object.assign(new Error(message), { httpStatus });
 
@@ -619,7 +619,12 @@ async function createBackdatedSale(payload, actorName) {
     }
 
     const year = dt.getFullYear();
-    const orderNumber = await generateNextSequence(Order, `ORD-${year}`, 'orderNumber', 'ORD');
+    // A re-imported order keeps the number it had (the Orders import), when
+    // nothing else holds it now; everything else takes the next one.
+    const keep = String(wantedNumber || '').trim();
+    const orderNumber = keep && !(await Order.exists({ orderNumber: keep }))
+      ? keep
+      : await generateNextSequence(Order, `ORD-${year}`, 'orderNumber', 'ORD');
 
     // Optional stock deduction + COGS - only when explicitly asked.
     let totalCogs = 0;
@@ -674,6 +679,9 @@ async function createBackdatedSale(payload, actorName) {
       createdAt: dt,
       cashier: actorName || 'Backdated Entry',
       customerName: customerName || 'Walk-in (backdated)',
+      // The client account it was sold to, so A/R and the client's history
+      // carry it - not just a name.
+      ...(clientId ? { clientId: String(clientId), clientAccountId: String(clientId) } : {}),
       paymentMethod: method,
       ...(payRef ? { paymentReference: payRef } : {}),
       ...(checkDate ? { paymentCheckDate: checkDate } : {}),
@@ -780,6 +788,122 @@ async function createBackdatedSale(payload, actorName) {
     throw err;
   }
 }
+
+// ── ORDERS IMPORT ─────────────────────────────────────────────────────────────
+// Brings back the Orders export (Ledger -> Import, or the setup workbook). Each
+// row becomes a completed sale through createBackdatedSale - dated to its day,
+// posted to the books, keeping its ORIGINAL order number - so the books and the
+// client's A/R come back exactly. With the export's "Order Lines" sheet the
+// products come back too; without it (an older export) each order gets one
+// summary line priced so its subtotal, discount and total match to the centavo.
+//
+// Never twice: a row whose order number is still in the app, or was imported
+// before (its importRef), is skipped. Only Completed orders come back - a
+// cancelled or voided one never happened, and a refund cannot be recreated
+// from a summary, so those are reported rather than guessed at.
+const ORDER_IMPORT_MAX_ROWS = 2000;
+app.post('/api/orders/import', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    const lineRows = Array.isArray(req.body?.lines) ? req.body.lines : [];
+    if (!rows.length) return res.status(400).json({ success: false, error: 'No orders to import.' });
+    if (rows.length > ORDER_IMPORT_MAX_ROWS) return res.status(400).json({ success: false, error: `Too many rows (${rows.length}) - import at most ${ORDER_IMPORT_MAX_ROWS} at a time.` });
+
+    const pick = (r, ...keys) => { for (const k of keys) { const v = r[k]; if (v !== undefined && v !== null && String(v).trim() !== '') return v; } return ''; };
+    const num = (v) => { const n = parseFloat(String(v ?? '').replace(/[₱,\s]/g, '')); return Number.isFinite(n) ? n : 0; };
+
+    // Lines by order number.
+    const linesByOrder = new Map();
+    for (const l of lineRows) {
+      const no = String(pick(l, 'Order No', 'orderNo')).trim();
+      if (!no) continue;
+      if (!linesByOrder.has(no)) linesByOrder.set(no, []);
+      linesByOrder.get(no).push(l);
+    }
+    const [products, clients] = await Promise.all([
+      Product.find({}, { name: 1, productCode: 1 }).lean(),
+      mongoose.model('ClientAccount').find({}, { name: 1 }).lean(),
+    ]);
+    const prodByCode = new Map(products.filter(p => p.productCode).map(p => [String(p.productCode).toUpperCase(), p]));
+    const prodByName = new Map(products.map(p => [String(p.name).toUpperCase(), p]));
+    const clientByName = new Map(clients.map(c => [String(c.name || '').trim().toUpperCase(), c]));
+
+    const created = [], skipped = [], problems = [];
+    let maxSeqByKey = {};
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i] || {};
+      const no = String(pick(r, 'Order No', 'orderNo')).trim();
+      try {
+        if (!no) throw new Error('Order No is required.');
+        const status = String(pick(r, 'Status', 'status') || 'Completed').trim();
+        if (status.toLowerCase() !== 'completed') throw new Error(`${no} is ${status} - only completed orders are imported.`);
+        if (await Order.exists({ $or: [{ orderNumber: no }, { importRef: no, isBackdated: true }] })) throw new Error(`${no} is already in the app - skipped.`);
+
+        const date = pick(r, 'Date', 'date');
+        const customer = String(pick(r, 'Customer', 'customer')).trim();
+        const payment = String(pick(r, 'Payment', 'paymentMethod') || 'Cash').trim();
+        const subtotal = num(pick(r, 'Subtotal', 'subtotal'));
+        const discount = Math.max(0, num(pick(r, 'Discount', 'discount')));
+        const total = num(pick(r, 'Total', 'total'));
+        if (!(total > 0)) throw new Error(`${no} has no total.`);
+
+        const its = (linesByOrder.get(no) || []).map(l => {
+          const code = String(pick(l, 'Code', 'code')).trim().toUpperCase();
+          const name = String(pick(l, 'Product', 'product', 'name')).trim();
+          const p = (code && prodByCode.get(code)) || prodByName.get(name.toUpperCase());
+          return {
+            name: name || p?.name || 'Item', price: num(pick(l, 'Unit Price', 'unitPrice', 'price')), quantity: num(pick(l, 'Qty', 'qty', 'quantity')),
+            discountPercent: num(pick(l, 'Line Discount %', 'discountPercent')),
+            productId: p?._id ? String(p._id) : undefined, productCode: code || p?.productCode || undefined,
+          };
+        }).filter(it => it.quantity > 0);
+
+        // The order-level discount the lines do not already explain, in pesos,
+        // so the sale lands on the exported total exactly.
+        let payload;
+        if (its.length) {
+          const gross = its.reduce((s, it) => s + it.price * it.quantity, 0);
+          const lineDisc = its.reduce((s, it) => s + Math.round(it.price * it.quantity * Math.min(100, it.discountPercent) ) / 100, 0);
+          const rest = Math.max(0, Math.round((gross - lineDisc - total) * 100) / 100);
+          payload = { items: its, discountAmount: rest };
+        } else {
+          const gross = subtotal > 0 ? subtotal : total + discount;
+          payload = { items: [{ name: `Sales - ${no}`, price: gross, quantity: 1 }], discountAmount: Math.max(0, Math.round((gross - total) * 100) / 100) };
+        }
+        const client = customer ? clientByName.get(customer.toUpperCase()) : null;
+        const result = await createBackdatedSale({
+          ...payload, date, customerName: customer || undefined, paymentMethod: payment,
+          importRef: no, orderNumber: no, clientId: client ? String(client._id) : '',
+          notes: `Re-imported - ${no}`, affectInventory: false,
+        }, req.user?.name);
+        if (Math.abs(Number(result.total) - total) > 0.005) problems.push(`${no}: imported at ${result.total}, the sheet says ${total} - check its lines.`);
+        if (num(pick(r, 'Refunded')) > 0) problems.push(`${no}: had a refund of ${num(pick(r, 'Refunded'))} - imported at its full total; record the refund again.`);
+        if (num(pick(r, 'Collected')) > 0) problems.push(`${no}: ${num(pick(r, 'Collected'))} had been collected on it - record that collection again in A/R.`);
+        const m = /^(.+)-A(\d+)$/.exec(result.order.orderNumber);
+        if (m) { const key = `ORD${m[1].slice(m[1].indexOf('-'))}`; maxSeqByKey[key] = Math.max(maxSeqByKey[key] || 0, Number(m[2])); }
+        created.push({ row: i + 1, orderNumber: result.order.orderNumber, total: result.total, itemized: !!its.length });
+      } catch (e) {
+        skipped.push({ row: i + 1, error: e.message });
+      }
+    }
+    // Numbers kept from the sheet must never be handed out again.
+    const Counter = mongoose.model('Counter');
+    for (const [key, seq] of Object.entries(maxSeqByKey)) await Counter.updateOne({ _id: key }, { $max: { seq } }, { upsert: true });
+
+    const total = Math.round(created.reduce((s, c) => s + c.total, 0) * 100) / 100;
+    await logAudit(req, { action: 'import', entity: 'Order', entityId: 'orders-import', after: { created: created.length, skipped: skipped.length, total } });
+    emitToMgr('erpUpdated');
+    const itemized = created.filter(c => c.itemized).length;
+    res.json({
+      success: true, created: created.length, skipped, problems, total,
+      note: `${created.length} order(s), ₱${total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}, back on their own dates with their own numbers and posted to the books.`
+        + (created.length && itemized < created.length ? ` ${created.length - itemized} came from a summary-only export, so each has one summary line instead of its products (stock was not touched).` : ''),
+    });
+  } catch (err) {
+    log.error?.({ err }, 'POST /api/orders/import failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
 
 app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req, res) => {
   try {

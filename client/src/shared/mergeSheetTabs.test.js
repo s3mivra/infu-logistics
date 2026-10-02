@@ -21,7 +21,7 @@ describe('merging stock tabs', () => {
   it('takes every stock tab on "all", matching columns by name, and skips the rest', () => {
     const res = mergeStockTabs(XLSX, book(tabs), 'all');
     expect(res.used).toEqual(['Beans', 'Milk']);
-    expect(res.skipped).toEqual([{ name: 'Notes', reason: 'no Product and Qty Unit / Unit Cost columns' }]);
+    expect(res.skipped).toEqual([{ name: 'Notes', reason: 'no Product and Qty / Cost columns' }]);
     expect(rowsOf(res)).toEqual([
       { Product: 'Espresso Beans 1kg', 'Qty Unit': 10, 'Unit Cost': 900 },
       { Product: 'Fresh Milk 1L', 'Qty Unit': 24, 'Unit Cost': 95 },
@@ -56,5 +56,16 @@ describe('merging stock tabs', () => {
     const res = mergeStockTabs(XLSX, book({ Notes: tabs.Notes }), 'all');
     expect(res.workbook).toBeNull();
     expect(res.used).toEqual([]);
+  });
+});
+
+describe("a sheet in the template's pack layout", () => {
+  it('is read on pull, like a file upload of the same sheet', () => {
+    const res = mergeStockTabs(XLSX, book({
+      'Actual(With Expiry Not Ref)': [['Code', 'Product', 'Pack', 'Unit', 'Qty', 'Cost / pack', 'SRP / unit', 'Expiry date'],
+        ['P10001', 'COMMERCIAL BLEND', 1, 'kg', 400, 600, 950, '']],
+    }), ['Actual(With Expiry Not Ref)']);
+    expect(res.used).toEqual(['Actual(With Expiry Not Ref)']);
+    expect(rowsOf(res)[0]).toMatchObject({ Product: 'COMMERCIAL BLEND', Qty: 400, 'Cost / pack': 600 });
   });
 });

@@ -241,3 +241,53 @@ describe('an imported billing statement lands on its own grand total', () => {
     expect(saved.body.order.importRef).toBe('GT-2');
   });
 });
+
+describe('importing an Orders export back', () => {
+  const imp = (body) => auth('post', '/api/orders/import', superTok).send(body);
+
+  it('a summary row comes back on its date, with its number, total and client', async () => {
+    const client = await mongoose.model('ClientAccount').create({ name: 'IMPORT CLIENT', clientCode: 'IMP-1', username: 'impclient', password: 'x' });
+    const r = await imp({ rows: [{ 'Order No': 'ORD-2026-A9001', Date: LAST_MONTH, Customer: 'Import Client', Status: 'Completed', Payment: 'On Account', Subtotal: 1000, Discount: 50, Total: 950 }] });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.created).toBe(1);
+    const o = await mongoose.model('Order').findOne({ orderNumber: 'ORD-2026-A9001' }).lean();
+    expect(o).toBeTruthy();
+    expect(o.total).toBe(950);
+    expect(o.discount).toBe(50);
+    expect(o.paymentMethod).toBe('On Account');
+    expect(o.clientId).toBe(String(client._id));
+    expect(o.createdAt.toISOString().slice(0, 10)).toBe(LAST_MONTH);
+  });
+
+  it('importing the same file again adds nothing', async () => {
+    const r = await imp({ rows: [{ 'Order No': 'ORD-2026-A9001', Date: LAST_MONTH, Status: 'Completed', Total: 950 }] });
+    expect(r.body.created).toBe(0);
+    expect(await mongoose.model('Order').countDocuments({ orderNumber: 'ORD-2026-A9001' })).toBe(1);
+  });
+
+  it('only completed orders come back', async () => {
+    const r = await imp({ rows: [{ 'Order No': 'ORD-2026-A9002', Date: LAST_MONTH, Status: 'Cancelled', Total: 500 }] });
+    expect(r.body.created).toBe(0);
+    expect(r.body.skipped[0].error).toMatch(/only completed/i);
+  });
+
+  it('with its lines, the products come back too', async () => {
+    const r = await imp({
+      rows: [{ 'Order No': 'ORD-2026-A9003', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 600, Discount: 0, Total: 600 }],
+      lines: [
+        { 'Order No': 'ORD-2026-A9003', Product: 'Line A', Qty: 2, 'Unit Price': 200 },
+        { 'Order No': 'ORD-2026-A9003', Product: 'Line B', Qty: 1, 'Unit Price': 200 },
+      ],
+    });
+    expect(r.body.created).toBe(1);
+    const o = await mongoose.model('Order').findOne({ orderNumber: 'ORD-2026-A9003' }).lean();
+    expect(o.items.map(i => i.name)).toEqual(['Line A', 'Line B']);
+    expect(o.total).toBe(600);
+  });
+
+  it('a new order after the import never reuses an imported number', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({ date: LAST_MONTH, amount: 10 });
+    const n = Number(/-A(\d+)$/.exec(res.body.order.orderNumber)[1]);
+    expect(n).toBeGreaterThan(9003);
+  });
+});

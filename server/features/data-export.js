@@ -273,6 +273,8 @@ export default function registerDataExport(ctx) {
         // A dataset may drop columns that mean nothing for this business type,
         // so an fb sheet is not padded with a category that never exists.
         columns: def.columnsFor ? def.columnsFor(inv) : def.columns, rows,
+        ...(def.sheetName ? { sheetName: def.sheetName } : {}),
+        ...(def.extraSheets ? { extraSheets: def.extraSheets(docs) } : {}),
         // Said plainly: a clipped export must never be mistaken for the whole set.
         truncated: docs.length === limit, limit,
       });

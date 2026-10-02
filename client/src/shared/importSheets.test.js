@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normaliseInventoryRow, isSectionRow, isCategoryHeaderCode, readQtyCell, canonicalUnit } from './importSheets';
+import { normaliseInventoryRow, isSectionRow, isCategoryHeaderCode, readQtyCell, canonicalUnit, isStockSheetHeader } from './importSheets';
 
 const read = (row) => normaliseInventoryRow(row);
 const stock = (row) => { const n = read(row); return `${n.qty} ${n.displayUnit}`; };
@@ -138,5 +138,16 @@ describe('helpers', () => {
     expect(readQtyCell('6 kg').unit).toEqual({ unit: 'kg', factor: 1 });
     expect(readQtyCell('6 packs')).toMatchObject({ amount: 6, packs: true, unknownWord: '' });
     expect(readQtyCell('')).toBeNull();
+  });
+});
+
+describe('recognising a stock sheet', () => {
+  it('takes the pack layout (Qty, Cost / pack) as well as Qty Unit / Unit Cost', () => {
+    expect(isStockSheetHeader(['Code', 'Product', 'Pack', 'Unit', 'Qty', 'Cost / pack', 'SRP / unit', 'Expiry date'])).toBe(true);
+    expect(isStockSheetHeader(['Product', 'Qty Unit', 'Unit Cost'])).toBe(true);
+  });
+  it('still leaves out a recipe sheet and a notes tab', () => {
+    expect(isStockSheetHeader(['Product', 'Ingredient', 'Qty', 'Unit'])).toBe(false);
+    expect(isStockSheetHeader(['Notes', 'Date'])).toBe(false);
   });
 });
