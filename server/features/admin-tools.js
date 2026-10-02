@@ -2,6 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { roundMoney } from '../lib/money.js';
+import { saleDebitAccount } from '../lib/saleAccounts.js';
 import { captureError } from '../lib/errorLog.js';
 import { saleRevenueLines, vatFromInclusive } from '../lib/vatPosting.js';
 import { loadVatConfig } from '../lib/vatSettings.js';
@@ -529,7 +530,7 @@ async function maybePromoteBackdateClient(customerName) {
 // Throws an Error with `.httpStatus` set for anything that should reach the
 // client as a 400/423 rather than a 500.
 async function createBackdatedSale(payload, actorName) {
-  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, discountAmount = 0, isComplimentary = false, importRef = '', deliveryFee = 0, paymentReference = '', paymentCheckDate = null, orderNumber: wantedNumber = '', clientId = '' } = payload;
+  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, discountAmount = 0, isComplimentary = false, importRef = '', deliveryFee = 0, paymentReference = '', paymentCheckDate = null, orderNumber: wantedNumber = '', clientId = '', payments: paymentsIn = null } = payload;
   const comp = !!isComplimentary;
   const fail = (httpStatus, message) => Object.assign(new Error(message), { httpStatus });
 
@@ -604,8 +605,20 @@ async function createBackdatedSale(payload, actorName) {
     const lock = await periodLockFor(dt);
     if (lock) throw fail(423, `Period ${lock.year}-${String(lock.month).padStart(2,'0')} is closed.`);
 
-    const method = paymentMethod || 'Cash';
-    const acct = accountForPaymentMethod(method);
+    // A split tender - part cash, part on account, as the POS allows: each part
+    // is its own debit, and only the parts that land in a receivable are owed.
+    const splitParts = Array.isArray(paymentsIn)
+      ? paymentsIn.map(p => ({ method: String(p?.method || '').trim(), amount: roundMoney(Number(p?.amount) || 0) })).filter(p => p.method && p.amount > 0)
+      : [];
+    const isSplit = !comp && splitParts.length >= 2;
+    if (isSplit) {
+      const paid = roundMoney(splitParts.reduce((s, p) => s + p.amount, 0));
+      if (Math.abs(paid - total) > 0.01) throw fail(400, `The split payments add up to ${paid.toFixed(2)}, but the sale is ${total.toFixed(2)}.`);
+    }
+    const method = isSplit ? 'Split' : (paymentMethod || 'Cash');
+    // The SALE side of the map: On Account is owed by the customer (A/R), never A/P.
+    const saleAcct = (m) => saleDebitAccount(accountForPaymentMethod, m);
+    const acct = saleAcct(isSplit ? splitParts[0].method : method);
     // A check is paid by its number (and dated), the same as a live check sale
     // - without it the deposit can never be matched or a bounce traced.
     const payRef = String(paymentReference || '').trim().slice(0, 60);
@@ -683,6 +696,12 @@ async function createBackdatedSale(payload, actorName) {
       // carry it - not just a name.
       ...(clientId ? { clientId: String(clientId), clientAccountId: String(clientId) } : {}),
       paymentMethod: method,
+      ...(isSplit ? {
+        payments: splitParts,
+        // What was settled at the sale (cash, bank, wallet) is not owed - only
+        // the parts booked to Accounts Receivable stay on the client's A/R.
+        arPaidAmount: roundMoney(splitParts.filter(p => saleAcct(p.method).code !== '120000').reduce((s, p) => s + p.amount, 0)),
+      } : {}),
       ...(payRef ? { paymentReference: payRef } : {}),
       ...(checkDate ? { paymentCheckDate: checkDate } : {}),
       items: orderItems,
@@ -726,7 +745,14 @@ async function createBackdatedSale(payload, actorName) {
       lines.push({ accountCode: '540000', accountName: 'Complimentary Expense', debit: gross, credit: 0 });
       lines.push({ accountCode: '410000', accountName: 'Sales Revenue', debit: 0, credit: gross });
     } else {
-      lines.push({ accountCode: acct.code, accountName: acct.name, debit: total, credit: 0 });
+      if (isSplit) {
+        for (const p of splitParts) {
+          const a = saleAcct(p.method);
+          lines.push({ accountCode: a.code, accountName: a.name, debit: p.amount, credit: 0 });
+        }
+      } else {
+        lines.push({ accountCode: acct.code, accountName: acct.name, debit: total, credit: 0 });
+      }
       if (discount > 0) lines.push({ accountCode: '430000', accountName: 'Sales Discounts', debit: discount, credit: 0 });
       // Delivery fee folds into the same Sales Revenue credit as the rest of
       // the sale (no separate COA account for it) - it must land on the
@@ -1064,7 +1090,7 @@ app.post('/api/admin/backdate-sale/backfill-ledger', verifyToken, requireSuperAd
       try {
         const amt = order.total;
         const method = order.paymentMethod || 'Cash';
-        const acct = accountForPaymentMethod(method);
+        const acct = saleDebitAccount(accountForPaymentMethod, method);
         const reference = await mkSeqRef('BACKDATE');
         await JournalEntry.create([{
           date: order.createdAt,

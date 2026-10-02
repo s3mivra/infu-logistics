@@ -4,6 +4,7 @@ import { roundMoney, toCentavos } from './lib/money.js';
 import { createAutoRestorer } from './lib/autoRestore.js';
 import { uppercasePartyNames } from './lib/partyNames.js';
 import { releaseCancelledOrderNumbers } from './lib/orderNumbers.js';
+import { repairBackdatedSalesOnPayables } from './lib/saleAccounts.js';
 import { LEDGER_WRITE_OPS, inLedgerMaintenance, refuseLedgerRewrite, withLedgerMaintenance } from './lib/ledgerGuard.js';
 import express from 'express';
 import { businessDayStart, businessDateStr, businessClosingDateStr, setBusinessTimeZone, isValidTimeZone, DEFAULT_BUSINESS_TZ } from './lib/businessTime.js';
@@ -1117,6 +1118,19 @@ const runStartupTasks = async () => {
       }
     } catch (err) {
       log.error({ err }, 'Floor-action permission migration failed');
+    }
+
+    // Once: backdated sales "On Account" were booked to Accounts Payable - post
+    // the correcting entries that move them to Accounts Receivable.
+    try {
+      const done = await Settings.findOne({ key: 'backdateOnAccountFixV1' }).lean();
+      if (!done) {
+        const fixed = await repairBackdatedSalesOnPayables(mongoose);
+        await Settings.findOneAndUpdate({ key: 'backdateOnAccountFixV1' }, { key: 'backdateOnAccountFixV1', value: true }, { upsert: true });
+        if (fixed.length) log.info({ count: fixed.length, total: fixed.reduce((s, f) => s + f.amount, 0) }, '✅ Backdated On Account sales moved from Accounts Payable to Receivable');
+      }
+    } catch (err) {
+      log.error({ err }, 'Backdated On Account repair failed');
     }
 
     // Once: client and supplier names saved before they were kept in capitals.

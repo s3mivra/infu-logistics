@@ -291,3 +291,49 @@ describe('importing an Orders export back', () => {
     expect(n).toBeGreaterThan(9003);
   });
 });
+
+describe('the money side of a backdated sale', () => {
+  const jeOf = async (res) => mongoose.model('JournalEntry').findOne({ reference: res.body.journalReference }).lean();
+  const linesOf = (je) => je.lines.map(l => `${l.accountCode}:${l.debit}/${l.credit}`).sort();
+
+  it('a sale On Account is owed by the customer - Accounts Receivable, never Payable', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({ date: LAST_MONTH, amount: 1000, paymentMethod: 'On Account' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const lines = linesOf(await jeOf(res));
+    expect(lines).toContain('120000:1000/0');
+    expect(lines.some(l => l.startsWith('220000'))).toBe(false);
+  });
+
+  it('a split - half cash, half on account - books each part, and only the credit part is owed', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({
+      date: LAST_MONTH, amount: 1000, payments: [{ method: 'Cash', amount: 500 }, { method: 'On Account', amount: 500 }],
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.order.paymentMethod).toBe('Split');
+    const lines = linesOf(await jeOf(res));
+    expect(lines).toEqual(expect.arrayContaining(['111000:500/0', '120000:500/0']));
+    const o = await mongoose.model('Order').findById(res.body.order._id).lean();
+    expect(o.payments.map(p => [p.method, p.amount])).toEqual([['Cash', 500], ['On Account', 500]]);
+    expect(o.total - o.arPaidAmount).toBe(500);   // what the client still owes
+  });
+
+  it('a split that does not add up to the sale is refused', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({
+      date: LAST_MONTH, amount: 1000, payments: [{ method: 'Cash', amount: 500 }, { method: 'On Account', amount: 400 }],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/add up/);
+  });
+
+  it('an On Account sale already booked to Accounts Payable is corrected once', async () => {
+    const { repairBackdatedSalesOnPayables } = await import('../lib/saleAccounts.js');
+    const JE = mongoose.model('JournalEntry');
+    await JE.create({ date: new Date(LAST_MONTH), reference: 'BACKDATE-OLD1', description: 'Backdated sale: ORD-OLD-1',
+      lines: [{ accountCode: '220000', accountName: 'Accounts Payable', debit: 750, credit: 0 }, { accountCode: '410000', accountName: 'Sales Revenue', debit: 0, credit: 750 }] });
+    const first = await repairBackdatedSalesOnPayables(mongoose);
+    expect(first.find(f => f.reference === 'BACKDATE-OLD1')?.amount).toBe(750);
+    const fix = await JE.findOne({ description: /\[fixes BACKDATE-OLD1\]/ }).lean();
+    expect(fix.lines.map(l => `${l.accountCode}:${l.debit}/${l.credit}`).sort()).toEqual(['120000:750/0', '220000:0/750']);
+    expect((await repairBackdatedSalesOnPayables(mongoose)).find(f => f.reference === 'BACKDATE-OLD1')).toBeUndefined();
+  });
+});

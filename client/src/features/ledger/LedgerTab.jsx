@@ -1,5 +1,6 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import { roundMoney } from '../../shared/money.js';
+import SplitPayEditor, { newSplit, splitReady, splitPayload } from './SplitPayEditor';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, Upload, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Receipt, History, HandCoins, Wallet } from 'lucide-react';
 import { isCancelledRow, isCancelledSheet, partitionCancelledGroups } from '../../shared/backdateCancelled';
 import { usePagination } from '../../shared/usePagination';
@@ -351,6 +352,7 @@ export default function LedgerTab({ ctx }) {
     if (!bd.date) return ui.alert('Pick the sale date.');
     if (bdCart.length === 0) return ui.alert('Add at least one product to the sale.');
     if (!bd.isComplimentary && bd.paymentMethod === 'Check' && !bd.checkNumber.trim()) return ui.alert('Enter the check number.');
+    if (!bd.isComplimentary && bd.paymentMethod === 'Split' && !splitReady(bdTotal, bd.payments || [])) return ui.alert('The split payments must add up to the sale total, with at least two parts.');
     const label = bd.isComplimentary ? 'complimentary (₱0)' : `₱${bdTotal.toFixed(2)}`;
     const stockNote = bd.affectInventory ? '\n\nThis WILL reduce current inventory.' : '';
     if (!(await ui.confirm(`Record a backdated sale of ${label} on ${bd.date}?${stockNote}`))) return;
@@ -359,6 +361,7 @@ export default function LedgerTab({ ctx }) {
       const r = await apiFetch('/api/admin/backdate-sale', { method: 'POST', body: JSON.stringify({
         date: bd.date, customerName: bd.customerName, paymentMethod: bd.paymentMethod, notes: bd.notes,
         ...(bd.paymentMethod === 'Check' ? { paymentReference: bd.checkNumber.trim(), paymentCheckDate: bd.checkDate || null } : {}),
+        ...(bd.paymentMethod === 'Split' && !bd.isComplimentary ? { payments: splitPayload(bd.payments) } : {}),
         discountPercent: bdPct, affectInventory: bd.affectInventory, isComplimentary: bd.isComplimentary,
         items: bdCart.map(x => ({ name: x.name, price: x.price, quantity: x.quantity, discountPercent: bdLinePct(x), productId: x.productId, productCode: x.productCode })),
       }) });
@@ -751,6 +754,10 @@ export default function LedgerTab({ ctx }) {
 
   const confirmBdImport = async () => {
     if (!bdImportPreview) return;
+    // A split whose parts do not add up to the sale would be refused one by one
+    // mid-import - say which, before anything is posted.
+    const badSplits = bdImportPreview.groups.filter(g => g.paymentMethod === 'Split' && !splitReady(g.total, g.payments || []));
+    if (badSplits.length) return ui.alert(`Fix the split payment on: ${badSplits.map(g => g.client || g.transNo || 'a sale').join(', ')} - the parts must add up to the sale total, with at least two parts.`);
     setBdImporting(true);
     const total = bdImportPreview.groups.length;
     setBdImportProgress({ done: 0, total });
@@ -777,6 +784,7 @@ export default function LedgerTab({ ctx }) {
               method: 'POST',
               body: JSON.stringify({
                 date: g.date, customerName: g.client, paymentMethod: g.paymentMethod || bdImportSettings.paymentMethod,
+                ...(g.paymentMethod === 'Split' ? { payments: splitPayload(g.payments) } : {}),
                 notes: g.transNo ? `Imported - ${g.transNo}` : 'Imported from Excel',
                 // The sheet's own transaction/invoice number - lets the server skip
                 // this row as a duplicate if it (or an overlapping file) was already
@@ -5685,7 +5693,7 @@ It posts only what is not already accrued for that month.`)) return;
                       </div>
                       <div>
                         <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Payment Method</label>
-                        <select value={bd.paymentMethod} onChange={e => setBd({ ...bd, paymentMethod: e.target.value })}
+                        <select value={bd.paymentMethod} onChange={e => setBd({ ...bd, paymentMethod: e.target.value, ...(e.target.value === 'Split' ? { payments: newSplit(bdTotal) } : {}) })}
                           disabled={bd.isComplimentary}
                           className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60 disabled:opacity-40">
                           <optgroup label="In-Store Payments">
@@ -5693,6 +5701,7 @@ It posts only what is not already accrued for that month.`)) return;
                             <option value="Bank Transfer">Bank Transfer</option>
                             <option value="Check">Check</option>
                           </optgroup>
+                          <optgroup label="Paid in parts"><option value="Split">Split payment (e.g. part cash, part on account)</option></optgroup>
                           <optgroup label="E-Wallets">
                             <option value="GCash">GCash</option>
                             <option value="Maya">Maya</option>
@@ -5708,6 +5717,12 @@ It posts only what is not already accrued for that month.`)) return;
                           <optgroup label="Credit"><option value="On Account">On Account (A/R)</option></optgroup>
                         </select>
                       </div>
+                      {bd.paymentMethod === 'Split' && !bd.isComplimentary && (
+                        <div className="sm:col-span-2">
+                          <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Split payment</label>
+                          <SplitPayEditor total={bdTotal} parts={bd.payments || newSplit(bdTotal)} onChange={parts => setBd({ ...bd, payments: parts })} />
+                        </div>
+                      )}
                       {bd.paymentMethod === 'Check' && !bd.isComplimentary && (<>
                         <div>
                           <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Check No. *</label>
@@ -6116,19 +6131,26 @@ It posts only what is not already accrued for that month.`)) return;
                       </div>
                       <div className="flex items-center gap-2 mb-2">
                         <select value={g.paymentMethod || bdImportSettings.paymentMethod}
-                          onChange={e => { const v = e.target.value; setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, paymentMethod: v } : x) })); }}
+                          onChange={e => { const v = e.target.value; setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, paymentMethod: v, ...(v === 'Split' ? { payments: newSplit(x.total) } : {}) } : x) })); }}
                           className={`text-[10px] font-bold uppercase tracking-wider rounded-lg px-2 py-1 outline-none border ${g.paymentMethod ? 'bg-brand/10 border-brand/40 text-brand-text' : 'bg-page-bg border-white/10 text-fg/65'}`}>
                           <option value="Cash">Cash</option>
                           <option value="Bank Transfer">Bank Transfer</option>
                           <option value="GCash">GCash</option>
                           <option value="Maya">Maya</option>
                           <option value="On Account">On Account (A/R)</option>
+                          <option value="Split">Split payment</option>
                         </select>
                         {g.paymentMethod && (
                           <button onClick={() => setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, paymentMethod: null } : x) }))}
                             className="text-[9px] font-bold uppercase tracking-wider text-fg/65 transition">reset to default</button>
                         )}
                       </div>
+                      {g.paymentMethod === 'Split' && (
+                        <div className="mb-2 max-w-md">
+                          <SplitPayEditor compact total={g.total} parts={g.payments || newSplit(g.total)}
+                            onChange={parts => setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, payments: parts } : x) }))} />
+                        </div>
+                      )}
                       <div className="space-y-0.5">
                         {g.items.map((it, li) => (
                           <div key={li} className="flex items-center justify-between text-xs text-fg/65">
