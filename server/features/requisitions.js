@@ -151,7 +151,7 @@ export default function registerRequisitions(ctx) {
       }
 
       // type === 'procurement'
-      const { supplier, supplierId, expectedDate, lines, notes } = req.body;
+      const { supplier, supplierId, expectedDate, lines, notes, payOnDelivery = false, payOnDeliveryAccount = '' } = req.body;
       if (!Array.isArray(lines) || lines.length === 0) return res.status(400).json({ success: false, error: 'At least one line item is required.' });
       const cleanLines = [];
       for (const l of lines) {
@@ -179,6 +179,8 @@ export default function registerRequisitions(ctx) {
         supplier: supplier || '', supplierId: mongoose.Types.ObjectId.isValid(supplierId || '') ? supplierId : null,
         expectedDate: expectedDate ? new Date(expectedDate) : null,
         lines: cleanLines, estTotal, notes: notes || '',
+        // Paid on delivery from a cash, bank or e-wallet account (11xxxx).
+        ...(payOnDelivery && /^11[123]/.test(String(payOnDeliveryAccount || '111000')) ? { payOnDelivery: true, payOnDeliveryAccount: String(payOnDeliveryAccount || '111000') } : {}),
         preparedBy,
       });
       await attachBudgetCheck(req, slip);
@@ -398,6 +400,7 @@ export default function registerRequisitions(ctx) {
       const po = await PurchaseOrder.create({
         poNumber, supplier: slip.supplier, supplierId: slip.supplierId || null,
         status: 'Ordered', expectedDate: slip.expectedDate,
+        ...(slip.payOnDelivery ? { payOnDelivery: true, payOnDeliveryAccount: slip.payOnDeliveryAccount || '111000' } : {}),
         notes: `${slip.notes || ''}${slip.notes ? ' - ' : ''}Requisition ${slip.slipNumber}`.trim(),
         lines: slip.lines.map(l => ({
           purchaseType: l.purchaseType || 'inventory',

@@ -153,7 +153,11 @@ export default function registerPurchaseOrders(ctx) {
       const {
         supplier = '', supplierId = null, expectedDate = null, notes = '', lines = [],
         prepaid = false, prepaidAmount, prepaidDate, prepaidFromAccount,
+        payOnDelivery = false, payOnDeliveryAccount = '',
       } = req.body || {};
+      if (payOnDelivery && prepaid) return res.status(400).json({ success: false, error: 'An order is either paid in advance or paid on delivery - not both.' });
+      const codAccount = payOnDelivery ? String(payOnDeliveryAccount || '111000') : '';
+      if (payOnDelivery && !isCashAccount(codAccount)) return res.status(400).json({ success: false, error: 'Pick the cash, bank or e-wallet account the delivery is paid from.' });
       // Link to the supplier record when one is given, and prefer its canonical
       // name over the free-text field. The PO schema has always had supplierId;
       // the create route was silently dropping it, which left every payable
@@ -183,6 +187,7 @@ export default function registerPurchaseOrders(ctx) {
         lines: clean,
         estTotal: estTotalOf(clean),
         createdBy: req.user?.name || '',
+        ...(payOnDelivery ? { payOnDelivery: true, payOnDeliveryAccount: codAccount } : {}),
         ...tenantScope(req),
       });
 
@@ -226,7 +231,14 @@ export default function registerPurchaseOrders(ctx) {
         return res.status(409).json({ success: false, error: 'This PO has already been received. Reconciled POs cannot be edited.' });
       }
 
-      const { supplier, expectedDate, notes, status, lines } = req.body || {};
+      const { supplier, expectedDate, notes, status, lines, payOnDelivery, payOnDeliveryAccount } = req.body || {};
+      if (payOnDelivery !== undefined) {
+        const acct = String(payOnDeliveryAccount || po.payOnDeliveryAccount || '111000');
+        if (payOnDelivery && po.prepaid) return res.status(400).json({ success: false, error: 'This order was paid in advance - it cannot also be paid on delivery.' });
+        if (payOnDelivery && !isCashAccount(acct)) return res.status(400).json({ success: false, error: 'Pick the cash, bank or e-wallet account the delivery is paid from.' });
+        po.payOnDelivery = !!payOnDelivery;
+        po.payOnDeliveryAccount = payOnDelivery ? acct : '';
+      }
       if (supplier !== undefined) po.supplier = String(supplier).slice(0, 200);
       if (notes !== undefined) po.notes = String(notes).slice(0, 1000);
       if (expectedDate !== undefined) po.expectedDate = expectedDate ? new Date(expectedDate) : null;
@@ -317,7 +329,17 @@ export default function registerPurchaseOrders(ctx) {
   // Both credit a NON-TRADE payable. 220000 is what we owe for goods to sell
   // or consume; owing for a machine is a different obligation and the balance
   // sheet should not merge them.
-  const postNonInventoryReceipt = async (req, line, kind, lineCost, delta, po, { fromAdvance = 0, lineVat = 0 } = {}) => {
+  // Money you pay a supplier with: Cash on Hand, Cash in Bank, E-Wallet, or a
+  // sub-account of one of them (a named bank account).
+  const CASH_PARENTS = new Set(['111000', '112000', '113000']);
+  const isCashAccount = (code) => {
+    const c = String(code || '');
+    if (CASH_PARENTS.has(c)) return true;
+    const meta = acctMeta(c);
+    return !!meta && CASH_PARENTS.has(String(meta.parent || '')) && meta.isActive !== false;
+  };
+
+  const postNonInventoryReceipt = async (req, line, kind, lineCost, delta, po, { fromAdvance = 0, lineVat = 0, paidFrom = '' } = {}) => {
     const rcvRef = await mkSeqRef('PO-RCV');
     const nameOf = (c, f) => acctMeta(c)?.name || f || c;
     const label = line.itemName || line.itemCode || 'item';
@@ -344,6 +366,8 @@ export default function registerPurchaseOrders(ctx) {
     const advanceShare = Math.min(money(fromAdvance), lineGross);
     const payableShare = money(lineGross - advanceShare);
 
+    // Paid on delivery: the rest left the cash/bank account just now - nothing owed.
+    if (paidFrom) credCode = paidFrom;
     const lines = [
       { accountCode: debitCode, accountName: nameOf(debitCode), debit: lineCost, credit: 0 },
       ...(lineVat > 0 ? [{ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: lineVat, credit: 0 }] : []),
@@ -390,7 +414,7 @@ export default function registerPurchaseOrders(ctx) {
   // A line is routed by its purchaseType. Only `inventory` touches stock; the
   // other two never should - an espresso machine in Inventory is both an
   // overstated stock figure and something a recipe could consume.
-  const postReceiptToStock = async (req, deltas, po, { claimInputVat = false } = {}) => {
+  const postReceiptToStock = async (req, deltas, po, { claimInputVat = false, paidFrom = '' } = {}) => {
     const poVatCfg = await loadVatConfig(Settings);
     let totalCost = 0;
     // How much of this delivery the prepayment still covers. A PO prepaid for
@@ -407,6 +431,8 @@ export default function registerPurchaseOrders(ctx) {
     }
     let advanceUsed = 0;
     let payableTotal = 0;
+    let paidNow = 0;          // paid on delivery, from `paidFrom`
+    const paidName = paidFrom ? (acctMeta(paidFrom)?.name || paidFrom) : '';
     for (const { line, delta, expiryDate, productionDate } of deltas) {
       const kind = line.purchaseType || 'inventory';
 
@@ -420,11 +446,12 @@ export default function registerPurchaseOrders(ctx) {
       if (kind !== 'inventory') {
         if (lineCost <= 0) continue;
         const share = Math.min(advanceLeft, lineGross);
-        const out = await postNonInventoryReceipt(req, line, kind, lineCost, delta, po, { fromAdvance: share, lineVat });
+        const out = await postNonInventoryReceipt(req, line, kind, lineCost, delta, po, { fromAdvance: share, lineVat, paidFrom });
         if (out) {
           advanceLeft = money(advanceLeft - share);
           advanceUsed = money(advanceUsed + share);
-          payableTotal = money(payableTotal + (lineGross - share));
+          if (paidFrom) paidNow = money(paidNow + (lineGross - share));
+          else payableTotal = money(payableTotal + (lineGross - share));
           totalCost = money(totalCost + lineGross);
         }
         continue;
@@ -494,14 +521,19 @@ export default function registerPurchaseOrders(ctx) {
             { accountCode: '130000', accountName: 'Inventory Asset', debit: lineCost, credit: 0 },
             ...(lineVat > 0 ? [{ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: lineVat, credit: 0 }] : []),
             ...(fromAdvance > 0 ? [{ accountCode: '170200', accountName: acctMeta('170200')?.name || 'Advances to Suppliers', debit: 0, credit: fromAdvance }] : []),
-            ...(owedNow > 0 ? [{ accountCode: '220000', accountName: 'Accounts Payable', debit: 0, credit: owedNow }] : []),
+            // Paid on delivery: the money left the cash/bank account now, for
+            // exactly what arrived - no payable, so no bill follows.
+            ...(owedNow > 0 ? [paidFrom
+              ? { accountCode: paidFrom, accountName: paidName, debit: 0, credit: owedNow }
+              : { accountCode: '220000', accountName: 'Accounts Payable', debit: 0, credit: owedNow }] : []),
           ],
           totalDebit: lineGross,
           totalCredit: lineGross,
         });
         advanceLeft = money(advanceLeft - fromAdvance);
         advanceUsed = money(advanceUsed + fromAdvance);
-        payableTotal = money(payableTotal + owedNow);
+        if (paidFrom) paidNow = money(paidNow + owedNow);
+        else payableTotal = money(payableTotal + owedNow);
         totalCost = money(totalCost + lineGross);
       }
     }
@@ -521,7 +553,7 @@ export default function registerPurchaseOrders(ctx) {
     // `payableTotal` is what the supplier can still invoice for - the part the
     // prepayment did not reach. It is what a bill may be raised for; billing
     // the whole delivery would demand money that has already left.
-    return { totalCost, payableTotal };
+    return { totalCost, payableTotal, paidNow };
   };
 
   // ── RECEIVE (reconcile actual delivery) ───────────────────────────────────────
@@ -581,7 +613,13 @@ export default function registerPurchaseOrders(ctx) {
       // Post the delivery into stock and the books. Without this the PO flips to
       // Complete while inventory never moves - goods marked received that the
       // stock ledger never hears about.
-      const posted = await postReceiptToStock(req, deltas, po, { claimInputVat: req.body?.claimInputVat === true });
+      // Paid on delivery: the receive step names the account (defaulting to
+      // the PO's), or sends paidOnDelivery: false to put this delivery on account.
+      const codReq = req.body?.paidOnDelivery;
+      const paidFrom = codReq === false ? '' : String(codReq?.account || (codReq === true || po.payOnDelivery ? po.payOnDeliveryAccount || '111000' : '') || '');
+      if (paidFrom && !isCashAccount(paidFrom)) return res.status(400).json({ success: false, error: 'Pick the cash, bank or e-wallet account this delivery was paid from.' });
+      const posted = await postReceiptToStock(req, deltas, po, { claimInputVat: req.body?.claimInputVat === true, paidFrom });
+      if (posted.paidNow > 0) { po.paidOnDelivery = money((po.paidOnDelivery || 0) + posted.paidNow); await po.save(); }
 
       // One Bill per delivery (not per line - a supplier sends one invoice for
       // the whole shipment), awaiting approval before it can be scheduled/paid.
@@ -639,7 +677,7 @@ export default function registerPurchaseOrders(ctx) {
 
       logAudit?.(req, { action: 'receive', entity: 'purchase_order', entityId: po.poNumber, after: { status: po.status, actualTotal: po.actualTotal, stockPosted: posted.totalCost, billNumber: bill?.billNumber } });
       if (posted.totalCost > 0) emitToMgr?.('erpUpdated');
-      res.json({ success: true, purchaseOrder: po.toObject(), bill });
+      res.json({ success: true, purchaseOrder: po.toObject(), bill, paidOnDelivery: posted.paidNow || 0 });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   }));
 

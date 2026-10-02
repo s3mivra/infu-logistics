@@ -308,6 +308,7 @@ export default function ProcurementTab({ ctx }) {
     // nothing is owed, the supplier owes us goods - so the server books it
     // to 170200 and receiving clears it instead of crediting A/P.
     prepaid: false, prepaidAmount: '', prepaidDate: '', prepaidFromAccount: '111000',
+    payOnDelivery: false, payOnDeliveryAccount: '111000',
   });
   const [saving, setSaving] = useState(false);
 
@@ -325,6 +326,7 @@ export default function ProcurementTab({ ctx }) {
       supplierId: po.supplierId || '',
       expectedDate: po.expectedDate ? dateStr(po.expectedDate) : '',
       notes: po.notes || '',
+      payOnDelivery: !!po.payOnDelivery, payOnDeliveryAccount: po.payOnDeliveryAccount || '111000',
       lines: (po.lines || []).map(l => ({
         invId: l.invId || null, itemName: l.itemName || '', itemCode: l.itemCode || '',
         unit: l.unit || '', packSize: l.packSize ?? '', orderedQty: l.orderedQty ?? '', unitCost: l.unitCost ?? '',
@@ -712,8 +714,10 @@ export default function ProcurementTab({ ctx }) {
             prepaidAmount: form.prepaidAmount === '' ? undefined : Number(form.prepaidAmount),
             prepaidDate: form.prepaidDate || undefined,
             prepaidFromAccount: form.prepaidFromAccount || undefined,
+            payOnDelivery: !!form.payOnDelivery, payOnDeliveryAccount: form.payOnDelivery ? form.payOnDeliveryAccount : undefined,
           }
-        : { type: 'procurement', supplier: form.supplier, supplierId: form.supplierId || null, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines };
+        : { type: 'procurement', supplier: form.supplier, supplierId: form.supplierId || null, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines,
+            payOnDelivery: !!form.payOnDelivery, payOnDeliveryAccount: form.payOnDelivery ? form.payOnDeliveryAccount : undefined };
       const res = await apiFetch(url, { method: editId ? 'PATCH' : 'POST', body: JSON.stringify(body) });
       const d = await res.json();
       if (d.success) {
@@ -806,6 +810,8 @@ export default function ProcurementTab({ ctx }) {
   // Whether this delivery's supplier charged VAT we can credit. Off unless the
   // business is VAT-registered, where it decides how the receipt is costed.
   const [receiveClaimVat, setReceiveClaimVat] = useState(false);
+  // Paid on delivery: the account this delivery was paid from, or '' for on account.
+  const [receivePaidFrom, setReceivePaidFrom] = useState('');
 
   // What is still returnable on a line: what arrived, less what already went back.
   const returnableOf = (l) => Math.max(0, (Number(l.receivedQty) || 0) - (Number(l.returnedQty) || 0));
@@ -858,6 +864,7 @@ export default function ProcurementTab({ ctx }) {
     setReceiveExpiry(exp);
     setReceiveProduction(prod);
     setReceiveNotes(po.notes || '');
+    setReceivePaidFrom(po.payOnDelivery ? (po.payOnDeliveryAccount || '111000') : '');
   };
 
   const submitReceive = async (po) => {
@@ -870,7 +877,7 @@ export default function ProcurementTab({ ctx }) {
           productionDate: receiveExpiry[l._id || i] ? null : (receiveProduction[l._id || i] || null),
         }))
         .filter(r => r.receivedQty > 0); // only send lines the user actually entered a delivered qty for
-      const res = await apiFetch(`/api/purchase-orders/${po._id}/receive`, { method: 'POST', body: JSON.stringify({ received, notes: receiveNotes, claimInputVat: receiveClaimVat }) });
+      const res = await apiFetch(`/api/purchase-orders/${po._id}/receive`, { method: 'POST', body: JSON.stringify({ received, notes: receiveNotes, claimInputVat: receiveClaimVat, paidOnDelivery: receivePaidFrom ? { account: receivePaidFrom } : false }) });
       const d = await res.json();
       if (d.success) { setReceiveId(null); await fetchPOs(); }
       else setError(d.error || 'Failed to reconcile delivery.');
@@ -1246,12 +1253,12 @@ export default function ProcurementTab({ ctx }) {
               {receiveId === po._id && (() => {
                 const missingLines = po.lines.map((l, i) => ({ l, i, key: l._id || i, rem: remainingOf(l) })).filter(x => x.rem > 0);
                 return (
-                <div className="border-t border-white/10 p-4 space-y-3 bg-accent">
-                  <p className="text-[11px] font-black uppercase tracking-wider text-white">
+                <div className="border-t border-brand/40 p-4 space-y-3 bg-brand/10">
+                  <p className="text-[11px] font-black uppercase tracking-wider text-brand-text">
                     {po.status === 'Incomplete' ? 'Outstanding items only - enter what just arrived' : 'Enter actual quantities received'}
                   </p>
                   {missingLines.length === 0 ? (
-                    <p className="text-white text-sm font-bold py-2">Nothing outstanding on this PO.</p>
+                    <p className="text-fg text-sm font-bold py-2">Nothing outstanding on this PO.</p>
                   ) : (
                   <div className="space-y-2">
                     {missingLines.map(({ l, key, rem }) => {
@@ -1259,10 +1266,10 @@ export default function ProcurementTab({ ctx }) {
                       const short = !isNaN(recv) && recv > 0 && recv < rem;
                       const alreadyIn = Number(l.receivedQty) || 0;
                       return (
-                        <div key={key} className="flex items-center gap-3 bg-white rounded-lg px-3 py-2">
+                        <div key={key} className="flex flex-wrap items-center gap-3 bg-surface border border-white/10 rounded-lg px-3 py-2">
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-bold text-brand-text truncate" title={String((l.itemName) ?? '')}>{l.itemName}</p>
-                            <p className="text-black text-xs">
+                            <p className="text-fg/80 text-xs">
                               Ordered: {l.orderedQty} {l.unit} @ {money(l.unitCost)}
                               {alreadyIn > 0 && <span className="text-success"> · Received so far: {alreadyIn}</span>}
                               <span className="text-warning"> · Missing: {rem} {l.unit}</span>
@@ -1271,17 +1278,20 @@ export default function ProcurementTab({ ctx }) {
                           <div className="flex items-center gap-1.5">
                             <input type="number" min="0" step="any" value={receiveQtys[key] ?? ''}
                               onChange={e => setReceiveQtys(q => ({ ...q, [key]: e.target.value }))}
-                              className={`w-24 bg-white/5 border rounded-lg px-2 py-1.5 text-sm text-right text-fg focus:outline-none ${short ? 'border-red-500/50' : 'border-white/10 focus:border-brand/60'}`} />
+                              aria-label={`Quantity received of ${l.itemName}`}
+                              className={`w-24 bg-page-bg border rounded-lg px-2 py-1.5 text-sm text-right text-fg font-bold focus:outline-none ${short ? 'border-red-500/60' : 'border-white/15 focus:border-brand/60'}`} />
                             <span className="text-fg/70 text-xs font-bold w-8">{l.unit}</span>
                             <input type="date" value={receiveExpiry[key] ?? ''}
                               onChange={e => setReceiveExpiry(x => ({ ...x, [key]: e.target.value }))}
                               title="Expiry date on this delivery (optional)"
-                              className="w-[9.5rem] bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg/70 focus:outline-none focus:border-brand/60" />
+                              aria-label={`Expiry date of ${l.itemName}`}
+                              className="w-[9.5rem] bg-page-bg border border-white/15 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-brand/60" />
                             {!receiveExpiry[key] && (
                               <input type="date" value={receiveProduction[key] ?? ''}
                                 onChange={e => setReceiveProduction(x => ({ ...x, [key]: e.target.value }))}
                                 title="Production date on this delivery - for goods with no real expiry, e.g. beans"
-                                className="w-[9.5rem] bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg/70 focus:outline-none focus:border-brand/60" />
+                                aria-label={`Production date of ${l.itemName}`}
+                                className="w-[9.5rem] bg-page-bg border border-white/15 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-brand/60" />
                             )}
                           </div>
                         </div>
@@ -1299,11 +1309,34 @@ export default function ProcurementTab({ ctx }) {
                     </label>
                   )}
                   <textarea value={receiveNotes} onChange={e => setReceiveNotes(e.target.value)} rows={2}
-                    placeholder="Delivery notes (optional): damages, substitutions, backorders…" className="w-full bg-white border border-white/10 rounded-lg px-3 py-2 text-sm text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60" />
+                    placeholder="Delivery notes (optional): damages, substitutions, backorders…" className="w-full bg-page-bg border border-white/15 rounded-lg px-3 py-2 text-sm text-fg placeholder-fg/65 focus:outline-none focus:border-brand/60" />
+                  {/* Paid on delivery - for what arrived, not what was ordered. */}
+                  {(() => {
+                    const cashAccts = (procurementCreditAccounts || []).filter(a => /^(111|112|113)/.test(String(a.code)));
+                    const owe = missingLines.reduce((sum, { l, key }) => sum + (Number(receiveQtys[key]) || 0) * (Number(l.unitCost) || 0), 0);
+                    return (
+                      <div className="flex flex-wrap items-center gap-3 bg-surface border border-white/10 rounded-lg px-3 py-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" className="accent-brand w-4 h-4" checked={!!receivePaidFrom}
+                            onChange={e => setReceivePaidFrom(e.target.checked ? (po.payOnDeliveryAccount || cashAccts[0]?.code || '111000') : '')} />
+                          <span className="text-xs font-bold text-fg">Paid on delivery</span>
+                        </label>
+                        {receivePaidFrom ? (<>
+                          <select value={receivePaidFrom} onChange={e => setReceivePaidFrom(e.target.value)} aria-label="Paid from"
+                            className="bg-page-bg border border-white/15 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-brand/60">
+                            {(cashAccts.length ? cashAccts : [{ code: '111000', name: 'Cash on Hand' }]).map(a => <option key={a.code} value={a.code}>{a.name}</option>)}
+                          </select>
+                          <span className="text-xs text-fg/80">pays <b className="text-fg">{money(owe)}</b> now - for what arrived. No bill.</span>
+                        </>) : (
+                          <span className="text-xs text-fg/70">Off: what arrived ({money(owe)}) goes on account, with a bill to pay later.</span>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div className="flex items-center justify-end gap-2">
-                    <button onClick={() => setReceiveId(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-white/80 transition">Cancel</button>
+                    <button onClick={() => setReceiveId(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/80 hover:text-fg transition">Cancel</button>
                     <button onClick={() => submitReceive(po)} disabled={receiving || missingLines.length === 0}
-                      className="flex items-center gap-2 bg-white hover:bg-white/90 disabled:opacity-50 text-brand-text font-bold text-sm px-4 py-2 rounded-xl transition">
+                      className="flex items-center gap-2 bg-brand hover:bg-brand-dark disabled:opacity-50 text-on-brand font-bold text-sm px-4 py-2 rounded-xl transition">
                       {receiving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Confirm Received
                     </button>
                   </div>
@@ -1619,10 +1652,29 @@ export default function ProcurementTab({ ctx }) {
                   prepayment the supplier still has to deliver against. The
                   server books it as a supplier advance and clears it on
                   receipt, so A/P never shows a debt on a settled order. */}
+              {/* Paid on delivery (COD): each delivery is paid when it arrives,
+                  for what arrived - not what was ordered. No bill. */}
+              <div className="border border-white/10 rounded-xl p-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={!!form.payOnDelivery}
+                    onChange={e => setForm(f => ({ ...f, payOnDelivery: e.target.checked, ...(e.target.checked ? { prepaid: false } : {}) }))} />
+                  <span className="text-[11px] font-black uppercase tracking-wider text-fg/70">Pay on delivery</span>
+                </label>
+                {form.payOnDelivery && (
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <span className="text-[10px] text-fg/70">Paid from</span>
+                    <select value={form.payOnDeliveryAccount} onChange={e => setForm(f => ({ ...f, payOnDeliveryAccount: e.target.value }))}
+                      className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-brand/60">
+                      {(procurementCreditAccounts || []).filter(a => /^(111|112|113)/.test(String(a.code))).map(a => <option key={a.code} value={a.code}>{a.name}</option>)}
+                    </select>
+                    <span className="text-[10px] text-fg/70">Paid for what is received, when it is received. You can change it at receiving.</span>
+                  </div>
+                )}
+              </div>
               <div className="border border-white/10 rounded-xl p-3">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={!!form.prepaid}
-                    onChange={e => setForm(f => ({ ...f, prepaid: e.target.checked }))} />
+                    onChange={e => setForm(f => ({ ...f, prepaid: e.target.checked, ...(e.target.checked ? { payOnDelivery: false } : {}) }))} />
                   <span className="text-[11px] font-black uppercase tracking-wider text-fg/70">Already paid this supplier</span>
                 </label>
                 {form.prepaid && (

@@ -50,3 +50,54 @@ describe('one product, two batches on a purchase order', () => {
     expect(new Date(item.expiryDate).toISOString().slice(0, 10)).toBe('2027-03-31');
   });
 });
+
+describe('paid on delivery', () => {
+  const netOf = async (code) => {
+    const rows = await mongoose.model('JournalEntry').aggregate([{ $unwind: '$lines' }, { $match: { 'lines.accountCode': code } },
+      { $group: { _id: null, d: { $sum: '$lines.debit' }, c: { $sum: '$lines.credit' } } }]);
+    return rows[0] ? Math.round((rows[0].d - rows[0].c) * 100) / 100 : 0;
+  };
+  const make = (extra) => request(app).post('/api/purchase-orders').set(auth()).send({
+    supplier: 'Syrup Co', lines: [{ invId, itemName: 'OATSIDE BARISTA EDITION', unit: 'L', packSize: 1, unitCost: 260, orderedQty: 12 }], ...extra,
+  });
+
+  it('pays for what arrived - 8 of 12 - from cash, owes nothing, raises no bill', async () => {
+    const cash0 = await netOf('111000'), ap0 = await netOf('220000');
+    const po = (await make({ payOnDelivery: true, payOnDeliveryAccount: '111000' })).body.purchaseOrder;
+    expect(po.payOnDelivery).toBe(true);
+    const r = await request(app).post(`/api/purchase-orders/${po._id}/receive`).set(auth())
+      .send({ received: [{ lineId: po.lines[0]._id, receivedQty: 8 }] });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.bill).toBeNull();
+    expect(r.body.paidOnDelivery).toBe(2080);
+    expect(Math.round((await netOf('111000') - cash0) * 100) / 100).toBe(-2080);
+    expect(await netOf('220000')).toBe(ap0);
+  });
+
+  it('a normal order still goes on account, with a bill', async () => {
+    const po = (await make({})).body.purchaseOrder;
+    const r = await request(app).post(`/api/purchase-orders/${po._id}/receive`).set(auth())
+      .send({ received: [{ lineId: po.lines[0]._id, receivedQty: 12 }] });
+    expect(r.body.paidOnDelivery).toBe(0);
+    expect(r.body.bill?.amount).toBe(3120);
+  });
+
+  it('refuses a pay-on-delivery account that is not cash, bank or e-wallet', async () => {
+    const r = await make({ payOnDelivery: true, payOnDeliveryAccount: '220000' });
+    expect(r.status).toBe(400);
+  });
+});
+
+describe('pay on delivery through a requisition slip', () => {
+  it('the approved PO is paid on delivery from the chosen account', async () => {
+    const slip = await request(app).post('/api/requisition-slips').set(auth()).send({
+      type: 'procurement', supplier: 'Syrup Co', payOnDelivery: true, payOnDeliveryAccount: '112000',
+      lines: [{ invId, itemName: 'OATSIDE BARISTA EDITION', unit: 'L', packSize: 1, unitCost: 260, orderedQty: 12 }],
+    });
+    expect(slip.body.success, JSON.stringify(slip.body)).toBe(true);
+    const ok = await request(app).post(`/api/requisition-slips/${slip.body.slip._id}/approve`).set(auth()).send({});
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const po = await mongoose.model('PurchaseOrder').findOne({ notes: new RegExp(slip.body.slip.slipNumber) }).lean();
+    expect(po).toMatchObject({ payOnDelivery: true, payOnDeliveryAccount: '112000' });
+  });
+});

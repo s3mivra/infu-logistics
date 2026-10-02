@@ -3270,6 +3270,12 @@ const PurchaseOrderSchema = new mongoose.Schema({
   prepaidAmount:  { type: Number, default: 0 },
   prepaidDate:    { type: Date, default: null },
   prepaidFromAccount: { type: String, default: '' },
+  // Paid on delivery (COD): what each delivery brings is paid there and then,
+  // from this cash/bank account - for what was RECEIVED, never what was
+  // ordered. No payable, no bill. The receive step may still change it.
+  payOnDelivery: { type: Boolean, default: false },
+  payOnDeliveryAccount: { type: String, default: '' },
+  paidOnDelivery: { type: Number, default: 0 },   // running total paid at deliveries
   // The Advance this PO was paid through, so receiving can liquidate it.
   advanceId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Advance', default: null },
   advanceNumber:  { type: String, default: '' },
@@ -4494,6 +4500,9 @@ const RevolvingFundTx =mongoose.model('RevolvingFundTx', RevolvingFundTxSchema);
 // once set - is the "Approved By" line beneath it.
 const REQ_SLIP_STATUSES = ['Pending', 'Approved', 'Rejected'];
 const RequisitionSlipSchema = new mongoose.Schema({
+  // Procurement slips: paid on delivery, carried onto the PO it becomes.
+  payOnDelivery: { type: Boolean, default: false },
+  payOnDeliveryAccount: { type: String, default: '' },
   businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
   slipNumber: { type: String, index: true },              // REQ-2026-000001
