@@ -1578,6 +1578,12 @@ items: [{
     // later SRP change never rewrites an old sale's comparison.
     listPrice: { type: Number, default: null },
     quantity: Number,
+    // Served in the bar's own cups: how many units of this line still have NOT
+    // had their take-out packaging taken from stock, and what one unit would
+    // take (base units). Set when the order is completed with useBarCups;
+    // POST /api/orders/:id/take-out draws on it if the customer leaves with it.
+    barCupQty: { type: Number, default: 0 },
+    barCupPack: [{ _id: false, invId: String, name: String, qty: Number }],
     fulfilledQty: { type: Number, default: 0 },        // units fulfilled so far (partial fulfillment)
     // Cumulative units of THIS line refunded/returned so far, across however many
     // partial-refund passes (see POST /api/orders/:id/partial-refund). Never
@@ -1695,6 +1701,9 @@ items: [{
   // lineIndex is the order line it belongs to, so a partial refund can take
   // back its share. Orders from before this field existed have none, and are
   // reversed from the recipe as before.
+  // Dine-in, served in the bar's cups rather than take-out ones (cafe). The
+  // take-out packaging in each recipe is left on the shelf at completion.
+  useBarCups: { type: Boolean, default: false },
   stockMoves: [{
     _id: false,
     invId: String,
@@ -1927,6 +1936,11 @@ const InventorySchema = new mongoose.Schema({
   unit: String,                                       // base unit: 'g', 'ml', 'pcs'
   unitCost: { type: Number, default: 0 },             // ALWAYS per base unit (e.g. P0.07/ml when 1L costs P70)
   lowStockThreshold: { type: Number, default: 0 },
+  // Take-out packaging: a cup, lid, straw or bag that only leaves the shelf
+  // when the drink leaves the shop. A dine-in order served in the bar's own
+  // cups (Order.useBarCups) skips these when it is completed - see the stock
+  // engine in orders.js - and takes them later only if it is made take-out.
+  takeoutPackaging: { type: Boolean, default: false },
   // Display layer - what operators see (kg / L / pcs). storage stays in base units for recipe precision.
   displayUnit:     { type: String, default: '' },     // 'L', 'kg', 'pcs', 'g', 'ml' - falls back to `unit` when empty
   unitMultiplier:  { type: Number, default: 1 },      // base units per displayUnit (1 for g/ml/pcs; 1000 for L/kg)

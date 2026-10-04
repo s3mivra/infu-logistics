@@ -280,6 +280,16 @@ export default function AdminDashboard() {
   const [posNotes, setPosNotes] = useState('');
   // --- POS GUEST COUNT ---
   const [posGuestCount, setPosGuestCount] = useState(1);
+  // Cafe, dine-in: serve in the bar's own cups, so the take-out cup in the
+  // recipe stays on the shelf. Remembered on this till - a shop that always
+  // serves dine-in in its own cups sets it once.
+  const [posBarCups, setPosBarCupsState] = useState(() => {
+    try { return localStorage.getItem('posBarCups') === '1'; } catch { return false; }
+  });
+  const setPosBarCups = (on) => {
+    setPosBarCupsState(!!on);
+    try { localStorage.setItem('posBarCups', on ? '1' : '0'); } catch { /* private window - not remembered */ }
+  };
   // --- MODIFIER GROUPS ---
   const [modifierGroups, setModifierGroups] = useState([]);
   // --- MULTI-PAYMENT ---
@@ -2548,6 +2558,8 @@ export default function AdminDashboard() {
       dispatchStatus: (isDelivery || isPickup) ? 'Preparing' : '',
       orderNotes: posNotes.trim(),
       guestCount: Math.max(1, parseInt(posGuestCount) || 1),
+      // Only a dine-in order can be served in the bar's cups.
+      ...(BUSINESS_TYPE === 'fb' && posTable === 'Dine-In' && posBarCups ? { useBarCups: true } : {}),
       location: posBranch || '',
     };
 
@@ -3771,7 +3783,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
   // Files a Requisition Slip instead of replenishing directly - unlike a
   // disbursement, this draws down a real cash/bank account, so the balance
   // doesn't move until someone with requisitions.approve signs off on
-  // Ledger → Approvals (see requisitions.js, type 'fund-replenish').
+  // Approvals (see requisitions.js, type 'fund-replenish').
   const submitRfRepl = async () => {
     if (rfReplSubmitting || !rfActiveFund) return;
     setRfReplSubmitting(true);
@@ -5960,6 +5972,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       stockLocation: item.stockLocation || '',
       stockCategory: item.stockCategory || '',
       srp: item.srp != null && item.srp !== 0 ? String(item.srp) : '',
+      takeoutPackaging: item.takeoutPackaging === true,
     });
     setEditInvModal({ item });
   };
@@ -5999,6 +6012,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         stockLocation: editInvForm.stockLocation || null,
         stockCategory: editInvForm.stockCategory || null,
         srp: editInvForm.srp === '' || editInvForm.srp == null ? 0 : Math.max(0, parseFloat(editInvForm.srp) || 0),
+        takeoutPackaging: editInvForm.takeoutPackaging === true,
       };
       const res = await apiFetch(`/api/inventory/${editInvModal.item._id}`, {
         method: 'PUT',
@@ -7104,14 +7118,21 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     finally { setBounceSubmitting(false); }
   };
 
-  const fetchSalesByPayment = async () => {
-    try { const res = await apiFetch(`/api/reports/sales-by-payment?start=${sbpRange.start}&end=${sbpRange.end}`); const d = await res.json(); if (d.success) setSalesByPayment(d); }
+  // Which sales a sales report covers: '' all, 'backdated' (entered after the
+  // fact - Backdate Sale or an import), or 'live' (the till, the portal). One
+  // choice shared by the sales reports. Each loader also takes it directly, so
+  // changing the choice can reload at once without waiting for a re-render;
+  // called as a click handler it is handed an event, hence the string check.
+  const [salesSource, setSalesSource] = useState('');
+  const srcQuery = (arg) => { const s = typeof arg === 'string' ? arg : salesSource; return s ? `&source=${s}` : ''; };
+  const fetchSalesByPayment = async (src) => {
+    try { const res = await apiFetch(`/api/reports/sales-by-payment?start=${sbpRange.start}&end=${sbpRange.end}${srcQuery(src)}`); const d = await res.json(); if (d.success) setSalesByPayment(d); }
     catch (err) { console.error('fetchSalesByPayment', err); }
   };
 
   // ── Summary Sales (channel breakdown: cash / e-wallet / bank / delivery) ──────
-  const fetchSalesSummary = async () => {
-    try { const res = await apiFetch(`/api/reports/sales-summary?start=${sssRange.start}&end=${sssRange.end}`); const d = await res.json(); if (d.success) setSalesSummary(d); }
+  const fetchSalesSummary = async (src) => {
+    try { const res = await apiFetch(`/api/reports/sales-summary?start=${sssRange.start}&end=${sssRange.end}${srcQuery(src)}`); const d = await res.json(); if (d.success) setSalesSummary(d); }
     catch (err) { console.error('fetchSalesSummary', err); }
   };
   // Roll per-order rows up to per-day rows (client-side), merging channel + method detail.
@@ -7163,8 +7184,8 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   };
 
   // ── Sales Line Items (item-level detail) ─────────────────────────────────────
-  const fetchSalesLineItems = async () => {
-    try { const res = await apiFetch(`/api/reports/sales-line-items?start=${sliRange.start}&end=${sliRange.end}`); const d = await res.json(); if (d.success) setSalesLineItems(d); }
+  const fetchSalesLineItems = async (src) => {
+    try { const res = await apiFetch(`/api/reports/sales-line-items?start=${sliRange.start}&end=${sliRange.end}${srcQuery(src)}`); const d = await res.json(); if (d.success) setSalesLineItems(d); }
     catch (err) { console.error('fetchSalesLineItems', err); }
   };
   const exportSalesLineItemsPDF = async () => {
@@ -9053,7 +9074,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     commissions, fetchCommissions,
     exportPnlPDF, exportBalanceSheetPDF, exportPurchaseOrderPDF,
     // ── Multi-Payment ────────────────────────────────────────────────────────
-    posPayments, setPosPayments, posGuestCount, setPosGuestCount,
+    posPayments, setPosPayments, posGuestCount, setPosGuestCount, posBarCups, setPosBarCups,
     // ── Archive Search ───────────────────────────────────────────────────────
     archiveSearch, setArchiveSearch, archiveDateRange, setArchiveDateRange, archiveTotal,
     // ── Denomination Breakdown + Z-Reading ──────────────────────────────────
@@ -9080,7 +9101,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     bounceTarget, setBounceTarget, bounceForm, setBounceForm, bounceSubmitting, submitBounceCheck,
     // ── Summary Sales (channel breakdown) ────────────────────────────────────
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
-    salesLineItems, sliRange, setSliRange, fetchSalesLineItems, exportSalesLineItemsPDF,
+    salesLineItems, sliRange, setSliRange, fetchSalesLineItems, exportSalesLineItemsPDF, salesSource, setSalesSource,
     // ── Refund ───────────────────────────────────────────────────────────────
     refundModal, setRefundModal, refundForm, setRefundForm, refundSubmitting, handleRefund, handlePartialRefund, handleExchange,
     // ── Clock In/Out ─────────────────────────────────────────────────────────
@@ -9465,7 +9486,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       {activeTab === 'production' && <Suspense fallback={<TabFallback />}><ProductionTab ctx={ctx} /></Suspense>}
 
       {/* --- ACCOUNTING & LEDGER TAB --- */}
-      {(activeTab === 'ledger' || activeTab === 'reports') && <Suspense fallback={<TabFallback />}><LedgerTab ctx={ctx} /></Suspense>}
+      {(activeTab === 'ledger' || activeTab === 'reports' || activeTab === 'approvals') && <Suspense fallback={<TabFallback />}><LedgerTab ctx={ctx} /></Suspense>}
 
       {/* ===== REVOLVING FUND MODALS ===== */}
 

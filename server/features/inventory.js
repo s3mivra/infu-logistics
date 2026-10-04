@@ -1400,9 +1400,10 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
     // Whitelist editable fields - stockQty must NEVER be edited here
     // (would bypass StockCard audit trail and double-entry accounting).
     // Stock changes go through restock / spoilage / order-completion flows.
-    const allowed = ['itemName', 'unit', 'unitCost', 'lowStockThreshold', 'expiryDate', 'expiryWarnDays', 'displayUnit', 'unitMultiplier', 'srp', 'packSize', 'stockLocation', 'stockCategory'];
+    const allowed = ['itemName', 'unit', 'unitCost', 'lowStockThreshold', 'expiryDate', 'expiryWarnDays', 'displayUnit', 'unitMultiplier', 'srp', 'packSize', 'stockLocation', 'stockCategory', 'takeoutPackaging'];
     const update = {};
     for (const k of allowed) if (k in req.body) update[k] = req.body[k];
+    if ('takeoutPackaging' in update) update.takeoutPackaging = update.takeoutPackaging === true;
 
     // itemCode is a business key: in log mode the resale Product's productCode
     // equals it, so a rename must cascade or the two silently desync. Handled
@@ -2097,7 +2098,21 @@ async function runInventoryImport(req, res, attempt) {
         //    batch with the +diff qty (only if diff > 0).
         //  - If diff < 0: FEFO/FPFO-consume the absolute diff from existing batches.
         //  - If diff > 0 and no date on Excel row: leave batches untouched (caller assumes existing batch still applies).
-        if (diff < 0) {
+        //  - BUT a row that carries a date is a count of what is on the shelf with
+        //    that date: the item's batches become exactly this row (and any repeat
+        //    rows of it further down add theirs). Recording only the +diff dropped
+        //    the date whenever the count matched or fell - so a sheet listing
+        //    "10, expires May" over "10, expires March" kept March.
+        if (expiryFromExcel || productionFromExcel) {
+          existing.expiryBatches = newBaseQty > 0 ? [{
+            qty: newBaseQty,
+            expiryDate: expiryFromExcel ? new Date(expiryFromExcel) : null,
+            productionDate: productionFromExcel ? new Date(productionFromExcel) : null,
+            receivedAt: new Date(),
+            reference: impRef,
+            unitCost: existing.unitCost || unitCostForValuation,
+          }] : [];
+        } else if (diff < 0) {
           const r = consumeBatches(existing.expiryBatches || [], Math.abs(diff));
           existing.expiryBatches = r.batches;
         } else if (diff > 0 && (expiryFromExcel || productionFromExcel)) {

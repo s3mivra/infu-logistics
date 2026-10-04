@@ -115,7 +115,7 @@ export default function OrdersTab({ ctx }) {
     setImportModal, setImportRows, setInvForm, setInvPage, setInvSubTab,
     setIsPosOpen, setIsStatusMenuOpen, setJeForm, setJournalEntries, setLedgerSubTab,
     setNewDiscount, setOrderFilter, setOrderSearch, orderSearch, setOrdersPage, setPaymentSelections, setPhysicalCounts,
-    posNotes, setPosNotes, posGuestCount, setPosGuestCount,
+    posNotes, setPosNotes, posGuestCount, setPosGuestCount, posBarCups, setPosBarCups,
     posPayments, setPosPayments,
     modifierGroups, printKitchenTicket,
     paymentRefs, setPaymentRefs, paymentCheckDates, setPaymentCheckDates,
@@ -262,6 +262,39 @@ export default function OrdersTab({ ctx }) {
       ui.alert(`${d.reservation.reservationNumber} holds this order's stock until ${new Date(d.reservation.expiresAt).toLocaleDateString()}. Completing the order releases it.`);
       fetchOrders();
     } catch { ui.alert('Network error.'); }
+  };
+
+  // ── Cafe: bar cups ─────────────────────────────────────────────────────────
+  // A dine-in order served in the shop's own cups takes no take-out cup, lid or
+  // straw from stock when it is completed. It can be switched on the order
+  // itself any time before that (a QR table order has no till to set it), and
+  // a completed one can still be made take-out if the customer leaves with it.
+  const NOT_DINE_IN = ['Takeout', 'Grab Delivery', 'Foodpanda', 'Manual Delivery', 'Pickup', 'Lalamove', 'Backdated'];
+  const isDineInOrder = (order) => !NOT_DINE_IN.includes(order.table);
+  const barCupLines = (order) => (order.items || []).map((it, index) => ({ index, name: it.name, left: Number(it.barCupQty) || 0 })).filter(l => l.left > 0);
+  const setOrderBarCups = async (order, on) => {
+    try {
+      const res = await apiFetch(`/api/orders/${order._id}`, { method: 'PUT', body: JSON.stringify({ useBarCups: on }) });
+      const d = await res.json();
+      if (!d.success) return ui.alert(d.error || 'Could not change that.');
+      fetchOrders();
+    } catch { ui.alert('Network error.'); }
+  };
+  const [takeOut, setTakeOut] = React.useState(null);   // { orderId, qty: { [index]: n }, busy }
+  const submitTakeOut = async (order) => {
+    const lines = barCupLines(order)
+      .map(l => ({ index: l.index, qty: Math.min(l.left, Math.max(0, Number(takeOut?.qty?.[l.index] ?? l.left))) }))
+      .filter(l => l.qty > 0);
+    if (!lines.length) return ui.alert('Enter how many are being taken out.');
+    setTakeOut(t => ({ ...t, busy: true }));
+    try {
+      const res = await apiFetch(`/api/orders/${order._id}/take-out`, { method: 'POST', body: JSON.stringify({ lines }) });
+      const d = await res.json();
+      if (!d.success) { setTakeOut(t => ({ ...t, busy: false })); return ui.alert(d.error || 'Could not make it take-out.'); }
+      setTakeOut(null);
+      ui.toast(`Take-out cups taken from stock for ${d.made.reduce((n, m) => n + m.qty, 0)} drink(s).`, { tone: 'success' });
+      fetchOrders();
+    } catch { setTakeOut(t => ({ ...t, busy: false })); ui.alert('Network error - nothing was changed.'); }
   };
 
   const openAmend = (order) => setAmendModal({ order, qty: (order.items || []).map(i => String(i.quantity)), adds: [], search: '', reason: '', busy: false, error: '' });
@@ -641,6 +674,21 @@ export default function OrdersTab({ ctx }) {
                           value={posGuestCount} onChange={e => setPosGuestCount(e.target.value)}
                           className="w-20 bg-page-bg border border-white/10 rounded-lg px-2.5 py-1.5 text-fg text-xs font-bold outline-none focus:border-brand/50" />
                       </label>
+                    )}
+                    {/* Dine-in in the bar's own cups: the take-out cup, lid and
+                        straw in each recipe stay on the shelf. */}
+                    {BUSINESS_TYPE === 'fb' && posTable === 'Dine-In' && (
+                      <button type="button" onClick={() => setPosBarCups?.(!posBarCups)} aria-pressed={!!posBarCups}
+                        title="Serve in the bar's own cups - take-out cups, lids and straws are not taken from stock. If they leave with it, use Make take-out on the completed order."
+                        className={`flex items-center justify-between gap-3 px-3 py-2 rounded-xl border text-left transition ${posBarCups ? 'bg-brand/10 border-brand/40' : 'bg-page-bg border-white/10'}`}>
+                        <span>
+                          <span className="text-xs font-bold text-fg block">Bar cups</span>
+                          <span className="text-[10px] text-fg/65 block">{posBarCups ? 'No take-out cups used for this order' : 'Off - uses take-out cups'}</span>
+                        </span>
+                        <span className={`w-9 h-5 rounded-full shrink-0 relative transition ${posBarCups ? 'bg-brand' : 'bg-white/15'}`}>
+                          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${posBarCups ? 'left-[18px]' : 'left-0.5'}`} />
+                        </span>
+                      </button>
                     )}
                     {!noteOpen && !posNotes ? (
                       <button type="button" onClick={() => setNoteOpen(true)}
@@ -1600,6 +1648,49 @@ export default function OrdersTab({ ctx }) {
                             </div>)}
 
                             <div className={`flex flex-col gap-2 ${isUpdating ? 'opacity-50 pointer-events-none' : ''}`}>
+                              {/* Cafe, dine-in, still open: serve in the bar's own cups? */}
+                              {BUSINESS_TYPE === 'fb' && departmentFilter === 'All' && isDineInOrder(order)
+                                && ['Pending', 'Preparing', 'Ready'].includes(order.status) && (
+                                <button type="button" onClick={() => setOrderBarCups(order, !order.useBarCups)} aria-pressed={!!order.useBarCups}
+                                  title="Serve in the bar's own cups - take-out cups, lids and straws are not taken from stock when this order is completed."
+                                  className={`flex items-center justify-between gap-3 px-3 py-2 rounded-lg border text-left transition ${order.useBarCups ? 'bg-brand/10 border-brand/40' : 'bg-black/20 border-white/10'}`}>
+                                  <span>
+                                    <span className="text-xs font-bold text-fg block">Bar cups</span>
+                                    <span className="text-[10px] text-fg/70 block">{order.useBarCups ? 'No take-out cups will be used' : 'Off - uses take-out cups'}</span>
+                                  </span>
+                                  <span className={`w-9 h-5 rounded-full shrink-0 relative transition ${order.useBarCups ? 'bg-brand' : 'bg-white/15'}`}>
+                                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${order.useBarCups ? 'left-[18px]' : 'left-0.5'}`} />
+                                  </span>
+                                </button>
+                              )}
+                              {/* Completed in bar cups, and they are leaving with it after all. */}
+                              {BUSINESS_TYPE === 'fb' && departmentFilter === 'All' && order.status === 'Completed' && barCupLines(order).length > 0 && (
+                                takeOut?.orderId === order._id ? (
+                                  <div className="flex flex-col gap-2 bg-black/20 border border-white/10 rounded-lg p-3">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-fg/75">Make take-out - how many?</p>
+                                    {barCupLines(order).map(l => (
+                                      <div key={l.index} className="flex items-center justify-between gap-2">
+                                        <span className="text-xs font-bold text-fg truncate" title={l.name}>{l.name} <span className="text-fg/65 font-normal">({l.left} in bar cups)</span></span>
+                                        <QtyInput value={Math.min(l.left, Number(takeOut.qty?.[l.index] ?? l.left)) || 1} max={l.left} label={`Take-out quantity of ${l.name}`}
+                                          onChange={q => setTakeOut(t => ({ ...t, qty: { ...t.qty, [l.index]: q } }))} />
+                                      </div>
+                                    ))}
+                                    <p className="text-[10px] text-fg/70">Takes the take-out cup, lid and straw for these from stock now.</p>
+                                    <div className="flex gap-2">
+                                      <button onClick={() => setTakeOut(null)} disabled={takeOut.busy} className="flex-1 border border-white/15 text-fg/80 py-2 rounded-lg font-bold text-xs transition disabled:opacity-50">Cancel</button>
+                                      <button onClick={() => submitTakeOut(order)} disabled={takeOut.busy} className="flex-1 bg-brand text-on-brand py-2 rounded-lg font-black text-xs uppercase tracking-widest transition disabled:opacity-50">
+                                        {takeOut.busy ? 'Saving…' : 'Confirm take-out'}
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <button onClick={() => setTakeOut({ orderId: order._id, qty: {}, busy: false })}
+                                    title="Served in the bar's cups, but they are taking it out: take the take-out cups from stock now."
+                                    className="w-full border border-brand/40 bg-brand/10 text-brand-text py-2 rounded-lg hover:bg-brand/20 font-bold text-xs uppercase tracking-widest transition flex items-center justify-center gap-2">
+                                    <ShoppingBag size={13} /> Make take-out ({barCupLines(order).reduce((n, l) => n + l.left, 0)} in bar cups)
+                                  </button>
+                                )
+                              )}
                               {/* Reserved orders are held with no payment. Unlock promotes them to Pending,
                                   which surfaces the normal Pay & Send / Drop controls below. */}
                               {order.status === 'Reserved' && departmentFilter === 'All' && (

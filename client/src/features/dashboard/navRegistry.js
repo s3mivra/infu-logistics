@@ -57,6 +57,12 @@ export const NAV_GROUPS = [
       // superadmin check here previously left managers unable to find promos.
       { id: 'pricing', label: 'Pricing Control', icon: DollarSign, perm: 'products.manage', hint: 'Prices, margins, discounts' },
       { id: 'history', label: 'Shifts & Cash', icon: Clock, perm: 'shifts.view', hint: 'Shift history, X-reading' },
+      // Requisition slips waiting for a decision. Its own entry, not a Ledger
+      // page: visible to any staff - the server scopes what comes back (without
+      // requisitions.view you only see the slips you filed yourself), and
+      // Approve / Reject still need requisitions.approve. It is drawn by the
+      // Ledger screen in its "approvals only" mode, hence `sub`.
+      { id: 'approvals', label: 'Approvals', icon: ShieldCheck, sub: 'approvals', hint: 'Requisition slips to approve' },
       { id: 'audit', label: 'Audit Report', icon: ShieldCheck, perm: 'audit.view', hint: 'Who changed what' },
       { id: 'fixedassets', label: 'Fixed Assets', icon: Building2, perm: 'assets.view', hint: 'Register, depreciation' },
       // Optional modules: each appears only where the business has switched it
@@ -105,10 +111,9 @@ export const LEDGER_TAB_GROUPS = [
     // The month-end checklist, and the Close button behind it.
     ['closing', 'Month-End Close', CalendarCheck],
     ['backdate', 'Backdate Sale', Clock],
-    // Always visible to any staff - the server itself scopes what comes back:
-    // without requisitions.view you only ever see your OWN filed slips, not
-    // anyone else's. Approve or Reject still require requisitions.approve.
-    ['approvals', 'Approvals', ShieldCheck],
+    // Approvals is no longer a page of this tab - it has its own place in the
+    // sidebar (see the `approvals` item in NAV_GROUPS), so someone who files
+    // or approves slips does not need the Ledger to reach them.
     // The only diagnostic that answers "is every document stamped with this
     // server's business type", which is what a mis-scoped report looks like
     // from the outside.

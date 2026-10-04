@@ -26,7 +26,7 @@ import { checkApproval, orderIsPaid } from '../lib/approval.js';
 import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 
 import { atomic } from '../lib/atomicRoute.js';
-import { stockMovesFrom, movesToReturn, hasStockMoves } from '../lib/stockMoves.js';
+import { stockMovesFrom, movesToReturn, hasStockMoves, roundQty } from '../lib/stockMoves.js';
 export default function registerOrders(ctx) {
   const {
     app,
@@ -1319,6 +1319,9 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       salesperson: String((!selfServiceOrder && req.body.salesperson) || buyerRep || (selfServiceOrder ? '' : cashier) || '').trim().slice(0, 100),
       ...(creditOverride && { creditOverride }),
       ...(paymentsInput?.length > 0 && { payments: paymentsInput }),
+      // Dine-in in the bar's own cups (cafe): the till's choice, never a
+      // customer's - a QR order is switched by staff on the order itself.
+      ...(BUSINESS_TYPE === 'fb' && !selfServiceOrder && req.body.useBarCups === true && { useBarCups: true }),
       ...(paymentReference && { paymentReference }),
       ...(paymentCheckDate && { paymentCheckDate }),
     });
@@ -1806,6 +1809,10 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       return res.status(400).json({ success: false, error: 'Completed orders are immutable. Use the void workflow for cancellations.' });
     }
 
+    // Dine-in in the bar's own cups, or take-out cups after all - decided any
+    // time up to the moment the order is completed, which is when stock moves.
+    if (typeof req.body.useBarCups === 'boolean' && BUSINESS_TYPE === 'fb') order.useBarCups = req.body.useBarCups;
+
     if (status !== undefined) {
       // The generic update may only move an order along its normal life.
       // Voided and Refunded have their own routes that capture a reason and
@@ -2033,6 +2040,22 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       productsById.forEach(p => productMap.set(String(p._id), p));
       productsByName.forEach(p => productMap.set(`name:${p.name}`, p));
 
+      // Served in the bar's own cups (cafe): the take-out packaging in each
+      // recipe - cup, lid, straw - stays on the shelf. What each line WOULD
+      // have taken is kept on the line, so it can still be taken if the
+      // customer leaves with the drink (POST /api/orders/:id/take-out).
+      const barCupIds = (BUSINESS_TYPE === 'fb' && order.useBarCups)
+        ? new Set((await Inventory.find({ businessType: BUSINESS_TYPE, takeoutPackaging: true }, { _id: 1 }).session(session).lean()).map(i => String(i._id)))
+        : null;
+      const keptOnShelf = new Map();   // lineIndex -> Map(invId -> { invId, name, qty per unit })
+      const keepOnShelf = (lineIndex, invId, name, perUnit) => {
+        if (!keptOnShelf.has(lineIndex)) keptOnShelf.set(lineIndex, new Map());
+        const packs = keptOnShelf.get(lineIndex);
+        const key = String(invId);
+        const prev = packs.get(key);
+        packs.set(key, { invId: key, name: prev?.name || name || '', qty: roundQty((prev?.qty || 0) + (Number(perUnit) || 0)) });
+      };
+
       for (const [lineIndex, item] of order.items.entries()) {
         if (item.price === undefined || item.quantity === undefined) {
           await session.abortTransaction(); session.endSession();
@@ -2080,6 +2103,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
             for (const ing of compRecipe) {
               const invId = await resolveIngInvId(ing, session);
               if (!invId) continue;
+              if (barCupIds?.has(String(invId))) { keepOnShelf(lineIndex, invId, ing.name, ing.qty * (comp.quantity || 1)); continue; }
               const deductQty = (ing.qty * (comp.quantity || 1) * item.quantity);
               const invItem = await Inventory.findOneAndUpdate(
                 { _id: invId, // Only stock that is not held for another client can be sold.
@@ -2158,6 +2182,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         for (const ing of recipeToUse) {
           const invId = await resolveIngInvId(ing, session);
           if (!invId) continue;
+          if (barCupIds?.has(String(invId))) { keepOnShelf(lineIndex, invId, ing.name, ing.qty); continue; }
           const deductQty = (ing.qty * item.quantity);
           const invItem = await Inventory.findOneAndUpdate(
             { _id: invId, // Only stock that is not held for another client can be sold.
@@ -2200,6 +2225,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
             for (const ing of resolvedRecipe) {
               const invId = await resolveIngInvId(ing, session);
               if (!invId) continue;
+              if (barCupIds?.has(String(invId))) { keepOnShelf(lineIndex, invId, ing.name, ing.qty); continue; }
               const deductQty = (ing.qty * item.quantity);
               const invItem = await Inventory.findOneAndUpdate(
                 { _id: invId, // Only stock that is not held for another client can be sold.
@@ -2257,6 +2283,13 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       }
       // What this sale took, for a void or refund to give back exactly.
       order.stockMoves = stockMovesFrom(stockCardBatch);
+      // The take-out packaging each line left on the shelf (bar cups).
+      for (const [lineIndex, packs] of keptOnShelf) {
+        const line = order.items[lineIndex];
+        line.barCupPack = [...packs.values()].filter(p => p.qty > 0);
+        line.barCupQty = line.barCupPack.length ? (Number(line.quantity) || 0) : 0;
+      }
+      if (keptOnShelf.size) order.markModified('items');
 
       const reference = mkRef('', order.orderNumber);
       const lines = [];
@@ -2511,6 +2544,94 @@ app.post('/api/orders/:id/unvoid', verifyToken, requireSuperAdmin, async (req, r
 // an owner hands voids to a head barista or a manager. It used to be hard-wired
 // to the superadmin, so granting that permission did nothing for a completed
 // order. Un-voiding stays superadmin-only: it re-posts a sale someone reversed.
+// ── MADE TAKE-OUT AFTER ALL ──────────────────────────────────────────────────
+// POST /api/orders/:id/take-out  { lines?: [{ index, qty }] }
+//
+// A dine-in drink served in the bar's cups took no take-out packaging when the
+// order was completed. The customer does not finish it and leaves with it: the
+// cup, lid and straw it would have used come off the shelf NOW, for as many
+// drinks as are named (all that are left, when none are). They are added to
+// the order's stock moves - so a later void or refund gives them back too - and
+// their cost is booked as cost of goods sold, dated today, when they were used.
+app.post('/api/orders/:id/take-out', verifyToken, requireStaff, permitAny('pos.use', 'orders.manage'), async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  const stop = async (code, error) => { await session.abortTransaction(); session.endSession(); return res.status(code).json({ success: false, error }); };
+  try {
+    if (!mongoose.Types.ObjectId.isValid(String(req.params.id))) return stop(404, 'Order not found.');
+    const order = await Order.findById(req.params.id).session(session);
+    if (!order) return stop(404, 'Order not found.');
+    if (order.status !== 'Completed') return stop(400, 'This order is not completed yet - switch "Bar cups" off on the order instead.');
+
+    const wanted = Array.isArray(req.body?.lines)
+      ? new Map(req.body.lines.map(l => [Number(l?.index), Math.floor(Number(l?.qty) || 0)]))
+      : null;
+    const reference = await mkSeqRef('TAKEOUT');
+    const cards = [];
+    const made = [];
+    let cogs = 0;
+    for (const [lineIndex, item] of order.items.entries()) {
+      const left = Number(item.barCupQty) || 0;
+      const packs = item.barCupPack || [];
+      if (!(left > 0) || !packs.length) continue;
+      const n = wanted ? Math.min(left, wanted.get(lineIndex) || 0) : left;
+      if (!(n > 0)) continue;
+      for (const p of packs) {
+        const deductQty = roundQty((Number(p.qty) || 0) * n);
+        if (!(deductQty > 0) || !mongoose.Types.ObjectId.isValid(String(p.invId))) continue;
+        const inv = await Inventory.findOneAndUpdate(
+          { _id: p.invId, $expr: { $gte: [{ $subtract: ['$stockQty', { $ifNull: ['$reservedQty', 0] }] }, deductQty] } },
+          { $inc: { stockQty: -deductQty } },
+          { session, returnDocument: 'after' },
+        );
+        if (!inv) return stop(400, `Not enough ${p.name || 'take-out packaging'} in stock to make this take-out.`);
+        if (inv.expiryBatches?.length > 0) {
+          const r = consumeBatches(inv.expiryBatches, deductQty);
+          inv.expiryBatches = r.batches; inv.expiryDate = soonestExpiry(r.batches);
+          await inv.save({ session });
+        }
+        cards.push({
+          inventoryId: inv._id, itemName: inv.itemName, type: 'Sale', reference,
+          qtyChange: -deductQty, balanceAfter: inv.stockQty, unitCost: inv.unitCost || 0, lineIndex,
+          remarks: `Made take-out (${item.name}) - ${order.orderNumber}`,
+        });
+        cogs += (inv.unitCost || 0) * deductQty;
+      }
+      item.barCupQty = left - n;
+      made.push({ index: lineIndex, name: item.name, qty: n });
+    }
+    if (!made.length) return stop(400, 'Nothing on this order is still in bar cups.');
+
+    if (cards.length) await StockCard.insertMany(cards, { session });
+    order.stockMoves = [...(order.stockMoves || []).map(m => (m.toObject ? m.toObject() : m)), ...stockMovesFrom(cards)];
+    order.markModified('items');
+    await order.save({ session });
+
+    cogs = +cogs.toFixed(2);
+    if (cogs > 0) {
+      await JournalEntry.create([{
+        reference,
+        description: `Take-out packaging for ${order.orderNumber} (served dine-in, taken out after)`,
+        lines: [
+          { accountCode: '510000', accountName: 'Cost of Goods Sold', debit: cogs, credit: 0 },
+          { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: cogs },
+        ],
+        totalDebit: cogs, totalCredit: cogs,
+      }], { session });
+    }
+    await session.commitTransaction();
+    session.endSession();
+    try { await logAudit(req, { action: 'take-out', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, made, cost: cogs } }); } catch (err) { captureError(req, err); }
+    emitToOps('orderUpdated', order);
+    if (cogs > 0) emitToMgr('erpUpdated');
+    res.json({ success: true, order, made, cost: cogs });
+  } catch (err) {
+    try { await session.abortTransaction(); } catch { /* already ended */ }
+    session.endSession();
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 app.post('/api/orders/:id/void', verifyToken, requireStaff, permit('orders.delete'), async (req, res) => {
   await runWithStatsRetry(voidOrderOnce, req, res);
 });

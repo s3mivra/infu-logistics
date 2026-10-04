@@ -15,6 +15,7 @@ const TABS = [
   'Ledger',
   'Pricing Control',
   'Shifts & Cash',
+  'Approvals',
   'Audit Report',
   'Fixed Assets',
   'Production',
@@ -138,4 +139,24 @@ test('the optional accounting modules open once they are switched on', async ({ 
     !/favicon|manifest|service ?worker|net::ERR|Failed to load resource|the server responded with a status of 4/i.test(e)
   );
   expect(real, `Console/runtime errors on the optional modules:\n${real.join('\n')}`).toHaveLength(0);
+});
+
+// Approvals used to be a page under Ledger -> Setup. It has its own sidebar
+// entry now, and opens by itself - none of the Ledger's page tabs around it.
+test('Approvals opens on its own, and is no longer under Ledger', async ({ page }) => {
+  await login(page);
+
+  await page.getByRole('button', { name: /^Approvals/ }).first().click();
+  await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
+  await expect(page.getByRole('heading', { name: /Approvals/ })).toBeVisible();
+  await expect(page.getByText(/Requisition slips - petty cash/i)).toBeVisible();
+  // The Ledger's own page tabs are not drawn in this mode.
+  await expect(page.getByRole('button', { name: /^Trial Balance/ })).toHaveCount(0);
+
+  await page.getByRole('button', { name: /^Ledger/ }).first().click();
+  await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
+  await page.getByRole('button', { name: /^Setup/ }).first().click();
+  await expect(page.getByRole('button', { name: /^Backdate Sale/ })).toBeVisible();
+  // One Approvals button on the page: the sidebar's. Not a second one in Setup.
+  await expect(page.getByRole('button', { name: /^Approvals/ })).toHaveCount(1);
 });

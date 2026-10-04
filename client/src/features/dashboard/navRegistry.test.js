@@ -42,7 +42,10 @@ describe('every registered screen exists', () => {
 
 describe('every screen can be reached', () => {
   it('has a nav group for each page the Ledger renders', () => {
-    const known = new Set([...ledgerPages, ...reportPages, ...Object.keys(alias)]);
+    // A page is reachable from a Ledger / Reports tab, or straight from the
+    // sidebar (Approvals has its own entry there, pointing at its page).
+    const sidebarPages = NAV_GROUPS.flatMap((g) => g.items).map((it) => it.sub).filter(Boolean);
+    const known = new Set([...ledgerPages, ...reportPages, ...Object.keys(alias), ...sidebarPages]);
     const orphans = [...renderedPages].filter((id) => !known.has(id));
     expect(orphans).toEqual([]);
   });
@@ -77,5 +80,14 @@ describe('the way in is on the screen', () => {
     expect(dash).toMatch(/aria-label="Search screens \(Ctrl\+K\)"/);
     expect(dash.indexOf('aria-label="Search screens (Ctrl+K)"')).toBeLessThan(dash.indexOf('<nav className="p-3'));
     expect(sidebar.length).toBeGreaterThan(0);
+  });
+});
+
+describe('Approvals', () => {
+  it('has its own sidebar entry, open to any staff, and is no longer a Ledger page', () => {
+    const item = NAV_GROUPS.flatMap((g) => g.items).find((it) => it.id === 'approvals');
+    expect(item).toMatchObject({ label: 'Approvals', sub: 'approvals' });
+    expect(item.perm).toBeUndefined();
+    expect(ledgerPages).not.toContain('approvals');
   });
 });

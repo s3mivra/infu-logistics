@@ -3,6 +3,7 @@ import { useDashboard } from '../../dashboard/DashboardContext';
 
 
 import { PACK_UNIT } from '../../../shared/packUnit.js';
+const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 // Edit an inventory item's identity/costing fields. Quantity is deliberately
 // NOT editable here - stock only moves through Restock or Waste so every change
 // leaves a stock-card trail and a journal entry.
@@ -91,6 +92,19 @@ export default function EditInventoryModal() {
               className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold tabular-nums outline-none focus:border-brand/60" />
             <p className="text-[10px] text-fg/65 mt-1">Alert when stock drops to or below. 0 = disable.</p>
           </div>
+          {/* Cafe: a cup, lid, straw or bag only leaves the shelf when the drink
+              leaves the shop. A dine-in order served in the bar's own cups
+              skips these, and takes them only if it is made take-out after. */}
+          {BUSINESS_TYPE === 'fb' && (
+            <label className="flex items-start gap-3 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 cursor-pointer">
+              <input type="checkbox" className="mt-0.5 w-4 h-4 accent-brand" checked={editInvForm.takeoutPackaging === true}
+                onChange={e => set({ takeoutPackaging: e.target.checked })} />
+              <span>
+                <span className="text-sm font-bold text-fg block">Take-out packaging</span>
+                <span className="text-[10px] text-fg/65 block leading-snug">A take-out cup, lid, straw or bag. Not taken from stock when a dine-in order is served in the bar's own cups.</span>
+              </span>
+            </label>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-[10px] text-fg/65 font-bold uppercase block mb-1">Storage Location</label>

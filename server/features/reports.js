@@ -1117,10 +1117,17 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, requi
 // came in to take a commission from. Every user with any sales in range is
 // listed, including a 0%-rate one, so an admin can see who still needs a rate
 // set rather than have them silently vanish from the report.
+
+// ?source=backdated | live narrows a sales report to backdated sales (entered
+// after the fact - Ledger -> Backdate Sale, or an import) or to live ones (the
+// till, the client portal). Anything else means all of them - the default, so
+// every existing caller is unchanged.
+const salesSourceFilter = (source) => (source === 'backdated' ? { isBackdated: true }
+  : source === 'live' ? { isBackdated: { $ne: true } } : {});
 app.get('/api/reports/commissions', verifyToken, ...canViewReports, requirePermission('screen.reports.commissions'), async (req, res) => {
   try {
     const { start, end } = req.query;
-    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
+    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...salesSourceFilter(req.query.source) };
     if (start || end) {
       match.createdAt = {};
       if (start) match.createdAt.$gte = dayStart(start);
@@ -1242,7 +1249,7 @@ app.get('/api/reports/sales-by-customer', verifyToken, ...canViewReports, requir
 app.get('/api/reports/sales-by-payment', verifyToken, ...canViewReports, requirePermission('screen.reports.payments'), async (req, res) => {
   try {
     const { start, end } = req.query;
-    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
+    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...salesSourceFilter(req.query.source) };
     if (start || end) {
       match.createdAt = {};
       if (start) match.createdAt.$gte = dayStart(start);
@@ -1330,7 +1337,7 @@ app.get('/api/reports/sales-trend', verifyToken, ...canViewReports, async (req, 
 app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePermission('screen.reports.salessummary'), async (req, res) => {
   try {
     const { start, end } = req.query;
-    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
+    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...salesSourceFilter(req.query.source) };
     if (start || end) {
       match.createdAt = {};
       if (start) match.createdAt.$gte = dayStart(start);
@@ -1389,7 +1396,7 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePer
 app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, requirePermission('screen.reports.salesline'), async (req, res) => {
   try {
     const { start, end } = req.query;
-    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
+    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...salesSourceFilter(req.query.source) };
     if (start || end) {
       match.createdAt = {};
       if (start) match.createdAt.$gte = dayStart(start);
@@ -1539,7 +1546,7 @@ app.get('/api/reports/sales-documents', verifyToken, ...canViewReports, requireP
     const from = dayStart(start), to = dayEnd(end);
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return res.status(400).json({ success: false, error: 'Invalid date range.' });
     const orders = await Order.find({
-      businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true },
+      businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...salesSourceFilter(req.query.source),
       $or: [{ completedAt: { $gte: from, $lte: to } }, { completedAt: null, createdAt: { $gte: from, $lte: to } }],
     }, {
       orderNumber: 1, createdAt: 1, completedAt: 1, customerName: 1, clientId: 1, clientAccountId: 1, paymentMethod: 1,

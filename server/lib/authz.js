@@ -121,7 +121,7 @@ export const SCREENS = [
     ['journal', 'General Ledger'], ['trial', 'Trial Balance'], ['pnl', 'P&L'], ['balance', 'Balance Sheet'],
     ['araap', 'AR & AP'], ['bills', 'Bills (AP)'],
     ['revolving', 'Revolving Funds'], ['expenses', 'Expenses'],
-    ['accperiods', 'Accounts & Periods'], ['closing', 'Month-End Close'], ['backdate', 'Backdate Sale'], ['approvals', 'Approvals'],
+    ['accperiods', 'Accounts & Periods'], ['closing', 'Month-End Close'], ['backdate', 'Backdate Sale'],
     ['tenancy', 'Tenancy Health'], ['bookshealth', 'Books Health'], ['exportall', 'Export All'],
   ] },
   { tab: 'reports', label: 'Reports', parent: 'reports.view', pages: [

@@ -126,7 +126,7 @@ export default function LedgerTab({ ctx }) {
     profitByCategory, fetchProfitByCategory,
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
-    salesLineItems, sliRange, setSliRange, fetchSalesLineItems, exportSalesLineItemsPDF,
+    salesLineItems, sliRange, setSliRange, salesSource, setSalesSource, fetchSalesLineItems, exportSalesLineItemsPDF,
     menuEngineering, fetchMenuEngineering, cashierVariance, fetchCashierVariance, purchaseOrder, fetchPurchaseOrder,
     commissions, fetchCommissions,
     exportPnlPDF, exportBalanceSheetPDF, exportPurchaseOrderPDF, reconcileInventory,
@@ -294,13 +294,27 @@ export default function LedgerTab({ ctx }) {
   // Daily sales report: the item-level detail, or one row per sales document.
   const [sliView, setSliView] = useState('detail');
   const [sliSummary, setSliSummary] = useState(null);
-  const loadSliSummary = async () => {
+  // All sales, or only backdated ones, or only live ones - the same choice on
+  // every sales report (see salesSource in AdminDashboard).
+  const srcOf = (arg) => (typeof arg === 'string' ? arg : (salesSource || ''));
+  const salesSourceSelect = (onPick) => (
+    <select value={salesSource || ''} aria-label="Which sales"
+      onChange={e => { const v = e.target.value; setSalesSource?.(v); onPick(v); }}
+      title="All sales, only backdated sales (entered after the fact or imported), or only live sales"
+      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg text-xs font-bold outline-none focus:border-brand/60">
+      <option value="">All sales</option>
+      <option value="backdated">Backdated only</option>
+      <option value="live">Live only</option>
+    </select>
+  );
+  const loadSliSummary = async (src) => {
     try {
-      const d = await (await apiFetch(`/api/reports/sales-documents?start=${sliRange.start}&end=${sliRange.end}`)).json();
+      const s = srcOf(src);
+      const d = await (await apiFetch(`/api/reports/sales-documents?start=${sliRange.start}&end=${sliRange.end}${s ? `&source=${s}` : ''}`)).json();
       if (d.success) setSliSummary(d); else ui.alert(d.error || 'Could not load the summary.');
     } catch { ui.alert('Network error.'); }
   };
-  const loadSli = () => (sliView === 'summary' ? loadSliSummary() : fetchSalesLineItems());
+  const loadSli = (src) => (sliView === 'summary' ? loadSliSummary(src) : fetchSalesLineItems(src));
   const fmtD = (d) => (d ? dateStr(d) : '');
   const exportSliExcel = async () => {
     const XLSX = await import('xlsx');
@@ -1195,9 +1209,17 @@ It posts only what is not already accrued for that month.`)) return;
   // the page that now holds them.
   const LEDGER_ALIAS = { coa: 'accperiods', periods: 'accperiods', payroute: 'accperiods', ar: 'araap', ap: 'araap' };
   const pageTab = activeTab === 'reports' ? 'reports' : 'ledger';
-  const pageGroups = (pageTab === 'reports' ? REPORT_TAB_GROUPS : LEDGER_TAB_GROUPS)
+  // Approvals has its own sidebar entry: this screen then shows that one page
+  // and nothing of the Ledger around it - no page tabs, no export bar.
+  const soloApprovals = activeTab === 'approvals';
+  const pageGroups = soloApprovals ? [] : (pageTab === 'reports' ? REPORT_TAB_GROUPS : LEDGER_TAB_GROUPS)
     .map(([label, items]) => [label, items.filter(([id]) => can(`screen.${pageTab}.${id}`))])
     .filter(([, items]) => items.length > 0);
+  useEffect(() => {
+    if (!soloApprovals) return;
+    if (ledgerSubTab !== 'approvals') setLedgerSubTab('approvals');
+    fetchRequisitionSlips();
+  }, [soloApprovals]); // eslint-disable-line react-hooks/exhaustive-deps
   const allowedPages = pageGroups.flatMap(([, items]) => items.map(([id]) => id));
   useEffect(() => {
     if (activeTab !== 'ledger' && activeTab !== 'reports') return;
@@ -1332,7 +1354,7 @@ It posts only what is not already accrued for that month.`)) return;
               listed, so the nav stays two rows however many reports exist. */}
           {/* Export / template control. Which dataset a page exports is a
               lookup, not a button per screen - a new page is one line here. */}
-          {(() => {
+          {!soloApprovals && (() => {
             const DATASET_FOR_PAGE = {
               checkvouchers: 'checkVouchers', advances: 'advances', expenses: 'expenses',
               journal: 'journal', bills: 'bills', araap: 'bills', revolving: 'revolvingFunds',
@@ -1501,6 +1523,7 @@ It posts only what is not already accrued for that month.`)) return;
                   <input type="date" value={sssRange.end} min={sssRange.start || undefined}
                     onChange={e => setSssRange(r => ({ ...r, end: e.target.value }))}
                     className="bg-white/5 border border-white/10 rounded-xl px-2.5 py-2 text-fg text-xs font-bold outline-none focus:border-brand" />
+                  {salesSourceSelect(fetchSalesSummary)}
                   <button onClick={fetchSalesSummary} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/80 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Refresh</button>
                   {salesSummary && <button onClick={exportSalesSummaryPDF} className="flex items-center gap-1.5 bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
                 </div>
@@ -1576,6 +1599,7 @@ It posts only what is not already accrued for that month.`)) return;
                   <span className="text-fg/65 font-bold text-sm">→</span>
                   <input type="date" value={sliRange.end} onChange={e => setSliRange(p => ({ ...p, end: e.target.value }))}
                     className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
+                  {salesSourceSelect((v) => { setSliSummary(null); loadSli(v); })}
                   <button onClick={loadSli} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/80 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Load</button>
                   {sliView === 'detail' && salesLineItems && <button onClick={exportSalesLineItemsPDF} className="flex items-center gap-1.5 bg-white/5 text-fg/80 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
                   {((sliView === 'detail' && salesLineItems) || (sliView === 'summary' && sliSummary)) && <button onClick={exportSliExcel} className="flex items-center gap-1.5 bg-white/5 text-fg/80 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> Excel</button>}
@@ -4515,6 +4539,7 @@ It posts only what is not already accrued for that month.`)) return;
                 <span className="text-fg/65 font-bold text-sm">→</span>
                 <input type="date" value={sbpRange.end} onChange={e => setSbpRange(p=>({...p,end:e.target.value}))}
                   className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
+                {salesSourceSelect(fetchSalesByPayment)}
                 <button onClick={fetchSalesByPayment} className="px-5 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition">Load</button>
                 {salesByPayment && <button onClick={exportPaymentsPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
               </div>
@@ -4972,7 +4997,7 @@ It posts only what is not already accrued for that month.`)) return;
           {ledgerSubTab === 'expenses' && <ExpensesPage />}
 
           {/* ===== APPROVALS SUB-TAB (Requisition Slips) ===== */}
-          {ledgerSubTab === 'approvals' && (
+          {soloApprovals && ledgerSubTab === 'approvals' && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div>

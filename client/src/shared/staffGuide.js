@@ -113,7 +113,7 @@ export function staffGuide({ role, businessType, can = () => false }) {
       steps.push('Your PIN approves deleting paid orders on other people\'s tills. Keep it to yourself - the approval is recorded under your name.');
     }
     const waiting = [
-      can('requisitions.approve') && 'requisition slips in Ledger → Approvals',
+      can('requisitions.approve') && 'requisition slips in Approvals',
       can('pricing.approve') && 'price and cost changes in Reports → Price Changes',
       can('production.approve') && 'production orders in Production',
     ].filter(Boolean);
