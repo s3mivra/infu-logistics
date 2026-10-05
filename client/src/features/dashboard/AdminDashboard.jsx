@@ -7194,17 +7194,20 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(`${BIZ_NAME} - Daily Sales Report`, 14, 14);
     doc.setFontSize(9); doc.text(`${sliRange.start} to ${sliRange.end}`, 14, 20);
-    const head = ['Date', 'Customer ID', 'Customer Name', 'Order ID', 'Item Code', 'Item', 'Qty', 'Payment', 'Line Total'];
+    // Net of discount, like the screen and the Excel - the gross alone read as
+    // more than was actually sold.
+    const head = ['Date', 'Customer ID', 'Customer Name', 'Order ID', 'Item Code', 'Item', 'Qty', 'Payment', 'Gross', 'Discount', 'Total'];
     const body = salesLineItems.rows.map(r => r.isComponent
       // Promo/combo component: indented, no price (it's included in the combo row).
-      ? ['', '', '', '', r.itemCode || '', `   ↳ ${r.itemName || ''}`, String(r.quantity), '', 'included']
+      ? ['', '', '', '', r.itemCode || '', `   ↳ ${r.itemName || ''}`, String(r.quantity), '', '', '', 'included']
       : [
         new Date(r.date).toLocaleDateString(), r.customerId || '', r.customerName || '', r.orderNumber,
-        r.itemCode || '', (r.itemName || '') + (r.isCombo ? ' (promo)' : ''), String(r.quantity), r.paymentMethod || '', pdfMoney(r.lineTotal),
+        r.itemCode || '', (r.itemName || '') + (r.isCombo ? ' (promo)' : ''), String(r.quantity), r.paymentMethod || '',
+        pdfMoney(r.grossSales ?? r.lineTotal), pdfMoney(r.discount || 0), pdfMoney(r.netSales ?? r.lineTotal),
       ]);
     autoTable(doc, {
       startY: 24, head: [head], body,
-      foot: [[ 'TOTAL', '', '', '', '', '', '', '', pdfMoney(salesLineItems.grandTotal) ]],
+      foot: [[ 'TOTAL', '', '', '', '', '', '', '', pdfMoney(salesLineItems.totals?.gross ?? salesLineItems.grandTotal), pdfMoney(salesLineItems.totals?.discount || 0), pdfMoney(salesLineItems.totals?.net ?? salesLineItems.grandTotal) ]],
       styles: { fontSize: 7 }, headStyles: { fillColor: [30,30,30] }, footStyles: { fillColor: [70,70,70], textColor: 255 },
     });
     doc.save(`Sales-Line-Items_${sliRange.start}_to_${sliRange.end}.pdf`);

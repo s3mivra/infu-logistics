@@ -19,6 +19,7 @@ import { CashFlowReport, SalesByChannelReport, SalesByCustomerReport, BudgetRepo
 import Attachments from '../../shared/Attachments';
 import RangePresets from '../../shared/RangePresets';
 import RevolvingFundLiquidation from './RevolvingFundLiquidation';
+import FundSpendsToCheck from './FundSpendsToCheck';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 // ── LedgerTab - extracted from AdminDashboard.jsx ──
@@ -5060,7 +5061,7 @@ It posts only what is not already accrued for that month.`)) return;
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div>
                   <h3 className="text-xl font-black text-fg flex items-center gap-2"><ShieldCheck size={18} className="text-brand-text"/> Approvals</h3>
-                  <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Requisition slips - petty cash disbursements and new purchase orders wait here until approved</p>
+                  <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Requisition slips and revolving fund spends wait here until approved</p>
                 </div>
                 <div className="flex bg-page-bg p-1 rounded-lg shadow-inner">
                   <button onClick={() => { setReqSlipView('pending'); fetchRequisitionSlips('Pending'); }}
@@ -5076,6 +5077,8 @@ It posts only what is not already accrued for that month.`)) return;
                   Export PDF
                 </button>
               </div>
+
+              {can('accounting.view') && <FundSpendsToCheck apiFetch={apiFetch} onChanged={fetchERPData} />}
 
               <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
                 {reqSlipsLoading && reqSlips.length === 0 ? (

@@ -1687,6 +1687,25 @@ const txForValidation = async (req, res) => {
   return tx;
 };
 
+// Every spend still waiting for that check, across all funds - what the
+// Approvals page lists, so nobody has to open each fund to find them.
+app.get('/api/revolving-funds/unvalidated', verifyToken, ...canViewAcct, async (req, res) => {
+  try {
+    const txs = await RevolvingFundTx.find({ type: 'disbursement', 'validation.status': 'Unvalidated' }).sort({ date: 1 }).limit(500).lean();
+    const funds = new Map((await RevolvingFund.find({ _id: { $in: txs.map(t => t.fundId) } }, { name: 1 }).lean()).map(f => [String(f._id), f.name]));
+    res.json({
+      success: true,
+      rows: txs.map(t => ({
+        _id: t._id, fundId: t.fundId, fundName: funds.get(String(t.fundId)) || 'Fund', date: t.date, amount: t.amount,
+        description: t.description, payee: t.payee || '', refNo: t.refNo || '', spentBy: t.performedBy || '',
+        account: acctMeta(t.categoryCode)?.name || t.categoryCode || '',
+      })),
+    });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 app.post('/api/revolving-funds/:id/transactions/:txId/validate', verifyToken, ...canPostAcct, async (req, res) => {
   try {
     const tx = await txForValidation(req, res); if (!tx) return;

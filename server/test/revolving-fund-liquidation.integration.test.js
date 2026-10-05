@@ -43,6 +43,13 @@ describe('spending lands in the validation queue', () => {
     expect(tx.validation.status).toBe('Unvalidated');
   });
 
+  it('shows up in the list of spends waiting to be checked, across funds', async () => {
+    const r = await as(tok.accountant, 'get', '/api/revolving-funds/unvalidated');
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.rows).toHaveLength(1);
+    expect(r.body.rows[0]).toMatchObject({ fundName: 'Logistics Revolving Fund', amount: 2051, description: 'DIESEL', spentBy: 'rfCustodian', payee: 'REPHIL NASAK INC.' });
+  });
+
   it('a spend recorded before validation existed is not dragged into the queue', async () => {
     // Written straight to the collection, as an old row would be.
     await M('RevolvingFundTx').collection.insertOne({ fundId: new mongoose.Types.ObjectId(fund._id), type: 'disbursement', amount: 1, description: 'old', date: new Date('2020-01-01') });

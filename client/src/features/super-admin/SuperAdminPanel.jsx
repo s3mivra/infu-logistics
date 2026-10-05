@@ -254,6 +254,7 @@ export default function SuperAdminPanel() {
 
   // Navigation / layout
   const [activeSection, setActiveSection] = useState('users');
+  const [clientSearch, setClientSearch] = useState('');
   const [drawerOpen, setDrawerOpen]       = useState(false);
 
   // Toast
@@ -265,6 +266,10 @@ export default function SuperAdminPanel() {
 
   // Client accounts (logistics mode)
   const [clients, setClients]           = useState([]);
+  const clientNeedle = clientSearch.trim().toLowerCase();
+  const shownClients = clientNeedle
+    ? clients.filter(c => [c.name, c.clientCode, c.username].some(v => String(v || '').toLowerCase().includes(clientNeedle)))
+    : clients;
   const [clientsLoading, setClientsLoading] = useState(false);
   const [priceTiers, setPriceTiers]     = useState([]);
   const [tierImportPreview, setTierImportPreview] = useState(null);
@@ -1605,6 +1610,11 @@ export default function SuperAdminPanel() {
         {/* ----------------------------------------------------------------- */}
         {activeSection === 'clients' && (
           <div className="flex-1 p-6 space-y-3">
+            {clients.length > 0 && (
+              <input type="search" value={clientSearch} onChange={e => setClientSearch(e.target.value)}
+                placeholder="Search client accounts - name, code or username" aria-label="Search client accounts"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-fg placeholder:text-fg/50 outline-none focus:border-brand/60" />
+            )}
             {clientsLoading
               ? Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)
               : clients.length === 0
@@ -1620,7 +1630,9 @@ export default function SuperAdminPanel() {
                     </button>
                   </div>
                 )
-                : clients.map(client => (
+                : shownClients.length === 0
+                ? <p className="text-fg/70 font-bold text-sm py-10 text-center">No client account matches "{clientSearch.trim()}".</p>
+                : shownClients.map(client => (
                   <div key={client._id} className="flex items-center gap-4 p-4 rounded-xl border bg-white/5 border-white/5 hover:border-white/15 transition-all">
                     <div className="w-10 h-10 rounded-xl bg-brand/20 flex items-center justify-center font-black text-sm text-brand-text flex-shrink-0">
                       {client.name.slice(0, 2).toUpperCase()}
