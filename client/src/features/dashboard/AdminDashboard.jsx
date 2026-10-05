@@ -6154,7 +6154,26 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
   // 1. COMPLETE SALES HISTORY (Master Summary + Daily Breakdown)
   const exportAllToPDF = async () => {
-    const allOrders = [...orders.filter(o => o.status !== 'Pending' && o.status !== 'Preparing' && o.status !== 'Ready'), ...archivedOrders].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    // The screen holds only the newest 200 past sales; "Export All" means all
+    // of them (within the search / dates set on the screen), so read every page.
+    // Backdated sales sit among the past sales, and were what went missing.
+    let past = archivedOrders;
+    if (activeAdmin?.role === 'superadmin' && archiveTotal > archivedOrders.length) {
+      try {
+        past = [];
+        for (let page = 1; page <= 200; page++) {
+          const q = new URLSearchParams({ page: String(page), limit: '500' });
+          if (archiveSearch) q.set('search', archiveSearch);
+          if (archiveDateRange.start) q.set('start', archiveDateRange.start);
+          if (archiveDateRange.end) q.set('end', archiveDateRange.end);
+          const d = await (await apiFetch(`/api/orders/archives?${q.toString()}`, { cache: 'no-store' })).json();
+          if (!d.success) throw new Error(d.error || 'failed');
+          past.push(...(d.archives || []));
+          if (!(d.archives || []).length || past.length >= (d.total || 0)) break;
+        }
+      } catch { return ui.alert('Could not load all past sales for the export - check the connection and try again.'); }
+    }
+    const allOrders = [...orders.filter(o => o.status !== 'Pending' && o.status !== 'Preparing' && o.status !== 'Ready'), ...past].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
     if (allOrders.length === 0) return ui.alert("No orders to export.");
     
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');

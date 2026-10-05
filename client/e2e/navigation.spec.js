@@ -149,7 +149,7 @@ test('Approvals opens on its own, and is no longer under Ledger', async ({ page 
   await page.getByRole('button', { name: /^Approvals/ }).first().click();
   await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
   await expect(page.getByRole('heading', { name: /Approvals/ })).toBeVisible();
-  await expect(page.getByText(/Requisition slips - petty cash/i)).toBeVisible();
+  await expect(page.getByText(/Requisition slips and revolving fund spends/i)).toBeVisible();
   // The Ledger's own page tabs are not drawn in this mode.
   await expect(page.getByRole('button', { name: /^Trial Balance/ })).toHaveCount(0);
 

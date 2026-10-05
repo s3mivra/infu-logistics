@@ -125,7 +125,7 @@ export const SCREENS = [
     ['tenancy', 'Tenancy Health'], ['bookshealth', 'Books Health'], ['exportall', 'Export All'],
   ] },
   { tab: 'reports', label: 'Reports', parent: 'reports.view', pages: [
-    ['salessummary', 'Sales Summary'], ['salesline', 'Daily Sales Report'], ['saleschannel', 'Sales by Channel'], ['salescustomer', 'Sales by Customer'], ['payments', 'By Payment'],
+    ['salessummary', 'Sales'], ['saleschannel', 'Sales by Channel'], ['salescustomer', 'Sales by Customer'], ['payments', 'By Payment'],
     ['profitcat', 'By Category'], ['menueng', 'Menu Engineering'],
     ['arreport', 'A/R Report'], ['collections', 'Collections'],
     ['apreport', 'A/P Report'], ['supplierpay', 'Supplier Payments'], ['checkvouchers', 'Check Vouchers'], ['advances', 'Advances'],

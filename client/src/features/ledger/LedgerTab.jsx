@@ -316,13 +316,65 @@ export default function LedgerTab({ ctx }) {
     } catch { ui.alert('Network error.'); }
   };
   const loadSli = (src) => (sliView === 'summary' ? loadSliSummary(src) : fetchSalesLineItems(src));
+  // One Sales page, four ways to read it. The first two are the same report
+  // (by payment channel) per order or per day; "Orders" is one row per order
+  // with just its subtotal, discount and total; "Detailed" is one row per item.
+  const [salesView, setSalesView] = useState('order');
+  const SALES_VIEWS = [
+    ['order', 'Summary', 'One row per order, by how it was paid'],
+    ['day', 'Daily', 'One row per day, by how it was paid'],
+    ['docs', 'Orders', 'One row per order: subtotal, discount and total'],
+    ['detail', 'Detailed', 'One row per item sold'],
+  ];
+  const pickSalesView = (k) => {
+    setSalesView(k);
+    if (k === 'order' || k === 'day') { setSssGroup(k); if (!salesSummary) fetchSalesSummary(); }
+    else if (k === 'docs') { setSliView('summary'); if (!sliSummary) setTimeout(loadSliSummary, 0); }
+    else { setSliView('detail'); if (!salesLineItems) fetchSalesLineItems(); }
+  };
+  const salesViewTabs = () => (
+    <div className="flex gap-1 mt-2 flex-wrap" role="tablist" aria-label="How to show the sales">
+      {SALES_VIEWS.map(([k, label, hint]) => (
+        <button key={k} role="tab" aria-selected={salesView === k} title={hint} onClick={() => pickSalesView(k)}
+          className={`px-3 py-1 rounded-lg text-[11px] font-bold ${salesView === k ? 'bg-brand text-on-brand' : 'bg-white/5 text-fg/80 hover:bg-white/10'}`}>{label}</button>
+      ))}
+    </div>
+  );
+  const exportSssExcel = async () => {
+    if (!salesSummary) return ui.alert('Load the report first.');
+    const XLSX = await import('xlsx');
+    const day = sssGroup === 'day';
+    const head = ['Date', ...(day ? ['Orders'] : ['Customer ID', 'Customer Name', 'Order']), 'Cash', 'E-Wallet', 'Bank', 'Delivery', 'Subtotal', 'Total'];
+    const body = sssRows.map(r => [r.date ? dateStr(r.date) : '', ...(day ? [r.count] : [r.customerId || '', r.customerName || '', r.orderNumber]), r.cash || 0, r.ewallet || 0, r.bank || 0, r.delivery || 0, r.subtotal || 0, r.total || 0]);
+    const t = salesSummary.totals || {};
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body, [], ['TOTAL', ...(day ? [''] : ['', '', '']), t.cash || 0, t.ewallet || 0, t.bank || 0, t.delivery || 0, t.subtotal || 0, t.total || 0]]), day ? 'Sales per day' : 'Sales per order');
+    XLSX.writeFile(wb, `Sales-${day ? 'Daily' : 'Summary'}_${sssRange.start}_to_${sssRange.end}.xlsx`);
+  };
+  const exportSliSummaryPDF = async () => {
+    if (!sliSummary) return ui.alert('Load the report first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Sales by Order`, 14, 14);
+    doc.setFontSize(9); doc.text(`${sliRange.start} to ${sliRange.end}`, 14, 20);
+    const t = sliSummary.rows.reduce((a, r) => ({ g: a.g + (r.gross || 0), d: a.d + (r.discount || 0) }), { g: 0, d: 0 });
+    const d8 = (v) => (v ? dateStr(v) : '');
+    autoTable(doc, {
+      startY: 24,
+      head: [['Date', 'Cust. No.', 'Customer', 'Order', 'Billing Doc', 'DR No.', 'SI / OR No.', 'Payment', 'Subtotal', 'Discount', 'Total']],
+      body: sliSummary.rows.map(r => [d8(r.postingDate), r.customerNumber || '', r.customerName || '', r.orderNumber || '', r.billingNumber || '', r.drNumbers || '', r.orNumber || '', r.paymentMethod || '', pdfMoney(r.gross), pdfMoney(r.discount), pdfMoney(r.amount)]),
+      foot: [[`TOTAL (${sliSummary.count})`, '', '', '', '', '', '', '', pdfMoney(t.g), pdfMoney(t.d), pdfMoney(sliSummary.total)]],
+      styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], textColor: 255 },
+    });
+    doc.save(`Sales-Orders_${sliRange.start}_to_${sliRange.end}.pdf`);
+  };
   const fmtD = (d) => (d ? dateStr(d) : '');
   const exportSliExcel = async () => {
     const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
     if (sliView === 'summary') {
       if (!sliSummary) return ui.alert('Load the summary first.');
-      const head = ['Posting Date', 'Document Date', 'Customer Number', 'Customer Name', 'Order', 'Billing Document No.', 'Delivery Receipt No.', 'Sales Invoice / OR No.', 'Payment', 'Gross', 'Discount', 'Billing / Sales Amount'];
+      const head = ['Posting Date', 'Document Date', 'Customer Number', 'Customer Name', 'Order', 'Billing Document No.', 'Delivery Receipt No.', 'Sales Invoice / OR No.', 'Payment', 'Subtotal', 'Discount', 'Total'];
       const body = sliSummary.rows.map(r => [fmtD(r.postingDate), fmtD(r.documentDate), r.customerNumber, r.customerName, r.orderNumber, r.billingNumber, r.drNumbers, r.orNumber, r.paymentMethod, r.gross, r.discount, r.amount]);
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body, [], ['TOTAL', '', '', '', '', '', '', '', '', '', '', sliSummary.total]]), 'Daily Sales Summary');
     } else {
@@ -1241,7 +1293,6 @@ It posts only what is not already accrued for that month.`)) return;
   if (id === 'balance' && !bsData) fetchBalanceSheet();
   if (id === 'bsmonthly' && !bsMonthly) fetchBsMonthly();
   if (id === 'salessummary') fetchSalesSummary();
-  if (id === 'salesline') fetchSalesLineItems();
   if (id === 'payments') fetchSalesByPayment();
   if (id === 'arreport' && !arReport) fetchArReport();
   if (id === 'collections') { if (!collectionReport) fetchCollectionReport(); if (!checkRegister) fetchChecks(); }
@@ -1293,7 +1344,6 @@ It posts only what is not already accrued for that month.`)) return;
     if (ledgerSubTab === 'trial') loadTrial();
     if (ledgerSubTab === 'revolving') fetchRfFunds();
     if (ledgerSubTab === 'salessummary' && !salesSummary) fetchSalesSummary();
-    if (ledgerSubTab === 'salesline' && !salesLineItems) fetchSalesLineItems();
     if (ledgerSubTab === 'backdate' && !bdHistory) fetchBdHistory(1);
     if (ledgerSubTab === 'backdate' && !bdQueue) fetchBdQueue(1);
     // Tenancy Health had no entry here at all, so opening the page never
@@ -1566,12 +1616,13 @@ It posts only what is not already accrued for that month.`)) return;
           )}
 
           {/* ── SALES SUMMARY (channel breakdown) ─────────────────────────────── */}
-          {ledgerSubTab === 'salessummary' && (
+          {ledgerSubTab === 'salessummary' && (salesView === 'order' || salesView === 'day') && (
             <div className="bg-surface border border-white/10 rounded-2xl p-5">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                 <div>
-                  <h3 className="text-lg font-black text-fg">Sales Summary</h3>
-                  <p className="text-fg/65 text-xs">Completed sales broken down by payment channel.</p>
+                  <h3 className="text-lg font-black text-fg">Sales</h3>
+                  <p className="text-fg/65 text-xs">{salesView === 'day' ? 'Completed sales per day, by payment channel.' : 'Completed sales per order, by payment channel.'}</p>
+                  {salesViewTabs()}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <RangePresets value={sssRange} onChange={r => setSssRange(p => ({ ...p, ...r }))} onRun={fetchSalesSummary} />
@@ -1585,6 +1636,7 @@ It posts only what is not already accrued for that month.`)) return;
                   {salesSourceSelect(fetchSalesSummary)}
                   <button onClick={fetchSalesSummary} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/80 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Refresh</button>
                   {salesSummary && <button onClick={exportSalesSummaryPDF} className="flex items-center gap-1.5 bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
+                  {salesSummary && <button onClick={exportSssExcel} className="flex items-center gap-1.5 bg-white/5 text-fg/80 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> Excel</button>}
                 </div>
               </div>
               {!sssRows || sssRows.length === 0 ? (
@@ -1596,7 +1648,7 @@ It posts only what is not already accrued for that month.`)) return;
                       <tr className="text-fg/80 text-[10px] font-black uppercase tracking-wider text-left border-b border-white/10">
                         <th className="py-2">Date</th>
                         <th className="py-2">Customer ID</th><th className="py-2">Customer Name</th>
-                        <th className="py-2">Order</th>
+                        <th className="py-2">{salesView === 'day' ? 'Orders' : 'Order'}</th>
                         <th className="py-2 text-right">Cash</th><th className="py-2 text-right">E-Wallet</th>
                         <th className="py-2 text-right">Bank</th><th className="py-2 text-right">Delivery</th><th className="py-2 text-right" title="Before discount and delivery fee">Subtotal</th><th className="py-2 text-right" title="What was charged">Total</th>
                       </tr>
@@ -1640,18 +1692,13 @@ It posts only what is not already accrued for that month.`)) return;
           )}
 
           {/* ── SALES LINE ITEMS (item-level detail) ────────────────────────────── */}
-          {ledgerSubTab === 'salesline' && (
+          {ledgerSubTab === 'salessummary' && (salesView === 'docs' || salesView === 'detail') && (
             <div className="bg-surface border border-white/10 rounded-2xl p-5">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                 <div>
-                  <h3 className="text-lg font-black text-fg">Daily Sales Report</h3>
-                  <p className="text-fg/65 text-xs">{sliView === 'summary' ? 'One row per sales document, by posting date.' : 'One row per item sold - with its billing, delivery and invoice numbers.'}</p>
-                  <div className="flex gap-1 mt-2" role="tablist" aria-label="Report view">
-                    {[['detail', 'Detailed'], ['summary', 'Summary']].map(([k, label]) => (
-                      <button key={k} role="tab" aria-selected={sliView === k} onClick={() => { setSliView(k); if (k === 'summary' && !sliSummary) setTimeout(loadSliSummary, 0); }}
-                        className={`px-3 py-1 rounded-lg text-[11px] font-bold ${sliView === k ? 'bg-brand text-on-brand' : 'bg-white/5 text-fg/80 hover:bg-white/10'}`}>{label}</button>
-                    ))}
-                  </div>
+                  <h3 className="text-lg font-black text-fg">Sales</h3>
+                  <p className="text-fg/65 text-xs">{sliView === 'summary' ? 'One row per order - its subtotal, discount and total.' : 'One row per item sold - with its billing, delivery and invoice numbers.'}</p>
+                  {salesViewTabs()}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <RangePresets value={sliRange} onChange={r => setSliRange(p => ({ ...p, ...r }))} onRun={loadSli} />
@@ -1663,6 +1710,7 @@ It posts only what is not already accrued for that month.`)) return;
                   {salesSourceSelect((v) => { setSliSummary(null); loadSli(v); })}
                   <button onClick={loadSli} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/80 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Load</button>
                   {sliView === 'detail' && salesLineItems && <button onClick={exportSalesLineItemsPDF} className="flex items-center gap-1.5 bg-white/5 text-fg/80 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
+                  {sliView === 'summary' && sliSummary && <button onClick={exportSliSummaryPDF} className="flex items-center gap-1.5 bg-white/5 text-fg/80 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
                   {((sliView === 'detail' && salesLineItems) || (sliView === 'summary' && sliSummary)) && <button onClick={exportSliExcel} className="flex items-center gap-1.5 bg-white/5 text-fg/80 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> Excel</button>}
                 </div>
               </div>
@@ -1676,7 +1724,7 @@ It posts only what is not already accrued for that month.`)) return;
                         <tr className="text-fg/80 text-[10px] font-black uppercase tracking-wider text-left border-b border-white/10">
                           <th className="py-2">Posting</th><th className="py-2">Document</th><th className="py-2">Cust. No.</th><th className="py-2">Customer</th>
                           <th className="py-2">Billing Doc</th><th className="py-2">DR No.</th><th className="py-2">SI / OR No.</th>
-                          <th className="py-2 text-right">Gross</th><th className="py-2 text-right">Discount</th><th className="py-2 text-right">Amount</th>
+                          <th className="py-2 text-right">Subtotal</th><th className="py-2 text-right">Discount</th><th className="py-2 text-right">Total</th>
                         </tr>
                       </thead>
                       <tbody className="text-fg/75">

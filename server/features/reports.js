@@ -1396,7 +1396,7 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePer
 // One row per order LINE (not per order) - the item-level detail Summary Sales
 // deliberately leaves out. Same Completed/non-comp filter and date range as
 // sales-summary, so the two reports reconcile against each other.
-app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, requirePermission('screen.reports.salesline'), async (req, res) => {
+app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, requirePermission('screen.reports.salessummary'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...salesSourceFilter(req.query.source) };
@@ -1542,7 +1542,7 @@ app.get('/api/reports/cash-flow', verifyToken, ...canViewReports, requirePermiss
 // invoice numbers and the amount - the summary the daily sales report calls
 // for, beside the detailed line report above. Filtered by POSTING date (when
 // the sale reached the books), which is what the day's deposit ties to.
-app.get('/api/reports/sales-documents', verifyToken, ...canViewReports, requirePermission('screen.reports.salesline'), async (req, res) => {
+app.get('/api/reports/sales-documents', verifyToken, ...canViewReports, requirePermission('screen.reports.salessummary'), async (req, res) => {
   try {
     const { start, end } = req.query;
     if (!start || !end) return res.status(400).json({ success: false, error: 'A start and end date are both required.' });

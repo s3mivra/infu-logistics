@@ -129,8 +129,9 @@ export const LEDGER_TAB_GROUPS = [
 
 export const REPORT_TAB_GROUPS = [
   ['Sales', [
-    ['salessummary', 'Sales Summary', BarChart3],
-    ['salesline', 'Daily Sales Report', FileText],
+    // One Sales page; what used to be the separate Daily Sales Report is two
+    // of its views (Orders, Detailed).
+    ['salessummary', 'Sales', BarChart3],
     ['saleschannel', 'Sales by Channel', BarChart2],
     ['salescustomer', 'Sales by Customer', Users],
     ['payments', 'By Payment', Banknote],
