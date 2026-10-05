@@ -1344,7 +1344,7 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePer
       if (end) { match.createdAt.$lte = dayEnd(end); }
     }
     const orders = await Order.find(match, {
-      orderNumber: 1, total: 1, paymentMethod: 1, payments: 1, createdAt: 1,
+      orderNumber: 1, total: 1, subtotal: 1, paymentMethod: 1, payments: 1, createdAt: 1,
       customerName: 1, clientId: 1, clientAccountId: 1,
     }).sort({ createdAt: 1 }).lean();
 
@@ -1375,15 +1375,18 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePer
         date: o.createdAt, orderNumber: o.orderNumber,
         customerId: (clientCodeById[String(refId)] || WALK_IN_CUSTOMER_CODE).toUpperCase(),
         customerName: (o.customerName || 'WALK-IN').toUpperCase(),
-        ...ch, methods, total: Number(o.total) || 0,
+        // Subtotal is the sale before discount and delivery fee; Total is what
+        // was charged. Both are shown, side by side.
+        ...ch, methods, subtotal: Number(o.subtotal) || 0, total: Number(o.total) || 0,
       };
     });
 
     const totals = rows.reduce((t, r) => {
-      t.cash += r.cash; t.ewallet += r.ewallet; t.bank += r.bank; t.delivery += r.delivery; t.total += r.total;
+      t.cash += r.cash; t.ewallet += r.ewallet; t.bank += r.bank; t.delivery += r.delivery; t.total += r.total; t.subtotal += r.subtotal;
       for (const [m, a] of Object.entries(r.methods)) t.methods[m] = (t.methods[m] || 0) + a;
       return t;
-    }, { cash: 0, ewallet: 0, bank: 0, delivery: 0, total: 0, methods: {} });
+    }, { cash: 0, ewallet: 0, bank: 0, delivery: 0, subtotal: 0, total: 0, methods: {} });
+    totals.subtotal = roundMoney(totals.subtotal);
 
     res.json({ success: true, rows, totals });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }

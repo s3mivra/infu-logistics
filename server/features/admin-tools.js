@@ -534,7 +534,7 @@ async function maybePromoteBackdateClient(customerName) {
 // mirrored by one reversing entry dated the same day; the stock it took goes
 // back at the cost it left at; the running sales counters come down; the order
 // is kept, marked Voided, and its sheet reference is released for the new one.
-async function reverseBackdatedSale(old, session, actorName) {
+async function reverseBackdatedSale(old, session, actorName, freeNumber = false) {
   const fail = (httpStatus, message) => Object.assign(new Error(message), { httpStatus });
   const sales = await JournalEntry.find({ description: new RegExp(`^Backdated sale: ${escapeRegex(old.orderNumber)}(\\s|$|\\()`) }).session(session).lean();
   if (!sales.length) throw fail(409, `${old.orderNumber} has no ledger entry to reverse - void it by hand, then import again.`);
@@ -574,9 +574,17 @@ async function reverseBackdatedSale(old, session, actorName) {
     { session, upsert: true },
   );
 
+  // An Orders re-import keeps each order's own number, so the replaced copy
+  // steps aside for the corrected one.
+  let freed = {};
+  if (freeNumber) {
+    const aside = `${old.orderNumber}-R`;
+    freed = { orderNumber: (await Order.exists({ orderNumber: aside })) ? `${aside}${Date.now().toString(36)}` : aside };
+  }
   await Order.updateOne({ _id: old._id }, { $set: {
     status: 'Voided', voidReason: `Replaced by a re-import of ${old.importRef}`, voidedBy: actorName || 'Backdate import',
     importRef: `${old.importRef} (replaced ${new Date().toISOString().slice(0, 10)})`,
+    ...freed,
   } }, { session });
 }
 
@@ -615,7 +623,8 @@ async function createBackdatedSale(payload, actorName) {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
-    if (replacing) await reverseBackdatedSale(replacing, session, actorName);
+    const keepsNumber = !!replacing && String(wantedNumber || '').trim() === replacing.orderNumber;
+    if (replacing) await reverseBackdatedSale(replacing, session, actorName, keepsNumber);
     // Build the line items - itemized when provided, else a single lump line.
     const itemized = Array.isArray(items) && items.length > 0;
     let orderItems = [];
@@ -699,7 +708,7 @@ async function createBackdatedSale(payload, actorName) {
     // A re-imported order keeps the number it had (the Orders import), when
     // nothing else holds it now; everything else takes the next one.
     const keep = String(wantedNumber || '').trim();
-    const orderNumber = keep && !(await Order.exists({ orderNumber: keep }))
+    const orderNumber = keep && (keepsNumber || !(await Order.exists({ orderNumber: keep })))
       ? keep
       : await generateNextSequence(Order, `ORD-${year}`, 'orderNumber', 'ORD');
 
@@ -927,15 +936,20 @@ app.post('/api/orders/import', verifyToken, requireSuperAdmin, async (req, res) 
         if (!no) throw new Error('Order No is required.');
         const status = String(pick(r, 'Status', 'status') || 'Completed').trim();
         if (status.toLowerCase() !== 'completed') throw new Error(`${no} is ${status} - only completed orders are imported.`);
-        if (await Order.exists({ $or: [{ orderNumber: no }, { importRef: no, isBackdated: true }] })) throw new Error(`${no} is already in the app - skipped.`);
+        const total = num(pick(r, 'Total', 'total'));
+        if (!(total > 0)) throw new Error(`${no} has no total.`);
+        // Already here? Leave it - unless it is an earlier re-import of this
+        // same order that landed on a different total (one came in at its
+        // subtotal, short of its delivery fee): that one is replaced.
+        const earlier = await Order.findOne({ importRef: no, isBackdated: true }, { total: 1, status: 1 }).lean();
+        const fixing = !!earlier && earlier.status === 'Completed' && Math.abs((Number(earlier.total) || 0) - total) > 0.005;
+        if (!fixing && (earlier || await Order.exists({ orderNumber: no }))) throw new Error(`${no} is already in the app - skipped.`);
 
         const date = pick(r, 'Date', 'date');
         const customer = String(pick(r, 'Customer', 'customer')).trim();
         const payment = String(pick(r, 'Payment', 'paymentMethod') || 'Cash').trim();
         const subtotal = num(pick(r, 'Subtotal', 'subtotal'));
         const discount = Math.max(0, num(pick(r, 'Discount', 'discount')));
-        const total = num(pick(r, 'Total', 'total'));
-        if (!(total > 0)) throw new Error(`${no} has no total.`);
 
         const its = (linesByOrder.get(no) || []).map(l => {
           const code = String(pick(l, 'Code', 'code')).trim().toUpperCase();
@@ -954,18 +968,22 @@ app.post('/api/orders/import', verifyToken, requireSuperAdmin, async (req, res) 
         if (its.length) {
           const gross = its.reduce((s, it) => s + it.price * it.quantity, 0);
           const lineDisc = its.reduce((s, it) => s + Math.round(it.price * it.quantity * Math.min(100, it.discountPercent) ) / 100, 0);
-          const rest = Math.max(0, Math.round((gross - lineDisc - total) * 100) / 100);
-          payload = { items: its, discountAmount: rest };
+          const rest = Math.round((gross - lineDisc - total) * 100) / 100;
+          // A total above its lines is the delivery fee, which the export
+          // folds into Total without a column of its own.
+          payload = { items: its, discountAmount: Math.max(0, rest), deliveryFee: Math.max(0, -rest) };
         } else {
           const gross = subtotal > 0 ? subtotal : total + discount;
-          payload = { items: [{ name: `Sales - ${no}`, price: gross, quantity: 1 }], discountAmount: Math.max(0, Math.round((gross - total) * 100) / 100) };
+          const rest = Math.round((gross - Math.min(discount, gross) - total) * 100) / 100;
+          payload = { items: [{ name: `Sales - ${no}`, price: gross, quantity: 1 }], discountAmount: Math.max(0, Math.round((gross - total) * 100) / 100), deliveryFee: Math.max(0, -rest) };
         }
         const client = customer ? clientByName.get(customer.toUpperCase()) : null;
         const result = await createBackdatedSale({
           ...payload, date, customerName: customer || undefined, paymentMethod: payment,
           importRef: no, orderNumber: no, clientId: client ? String(client._id) : '',
-          notes: `Re-imported - ${no}`, affectInventory: false,
+          notes: `Re-imported - ${no}`, affectInventory: false, replaceExisting: fixing,
         }, req.user?.name);
+        if (fixing) problems.push(`${no}: was in at ${earlier.total}; replaced, now ${result.total}.`);
         if (Math.abs(Number(result.total) - total) > 0.005) problems.push(`${no}: imported at ${result.total}, the sheet says ${total} - check its lines.`);
         if (num(pick(r, 'Refunded')) > 0) problems.push(`${no}: had a refund of ${num(pick(r, 'Refunded'))} - imported at its full total; record the refund again.`);
         if (num(pick(r, 'Collected')) > 0) problems.push(`${no}: ${num(pick(r, 'Collected'))} had been collected on it - record that collection again in A/R.`);

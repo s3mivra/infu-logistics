@@ -265,6 +265,30 @@ describe('importing an Orders export back', () => {
     expect(await mongoose.model('Order').countDocuments({ orderNumber: 'ORD-2026-A9001' })).toBe(1);
   });
 
+  it('a total above its subtotal (a delivery fee) comes back at the total', async () => {
+    const r = await imp({ rows: [{ 'Order No': 'ORD-2026-A9010', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 75961, Discount: 0, Total: 77912 }] });
+    expect(r.body.created, JSON.stringify(r.body)).toBe(1);
+    const o = await mongoose.model('Order').findOne({ orderNumber: 'ORD-2026-A9010' }).lean();
+    expect(o.total).toBe(77912);
+    expect(o.deliveryFee).toBe(1951);
+  });
+
+  it('one that came in at the wrong total is replaced on the next import, keeping its number', async () => {
+    const Order = mongoose.model('Order');
+    // As the earlier import left it: at the subtotal.
+    await Order.updateOne({ orderNumber: 'ORD-2026-A9010' }, { $set: { total: 75961, deliveryFee: 0 } });
+    const r = await imp({ rows: [{ 'Order No': 'ORD-2026-A9010', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 75961, Discount: 0, Total: 77912 }] });
+    expect(r.body.created, JSON.stringify(r.body)).toBe(1);
+    const live = await Order.find({ orderNumber: 'ORD-2026-A9010' }).lean();
+    expect(live).toHaveLength(1);
+    expect(live[0].status).toBe('Completed');
+    expect(live[0].total).toBe(77912);
+    expect((await Order.findOne({ orderNumber: 'ORD-2026-A9010-R' }).lean()).status).toBe('Voided');
+    // and a third time changes nothing
+    const again = await imp({ rows: [{ 'Order No': 'ORD-2026-A9010', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 75961, Discount: 0, Total: 77912 }] });
+    expect(again.body.created).toBe(0);
+  });
+
   it('only completed orders come back', async () => {
     const r = await imp({ rows: [{ 'Order No': 'ORD-2026-A9002', Date: LAST_MONTH, Status: 'Cancelled', Total: 500 }] });
     expect(r.body.created).toBe(0);

@@ -7142,9 +7142,9 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     const byDay = {};
     for (const r of rows) {
       const day = new Date(r.date).toLocaleDateString('en-CA'); // YYYY-MM-DD
-      if (!byDay[day]) byDay[day] = { date: r.date, orderNumber: null, count: 0, cash: 0, ewallet: 0, bank: 0, delivery: 0, total: 0, methods: {} };
+      if (!byDay[day]) byDay[day] = { date: r.date, orderNumber: null, count: 0, cash: 0, ewallet: 0, bank: 0, delivery: 0, subtotal: 0, total: 0, methods: {} };
       const t = byDay[day];
-      t.count++; t.cash += r.cash; t.ewallet += r.ewallet; t.bank += r.bank; t.delivery += r.delivery; t.total += r.total;
+      t.count++; t.cash += r.cash; t.ewallet += r.ewallet; t.bank += r.bank; t.delivery += r.delivery; t.total += r.total; t.subtotal += r.subtotal || 0;
       for (const [m, a] of Object.entries(r.methods || {})) t.methods[m] = (t.methods[m] || 0) + a;
     }
     return Object.values(byDay).sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -7165,19 +7165,19 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     ];
     const cv = (r, ms) => ms.reduce((s, m) => s + (r?.methods?.[m] || 0), 0);
     // Item-level detail lives in the separate Sales Line Items report.
-    const head = ['Date', 'Customer ID', 'Customer Name', sssGroup === 'day' ? 'Orders' : 'Order ID', ...COLS.map(c => c[0]), 'Total'];
+    const head = ['Date', 'Customer ID', 'Customer Name', sssGroup === 'day' ? 'Orders' : 'Order ID', ...COLS.map(c => c[0]), 'Subtotal', 'Total'];
     const body = sssRows.map(r => [
       new Date(r.date).toLocaleDateString(),
       sssGroup === 'day' ? '' : (r.customerId || ''),
       sssGroup === 'day' ? '' : (r.customerName || ''),
       sssGroup === 'day' ? String(r.count) : r.orderNumber,
       ...COLS.map(([, ms]) => pdfMoney(cv(r, ms))),
-      pdfMoney(r.total),
+      pdfMoney(r.subtotal || 0), pdfMoney(r.total),
     ]);
     const t = salesSummary.totals || {};
     autoTable(doc, {
       startY: 24, head: [head], body,
-      foot: [[ 'TOTALS', '', '', '', ...COLS.map(([, ms]) => pdfMoney(ms.reduce((s, m) => s + (tm[m] || 0), 0))), pdfMoney(t.total) ]],
+      foot: [[ 'TOTALS', '', '', '', ...COLS.map(([, ms]) => pdfMoney(ms.reduce((s, m) => s + (tm[m] || 0), 0))), pdfMoney(t.subtotal || 0), pdfMoney(t.total) ]],
       styles: { fontSize: 7 }, headStyles: { fillColor: [30,30,30] }, footStyles: { fillColor: [70,70,70], textColor: 255 },
     });
     doc.save(`Sales-Summary_${sssRange.start}_to_${sssRange.end}.pdf`);

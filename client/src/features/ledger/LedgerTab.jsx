@@ -1598,7 +1598,7 @@ It posts only what is not already accrued for that month.`)) return;
                         <th className="py-2">Customer ID</th><th className="py-2">Customer Name</th>
                         <th className="py-2">Order</th>
                         <th className="py-2 text-right">Cash</th><th className="py-2 text-right">E-Wallet</th>
-                        <th className="py-2 text-right">Bank</th><th className="py-2 text-right">Delivery</th><th className="py-2 text-right">Total</th>
+                        <th className="py-2 text-right">Bank</th><th className="py-2 text-right">Delivery</th><th className="py-2 text-right" title="Before discount and delivery fee">Subtotal</th><th className="py-2 text-right" title="What was charged">Total</th>
                       </tr>
                     </thead>
                     <tbody className="text-fg/75">
@@ -1614,6 +1614,7 @@ It posts only what is not already accrued for that month.`)) return;
                           <td className="py-1.5 text-right font-mono">{row.ewallet ? money2(row.ewallet) : ''}</td>
                           <td className="py-1.5 text-right font-mono">{row.bank ? money2(row.bank) : ''}</td>
                           <td className="py-1.5 text-right font-mono">{row.delivery ? money2(row.delivery) : ''}</td>
+                          <td className="py-1.5 text-right font-mono text-fg/70">{money2(row.subtotal || 0)}</td>
                           <td className="py-1.5 text-right font-mono font-bold text-fg/90">{money2(row.total)}</td>
                         </tr>
                         );
@@ -1627,6 +1628,7 @@ It posts only what is not already accrued for that month.`)) return;
                           <td className="py-2 text-right font-mono">{money2(salesSummary.totals.ewallet)}</td>
                           <td className="py-2 text-right font-mono">{money2(salesSummary.totals.bank)}</td>
                           <td className="py-2 text-right font-mono">{money2(salesSummary.totals.delivery)}</td>
+                          <td className="py-2 text-right font-mono">{money2(salesSummary.totals.subtotal || 0)}</td>
                           <td className="py-2 text-right font-mono text-brand-text">{money2(salesSummary.totals.total)}</td>
                         </tr>
                       </tfoot>
