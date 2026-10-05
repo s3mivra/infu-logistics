@@ -723,6 +723,61 @@ export default function LedgerTab({ ctx }) {
     return xlsxRef.current.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '' });
   };
 
+  // The Orders export (Order No | Date | Customer | Status | Payment | Subtotal |
+  // Discount | Total, and "Order Lines" beside it when the export is a recent
+  // one) brought back through /api/orders/import: each completed order returns
+  // as a sale on its own date with its own number. Returns false when the file
+  // is not one, so the caller carries on reading it as billing statements.
+  const importOrdersExport = async (XLSX, wb) => {
+    const need = ['Order No', 'Date', 'Customer', 'Total'];
+    const sheet = (wb.SheetNames || []).find((n) => {
+      const head = (XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '' })[0] || []).map(h => String(h ?? '').trim());
+      return need.every(h => head.includes(h));
+    });
+    if (!sheet) return false;
+    const php = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheet], { defval: '' }).filter(r => String(r['Order No'] || '').trim());
+    if (!rows.length) { ui.alert('That Orders export has no orders in it.'); return true; }
+    const lines = wb.Sheets['Order Lines'] ? XLSX.utils.sheet_to_json(wb.Sheets['Order Lines'], { defval: '' }) : [];
+    const total = rows.reduce((sum, r) => sum + (Number(r.Total) || 0), 0);
+    const ok = await ui.confirm({
+      title: `Import ${rows.length} order(s) - ${php(total)}?`,
+      message: 'This is an Orders export. Each completed order comes back as a sale on its own date, with its own order number, and is posted to the books. Orders already in the app are skipped. '
+        + (lines.length
+          ? 'It carries its product lines, so the products come back too.'
+          : 'It has no product lines, so each order comes back with one summary line - totals and receivables will be right, but product reports will not include them and stock is not touched.'),
+      confirmLabel: 'Import orders',
+    });
+    if (!ok) return true;
+    setBulkOpInProgress?.(true);
+    try {
+      let created = 0, sum = 0; const skipped = [], problems = [];
+      // In batches, so a long export is never one enormous request.
+      for (let i = 0; i < rows.length; i += 200) {
+        const part = rows.slice(i, i + 200);
+        const nums = new Set(part.map(r => String(r['Order No']).trim()));
+        const d = await (await apiFetch('/api/orders/import', {
+          method: 'POST', body: JSON.stringify({ rows: part, lines: lines.filter(l => nums.has(String(l['Order No'] || '').trim())) }),
+        })).json();
+        if (!d.success) { ui.alert(d.error || 'The import failed - nothing more was imported.'); break; }
+        created += d.created || 0; sum += d.total || 0;
+        skipped.push(...(d.skipped || []).map(x => x.error)); problems.push(...(d.problems || []));
+      }
+      const already = skipped.filter(e => /already in the app/i.test(e)).length;
+      const other = skipped.filter(e => !/already in the app/i.test(e));
+      ui.alert(
+        `${created} order(s) imported - ${php(sum)}.`
+        + (already ? `\n${already} were already in the app and were skipped.` : '')
+        + (other.length ? `\n\nNot imported (${other.length}):\n- ${other.slice(0, 12).join('\n- ')}${other.length > 12 ? `\n...and ${other.length - 12} more` : ''}` : '')
+        + (problems.length ? `\n\nCheck these:\n- ${problems.slice(0, 8).join('\n- ')}` : ''),
+      );
+      fetchERPData?.();
+      fetchBdHistory(1);
+    } catch { ui.alert('Network error - check which orders came in before trying again (those already in are skipped).'); }
+    finally { setBulkOpInProgress?.(false); }
+    return true;
+  };
+
   const parseBackdateExcel = async (file) => {
     if (!file) return;
     // Defensive reset - a leftover preview/queue-resolve modal from a prior
@@ -738,6 +793,9 @@ export default function LedgerTab({ ctx }) {
       xlsxRef.current = XLSX;
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheetNames = wb.SheetNames || [];
+      // An Orders export, not a billing statement: it has its own importer, and
+      // this is the button people reach for with it - so take it here too.
+      if (await importOrdersExport(XLSX, wb)) { setBdImporting(false); return; }
       // Always pause here first - even a single-sheet file - so Payment Method
       // and Reduce Inventory are chosen BEFORE the sale preview is built, same
       // as the manual entry form asks for them up front.
