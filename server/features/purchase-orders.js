@@ -1,6 +1,7 @@
 ﻿// purchase-orders routes - procurement workflow (draft PO → reconcile delivery).
 // Models/helpers/middleware live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { billIsInBooks, carriedBillsFilter } from '../lib/billPoLink.js';
 import { title, partyName, lower, freeText, squish } from '../lib/normalize.js';
 import { INPUT_VAT } from '../lib/vatPosting.js';
 import { loadVatConfig } from '../lib/vatSettings.js';
@@ -589,16 +590,16 @@ export default function registerPurchaseOrders(ctx) {
       if (po.status === 'Cancelled') {
         return res.status(409).json({ success: false, error: 'Cancelled POs cannot be received.' });
       }
-      // A payable from the old books (or typed in by hand) has been linked to
-      // this order: the goods and the debt are already in the books. Receiving
-      // would add the stock and the payable a second time.
-      const carried = await Bill.findOne({
-        source: { $ne: 'PO' }, status: { $ne: 'Rejected' },
-        $or: [{ purchaseOrderId: po._id }, { purchaseOrderId: null, poNumber: po.poNumber }],
-      }, { billNumber: 1 }).lean();
-      if (carried) {
-        return res.status(409).json({ success: false, error: `${po.poNumber} is linked to payable ${carried.billNumber}, which is already in the books - receiving it would count the stock and the debt twice. If these goods really are arriving now, take the PO number off that bill first.` });
+      // A bill not raised by a delivery names this order. If it is already in
+      // the books (an opening payable, an approved typed-in bill) the goods and
+      // the debt are recorded - receiving would count them twice. If it is
+      // still pending, it becomes this delivery's payable (below).
+      const carriedBills = await Bill.find(carriedBillsFilter(po)).sort({ createdAt: 1 });
+      const inBooks = carriedBills.find(billIsInBooks);
+      if (inBooks) {
+        return res.status(409).json({ success: false, error: `${po.poNumber} is linked to payable ${inBooks.billNumber}, which is already in the books - receiving it would count the stock and the debt twice. If these goods really are arriving now, take the PO number off that bill first.` });
       }
+      const pendingLinked = carriedBills[0] || null;
 
       const received = Array.isArray(req.body?.received) ? req.body.received : [];
       // Map incoming actuals onto lines - accept a line _id or a positional index.
@@ -680,7 +681,19 @@ export default function registerPurchaseOrders(ctx) {
           await po.save();
         } catch (err) { captureError(req, err); }   // fall through: the receipt still stands
       }
-      if (posted.payableTotal > 0 && po.supplierId) {
+      if (posted.payableTotal > 0 && pendingLinked) {
+        // The bill someone typed in for this order ahead of the delivery is
+        // the payable for it - carried over, not raised a second time. It now
+        // stands for what was actually received, like any delivery's bill.
+        const typed = Number(pendingLinked.amount) || 0;
+        pendingLinked.source = 'PO';
+        pendingLinked.purchaseOrderId = po._id;
+        pendingLinked.poNumber = po.poNumber;
+        pendingLinked.amount = posted.payableTotal;
+        pendingLinked.deliveryLines = deltas.map(d => ({ itemName: d.line.itemName || '', qty: d.delta, unitCost: Number(d.line.unitCost) || 0 }));
+        pendingLinked.description = `${pendingLinked.description || ''} - delivery received on ${po.poNumber}${Math.abs(typed - posted.payableTotal) > 0.005 ? ` (entered as ${typed.toFixed(2)} before the delivery)` : ''}`.trim().slice(0, 500);
+        bill = await pendingLinked.save().catch((err) => { captureError(req, err); return null; });
+      } else if (posted.payableTotal > 0 && po.supplierId) {
         const billNumber = await mkSeqRef('BILL');
         bill = await Bill.create({
           businessType: BUSINESS_TYPE,

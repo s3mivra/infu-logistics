@@ -1177,6 +1177,20 @@ const runStartupTasks = async () => {
       log.error({ err }, 'Packed-item recipe repair failed');
     }
 
+    // Once: orders closed by a link to a bill that was still pending reopen -
+    // only a bill already in the books closes its order.
+    try {
+      const done = await Settings.findOne({ key: 'poLinkPendingReopenV1' }).lean();
+      if (!done) {
+        const { reopenOrdersClosedByPendingBills } = await import('./lib/billPoLink.js');
+        const checked = await reopenOrdersClosedByPendingBills(mongoose);
+        await Settings.findOneAndUpdate({ key: 'poLinkPendingReopenV1' }, { key: 'poLinkPendingReopenV1', value: true }, { upsert: true });
+        if (checked) log.info({ checked }, '✅ Linked purchase orders re-checked against their bills');
+      }
+    } catch (err) {
+      log.error({ err }, 'Linked purchase order re-check failed');
+    }
+
     // Load custom-role → permissions into the authz resolver (function is hoisted).
     await refreshCustomRolePerms();
 };

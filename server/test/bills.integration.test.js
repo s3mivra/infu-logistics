@@ -234,16 +234,48 @@ describe('a PO number on a payable that did not come from a PO here', () => {
     expect([closed.status, closed.closedByBill]).toEqual(['Complete', bill.billNumber]);
   });
 
-  it('rejecting the linked bill reopens the order', async () => {
+  it('a pending typed-in bill leaves its order open, and becomes the payable when the order is received', async () => {
     const PO = mongoose.model('PurchaseOrder');
-    const po = await PO.create({ poNumber: 'PO-TEST-REJ', supplier: 'Acme Supplies', supplierId, status: 'Processing', lines: [] });
-    const made = await auth('post', '/api/bills', tok).send({ supplierId, description: 'Typed in', amount: 300, expenseAccountCode: '520000' });
+    const Bill = mongoose.model('Bill');
+    const po = await PO.create({ poNumber: 'PO-TEST-PEND', supplier: 'Acme Supplies', supplierId, status: 'Processing',
+      lines: [{ invId: inv._id, itemName: 'Widget', unit: 'pcs', orderedQty: 10, unitCost: 5 }] });
+    const made = await auth('post', '/api/bills', tok).send({ supplierId, description: 'Typed in ahead of delivery', amount: 60, expenseAccountCode: '130000' });
     const id = made.body.bill._id;
-    expect((await auth('patch', `/api/bills/${id}/po-number`, tok).send({ poNumber: 'PO-TEST-REJ' })).body.linked).toBe(true);
+    expect((await auth('patch', `/api/bills/${id}/po-number`, tok).send({ poNumber: 'PO-TEST-PEND' })).body.linked).toBe(true);
+    // Not received, so not closed.
+    expect((await PO.findById(po._id).lean()).status).toBe('Processing');
+
+    // One order, one linked bill.
+    const other = await auth('post', '/api/bills', tok).send({ supplierId, description: 'Another', amount: 10, expenseAccountCode: '130000' });
+    const second = await auth('patch', `/api/bills/${other.body.bill._id}/po-number`, tok).send({ poNumber: 'PO-TEST-PEND' });
+    expect(second.status).toBe(409);
+    expect(second.body.error).toMatch(/already linked/i);
+
+    // Approving it before the delivery would book the payable twice.
+    const early = await auth('post', `/api/bills/${id}/approve`, tok).send({});
+    expect(early.status).toBe(409);
+    expect(early.body.error).toMatch(/not been received/i);
+
+    // Receiving raises no second bill: the typed-in one is the delivery's payable.
+    const before = await Bill.countDocuments({});
+    const rcv = await auth('post', `/api/purchase-orders/${po._id}/receive`, tok).send({ received: [{ index: 0, receivedQty: 10 }] });
+    expect(rcv.status, JSON.stringify(rcv.body)).toBe(200);
+    expect(await Bill.countDocuments({})).toBe(before);
+    const bill = await Bill.findById(id).lean();
+    expect([bill.source, bill.amount, String(bill.purchaseOrderId)]).toEqual(['PO', 50, String(po._id)]);
+    expect(bill.description).toMatch(/entered as 60\.00/);
     expect((await PO.findById(po._id).lean()).status).toBe('Complete');
-    expect((await auth('post', `/api/bills/${id}/reject`, tok).send({ reason: 'Entered by mistake' })).status).toBe(200);
-    const after = await PO.findById(po._id).lean();
-    expect([after.status, after.closedByBill]).toEqual(['Processing', '']);
+  });
+
+  it('rejecting a pending linked bill frees the order for another', async () => {
+    const PO = mongoose.model('PurchaseOrder');
+    const po = await PO.create({ poNumber: 'PO-TEST-REJ', supplier: 'Acme Supplies', supplierId, status: 'Ordered', lines: [] });
+    const a = await auth('post', '/api/bills', tok).send({ supplierId, description: 'First', amount: 300, expenseAccountCode: '520000' });
+    expect((await auth('patch', `/api/bills/${a.body.bill._id}/po-number`, tok).send({ poNumber: 'PO-TEST-REJ' })).body.linked).toBe(true);
+    expect((await auth('post', `/api/bills/${a.body.bill._id}/reject`, tok).send({ reason: 'Entered by mistake' })).status).toBe(200);
+    const b = await auth('post', '/api/bills', tok).send({ supplierId, description: 'Second', amount: 300, expenseAccountCode: '520000' });
+    expect((await auth('patch', `/api/bills/${b.body.bill._id}/po-number`, tok).send({ poNumber: 'PO-TEST-REJ' })).body.linked).toBe(true);
+    expect((await PO.findById(po._id).lean()).status).toBe('Ordered');
   });
 
   it('a bill raised from one of our own POs keeps its number', async () => {

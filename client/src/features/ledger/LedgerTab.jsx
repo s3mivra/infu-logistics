@@ -4230,16 +4230,16 @@ It posts only what is not already accrued for that month.`)) return;
                       </span>
                     )}
                   </div>
-                  <table className="w-full text-sm">
+                  <table className="w-full text-sm min-w-[920px]">
                     <thead>
                       <tr className="text-fg/65 text-[10px] uppercase tracking-widest border-b border-white/10">
                         <th className="text-left py-2.5 px-4">Client</th>
-                        <th className="text-right py-2.5">Current</th>
-                        <th className="text-right py-2.5">31-60</th>
-                        <th className="text-right py-2.5">61-90</th>
-                        <th className="text-right py-2.5">91+</th>
-                        <th className="text-right py-2.5">Total</th>
-                        <th className="text-right py-2.5" title="Everything on account including orders still in flight - this is what the credit limit spends">Committed</th>
+                        <th className="text-right py-2.5 px-3 whitespace-nowrap">Current</th>
+                        <th className="text-right py-2.5 px-3 whitespace-nowrap">31-60</th>
+                        <th className="text-right py-2.5 px-3 whitespace-nowrap">61-90</th>
+                        <th className="text-right py-2.5 px-3 whitespace-nowrap">91+</th>
+                        <th className="text-right py-2.5 px-3 whitespace-nowrap">Total</th>
+                        <th className="text-right py-2.5 px-3 whitespace-nowrap" title="Everything on account including orders still in flight - this is what the credit limit spends">Committed</th>
                         <th className="text-right py-2.5 px-4">Limit / Left</th>
                       </tr>
                     </thead>
@@ -4250,15 +4250,15 @@ It posts only what is not already accrued for that month.`)) return;
                             {row.client}
                             {row.overLimit && <span className="ml-2 text-[8px] font-black bg-red-700 text-white px-1.5 py-0.5 rounded uppercase">Over</span>}
                           </td>
-                          <td className="py-2.5 text-right tabular-nums text-fg/70">{row.current ? `₱${row.current.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                          <td className="py-2.5 text-right tabular-nums text-warning">{row.d31_60 ? `₱${row.d31_60.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                          <td className="py-2.5 text-right tabular-nums text-caution">{row.d61_90 ? `₱${row.d61_90.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                          <td className="py-2.5 text-right tabular-nums text-red-500/80">{row.d90_plus ? `₱${row.d90_plus.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                          <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{row.total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                          <td className="py-2.5 text-right tabular-nums text-brand-text">
+                          <td className="py-2.5 px-3 text-right whitespace-nowrap tabular-nums text-fg/70">{row.current ? `₱${row.current.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
+                          <td className="py-2.5 px-3 text-right whitespace-nowrap tabular-nums text-warning">{row.d31_60 ? `₱${row.d31_60.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
+                          <td className="py-2.5 px-3 text-right whitespace-nowrap tabular-nums text-caution">{row.d61_90 ? `₱${row.d61_90.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
+                          <td className="py-2.5 px-3 text-right whitespace-nowrap tabular-nums text-red-500/80">{row.d90_plus ? `₱${row.d90_plus.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
+                          <td className="py-2.5 px-3 text-right whitespace-nowrap tabular-nums font-black text-fg">₱{row.total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                          <td className="py-2.5 px-3 text-right whitespace-nowrap tabular-nums text-brand-text">
                             {row.exposure ? `₱${row.exposure.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}
                           </td>
-                          <td className="py-2.5 px-4 text-right tabular-nums text-xs">
+                          <td className="py-2.5 px-4 text-right whitespace-nowrap tabular-nums text-xs">
                             {row.creditLimit === null || row.creditLimit === undefined ? (
                               <span className="text-fg/65">No limit</span>
                             ) : (
@@ -4278,19 +4278,19 @@ It posts only what is not already accrued for that month.`)) return;
                 <div className="py-16 text-center text-fg/65 font-bold uppercase tracking-widest text-sm">No outstanding A/R </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-sm min-w-[1040px]">
                     <thead>
                       <tr className="text-fg/65 text-xs uppercase tracking-widest border-b border-white/10">
-                        <th className="text-left py-3">Order #</th>
-                        <th className="text-left py-3">Customer</th>
-                        <th className="text-left py-3">Channel</th>
-                        <th className="text-left py-3">Date</th>
-                        <th className="text-left py-3">Age</th>
-                        <th className="text-left py-3">Due</th>
-                        <th className="text-right py-3">Invoiced</th>
-                        <th className="text-right py-3">Collected</th>
-                        <th className="text-right py-3">Balance</th>
-                        <th className="text-right py-3">Action</th>
+                        <th className="text-left py-3 px-3 whitespace-nowrap">Order #</th>
+                        <th className="text-left py-3 px-3 whitespace-nowrap">Customer</th>
+                        <th className="text-left py-3 px-3 whitespace-nowrap">Channel</th>
+                        <th className="text-left py-3 px-3 whitespace-nowrap">Date</th>
+                        <th className="text-left py-3 px-3 whitespace-nowrap">Age</th>
+                        <th className="text-left py-3 px-3 whitespace-nowrap">Due</th>
+                        <th className="text-right py-3 px-3 whitespace-nowrap">Invoiced</th>
+                        <th className="text-right py-3 px-3 whitespace-nowrap">Collected</th>
+                        <th className="text-right py-3 px-3 whitespace-nowrap">Balance</th>
+                        <th className="text-right py-3 px-3 whitespace-nowrap">Action</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -4303,12 +4303,12 @@ It posts only what is not already accrued for that month.`)) return;
                           : 'bg-red-500/15 text-danger';
                         return (
                           <tr key={o._id} className="border-b border-white/5 hover:bg-white/5 transition">
-                            <td className="py-3 text-fg font-bold">{o.orderNumber}</td>
-                            <td className="py-3 text-fg/70">{o.customerName}</td>
-                            <td className="py-3"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/20 text-brand-text px-2 py-1 rounded">{o.paymentMethod}</span></td>
-                            <td className="py-3 text-fg/75 text-xs">{new Date(o.createdAt).toLocaleDateString()}</td>
-                            <td className="py-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${ageBadge}`}>{days}d</span></td>
-                            <td className="py-3 text-xs">
+                            <td className="py-3 px-3 whitespace-nowrap text-fg font-bold">{o.orderNumber}</td>
+                            <td className="py-3 px-3 text-fg/70 min-w-[140px]">{o.customerName}</td>
+                            <td className="py-3 px-3 whitespace-nowrap"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/20 text-brand-text px-2 py-1 rounded whitespace-nowrap">{o.paymentMethod}</span></td>
+                            <td className="py-3 px-3 whitespace-nowrap text-fg/75 text-xs">{new Date(o.createdAt).toLocaleDateString()}</td>
+                            <td className="py-3 px-3 whitespace-nowrap"><span className={`text-[10px] font-black px-2 py-1 rounded ${ageBadge}`}>{days}d</span></td>
+                            <td className="py-3 px-3 whitespace-nowrap text-xs">
                               {o.arDueDate ? (
                                 o.overdue
                                   ? <span className="text-[10px] font-black px-2 py-1 rounded bg-red-500/15 text-danger">OVERDUE · {new Date(o.arDueDate).toLocaleDateString()}</span>
@@ -4321,14 +4321,14 @@ It posts only what is not already accrued for that month.`)) return;
                                 asking "what do I owe on invoice X" needs the
                                 second, and reconciling against the sale needs
                                 the first. */}
-                            <td className="py-3 text-right text-fg/75 tabular-nums">₱{o.total.toFixed(2)}</td>
-                            <td className="py-3 text-right tabular-nums">
+                            <td className="py-3 px-3 whitespace-nowrap text-right text-fg/75 tabular-nums">₱{o.total.toFixed(2)}</td>
+                            <td className="py-3 px-3 whitespace-nowrap text-right tabular-nums">
                               {o.paid > 0
                                 ? <button onClick={() => openArHistory(o)} className="text-success font-bold hover:underline" title="View payment history">₱{o.paid.toFixed(2)}{o.paymentCount > 1 ? ` (${o.paymentCount})` : ''}</button>
                                 : <span className="text-fg/65">-</span>}
                             </td>
-                            <td className="py-3 text-right text-fg tabular-nums font-black">₱{(o.balance ?? o.total).toFixed(2)}</td>
-                            <td className="py-3 text-right">
+                            <td className="py-3 px-3 whitespace-nowrap text-right text-fg tabular-nums font-black">₱{(o.balance ?? o.total).toFixed(2)}</td>
+                            <td className="py-3 px-3 whitespace-nowrap text-right">
                               {/* Recording a collection, or spending a client's credit on it,
                                   is the owner's (the server allows only the superadmin), so
                                   nobody else is shown buttons that can only be refused. */}

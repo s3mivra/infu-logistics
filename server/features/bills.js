@@ -2,7 +2,7 @@
 // Models/helpers/middleware live in server.js and arrive via ctx.
 // See the BillSchema comment in server.js for the source:'PO' vs 'Manual'
 // distinction that drives when the A/P journal entry actually posts.
-import { findLinkablePo, closeLinkedPo, linkImportedBill, releaseLinkedPo } from '../lib/billPoLink.js';
+import { findLinkablePo, linkImportedBill, syncLinkedPo } from '../lib/billPoLink.js';
 import { captureError } from '../lib/errorLog.js';
 import { INPUT_VAT } from '../lib/vatPosting.js';
 import { loadVatConfig } from '../lib/vatSettings.js';
@@ -283,6 +283,16 @@ export default function registerBills(ctx) {
       if (!bill) return res.status(404).json({ success: false, error: 'Not found' });
       if (bill.status !== 'Pending') return res.status(409).json({ success: false, error: `Only a Pending bill can be approved (this one is ${bill.status}).` });
 
+      // A typed-in bill linked to an order that has not been received yet: the
+      // delivery is what books this payable (and brings the stock in), so
+      // approving it first would book it twice.
+      if (bill.source === 'Manual' && bill.purchaseOrderId) {
+        const linkedPo = await PurchaseOrder.findById(bill.purchaseOrderId).lean();
+        if (linkedPo && ['Ordered', 'Processing'].includes(linkedPo.status)) {
+          return res.status(409).json({ success: false, error: `This bill is linked to ${linkedPo.poNumber}, which has not been received yet. Receive the order first - the bill then follows that delivery. (If no delivery is coming, take the PO number off the bill.)` });
+        }
+      }
+
       // Three-way match gate: a bill for received goods is released for
       // payment only once the supplier's invoice agrees with the PO and the
       // receipt. An exception is accepted only by someone who may approve
@@ -386,7 +396,7 @@ export default function registerBills(ctx) {
       bill.rejectionReason = reason.trim().slice(0, 500);
       await bill.save();
       // A rejected bill no longer holds its purchase order closed.
-      if (bill.purchaseOrderId && bill.source !== 'PO') await releaseLinkedPo(mongoose, bill.purchaseOrderId);
+      if (bill.purchaseOrderId && bill.source !== 'PO') await syncLinkedPo(mongoose, bill.purchaseOrderId);
 
       await logAudit(req, { action: 'reject', entity: 'Bill', entityId: bill._id, after: { billNumber: bill.billNumber, reason: bill.rejectionReason } });
       res.json({ success: true, bill });
@@ -418,10 +428,12 @@ export default function registerBills(ctx) {
       await bill.save();
       // The order it is now linked to closes on its own: its goods and its debt
       // are already in the books, so there is nothing left to receive.
-      await closeLinkedPo(mongoose, po, bill);
+      // Closed if this bill is already in the books, left open if it is still
+      // pending (its delivery is yet to be received) - see lib/billPoLink.js.
+      if (po) await syncLinkedPo(mongoose, po._id);
       // The order it was linked to before reopens, unless another payable
       // from the books still holds it closed.
-      if (oldPoId && oldPoId !== String(po?._id || '')) await releaseLinkedPo(mongoose, oldPoId);
+      if (oldPoId && oldPoId !== String(po?._id || '')) await syncLinkedPo(mongoose, oldPoId);
       await logAudit(req, { action: 'update', entity: 'Bill', entityId: bill._id, before: { poNumber: before }, after: { poNumber: bill.poNumber, linked: !!po } });
       res.json({ success: true, bill, linked: !!po });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
