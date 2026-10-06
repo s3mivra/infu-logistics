@@ -64,6 +64,18 @@ describe('split payment at the till', () => {
     expect([await net('111000'), await net('120000')]).toEqual([0, 0]);
   });
 
+  it('a refund takes down what is owed first, then comes out of cash', async () => {
+    const o = await place(1000);
+    expect((await pay(o._id, { payments: [{ method: 'Cash', amount: 400 }, { method: 'On Account', amount: 600 }] })).status).toBe(200);
+    expect((await auth('put', `/api/orders/${o._id}`).send({ status: 'Completed' })).status).toBe(200);
+    const r = await auth('post', `/api/orders/${o._id}/refund`).send({ reason: 'Returned', refundAmount: 1000, inventoryAction: 'None' });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const je = await M('JournalEntry').findOne({ reference: { $regex: '^REFUND' }, description: { $regex: (await M('Order').findById(o._id).lean()).orderNumber } }).lean()
+      || await M('JournalEntry').findOne({ reference: { $regex: '^REFUND' } }).sort({ createdAt: -1 }).lean();
+    const credit = (code) => je.lines.filter(l => l.accountCode === code).reduce((s, l) => s + (l.credit || 0), 0);
+    expect([credit('120000'), credit('111000')]).toEqual([600, 400]);
+  });
+
   it('parts that are all cash are simply a cash sale', async () => {
     const o = await place(500);
     expect((await pay(o._id, { payments: [{ method: 'Cash', amount: 200 }, { method: 'Cash', amount: 300 }] })).status).toBe(200);

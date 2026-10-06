@@ -1677,6 +1677,25 @@ const creditOverrideRecord = (who, numbers = {}) => ({
   limit: numbers.limit ?? null, outstanding: numbers.outstanding ?? null, orderTotal: numbers.orderTotal ?? null,
 });
 
+// Where a refund comes back out of. A sale paid one way is credited to the
+// account it was debited to, as always. A SPLIT sale was partly cash and
+// partly a receivable: the refund first takes down what is still owed, and
+// only the rest is money handed back from the drawer - crediting the whole
+// refund to the receivable would leave the client "owed" cash that the books
+// still showed in the till. Call BEFORE adding this refund to refundedAmount.
+function refundCreditLines(order, amt) {
+  const one = debitAccountFor(order.paymentMethod);
+  if (!((order.payments || []).length >= 2)) return [{ accountCode: one.code, accountName: one.name, debit: 0, credit: amt }];
+  const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const owed = Math.max(0, r2((order.total || 0) - (order.arPaidAmount || 0) - (order.refundedAmount || 0)));
+  const fromReceivable = Math.min(r2(amt), owed);
+  const fromCash = r2(amt - fromReceivable);
+  const lines = [];
+  if (fromReceivable > 0) lines.push({ accountCode: '120000', accountName: 'Accounts Receivable', debit: 0, credit: fromReceivable });
+  if (fromCash > 0) lines.push({ accountCode: '111000', accountName: 'Cash on Hand', debit: 0, credit: fromCash });
+  return lines;
+}
+
 async function creditRefusal({ buyerClientId, excludeId, orderTotal }) {
   if (!buyerClientId) return null;
   const [modeRow, globalRow, client] = await Promise.all([
@@ -2359,6 +2378,13 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         const payRows = (order.payments?.length > 0)
           ? order.payments
           : [{ method: order.paymentMethod || 'Cash', amount: order.total }];
+        // A discount or an item change after the split was taken leaves parts
+        // that no longer add up to the order - say so, rather than fail to post.
+        const partsSum = Math.round(payRows.reduce((sum, p) => sum + (Number(p.amount) || 0), 0) * 100) / 100;
+        if (order.payments?.length > 0 && Math.abs(partsSum - order.total) > 0.011) {
+          await session.abortTransaction(); session.endSession();
+          return res.status(409).json({ success: false, error: `The order is now ₱${Number(order.total).toFixed(2)} but its split payment adds up to ₱${partsSum.toFixed(2)}. Take the payment again.` });
+        }
         for (const p of payRows) {
           const acct = debitAccountFor(p.method);
           lines.push({ accountCode: acct.code, accountName: acct.name, debit: p.amount, credit: 0 });
@@ -3703,10 +3729,9 @@ const refundOnce = async (req, res, mayRetry) => {
     const amt = parseFloat(refundAmount) || order.total;
     if (amt <= 0 || amt > order.total + 0.01) return res.status(400).json({ success: false, error: `Refund amount must be between ₱0.01 and ₱${order.total.toFixed(2)}.` });
     const reference = mkRef('REFUND', order.orderNumber);
-    const creditAcct = debitAccountFor(order.paymentMethod);
     const lines = [
       ...saleRevenueLines({ gross: amt, vatAmount: vatShare(order, amt), side: 'debit' }),
-      { accountCode: creditAcct.code, accountName: creditAcct.name,  debit: 0,    credit: amt },
+      ...refundCreditLines(order, amt),
     ];
 
     // --- INVENTORY / COGS REVERSAL ---
@@ -3910,9 +3935,8 @@ const partialRefundOnce = async (req, res, mayRetry) => {
         lines.push({ accountCode: '410000', accountName: 'Sales Revenue', debit: refundAmount, credit: 0 });
         lines.push({ accountCode: '540000', accountName: 'Complimentary Expense', debit: 0, credit: refundAmount });
       } else {
-        const creditAcct = debitAccountFor(order.paymentMethod);
         lines.push(...saleRevenueLines({ gross: refundAmount, vatAmount: vatShare(order, refundAmount), side: 'debit' }));
-        lines.push({ accountCode: creditAcct.code, accountName: creditAcct.name, debit: 0, credit: refundAmount });
+        lines.push(...refundCreditLines(order, refundAmount));
       }
     }
 
