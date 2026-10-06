@@ -63,3 +63,18 @@ describe('reorder forecast', () => {
     expect(row.status).toBe('soon');                  // 320 covered at 20 a day = 16 days: past delivery + spare, inside the week after
   });
 });
+
+describe('suggested purchase order', () => {
+  it('suggests what is selling out even with no low-stock threshold, less what is on order', async () => {
+    // Fast Syrup: 20 on hand, 300 on order, 20 a day. 14 days + 10 to arrive = 480 needed.
+    const r = await auth('get', '/api/reports/purchase-order?days=14');
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.lines.find(l => l.itemName === 'Fast Syrup')).toBeUndefined();   // 320 covered: not selling out yet
+    await mongoose.model('PurchaseOrder').updateOne({ poNumber: 'PO-FC-1' }, { $set: { status: 'Cancelled' } });
+    const again = await auth('get', '/api/reports/purchase-order?days=14');
+    const line = again.body.lines.find(l => l.itemName === 'Fast Syrup');
+    expect(line, JSON.stringify(again.body.lines)).toBeTruthy();
+    expect(line.suggestedOrder).toBe(460);
+    expect(again.body.lines.find(l => l.itemName === 'Idle Syrup')).toBeUndefined();
+  });
+});

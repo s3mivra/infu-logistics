@@ -606,6 +606,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
         { $group: {
           _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: businessTimeZone() } },
           net:  { $sum: { $cond: ['$isComplimentary', 0, '$total'] } },
+          count: { $sum: 1 },
         }},
         { $sort: { _id: 1 } },
       ]),
@@ -649,10 +650,10 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
 
     // ── Daily revenue list ─────────────────────────────────────────────────────
     let bestDay = { date: 'N/A', revenue: 0 };
-    const dailyRevenue = dailyAgg.map(({ _id, net }) => {
+    const dailyRevenue = dailyAgg.map(({ _id, net, count }) => {
       const label = new Date(_id + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
       if (net > bestDay.revenue) bestDay = { date: label, revenue: net };
-      return { date: label, revenue: net };
+      return { date: label, revenue: net, count };
     });
 
     // ── Top products: merge size variants ("Latte (Large)" → "Latte") then take top 5 ──
@@ -1043,6 +1044,21 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
       Supplier.find({ ...tenantScope(req), isActive: true, 'catalog.invId': { $ne: null } }, { name: 1, catalog: 1 }).lean(),
     ]);
     const prodMap = Object.fromEntries(products.map(p => [p._id.toString(), p]));
+    // The days there have actually been sales to average over (a month at most).
+    const firstSale = await Order.findOne({ ...bizScope, status: 'Completed' }, { createdAt: 1 }).sort({ createdAt: 1 }).lean();
+    const historyDays = Math.min(30, firstSale ? Math.max(1, Math.ceil((Date.now() - new Date(firstSale.createdAt).getTime()) / 86400000)) : 1);
+    // Already on its way on open purchase orders (base units) - not suggested again.
+    const onOrder = {};
+    const invByIdStr = new Map(inv.map(i => [i._id.toString(), i]));
+    const openPos = await mongoose.model('PurchaseOrder').find({ ...tenantScope(req), status: { $in: ['Ordered', 'Processing', 'Incomplete'] } }, { lines: 1 }).lean();
+    for (const po of openPos) for (const l of (po.lines || [])) {
+      const item = l.invId && invByIdStr.get(String(l.invId));
+      if (!item) continue;
+      const left = Math.max(0, (Number(l.orderedQty) || 0) - (Number(l.receivedQty) || 0));
+      onOrder[String(item._id)] = (onOrder[String(item._id)] || 0) + left * basePerPack({ unitMultiplier: item.unitMultiplier, packSize: Number(l.packSize) > 0 ? Number(l.packSize) : item.packSize });
+    }
+    // Days allowed for a delivery to arrive, plus spare - as the Reorder Forecast.
+    const WAIT_DAYS = 10;
     // Cheapest supplier quote per inventory item, so a reorder suggestion can be
     // grouped into per-supplier draft POs instead of one manually-assigned PO.
     const bestSupplierByInv = {};
@@ -1079,10 +1095,15 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
       }
     }
     const lines = inv.map(i => {
-      const adu = (usage[i._id.toString()] || 0) / 30; // avg daily usage (base units)
+      const adu = (usage[i._id.toString()] || 0) / historyDays; // avg daily usage (base units)
       const threshold = i.lowStockThreshold || 0;
       const lowFlag = threshold > 0 && i.stockQty <= threshold;
-      if (!lowFlag) return null;
+      // Selling out: what is on the shelf and on order will not last the wait
+      // for a delivery. This is what catches an item with no low-stock
+      // threshold set - before, only items with one were ever suggested.
+      const coming = onOrder[i._id.toString()] || 0;
+      const sellingOut = adu > 0 && (Math.max(0, i.stockQty) + coming) <= adu * WAIT_DAYS;
+      if (!lowFlag && !sellingOut) return null;
 
       // For LOG mode display in pcs (pack units); otherwise promote g→kg, ml→L.
       const { displayUnit: effUnit, mult: effMult } = effectiveDisplay(i);
@@ -1093,17 +1114,18 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
 
       // Best qty = whichever is larger: velocity-based cover OR refill to 2× threshold.
       // This ensures items with low/no velocity still get a sensible restock target.
-      const velocityTarget = adu * days;               // base units for N-day cover
-      const refillTarget   = threshold * 2;            // bring back to 2× the alert floor
+      const velocityTarget = adu * (days + WAIT_DAYS); // base units: N days of cover, plus the wait for delivery
+      const refillTarget   = lowFlag ? threshold * 2 : 0; // bring back to 2× the alert floor
       const bestTarget     = Math.max(velocityTarget, refillTarget);
-      const needBase       = Math.max(0, bestTarget - i.stockQty);
+      const needBase       = Math.max(0, bestTarget - Math.max(0, i.stockQty) - coming);
+      if (!(needBase > 0)) return null;
 
       const best = bestSupplierByInv[i._id.toString()] || null;
       return {
         invId: i._id, itemCode: i.itemCode || '', unit: i.unit || '', unitCost: i.unitCost || 0,
         itemName: i.itemName, currentStock: Math.round(i.stockQty / divisor), displayUnit,
         avgDailyUse: +(adu / divisor).toFixed(3), suggestedOrder: Math.ceil(needBase / divisor),
-        estCost: +((needBase) * (i.unitCost || 0)).toFixed(2), lowStock: true,
+        estCost: +((needBase) * (i.unitCost || 0)).toFixed(2), lowStock: lowFlag, sellingOut,
         supplierId: best?.supplierId || null, supplierName: best?.supplierName || null,
       };
     }).filter(Boolean).sort((a, b) => (b.suggestedOrder - a.suggestedOrder));

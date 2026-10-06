@@ -927,7 +927,9 @@ export default function LedgerTab({ ctx }) {
     // A split whose parts do not add up to the sale would be refused one by one
     // mid-import - say which, before anything is posted.
     const badSplits = bdImportPreview.groups.filter(g => g.paymentMethod === 'Split' && !splitReady(g.total, g.payments || []));
-    if (badSplits.length) return ui.alert(`Fix the split payment on: ${badSplits.map(g => g.client || g.transNo || 'a sale').join(', ')} - the parts must add up to the sale total, with at least two parts.`);
+    const noCheckNo = bdImportPreview.groups.filter(g => (g.paymentMethod || bdImportSettings.paymentMethod) === 'Check' && !(g.checkNumber || '').trim());
+    if (noCheckNo.length) return ui.alert(`Enter the check number for: ${noCheckNo.slice(0, 10).map(g => g.client || g.transNo || 'a sale').join(', ')}${noCheckNo.length > 10 ? ` and ${noCheckNo.length - 10} more` : ''}.`);
+    if (badSplits.length) return ui.alert(`Fix the split payment on: ${badSplits.map(g => g.client || g.transNo || 'a sale').join(', ')} - the parts must add up to the sale total, with at least two parts, and each check needs its number.`);
     if (bdImportSettings.replaceExisting && !(await ui.confirm({
       title: 'Replace sales already imported?',
       message: 'Any sale here whose transaction no. was imported before will be reversed - its journal entries and any stock it took - and recorded again from this sheet. The old one stays in history as Voided.',
@@ -960,6 +962,7 @@ export default function LedgerTab({ ctx }) {
               body: JSON.stringify({
                 date: g.date, customerName: g.client, paymentMethod: g.paymentMethod || bdImportSettings.paymentMethod,
                 ...(g.paymentMethod === 'Split' ? { payments: splitPayload(g.payments) } : {}),
+                ...((g.paymentMethod || bdImportSettings.paymentMethod) === 'Check' ? { paymentReference: (g.checkNumber || '').trim(), paymentCheckDate: g.checkDate || null } : {}),
                 ...(bdImportSettings.replaceExisting ? { replaceExisting: true } : {}),
                 notes: g.transNo ? `Imported - ${g.transNo}` : 'Imported from Excel',
                 // The sheet's own transaction/invoice number - lets the server skip
@@ -1062,12 +1065,16 @@ export default function LedgerTab({ ctx }) {
   const saveBdQueueItem = async () => {
     if (!bdQueueResolve) return;
     if (!bdQueueResolve.paymentMethod) { ui.alert('Pick a payment method.'); return; }
+    if (bdQueueResolve.paymentMethod === 'Check' && !(bdQueueResolve.checkNumber || '').trim()) { ui.alert('Enter the check number.'); return; }
     setBdQueueSaving(true);
     try {
       const row = bdQueueResolve.row;
       const r = await apiFetch(`/api/admin/backdate-sale/queue/${row._id}/save`, {
         method: 'POST',
-        body: JSON.stringify({ paymentMethod: bdQueueResolve.paymentMethod, affectInventory: !!bdQueueResolve.affectInventory }),
+        body: JSON.stringify({
+          paymentMethod: bdQueueResolve.paymentMethod, affectInventory: !!bdQueueResolve.affectInventory,
+          ...(bdQueueResolve.paymentMethod === 'Check' ? { paymentReference: (bdQueueResolve.checkNumber || '').trim(), paymentCheckDate: bdQueueResolve.checkDate || null } : {}),
+        }),
       });
       const d = await r.json();
       if (d.success) {
@@ -6182,9 +6189,20 @@ It posts only what is not already accrued for that month.`)) return;
                       <option value="Bank Transfer">Bank Transfer</option>
                       <option value="GCash">GCash</option>
                       <option value="Maya">Maya</option>
+                      <option value="Check">Check</option>
                       <option value="On Account">On Account (A/R)</option>
                     </select>
                   </div>
+                  {bdQueueResolve.paymentMethod === 'Check' && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <input value={bdQueueResolve.checkNumber || ''} onChange={e => setBdQueueResolve(s => ({ ...s, checkNumber: e.target.value }))}
+                        placeholder="Check number *" aria-label="Check number" maxLength={60}
+                        className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand/60" />
+                      <input type="date" value={bdQueueResolve.checkDate || ''} onChange={e => setBdQueueResolve(s => ({ ...s, checkDate: e.target.value }))}
+                        aria-label="Check date" title="Check date"
+                        className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand/60" />
+                    </div>
+                  )}
                   <button onClick={() => setBdQueueResolve(s => ({ ...s, affectInventory: !s.affectInventory }))}
                     className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition ${bdQueueResolve.affectInventory ? 'bg-amber-500/10 border-amber-500/40' : 'bg-page-bg border-white/10'}`}>
                     <span className="text-left">
@@ -6258,6 +6276,7 @@ It posts only what is not already accrued for that month.`)) return;
                       <option value="Bank Transfer">Bank Transfer</option>
                       <option value="GCash">GCash</option>
                       <option value="Maya">Maya</option>
+                      <option value="Check">Check</option>
                       <option value="On Account">On Account (A/R)</option>
                     </select>
                   </div>
@@ -6318,6 +6337,7 @@ It posts only what is not already accrued for that month.`)) return;
                       <option value="Bank Transfer">Bank Transfer</option>
                       <option value="GCash">GCash</option>
                       <option value="Maya">Maya</option>
+                      <option value="Check">Check</option>
                       <option value="On Account">On Account (A/R)</option>
                     </select>
                   </div>
@@ -6370,6 +6390,7 @@ It posts only what is not already accrued for that month.`)) return;
                           <option value="Bank Transfer">Bank Transfer</option>
                           <option value="GCash">GCash</option>
                           <option value="Maya">Maya</option>
+                          <option value="Check">Check</option>
                           <option value="On Account">On Account (A/R)</option>
                           <option value="Split">Split payment</option>
                         </select>
@@ -6378,6 +6399,18 @@ It posts only what is not already accrued for that month.`)) return;
                             className="text-[9px] font-bold uppercase tracking-wider text-fg/65 transition">reset to default</button>
                         )}
                       </div>
+                      {(g.paymentMethod || bdImportSettings.paymentMethod) === 'Check' && (
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <input value={g.checkNumber || ''} placeholder="Check number *" aria-label="Check number" maxLength={60}
+                            onChange={e => { const v = e.target.value; setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, checkNumber: v } : x) })); }}
+                            className={`w-40 bg-page-bg border rounded-lg px-2 py-1 text-fg text-xs outline-none ${(g.checkNumber || '').trim() ? 'border-white/10' : 'border-red-500/60'}`} />
+                          <label className="flex items-center gap-1 text-[10px] font-bold uppercase text-fg/70">Check date
+                            <input type="date" value={g.checkDate || ''} aria-label="Check date"
+                              onChange={e => { const v = e.target.value; setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, checkDate: v } : x) })); }}
+                              className="bg-page-bg border border-white/10 rounded-lg px-2 py-1 text-fg text-xs outline-none" />
+                          </label>
+                        </div>
+                      )}
                       {g.paymentMethod === 'Split' && (
                         <div className="mb-2 max-w-md">
                           <SplitPayEditor compact total={g.total} parts={g.payments || newSplit(g.total)}

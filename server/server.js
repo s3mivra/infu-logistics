@@ -1762,7 +1762,8 @@ items: [{
   // canceller themselves when they hold orders.delete).
   cancelApprovedBy: { type: String, default: null },
   // Split-payment breakdown: [{ method, amount }]
-  payments: [{ method: String, amount: Number }],
+  // A part paid by check keeps that check's number and date.
+  payments: [{ method: String, amount: Number, reference: { type: String, default: '' }, checkDate: { type: Date, default: null } }],
   // External reference the CUSTOMER supplies for their own payment - the GCash
   // / Maya / InstaPay confirmation number after scanning a payment QR, a bank
   // transfer reference, etc. Required for QR orders placed through the client

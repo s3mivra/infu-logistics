@@ -121,6 +121,11 @@ export default function AnalyticsTab({ ctx }) {
   // These stock-movement lists grow with SKU count and have no server-side cap,
   // unlike topProducts (already "Top 5") - paginate them so the page doesn't
   // just keep growing as inventory does.
+  // The day picked on the revenue chart (its total stays on screen), and the
+  // chart opening scrolled to the newest day.
+  const [pickedDay, setPickedDay] = useState(null);
+  const chartRef = React.useRef(null);
+  useEffect(() => { const el = chartRef.current; if (el) el.scrollLeft = el.scrollWidth; }, [ad?.dailyRevenue?.length]);
   const musPage  = usePagination(mus, 5);
   const lsPage   = usePagination(ls, 5);
   const hsPage   = usePagination(hs, 5);
@@ -336,25 +341,34 @@ export default function AnalyticsTab({ ctx }) {
                   <p className="text-fg/70 text-sm text-center py-4">No daily data available.</p>
                 ) : (
                   <>
-                    {/* Vertical bar graph - last 30 days, tallest bar = best day */}
-                    <div className="flex items-end gap-[3px] flex-1 min-h-[180px] overflow-x-auto pb-2">
-                      {dailyRevenue.slice(-30).map((day, i) => {
+                    {/* Vertical bar graph - every day on record, newest at the right;
+                        scroll back for older days, click a bar to keep its total on screen. */}
+                    <div className="h-5 mb-1 text-xs font-bold text-fg/80">
+                      {pickedDay
+                        ? <>{pickedDay.date} · <span className="text-brand-text">₱{Number(pickedDay.revenue).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>{pickedDay.count != null && <span className="text-fg/65 font-normal"> · {pickedDay.count} order(s)</span>}</>
+                        : <span className="text-fg/65 font-normal">Click a day to see its total.</span>}
+                    </div>
+                    <div ref={chartRef} className="flex items-end gap-[3px] flex-1 min-h-[160px] overflow-x-auto pb-2">
+                      {dailyRevenue.map((day, i) => {
                         const pct = bestDay.revenue > 0 ? (day.revenue / bestDay.revenue) * 100 : 0;
                         const isBest = day.revenue === bestDay.revenue && day.revenue > 0;
+                        const isPicked = pickedDay?.date === day.date;
                         return (
-                          <div key={i} className="group relative flex-1 min-w-[10px] h-full flex flex-col justify-end">
-                            <div className={`w-full rounded-t transition-colors ${isBest ? 'bg-accent' : 'bg-brand/60 group-hover:bg-brand'}`}
+                          <button type="button" key={i} onClick={() => setPickedDay(isPicked ? null : day)}
+                            aria-label={`${day.date}: ₱${Number(day.revenue).toLocaleString()}`} aria-pressed={isPicked}
+                            className="group relative flex-1 min-w-[18px] h-full flex flex-col justify-end cursor-pointer">
+                            <div className={`w-full rounded-t transition-colors ${isPicked ? 'bg-fg' : isBest ? 'bg-accent' : 'bg-brand/60 group-hover:bg-brand'}`}
                               style={{ height: `${Math.max(2, pct)}%` }} />
                             {/* tooltip */}
                             <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block whitespace-nowrap bg-page-bg border border-white/10 rounded-lg px-2 py-1 text-[10px] z-10">
                               <span className="text-fg/65">{day.date}</span> <span className="text-fg font-bold">₱{Number(day.revenue).toLocaleString()}</span>
                             </div>
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
                     <div className="flex justify-between text-[10px] text-fg/70 font-bold pt-1 border-t border-white/10">
-                      <span>{dailyRevenue.slice(-30)[0]?.date}</span>
+                      <span>{dailyRevenue[0]?.date}</span>
                       <span className="text-brand-text">Best: {bestDay.date} · ₱{Number(bestDay.revenue).toLocaleString()}</span>
                       <span>{dailyRevenue.slice(-1)[0]?.date}</span>
                     </div>

@@ -1,4 +1,5 @@
-﻿import React from 'react';
+﻿import SplitPayEditor, { newSplit, splitReady, splitPayload } from '../ledger/SplitPayEditor';
+import React from 'react';
 import QtyInput from '../../shared/ui/QtyInput';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Footprints, Utensils, ShoppingBag, Bike, Car, UserX, UserCheck, Flame } from 'lucide-react';
 import * as ui from '../../shared/ui';
@@ -151,6 +152,8 @@ export default function OrdersTab({ ctx }) {
   // UI-only hint for the walk-in picker below - not persisted; the real
   // guest-vs-regular classification comes from whether a customer name is entered.
   const [walkInMode, setWalkInMode] = React.useState('guest');
+  // A split payment being typed on an open order: { [orderId]: parts }.
+  const [splitParts, setSplitParts] = React.useState({});
   const [noteOpen, setNoteOpen] = React.useState(false);
   // Payment-QR display (set in Settings > Branding). The overlay itself lives
   // at dashboard level so it can be opened from anywhere payment is settled -
@@ -1747,6 +1750,11 @@ export default function OrdersTab({ ctx }) {
                                   const tendered = parseFloat(cashTendered[order._id] || '0') || 0;
                                   const changeDue = isCash && tendered > 0 ? tendered - displayTotal : null;
                                   const isUnderpaid = isCash && tendered > 0 && tendered < displayTotal;
+                                  // Paid in parts: the parts typed here, else the ones the order already has.
+                                  const isSplitPay = displayPayment === 'Split';
+                                  const splitNow = splitParts[order._id]
+                                    || ((order.payments || []).length >= 2 ? order.payments.map(p => ({ method: p.method, amount: p.amount, reference: p.reference || '', checkDate: p.checkDate ? String(p.checkDate).slice(0, 10) : '' })) : newSplit(displayTotal));
+                                  const splitNotReady = isSplitPay && !splitReady(displayTotal, splitNow);
                                   return (
                                     <div className="flex flex-col w-full gap-2">
                                       <select
@@ -1757,6 +1765,9 @@ export default function OrdersTab({ ctx }) {
                                         {/* Canonical payment methods - these stay even when no
                                             sub-accounts have been added so the cashier always has
                                             the standard options. */}
+                                        <optgroup label="Paid in parts">
+                                          <option value="Split">Split payment (e.g. part cash, part check)</option>
+                                        </optgroup>
                                         <optgroup label="In-Store Payments">
                                           <option value="Cash">Cash</option>
                                           <option value="Bank Transfer">Bank Transfer</option>
@@ -1826,6 +1837,10 @@ export default function OrdersTab({ ctx }) {
                                           e-wallets - so the cashier turns the screen round, the
                                           customer scans, and the confirmation number goes in the
                                           box directly below. */}
+                                      {isSplitPay && (
+                                        <SplitPayEditor compact total={displayTotal} parts={splitNow}
+                                          onChange={parts => setSplitParts(prev => ({ ...prev, [order._id]: parts }))} />
+                                      )}
                                       {payQrImage && ['QR', 'GCash', 'Maya', 'Maribank', 'Other E-Wallet'].includes(displayPayment) && (
                                         <button
                                           onClick={() => setPayQrOpen(true)}
@@ -1897,17 +1912,18 @@ export default function OrdersTab({ ctx }) {
                                           almost every order; dropping it and splitting
                                           it are the exceptions, and now look like it. */}
                                       <button
-                                        disabled={isUnderpaid || missingRef}
+                                        disabled={isUnderpaid || missingRef || splitNotReady}
                                         onClick={() => {
                                           // Seed the selection with the default so it persists even if untouched.
                                           if (paymentSelections[order._id] === undefined) {
                                             setPaymentSelections(prev => ({ ...prev, [order._id]: displayPayment }));
                                           }
-                                          setTimeout(() => updateStatus(order._id, 'Preparing'), 0);
+                                          const extra = isSplitPay ? { paymentMethod: 'Split', payments: splitPayload(splitNow) } : {};
+                                          setTimeout(() => updateStatus(order._id, 'Preparing', extra), 0);
                                         }}
-                                        className={`w-full py-3 rounded-lg font-black text-sm transition ${(isUnderpaid || missingRef) ? 'bg-white/10 text-fg/65 cursor-not-allowed' : 'bg-accent text-on-brand hover:bg-accentShadow'}`}
+                                        className={`w-full py-3 rounded-lg font-black text-sm transition ${(isUnderpaid || missingRef || splitNotReady) ? 'bg-white/10 text-fg/65 cursor-not-allowed' : 'bg-accent text-on-brand hover:bg-accentShadow'}`}
                                       >
-                                        {missingRef ? `${isCheck ? 'Check No.' : 'Ref No.'} Required` : `Pay & send to ${SEND_TARGET}`}
+                                        {splitNotReady ? 'Finish the split payment' : missingRef ? `${isCheck ? 'Check No.' : 'Ref No.'} Required` : `Pay & send to ${SEND_TARGET}`}
                                       </button>
                                       {BUSINESS_TYPE === 'log' && (
                                         <button onClick={() => sendUnpaid(order, displayTotal)}

@@ -26,12 +26,15 @@ export default function ReorderForecast({ rows = [], settings = {}, analyticsDis
   // Quantities arrive in the stock's base unit; show them the way the rest of
   // the app shows that item (packs, kilos...).
   const q = (item, n) => { const d = analyticsDisplay(item); return `${(Number(n || 0) / d.mult).toLocaleString('en-PH', { maximumFractionDigits: 2 })} ${d.unit}`; };
+  // What to buy is a whole number of units - nobody orders 4.92 pieces. (Used
+  // per day stays a fraction: an item that sells one every three days uses 0.33.)
+  const buy = (item, n) => { const d = analyticsDisplay(item); const whole = Math.ceil(Number(n || 0) / d.mult - 1e-9); return whole > 0 ? `${whole.toLocaleString('en-PH')} ${d.unit}` : '-'; };
   const lasts = (r) => (r.daysLeft == null ? '-' : r.daysLeft <= 0 ? 'Out' : `${r.daysLeft} day${r.daysLeft === 1 ? '' : 's'}`);
 
   const exportXlsx = async () => {
     const XLSX = await import('xlsx');
     const head = ['Item', 'Code', 'Unit', 'On hand', 'Used per day', 'Lasts (days)', 'Runs out on', 'On order', 'Buy for 2 weeks', 'Buy for 1 month', 'Status'];
-    const body = shown.map(r => { const d = analyticsDisplay(r); const n = (v) => +(Number(v || 0) / d.mult).toFixed(2); return [r.itemName, r.itemCode || '', d.unit, n(r.stockQty), n(r.dailyUse), r.daysLeft ?? '', r.runsOutOn || '', n(r.onOrder), n(r.buy14), n(r.buy30), STATUS[r.status]?.[0] || '']; });
+    const body = shown.map(r => { const d = analyticsDisplay(r); const n = (v) => +(Number(v || 0) / d.mult).toFixed(2); return [r.itemName, r.itemCode || '', d.unit, n(r.stockQty), n(r.dailyUse), r.daysLeft ?? '', r.runsOutOn || '', n(r.onOrder), Math.ceil(n(r.buy14) - 1e-9), Math.ceil(n(r.buy30) - 1e-9), STATUS[r.status]?.[0] || '']; });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body]), 'Reorder forecast');
     XLSX.writeFile(wb, `Reorder-forecast_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -80,8 +83,8 @@ export default function ReorderForecast({ rows = [], settings = {}, analyticsDis
                     <td className="py-2 px-2 text-right tabular-nums text-fg/80">{q(r, r.dailyUse)}</td>
                     <td className="py-2 px-2 text-fg/80 whitespace-nowrap">{lasts(r)}{r.runsOutOn && r.daysLeft > 0 && <span className="block text-[10px] text-fg/65">until {r.runsOutOn}</span>}</td>
                     <td className="py-2 px-2 text-right tabular-nums text-fg/80">{r.onOrder > 0 ? q(r, r.onOrder) : '-'}</td>
-                    <td className="py-2 px-2 text-right tabular-nums font-black text-fg">{r.buy14 > 0 ? q(r, r.buy14) : '-'}</td>
-                    <td className="py-2 px-2 text-right tabular-nums font-black text-fg">{r.buy30 > 0 ? q(r, r.buy30) : '-'}</td>
+                    <td className="py-2 px-2 text-right tabular-nums font-black text-fg">{buy(r, r.buy14)}</td>
+                    <td className="py-2 px-2 text-right tabular-nums font-black text-fg">{buy(r, r.buy30)}</td>
                     <td className="py-2 pl-2"><span className={`px-2 py-0.5 rounded text-[10px] font-black whitespace-nowrap ${STATUS[r.status]?.[1] || ''}`}>{STATUS[r.status]?.[0] || ''}</span></td>
                   </tr>
                 ))}

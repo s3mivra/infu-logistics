@@ -1867,13 +1867,42 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         pendingAudits.push(() => logAudit(req, { action: 'cancel', entity: 'Order', entityId: order._id, after: cancelAudit }));
       }
     }
+    // ── SPLIT PAYMENT ──────────────────────────────────────────────────────
+    // Paid in parts at the till - some cash, the rest by transfer, check or on
+    // account. Each part is debited to its own account when the sale posts
+    // (see the engine below); what was handed over in cash is recorded as
+    // already paid, so only the rest stays on the client's receivable.
+    let splitParts = null, splitReceivable = null;
+    if (paymentMethod === 'Split' && !order.isComplimentary && status !== 'Cancelled') {
+      const refuse = async (msg) => { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: msg }); };
+      const centavo = (n) => Math.round((Number(n) || 0) * 100) / 100;
+      splitParts = (Array.isArray(req.body.payments) ? req.body.payments : []).map(p => {
+        const part = { method: String(p?.method || '').trim().slice(0, 60), amount: centavo(p?.amount) };
+        if (part.method.toUpperCase() === 'CHECK') {
+          part.reference = String(p?.reference || '').trim().slice(0, 60);
+          const d = p?.checkDate ? new Date(p.checkDate) : null;
+          part.checkDate = d && !Number.isNaN(d.getTime()) ? d : null;
+        }
+        return part;
+      }).filter(p => p.method && p.method !== 'Split' && p.amount > 0);
+      if (splitParts.length < 2) return refuse('A split payment needs at least two parts.');
+      const paid = centavo(splitParts.reduce((sum, p) => sum + p.amount, 0));
+      if (Math.abs(paid - centavo(order.total)) > 0.01) return refuse(`The split payments add up to ${paid.toFixed(2)}, but the order is ${centavo(order.total).toFixed(2)}.`);
+      if (splitParts.some(p => p.method.toUpperCase() === 'CHECK' && !p.reference)) return refuse('A check number is required for the part paid by check.');
+      if (splitParts.some(p => p.method.toUpperCase() === 'QR') && !putPaymentReference && !order.paymentReference) return refuse('A payment reference number is required for the part paid by QR.');
+      if ((order.arPayments || []).length) return refuse('A collection was already recorded on this order - its payment can no longer be changed.');
+      const inHand = centavo(splitParts.filter(p => debitAccountFor(p.method).code === '111000').reduce((sum, p) => sum + p.amount, 0));
+      splitReceivable = centavo(paid - inHand);
+    }
+
     // Moving an order off cash at payment time - "not paid yet", or any tender
     // that is collected later - is where it starts to count against the
     // client's credit. Created as cash, it was never checked, so check now.
+    // A split payment only counts for the part not handed over in cash.
     const buyerClientId = String(order.clientId || order.clientAccountId || '');
     if (paymentMethod && paymentMethod !== 'Cash' && (order.paymentMethod || 'Cash') === 'Cash'
-        && buyerClientId && !order.isComplimentary && status !== 'Cancelled') {
-      const refusal = await creditRefusal({ buyerClientId, excludeId: order._id, orderTotal: Number(order.total) || 0 });
+        && buyerClientId && !order.isComplimentary && status !== 'Cancelled' && (splitReceivable === null || splitReceivable > 0)) {
+      const refusal = await creditRefusal({ buyerClientId, excludeId: order._id, orderTotal: splitReceivable ?? (Number(order.total) || 0) });
       const override = refusal ? creditOverrideFor(req, buyerClientId) : null;
       if (refusal && !override) {
         await session.abortTransaction();
@@ -1883,6 +1912,24 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       if (override) order.creditOverride = creditOverrideRecord(override, { orderTotal: Number(order.total) || 0 });
     }
     if (paymentMethod && !order.isComplimentary) order.paymentMethod = paymentMethod;
+    if (splitParts) {
+      if (splitReceivable <= 0) {
+        // Every part was cash in hand: that is simply a cash sale.
+        order.paymentMethod = 'Cash'; order.payments = []; order.arPaidAmount = 0;
+      } else {
+        order.payments = splitParts;
+        order.arPaidAmount = Math.round((Number(order.total) - splitReceivable) * 100) / 100;
+        const checks = splitParts.filter(p => p.reference);
+        if (checks.length && !putPaymentReference) {
+          order.paymentReference = checks.map(p => p.reference).join(', ').slice(0, 60);
+          const dated = checks.find(p => p.checkDate);
+          if (dated) order.paymentCheckDate = dated.checkDate;
+        }
+      }
+    } else if (paymentMethod && paymentMethod !== 'Split' && !order.isComplimentary && (order.payments || []).length && !(order.arPayments || []).length && previousStatus !== 'Completed') {
+      // Paid again as a single tender: the earlier split no longer applies.
+      order.payments = []; order.arPaidAmount = 0;
+    }
 
     // Same rule as order creation: a check or a QR payment is unreconcilable
     // without its number, and the POS settles a tender through THIS route
@@ -2700,7 +2747,21 @@ const voidOrderOnce = async (req, res, mayRetry) => {
         if (feeVatOnSale > 0) lines.push({ accountCode: OUTPUT_VAT.code, accountName: OUTPUT_VAT.name, debit: feeVatOnSale, credit: 0 });
       }
       lines.push(...saleRevenueLines({ gross: saleGross, vatAmount: +((order.vatAmount || 0) - feeVatOnSale).toFixed(2), side: 'debit' }));
-      lines.push({ accountCode: cashAccount, accountName: cashAccountName, debit: 0, credit: order.total });
+      const voidParts = (order.payments || []).filter(p => Number(p.amount) > 0);
+      const partsTotal = Math.round(voidParts.reduce((sum, p) => sum + Number(p.amount), 0) * 100) / 100;
+      if (voidParts.length >= 2 && Math.abs(partsTotal - order.total) < 0.011) {
+        // A split sale debited one account per part; reverse it the same way.
+        const byAcct = new Map();
+        for (const p of voidParts) {
+          const a = debitAccountFor(p.method);
+          const row = byAcct.get(a.code) || { accountCode: a.code, accountName: a.name, debit: 0, credit: 0 };
+          row.credit = Math.round((row.credit + Number(p.amount)) * 100) / 100;
+          byAcct.set(a.code, row);
+        }
+        lines.push(...byAcct.values());
+      } else {
+        lines.push({ accountCode: cashAccount, accountName: cashAccountName, debit: 0, credit: order.total });
+      }
       if (order.discount > 0) lines.push({ accountCode: '430000', accountName: 'Sales Discounts', debit: 0, credit: order.discount });
     } else {
       // Reverse the complimentary revenue recognition: DR 4000 / CR 5300 at selling price

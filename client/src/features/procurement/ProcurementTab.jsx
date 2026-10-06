@@ -382,11 +382,11 @@ export default function ProcurementTab({ ctx }) {
   const buildSuggestedPo = async () => {
     setSuggesting(true); setError('');
     try {
-      const res = await apiFetch('/api/reports/purchase-order?days=7');
+      const res = await apiFetch('/api/reports/purchase-order?days=14');
       const d = await res.json();
       if (!d.success) { setError(d.error || 'Failed to build a suggested PO.'); return; }
       const suggested = d.lines || [];
-      if (suggested.length === 0) { setError('Nothing to reorder - all stock is at or above its threshold.'); return; }
+      if (suggested.length === 0) { setError('Nothing to reorder - nothing is below its low-stock level or selling out.'); return; }
 
       const groups = new Map();
       for (const l of suggested) {

@@ -681,12 +681,21 @@ async function createBackdatedSale(payload, actorName) {
     // A split tender - part cash, part on account, as the POS allows: each part
     // is its own debit, and only the parts that land in a receivable are owed.
     const splitParts = Array.isArray(paymentsIn)
-      ? paymentsIn.map(p => ({ method: String(p?.method || '').trim(), amount: roundMoney(Number(p?.amount) || 0) })).filter(p => p.method && p.amount > 0)
+      ? paymentsIn.map(p => {
+          const part = { method: String(p?.method || '').trim(), amount: roundMoney(Number(p?.amount) || 0) };
+          if (part.method.toUpperCase() === 'CHECK') {
+            part.reference = String(p?.reference || '').trim().slice(0, 60);
+            const d = p?.checkDate ? new Date(p.checkDate) : null;
+            part.checkDate = d && !Number.isNaN(d.getTime()) ? d : null;
+          }
+          return part;
+        }).filter(p => p.method && p.amount > 0)
       : [];
     const isSplit = !comp && splitParts.length >= 2;
     if (isSplit) {
       const paid = roundMoney(splitParts.reduce((s, p) => s + p.amount, 0));
       if (Math.abs(paid - total) > 0.01) throw fail(400, `The split payments add up to ${paid.toFixed(2)}, but the sale is ${total.toFixed(2)}.`);
+      if (splitParts.some(p => p.method.toUpperCase() === 'CHECK' && !p.reference)) throw fail(400, 'A check number is required for the part paid by check.');
     }
     const method = isSplit ? 'Split' : (paymentMethod || 'Cash');
     // The SALE side of the map: On Account is owed by the customer (A/R), never A/P.
@@ -694,8 +703,9 @@ async function createBackdatedSale(payload, actorName) {
     const acct = saleAcct(isSplit ? splitParts[0].method : method);
     // A check is paid by its number (and dated), the same as a live check sale
     // - without it the deposit can never be matched or a bounce traced.
-    const payRef = String(paymentReference || '').trim().slice(0, 60);
-    let checkDate = null;
+    const splitChecks = isSplit ? splitParts.filter(p => p.method.toUpperCase() === 'CHECK') : [];
+    const payRef = (String(paymentReference || '').trim() || splitChecks.map(p => p.reference).join(', ')).slice(0, 60);
+    let checkDate = splitChecks.find(p => p.checkDate)?.checkDate || null;
     if (!comp && String(method).trim().toUpperCase() === 'CHECK') {
       if (!payRef) throw fail(400, 'A check number is required when the sale was paid by check.');
       if (paymentCheckDate) {
@@ -1116,10 +1126,11 @@ app.post('/api/admin/backdate-sale/queue/:id/save', verifyToken, requireSuperAdm
   try {
     const q = await BackdateQueueItem.findById(req.params.id);
     if (!q || q.status !== 'pending') return res.status(404).json({ success: false, error: 'Queue item not found or already resolved.' });
-    const { paymentMethod, affectInventory = false, discountPercent = 0, isComplimentary = false, notes } = req.body;
+    const { paymentMethod, affectInventory = false, discountPercent = 0, isComplimentary = false, notes, paymentReference = '', paymentCheckDate = null } = req.body;
     if (!paymentMethod) return res.status(400).json({ success: false, error: 'A payment method is required to resolve this queue item.' });
     const result = await createBackdatedSale({
       date: q.date, customerName: q.client, paymentMethod, affectInventory, discountPercent, isComplimentary,
+      paymentReference, paymentCheckDate,
       notes: notes || (q.transNo ? `Imported (queued) - ${q.transNo}` : 'Imported from Excel (queued)'),
       items: q.items,
       deliveryFee: q.deliveryFee || 0, discountAmount: q.discountAmount || 0,

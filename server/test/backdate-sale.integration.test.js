@@ -242,6 +242,22 @@ describe('an imported billing statement lands on its own grand total', () => {
   });
 });
 
+describe('a split payment with a part paid by check', () => {
+  const post = (body) => auth('post', '/api/admin/backdate-sale', superTok).send(body);
+  it('needs the check number, and keeps it on that part and on the sale', async () => {
+    const base = { date: LAST_MONTH, amount: 1000, customerName: 'Split Check Buyer' };
+    const none = await post({ ...base, payments: [{ method: 'Cash', amount: 400 }, { method: 'Check', amount: 600 }] });
+    expect(none.status).toBe(400);
+    expect(none.body.error).toMatch(/check number/i);
+    const ok = await post({ ...base, payments: [{ method: 'Cash', amount: 400 }, { method: 'Check', amount: 600, reference: 'CHK-7781', checkDate: LAST_MONTH }] });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const o = await mongoose.model('Order').findById(ok.body.order._id).lean();
+    expect(o.paymentMethod).toBe('Split');
+    expect(o.paymentReference).toBe('CHK-7781');
+    expect(o.payments.map(p => [p.method, p.amount, p.reference || ''])).toEqual([['Cash', 400, ''], ['Check', 600, 'CHK-7781']]);
+  });
+});
+
 describe('importing an Orders export back', () => {
   const imp = (body) => auth('post', '/api/orders/import', superTok).send(body);
 
