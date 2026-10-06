@@ -273,6 +273,13 @@ describe('importing an Orders export back', () => {
     expect(o.deliveryFee).toBe(1951);
   });
 
+  it('a discount and a delivery fee together still land on the total', async () => {
+    const r = await imp({ rows: [{ 'Order No': 'ORD-2026-A9011', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 100, Discount: 10, Total: 95 }] });
+    expect(r.body.created, JSON.stringify(r.body)).toBe(1);
+    const o = await mongoose.model('Order').findOne({ orderNumber: 'ORD-2026-A9011' }).lean();
+    expect([o.subtotal, o.discount, o.deliveryFee, o.total]).toEqual([100, 10, 5, 95]);
+  });
+
   it('one that came in at the wrong total is replaced on the next import, keeping its number', async () => {
     const Order = mongoose.model('Order');
     // As the earlier import left it: at the subtotal.

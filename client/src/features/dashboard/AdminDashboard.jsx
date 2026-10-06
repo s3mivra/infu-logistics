@@ -7184,7 +7184,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     ];
     const cv = (r, ms) => ms.reduce((s, m) => s + (r?.methods?.[m] || 0), 0);
     // Item-level detail lives in the separate Sales Line Items report.
-    const head = ['Date', 'Customer ID', 'Customer Name', sssGroup === 'day' ? 'Orders' : 'Order ID', ...COLS.map(c => c[0]), 'Subtotal', 'Total'];
+    const head = ['Date', 'Customer ID', 'Customer Name', sssGroup === 'day' ? 'Orders' : 'Order ID', ...COLS.map(c => c[0]), 'Gross Sales', 'Sales After Discount'];
     const body = sssRows.map(r => [
       new Date(r.date).toLocaleDateString(),
       sssGroup === 'day' ? '' : (r.customerId || ''),
@@ -7215,7 +7215,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     doc.setFontSize(9); doc.text(`${sliRange.start} to ${sliRange.end}`, 14, 20);
     // Net of discount, like the screen and the Excel - the gross alone read as
     // more than was actually sold.
-    const head = ['Date', 'Customer ID', 'Customer Name', 'Order ID', 'Item Code', 'Item', 'Qty', 'Payment', 'Gross', 'Discount', 'Total'];
+    const head = ['Date', 'Customer ID', 'Customer Name', 'Order ID', 'Item Code', 'Item', 'Qty', 'Payment', 'Gross Sales', 'Discount', 'Sales After Discount'];
     const body = salesLineItems.rows.map(r => r.isComponent
       // Promo/combo component: indented, no price (it's included in the combo row).
       ? ['', '', '', '', r.itemCode || '', `   ↳ ${r.itemName || ''}`, String(r.quantity), '', '', '', 'included']

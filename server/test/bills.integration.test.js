@@ -176,3 +176,81 @@ describe('PO receipt auto-creates a Bill', () => {
     expect(afterApprove).toBe(beforeJe + 1);
   });
 });
+
+describe('a PO number on a payable that did not come from a PO here', () => {
+  it('arrives with the workbook row, can be written on afterwards, and shows on the matching PO', async () => {
+    const Bill = mongoose.model('Bill');
+    const imp = await auth('post', '/api/setup/open-payables/import', tok).send({ rows: [
+      { supplier: 'Acme Supplies', invoiceNo: 'INV-PO-1', amountOwed: 900, poNumber: 'PO-OLD-77' },
+      { supplier: 'Acme Supplies', invoiceNo: 'INV-PO-2', amountOwed: 400 },
+    ] });
+    expect(imp.status, JSON.stringify(imp.body)).toBe(200);
+    expect(imp.body.created).toBe(2);
+    expect((await Bill.findOne({ supplierInvoiceNo: 'INV-PO-1' }).lean()).poNumber).toBe('PO-OLD-77');
+
+    const po = await mongoose.model('PurchaseOrder').create({ poNumber: 'PO-TEST-LINK', supplier: 'Acme Supplies', status: 'Ordered', lines: [] });
+    const second = await Bill.findOne({ supplierInvoiceNo: 'INV-PO-2' }).lean();
+    const set = await auth('patch', `/api/bills/${second._id}/po-number`, tok).send({ poNumber: 'PO-TEST-LINK' });
+    expect(set.status, JSON.stringify(set.body)).toBe(200);
+    expect(set.body.bill.poNumber).toBe('PO-TEST-LINK');
+    expect(set.body.linked).toBe(true);
+    expect(String(set.body.bill.purchaseOrderId)).toBe(String(po._id));
+    // Linked, the order closes on its own and cannot be received.
+    const PO = mongoose.model('PurchaseOrder');
+    let closed = await PO.findById(po._id).lean();
+    expect(closed.status).toBe('Complete');
+    expect(closed.closedByBill).toBe(second.billNumber);
+    const rcv = await auth('post', `/api/purchase-orders/${po._id}/receive`, tok).send({ received: [] });
+    expect(rcv.status).toBe(409);
+    // Saving the same number again is fine; taking it off reopens the order.
+    expect((await auth('patch', `/api/bills/${second._id}/po-number`, tok).send({ poNumber: 'po-test-link' })).status).toBe(200);
+    expect((await auth('patch', `/api/bills/${second._id}/po-number`, tok).send({ poNumber: '' })).status).toBe(200);
+    closed = await PO.findById(po._id).lean();
+    expect([closed.status, closed.closedByBill]).toEqual(['Ordered', '']);
+    await auth('patch', `/api/bills/${second._id}/po-number`, tok).send({ poNumber: 'PO-TEST-LINK' });
+    // A number that is no order here is kept as a reference.
+    const first = await Bill.findOne({ supplierInvoiceNo: 'INV-PO-1' }).lean();
+    const ref = await auth('patch', `/api/bills/${first._id}/po-number`, tok).send({ poNumber: 'PAPER-9' });
+    expect(ref.body.linked).toBe(false);
+    expect(ref.body.bill.purchaseOrderId).toBeNull();
+
+    const list = await auth('get', '/api/purchase-orders', tok);
+    const row = list.body.purchaseOrders.find(p => String(p._id) === String(po._id));
+    expect(row.payables.map(b => b.billNumber)).toEqual([second.billNumber]);
+  });
+
+  it('a workbook row naming an open order links to it and closes it', async () => {
+    const PO = mongoose.model('PurchaseOrder');
+    const Bill = mongoose.model('Bill');
+    const po = await PO.create({ poNumber: 'PO-TEST-WB', supplier: 'Acme Supplies', supplierId, status: 'Ordered', lines: [] });
+    const imp = await auth('post', '/api/setup/open-payables/import', tok).send({ rows: [
+      { supplier: 'Acme Supplies', invoiceNo: 'INV-PO-3', amountOwed: 250, poNumber: 'po-test-wb' },
+    ] });
+    expect(imp.body.created, JSON.stringify(imp.body)).toBe(1);
+    const bill = await Bill.findOne({ supplierInvoiceNo: 'INV-PO-3' }).lean();
+    expect(String(bill.purchaseOrderId)).toBe(String(po._id));
+    expect(bill.poNumber).toBe('PO-TEST-WB');
+    const closed = await PO.findById(po._id).lean();
+    expect([closed.status, closed.closedByBill]).toEqual(['Complete', bill.billNumber]);
+  });
+
+  it('rejecting the linked bill reopens the order', async () => {
+    const PO = mongoose.model('PurchaseOrder');
+    const po = await PO.create({ poNumber: 'PO-TEST-REJ', supplier: 'Acme Supplies', supplierId, status: 'Processing', lines: [] });
+    const made = await auth('post', '/api/bills', tok).send({ supplierId, description: 'Typed in', amount: 300, expenseAccountCode: '520000' });
+    const id = made.body.bill._id;
+    expect((await auth('patch', `/api/bills/${id}/po-number`, tok).send({ poNumber: 'PO-TEST-REJ' })).body.linked).toBe(true);
+    expect((await PO.findById(po._id).lean()).status).toBe('Complete');
+    expect((await auth('post', `/api/bills/${id}/reject`, tok).send({ reason: 'Entered by mistake' })).status).toBe(200);
+    const after = await PO.findById(po._id).lean();
+    expect([after.status, after.closedByBill]).toEqual(['Processing', '']);
+  });
+
+  it('a bill raised from one of our own POs keeps its number', async () => {
+    const Bill = mongoose.model('Bill');
+    const own = await Bill.findOne({ source: 'PO' }).lean();
+    if (!own) return;
+    const r = await auth('patch', `/api/bills/${own._id}/po-number`, tok).send({ poNumber: 'X' });
+    expect(r.status).toBe(409);
+  });
+});

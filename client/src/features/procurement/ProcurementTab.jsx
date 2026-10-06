@@ -1238,6 +1238,11 @@ export default function ProcurementTab({ ctx }) {
                   <p className="text-fg/70 text-xs font-bold mt-0.5 truncate">
                     {po.supplier || 'No supplier'} · {po.lines?.length || 0} item(s) · Expected {fmtDate(po.expectedDate)}
                   </p>
+                  {(po.payables || []).length > 0 && (
+                    <p className="text-fg/70 text-[11px] font-bold mt-0.5" title="This order's bill in Bills (AP)">
+                      Payable: {po.payables.map(b => `${b.billNumber} · ${b.status}`).join(', ')}
+                    </p>
+                  )}
                 </div>
                 <span className="text-fg/75 font-black text-sm whitespace-nowrap">{money(po.estTotal)}</span>
                 <ChevronRight size={16} className={`text-fg/65 transition ${receiveId === po._id ? 'rotate-90' : ''}`} />
@@ -1951,6 +1956,14 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
                       {po.supplier || 'No supplier'} · {po.lines?.length || 0} item(s)
                       {showReceived && po.receivedAt ? ` · Received ${fmtDate(po.receivedAt)}` : ` · Expected ${fmtDate(po.expectedDate)}`}
                     </p>
+                    {po.closedByBill && (
+                      <p className="text-fg/70 text-[11px] font-bold mt-0.5">Closed without a delivery - already in the books as {po.closedByBill}</p>
+                    )}
+                    {(po.payables || []).length > 0 && (
+                      <p className="text-fg/70 text-[11px] font-bold mt-0.5" title="This order's bill in Bills (AP)">
+                        Payable: {po.payables.map(b => `${b.billNumber} · ${b.status}`).join(', ')}
+                      </p>
+                    )}
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-fg/65 font-black text-sm">{money(showReceived && po.actualTotal ? po.actualTotal : po.estTotal)}</p>

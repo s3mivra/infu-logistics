@@ -6,6 +6,7 @@ import { roundMoney } from '../lib/money.js';
 import { buildCashFlow } from '../lib/cashFlow.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
+import { basePerPack } from '../lib/units.js';
 import { bucketFor, resolveClientKey, RECEIVABLE_STATUSES, isReceivableStatus } from '../lib/credit.js';
 import { captureError } from '../lib/errorLog.js';
 import { sectionAncestor } from '../lib/chartOfAccounts.js';
@@ -740,8 +741,12 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
       return usage;
     };
 
-    const daysElapsed30 = Math.max(1, Math.min(30, orders30d.length > 0 ? 30 : 1));
-    const daysElapsed7  = Math.max(1, Math.min(7,  orders7d.length  > 0 ? 7  : 1));
+    // Average over the days the business has actually been selling: a shop ten
+    // days old that sold 100 uses 10 a day, not 100 / 30.
+    const firstSale = await Order.findOne({ ...bizScope, status: 'Completed' }, { createdAt: 1 }).sort({ createdAt: 1 }).lean();
+    const historyDays = firstSale ? Math.max(1, Math.ceil((now.getTime() - new Date(firstSale.createdAt).getTime()) / 86400000)) : 1;
+    const daysElapsed30 = Math.max(1, Math.min(30, historyDays));
+    const daysElapsed7  = Math.max(1, Math.min(7, historyDays));
 
     const u7  = computeUsage(orders7d);
     const u30 = computeUsage(orders30d);
@@ -830,8 +835,56 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
       .sort((a, b) => b.tiedUpCapital - a.tiedUpCapital)
       .slice(0, 10);
 
+    // ── Reorder forecast: every stock item that sells, not a top five ──────────
+    // What is already on its way counts as covered: the outstanding quantity
+    // on open purchase orders, in the item's base unit.
+    const onOrderById = {};
+    try {
+      const openPos = await mongoose.model('PurchaseOrder').find(
+        { ...tenantScope(req), status: { $in: ['Ordered', 'Processing', 'Incomplete'] } }, { lines: 1 }).lean();
+      const invById = new Map(inventoryItems.map(i => [String(i._id), i]));
+      for (const po of openPos) for (const l of (po.lines || [])) {
+        const item = l.invId && invById.get(String(l.invId));
+        if (!item) continue;
+        const left = Math.max(0, (Number(l.orderedQty) || 0) - (Number(l.receivedQty) || 0));
+        const perPack = basePerPack({ unitMultiplier: item.unitMultiplier, packSize: Number(l.packSize) > 0 ? Number(l.packSize) : item.packSize });
+        onOrderById[String(item._id)] = (onOrderById[String(item._id)] || 0) + left * perPack;
+      }
+    } catch (err) { log.error({ err }, 'reorder forecast: open POs'); }
+    const STATUS_RANK = { out: 0, now: 1, soon: 2, ok: 3 };
+    const dayLabel = (n) => new Date(nowMs + n * 86400000).toLocaleDateString('en-CA', { timeZone: businessTimeZone() });
+    const reorderForecast = inventoryItems
+      .filter(item => !isRemovedProductStock(item))
+      .map(item => {
+        const u = uOf(item);
+        const use = u?.weightedAdu || 0;
+        if (!(use > 0)) return null;
+        const stock = Math.max(0, Number(item.stockQty) || 0);
+        const onOrder = onOrderById[String(item._id)] || 0;
+        const daysLeft = Math.floor(stock / use);
+        // Enough for the days asked for, plus the wait for delivery and the
+        // spare days - less what is on the shelf and what is already coming.
+        const buyFor = (days) => Math.max(0, Math.ceil(use * (days + LEAD_TIME_DAYS + SAFETY_DAYS) - stock - onOrder));
+        const covered = (stock + onOrder) / use;
+        const status = stock <= 0 ? 'out'
+          : covered <= LEAD_TIME_DAYS + SAFETY_DAYS ? 'now'
+          : covered <= LEAD_TIME_DAYS + SAFETY_DAYS + 7 ? 'soon' : 'ok';
+        return {
+          _id: item._id, itemName: item.itemName, itemCode: item.itemCode || '',
+          unit: item.unit, displayUnit: item.displayUnit, packSize: item.packSize, unitMultiplier: item.unitMultiplier,
+          stockQty: stock, dailyUse: use, daysLeft, runsOutOn: dayLabel(daysLeft), onOrder,
+          buy14: buyFor(14), buy30: buyFor(30), status,
+          trendPct: u.adu30 > 0 && ageDays(item) >= NEW_SKU_DAYS ? (u.adu7 / u.adu30 - 1) * 100 : null,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => (STATUS_RANK[a.status] - STATUS_RANK[b.status]) || (a.daysLeft - b.daysLeft))
+      .slice(0, 500);
+
     res.json({
       success: true,
+      reorderForecast,
+      forecastSettings: { leadTimeDays: LEAD_TIME_DAYS, safetyDays: SAFETY_DAYS, historyDays: daysElapsed30 },
       today: { gross: todayGross, revenue: todayRevenue, count: todayCount, avg: todayAvg, discounts: todayDiscounts, comp: todayComp },
       allTime: { revenue: totalAllTimeRevenue, comp: totalAllTimeComplimentary, orders: totalAllTimeOrders },
       dailyRevenue,

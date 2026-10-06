@@ -975,7 +975,9 @@ app.post('/api/orders/import', verifyToken, requireSuperAdmin, async (req, res) 
         } else {
           const gross = subtotal > 0 ? subtotal : total + discount;
           const rest = Math.round((gross - Math.min(discount, gross) - total) * 100) / 100;
-          payload = { items: [{ name: `Sales - ${no}`, price: gross, quantity: 1 }], discountAmount: Math.max(0, Math.round((gross - total) * 100) / 100), deliveryFee: Math.max(0, -rest) };
+          payload = { items: [{ name: `Sales - ${no}`, price: gross, quantity: 1 }], // With a fee on top, the sheet's own Discount stands and the fee is what
+            // is left over; without one, the discount is whatever reaches Total.
+            discountAmount: rest < 0 ? Math.min(discount, gross) : Math.max(0, Math.round((gross - total) * 100) / 100), deliveryFee: Math.max(0, -rest) };
         }
         const client = customer ? clientByName.get(customer.toUpperCase()) : null;
         const result = await createBackdatedSale({

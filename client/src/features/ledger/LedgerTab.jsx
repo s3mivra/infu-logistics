@@ -20,6 +20,7 @@ import Attachments from '../../shared/Attachments';
 import RangePresets from '../../shared/RangePresets';
 import RevolvingFundLiquidation from './RevolvingFundLiquidation';
 import FundSpendsToCheck from './FundSpendsToCheck';
+import ManualVoucherForm from './ManualVoucherForm';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 
 // ── LedgerTab - extracted from AdminDashboard.jsx ──
@@ -319,11 +320,55 @@ export default function LedgerTab({ ctx }) {
   // One Sales page, four ways to read it. The first two are the same report
   // (by payment channel) per order or per day; "Orders" is one row per order
   // with just its subtotal, discount and total; "Detailed" is one row per item.
-  const [salesView, setSalesView] = useState('order');
+  const [salesView, setSalesView] = useState(sssGroup === 'day' ? 'day' : 'order');
+  // Writing a PO number on a bill that did not come from one of our POs.
+  const [billPoEdit, setBillPoEdit] = useState(null);   // { id, value }
+  // Check vouchers: writing one by hand, and the list as Excel / PDF (what is
+  // on screen - the filters above it apply).
+  const [cvNewOpen, setCvNewOpen] = useState(false);
+  const cvExportRows = () => (checkVouchers || []).map(v => [
+    v.voucherNumber || '', v.date ? dateStr(v.date) : '', v.payeeName || '', v.payeeType || '', v.purpose || '',
+    v.sourceAccountName || v.sourceAccount || '', v.referenceNumber || '', v.notes || '', v.status || '',
+  ]);
+  const CV_HEAD = ['Voucher No.', 'Date', 'Payee', 'Payee type', 'Purpose', 'Paid from', 'Reference', 'Particulars', 'Status'];
+  const cvStamp = () => `${cvFilter.start || 'start'}_to_${cvFilter.end || todayStr()}`;
+  const exportCvExcel = async () => {
+    if (!(checkVouchers || []).length) return ui.alert('No vouchers to export.');
+    const XLSX = await import('xlsx');
+    const body = checkVouchers.map((v, i) => [...cvExportRows()[i], v.amount || 0]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[...CV_HEAD, 'Amount'], ...body, [], ['TOTAL ISSUED (voided excluded)', '', '', '', '', '', '', '', '', cvTotal || 0]]), 'Check Vouchers');
+    XLSX.writeFile(wb, `Check-Vouchers_${cvStamp()}.xlsx`);
+  };
+  const exportCvPDF = async () => {
+    if (!(checkVouchers || []).length) return ui.alert('No vouchers to export.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Check Vouchers`, 14, 14);
+    doc.setFontSize(9); doc.text(`${cvFilter.start || 'All dates'}${cvFilter.end ? ` to ${cvFilter.end}` : ''}${cvFilter.status ? `  ·  ${cvFilter.status}` : ''}${cvFilter.payeeType ? `  ·  ${cvFilter.payeeType}` : ''}`, 14, 20);
+    autoTable(doc, {
+      startY: 24, head: [[...CV_HEAD, 'Amount']],
+      body: checkVouchers.map((v, i) => [...cvExportRows()[i], pdfMoney(v.amount)]),
+      foot: [['TOTAL ISSUED (voided excluded)', '', '', '', '', '', '', '', '', pdfMoney(cvTotal || 0)]],
+      styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], textColor: 255 },
+    });
+    doc.save(`Check-Vouchers_${cvStamp()}.pdf`);
+  };
+  const saveBillPo = async () => {
+    if (!billPoEdit) return;
+    try {
+      const d = await (await apiFetch(`/api/bills/${billPoEdit.id}/po-number`, { method: 'PATCH', body: JSON.stringify({ poNumber: billPoEdit.value }) })).json();
+      if (!d.success) return ui.alert(d.error || 'Could not save the PO number.');
+      const typed = billPoEdit.value.trim();
+      setBillPoEdit(null);
+      fetchBills();
+      if (typed) ui.toast(d.linked ? `Linked to purchase order ${d.bill.poNumber}.` : `Saved as a reference - there is no purchase order ${typed} in the app.`);
+    } catch { ui.alert('Network error.'); }
+  };
   const SALES_VIEWS = [
     ['order', 'Summary', 'One row per order, by how it was paid'],
     ['day', 'Daily', 'One row per day, by how it was paid'],
-    ['docs', 'Orders', 'One row per order: subtotal, discount and total'],
+    ['docs', 'Orders', 'One row per order: gross sales, discount and sales after discount'],
     ['detail', 'Detailed', 'One row per item sold'],
   ];
   const pickSalesView = (k) => {
@@ -344,7 +389,7 @@ export default function LedgerTab({ ctx }) {
     if (!salesSummary) return ui.alert('Load the report first.');
     const XLSX = await import('xlsx');
     const day = sssGroup === 'day';
-    const head = ['Date', ...(day ? ['Orders'] : ['Customer ID', 'Customer Name', 'Order']), 'Cash', 'E-Wallet', 'Bank', 'Delivery', 'Subtotal', 'Total'];
+    const head = ['Date', ...(day ? ['Orders'] : ['Customer ID', 'Customer Name', 'Order']), 'Cash', 'E-Wallet', 'Bank', 'Delivery', 'Gross Sales', 'Sales After Discount'];
     const body = sssRows.map(r => [r.date ? dateStr(r.date) : '', ...(day ? [r.count] : [r.customerId || '', r.customerName || '', r.orderNumber]), r.cash || 0, r.ewallet || 0, r.bank || 0, r.delivery || 0, r.subtotal || 0, r.total || 0]);
     const t = salesSummary.totals || {};
     const wb = XLSX.utils.book_new();
@@ -361,7 +406,7 @@ export default function LedgerTab({ ctx }) {
     const d8 = (v) => (v ? dateStr(v) : '');
     autoTable(doc, {
       startY: 24,
-      head: [['Date', 'Cust. No.', 'Customer', 'Order', 'Billing Doc', 'DR No.', 'SI / OR No.', 'Payment', 'Subtotal', 'Discount', 'Total']],
+      head: [['Date', 'Cust. No.', 'Customer', 'Order', 'Billing Doc', 'DR No.', 'SI / OR No.', 'Payment', 'Gross Sales', 'Discount', 'Sales After Discount']],
       body: sliSummary.rows.map(r => [d8(r.postingDate), r.customerNumber || '', r.customerName || '', r.orderNumber || '', r.billingNumber || '', r.drNumbers || '', r.orNumber || '', r.paymentMethod || '', pdfMoney(r.gross), pdfMoney(r.discount), pdfMoney(r.amount)]),
       foot: [[`TOTAL (${sliSummary.count})`, '', '', '', '', '', '', '', pdfMoney(t.g), pdfMoney(t.d), pdfMoney(sliSummary.total)]],
       styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], textColor: 255 },
@@ -374,7 +419,7 @@ export default function LedgerTab({ ctx }) {
     const wb = XLSX.utils.book_new();
     if (sliView === 'summary') {
       if (!sliSummary) return ui.alert('Load the summary first.');
-      const head = ['Posting Date', 'Document Date', 'Customer Number', 'Customer Name', 'Order', 'Billing Document No.', 'Delivery Receipt No.', 'Sales Invoice / OR No.', 'Payment', 'Subtotal', 'Discount', 'Total'];
+      const head = ['Posting Date', 'Document Date', 'Customer Number', 'Customer Name', 'Order', 'Billing Document No.', 'Delivery Receipt No.', 'Sales Invoice / OR No.', 'Payment', 'Gross Sales', 'Discount', 'Sales After Discount'];
       const body = sliSummary.rows.map(r => [fmtD(r.postingDate), fmtD(r.documentDate), r.customerNumber, r.customerName, r.orderNumber, r.billingNumber, r.drNumbers, r.orNumber, r.paymentMethod, r.gross, r.discount, r.amount]);
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body, [], ['TOTAL', '', '', '', '', '', '', '', '', '', '', sliSummary.total]]), 'Daily Sales Summary');
     } else {
@@ -1650,7 +1695,7 @@ It posts only what is not already accrued for that month.`)) return;
                         <th className="py-2">Customer ID</th><th className="py-2">Customer Name</th>
                         <th className="py-2">{salesView === 'day' ? 'Orders' : 'Order'}</th>
                         <th className="py-2 text-right">Cash</th><th className="py-2 text-right">E-Wallet</th>
-                        <th className="py-2 text-right">Bank</th><th className="py-2 text-right">Delivery</th><th className="py-2 text-right" title="Before discount and delivery fee">Subtotal</th><th className="py-2 text-right" title="What was charged">Total</th>
+                        <th className="py-2 text-right">Bank</th><th className="py-2 text-right">Delivery</th><th className="py-2 text-right" title="Before discount and delivery fee">Gross Sales</th><th className="py-2 text-right" title="What was charged: after discount, with any delivery fee">Sales After Discount</th>
                       </tr>
                     </thead>
                     <tbody className="text-fg/75">
@@ -1697,7 +1742,7 @@ It posts only what is not already accrued for that month.`)) return;
               <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                 <div>
                   <h3 className="text-lg font-black text-fg">Sales</h3>
-                  <p className="text-fg/65 text-xs">{sliView === 'summary' ? 'One row per order - its subtotal, discount and total.' : 'One row per item sold - with its billing, delivery and invoice numbers.'}</p>
+                  <p className="text-fg/65 text-xs">{sliView === 'summary' ? 'One row per order - its gross sales, discount and sales after discount.' : 'One row per item sold - with its billing, delivery and invoice numbers.'}</p>
                   {salesViewTabs()}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
@@ -1724,7 +1769,7 @@ It posts only what is not already accrued for that month.`)) return;
                         <tr className="text-fg/80 text-[10px] font-black uppercase tracking-wider text-left border-b border-white/10">
                           <th className="py-2">Posting</th><th className="py-2">Document</th><th className="py-2">Cust. No.</th><th className="py-2">Customer</th>
                           <th className="py-2">Billing Doc</th><th className="py-2">DR No.</th><th className="py-2">SI / OR No.</th>
-                          <th className="py-2 text-right">Subtotal</th><th className="py-2 text-right">Discount</th><th className="py-2 text-right">Total</th>
+                          <th className="py-2 text-right">Gross Sales</th><th className="py-2 text-right">Discount</th><th className="py-2 text-right">Sales After Discount</th>
                         </tr>
                       </thead>
                       <tbody className="text-fg/75">
@@ -3509,7 +3554,7 @@ It posts only what is not already accrued for that month.`)) return;
                     The disbursement paper trail
                   </p>
                   <p className="text-[11px] text-fg/70 mt-1">
-                    Issued automatically on every bill payment, credit refund and cash advance - never by hand.
+                    Issued automatically on every bill payment, credit refund and cash advance. One can also be written by hand for a payment nothing else covers.
                   </p>
                 </div>
                 <div className="text-right shrink-0">
@@ -3554,7 +3599,20 @@ It posts only what is not already accrued for that month.`)) return;
                   className="bg-brand text-on-brand px-4 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[38px]">
                   Apply
                 </button>
+                <button onClick={exportCvPDF} className="flex items-center gap-1.5 bg-white/5 text-fg/80 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider transition min-h-[38px]"><Download size={12} /> PDF</button>
+                <button onClick={exportCvExcel} className="flex items-center gap-1.5 bg-white/5 text-fg/80 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider transition min-h-[38px]"><Download size={12} /> Excel</button>
+                {can('accounting.manage') && !cvNewOpen && (
+                  <button onClick={() => { setCvNewOpen(true); if (!(coaAccounts || []).length) fetchCoa?.(); }}
+                    className="ml-auto bg-brand text-on-brand px-4 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[38px]">
+                    + New voucher
+                  </button>
+                )}
               </div>
+              {cvNewOpen && (
+                <ManualVoucherForm apiFetch={apiFetch} cashAccounts={cashAndBankAccounts || []} accounts={coaAccounts || []}
+                  onCancel={() => setCvNewOpen(false)}
+                  onSaved={() => { setCvNewOpen(false); fetchCheckVouchers(); fetchERPData?.(); }} />
+              )}
 
               {!checkVouchers ? (
                 <div className="py-16 text-center text-fg/70 font-bold uppercase tracking-widest text-sm">Loading…</div>
@@ -4976,7 +5034,25 @@ It posts only what is not already accrued for that month.`)) return;
                             <td className="px-4 py-3 font-mono text-fg/70">{b.billNumber}</td>
                             <td className="px-4 py-3 font-bold text-fg">{b.supplierName || '-'}</td>
                             <td className="px-4 py-3"><span className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-fg/75 font-bold">{b.source}</span></td>
-                            <td className="px-4 py-3 text-fg/65 max-w-[200px] truncate" title={b.description || b.poNumber}>{b.description || b.poNumber || '-'}</td>
+                            <td className="px-4 py-3 text-fg/65 max-w-[220px]">
+                              <span className="block truncate" title={b.description || ''}>{b.description || '-'}</span>
+                              {billPoEdit?.id === b._id ? (
+                                <form className="flex gap-1 mt-1" onSubmit={e => { e.preventDefault(); saveBillPo(); }}>
+                                  <input autoFocus value={billPoEdit.value} onChange={e => setBillPoEdit({ id: b._id, value: e.target.value })}
+                                    placeholder="PO number" aria-label="PO number" maxLength={60}
+                                    className="w-28 bg-page-bg border border-white/20 rounded-lg px-2 py-1 text-fg text-[11px]" />
+                                  <button type="submit" className="px-2 rounded-lg bg-brand text-on-brand text-[11px] font-bold">Save</button>
+                                  <button type="button" onClick={() => setBillPoEdit(null)} className="px-2 rounded-lg bg-white/5 text-fg/80 text-[11px] font-bold">Cancel</button>
+                                </form>
+                              ) : (
+                                <span className="block text-[11px] mt-0.5">
+                                  {b.poNumber && <span className="font-mono text-fg/80" title={b.purchaseOrderId ? 'Linked to this purchase order in Procurement' : 'A reference only - no purchase order with this number in the app'}>PO: {b.poNumber}{b.purchaseOrderId ? ' (linked) ' : ' '}</span>}
+                                  {b.source !== 'PO' && can('accounting.manage') && (
+                                    <button onClick={() => setBillPoEdit({ id: b._id, value: b.poNumber || '' })} className="text-brand-text font-bold hover:underline">{b.poNumber ? 'Change' : '+ Add PO no.'}</button>
+                                  )}
+                                </span>
+                              )}
+                            </td>
                             <td className="px-4 py-3 text-right font-black tabular-nums font-mono text-fg">
                               {peso(b.amount)}
                               {b.status === 'Partially Paid' && <div className="text-[10px] font-normal text-warning mt-0.5">{peso(billOutstanding)} left</div>}

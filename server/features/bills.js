@@ -2,6 +2,7 @@
 // Models/helpers/middleware live in server.js and arrive via ctx.
 // See the BillSchema comment in server.js for the source:'PO' vs 'Manual'
 // distinction that drives when the A/P journal entry actually posts.
+import { findLinkablePo, closeLinkedPo, linkImportedBill, releaseLinkedPo } from '../lib/billPoLink.js';
 import { captureError } from '../lib/errorLog.js';
 import { INPUT_VAT } from '../lib/vatPosting.js';
 import { loadVatConfig } from '../lib/vatSettings.js';
@@ -173,7 +174,7 @@ export default function registerBills(ctx) {
       const suppliers = await Supplier.find(tenantScope(req), { name: 1 }).lean();
       const byName = new Map(suppliers.map(s => [String(s.name || '').toLowerCase().trim(), s]));
 
-      const created = [];
+      const created = [], poNotes = [];
       const skipped = [];
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i] || {};
@@ -208,14 +209,18 @@ export default function registerBills(ctx) {
           if (dueDate && Number.isNaN(dueDate.getTime())) throw new Error('Invalid due date.');
 
           const billNumber = await mkSeqRef('BILL');
-          await Bill.create({
+          const made = await Bill.create({
             businessType: BUSINESS_TYPE, ...tenantScope(req),
             billNumber, supplierId: supplier._id, supplierName: supplier.name,
             source: 'Manual', description: description.slice(0, 500), amount: amt,
             expenseAccountCode: accountCode, dueDate,
+            poNumber: String(r.poNumber ?? r['PO No'] ?? '').trim().slice(0, 60),
             ...(invoiceNo ? { supplierInvoiceNo: invoiceNo, supplierInvoiceKey: normalizeInvoiceNo(invoiceNo) } : {}),
             createdBy: req.user?.name || '',
           });
+          // A PO number that is an order here links for real, and closes it.
+          const poNote = await linkImportedBill(mongoose, made, tenantScope(req));
+          if (poNote) poNotes.push(poNote);
           created.push({ row: i + 1, billNumber, supplier: supplier.name, amount: amt });
         } catch (e) {
           skipped.push({ row: i + 1, error: e.message, data: r });
@@ -224,7 +229,7 @@ export default function registerBills(ctx) {
 
       await logAudit(req, { action: 'import', entity: 'Bill', entityId: 'bulk', after: { created: created.length, skipped: skipped.length } });
       res.json({
-        success: true, created: created.length, skipped, bills: created,
+        success: true, created: created.length, skipped, bills: created, problems: poNotes,
         totalAmount: Math.round(created.reduce((s, b) => s + b.amount, 0) * 100) / 100,
         // Said plainly, because "imported" reads as "done" otherwise.
         note: 'Imported as Pending. Nothing has posted to the ledger - approve each bill to book the payable.',
@@ -258,7 +263,7 @@ export default function registerBills(ctx) {
       const dupe = await duplicateInvoice(bill.supplierId, invoiceNo, bill._id);
       if (dupe) return res.status(409).json({ success: false, error: duplicateMessage(dupe, invoiceNo), duplicateOf: dupe.billNumber });
 
-      const po = bill.purchaseOrderId ? await PurchaseOrder.findById(bill.purchaseOrderId).lean() : null;
+      const po = bill.purchaseOrderId && bill.source === 'PO' ? await PurchaseOrder.findById(bill.purchaseOrderId).lean() : null;
       const result = threeWayMatch({ po, receivedValue: bill.amount, invoiceAmount, delivery: bill.deliveryLines });
       bill.supplierInvoiceNo = invoiceNo;
       bill.supplierInvoiceKey = normalizeInvoiceNo(invoiceNo);
@@ -380,6 +385,8 @@ export default function registerBills(ctx) {
       bill.rejectedAt = new Date();
       bill.rejectionReason = reason.trim().slice(0, 500);
       await bill.save();
+      // A rejected bill no longer holds its purchase order closed.
+      if (bill.purchaseOrderId && bill.source !== 'PO') await releaseLinkedPo(mongoose, bill.purchaseOrderId);
 
       await logAudit(req, { action: 'reject', entity: 'Bill', entityId: bill._id, after: { billNumber: bill.billNumber, reason: bill.rejectionReason } });
       res.json({ success: true, bill });
@@ -388,6 +395,38 @@ export default function registerBills(ctx) {
 
   // ── SCHEDULE PAYMENT ─────────────────────────────────────────────────────────
   // PATCH /api/bills/:id/schedule { scheduledPaymentDate }  (null clears it)
+  // The purchase order a bill was for, written on afterwards - for a payable
+  // carried in from the old books, or typed in by hand. When the number is a
+  // purchase order in this app the two are linked for real: the bill becomes
+  // that order's payable, and the order can no longer be received (which
+  // would raise a second payable and count the stock twice). A number that is
+  // not an order here is kept as a reference. Moves no money and no stock.
+  // A bill the app raised from one of its own POs keeps the number it has.
+  app.patch('/api/bills/:id/po-number', verifyToken, ...canPostAcct, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const bill = await Bill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+      if (!bill) return res.status(404).json({ success: false, error: 'Not found' });
+      if (bill.source === 'PO') return res.status(409).json({ success: false, error: `This bill came from ${bill.poNumber || 'a purchase order'} - its PO number cannot be changed.` });
+      const before = bill.poNumber || '';
+      const wanted = String(req.body?.poNumber ?? '').trim().slice(0, 60);
+      const { po, error, status } = await findLinkablePo(mongoose, { wanted, bill, scope: tenantScope(req) });
+      if (error) return res.status(status).json({ success: false, error });
+      const oldPoId = bill.purchaseOrderId ? String(bill.purchaseOrderId) : '';
+      bill.poNumber = po ? po.poNumber : wanted;
+      bill.purchaseOrderId = po ? po._id : null;
+      await bill.save();
+      // The order it is now linked to closes on its own: its goods and its debt
+      // are already in the books, so there is nothing left to receive.
+      await closeLinkedPo(mongoose, po, bill);
+      // The order it was linked to before reopens, unless another payable
+      // from the books still holds it closed.
+      if (oldPoId && oldPoId !== String(po?._id || '')) await releaseLinkedPo(mongoose, oldPoId);
+      await logAudit(req, { action: 'update', entity: 'Bill', entityId: bill._id, before: { poNumber: before }, after: { poNumber: bill.poNumber, linked: !!po } });
+      res.json({ success: true, bill, linked: !!po });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
   app.patch('/api/bills/:id/schedule', verifyToken, ...canPostAcct, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });

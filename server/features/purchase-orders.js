@@ -132,6 +132,21 @@ export default function registerPurchaseOrders(ctx) {
       if (req.query.status && PO_STATUSES.includes(req.query.status)) q.status = req.query.status;
       const limit = Math.min(500, Math.max(1, parseInt(req.query.limit) || 200));
       const pos = await PurchaseOrder.find(q).sort({ createdAt: -1 }).limit(limit).lean();
+      // The payable each order became (its bill in Bills / AP), so the order
+      // can point to it: which bill, and whether it is paid yet.
+      const bills = pos.length
+        ? await Bill.find({ $or: [{ purchaseOrderId: { $in: pos.map(p => p._id) } }, { purchaseOrderId: null, poNumber: { $in: pos.map(p => p.poNumber).filter(Boolean) } }] },
+            { purchaseOrderId: 1, poNumber: 1, billNumber: 1, status: 1, amount: 1 }).sort({ createdAt: 1 }).lean()
+        : [];
+      const idByNumber = new Map(pos.map(p => [p.poNumber, String(p._id)]));
+      const byPo = new Map();
+      for (const b of bills) {
+        const k = b.purchaseOrderId ? String(b.purchaseOrderId) : idByNumber.get(b.poNumber);
+        if (!k) continue;
+        if (!byPo.has(k)) byPo.set(k, []);
+        byPo.get(k).push({ billNumber: b.billNumber, status: b.status, amount: b.amount });
+      }
+      for (const p of pos) p.payables = byPo.get(String(p._id)) || [];
       res.json({ success: true, purchaseOrders: pos });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
@@ -573,6 +588,16 @@ export default function registerPurchaseOrders(ctx) {
       }
       if (po.status === 'Cancelled') {
         return res.status(409).json({ success: false, error: 'Cancelled POs cannot be received.' });
+      }
+      // A payable from the old books (or typed in by hand) has been linked to
+      // this order: the goods and the debt are already in the books. Receiving
+      // would add the stock and the payable a second time.
+      const carried = await Bill.findOne({
+        source: { $ne: 'PO' }, status: { $ne: 'Rejected' },
+        $or: [{ purchaseOrderId: po._id }, { purchaseOrderId: null, poNumber: po.poNumber }],
+      }, { billNumber: 1 }).lean();
+      if (carried) {
+        return res.status(409).json({ success: false, error: `${po.poNumber} is linked to payable ${carried.billNumber}, which is already in the books - receiving it would count the stock and the debt twice. If these goods really are arriving now, take the PO number off that bill first.` });
       }
 
       const received = Array.isArray(req.body?.received) ? req.body.received : [];

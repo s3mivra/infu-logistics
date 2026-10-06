@@ -255,3 +255,31 @@ describe('buying stock', () => {
     expect(await vouchers()).toHaveLength(0);
   });
 });
+
+describe('a voucher written by hand', () => {
+  const body = { payeeName: 'Juan Dela Cruz', amount: 1500, sourceAccount: '112000', chargeAccount: '760000', referenceNumber: 'CHK-0091', notes: 'Repair of delivery van' };
+
+  it('records the payment and documents it', async () => {
+    const before = await M('JournalEntry').countDocuments({});
+    const r = await auth('post', '/api/check-vouchers').send(body);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.voucher).toMatchObject({ payeeName: 'Juan Dela Cruz', amount: 1500, sourceAccount: '112000', referenceNumber: 'CHK-0091', status: 'Issued' });
+    const je = await M('JournalEntry').findOne({ reference: r.body.journalReference }).lean();
+    expect(je.lines.map(l => [l.accountCode, l.debit, l.credit])).toEqual([['760000', 1500, 0], ['112000', 0, 1500]]);
+    expect(await M('JournalEntry').countDocuments({})).toBe(before + 1);
+  });
+
+  it('for a payment already in the books, posts nothing', async () => {
+    const before = await M('JournalEntry').countDocuments({});
+    const r = await auth('post', '/api/check-vouchers').send({ ...body, chargeAccount: '', alreadyRecorded: true });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.journalReference).toBe('');
+    expect(await M('JournalEntry').countDocuments({})).toBe(before);
+  });
+
+  it('refuses one with nothing to charge it to, or charged to another cash account', async () => {
+    expect((await auth('post', '/api/check-vouchers').send({ ...body, chargeAccount: '' })).status).toBe(400);
+    expect((await auth('post', '/api/check-vouchers').send({ ...body, chargeAccount: '111000' })).status).toBe(400);
+    expect((await auth('post', '/api/check-vouchers').send({ ...body, sourceAccount: '760000' })).status).toBe(400);
+  });
+});

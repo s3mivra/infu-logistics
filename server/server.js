@@ -3289,6 +3289,11 @@ const PurchaseOrderSchema = new mongoose.Schema({
   // ordered. No payable, no bill. The receive step may still change it.
   payOnDelivery: { type: Boolean, default: false },
   payOnDeliveryAccount: { type: String, default: '' },
+  // Closed without a delivery, because a payable already in the books (carried
+  // in by the setup workbook, or typed in) was linked to it: the bill's number,
+  // and the status the order had, so taking the link off reopens it.
+  closedByBill: { type: String, default: '' },
+  statusBeforeLink: { type: String, default: '' },
   paidOnDelivery: { type: Number, default: 0 },   // running total paid at deliveries
   // The Advance this PO was paid through, so receiving can liquidate it.
   advanceId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Advance', default: null },

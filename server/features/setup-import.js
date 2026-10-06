@@ -22,6 +22,7 @@
 // the year's profit, and that shortfall is plugged back to Owner's Capital.
 // When the two statements agree, Owner's Capital nets to nothing - so what is
 // left there is the difference between them, and the response says how much.
+import { linkImportedBill } from '../lib/billPoLink.js';
 import { businessDateStr } from '../lib/businessTime.js';
 import { atomic } from '../lib/atomicRoute.js';
 import { captureError } from '../lib/errorLog.js';
@@ -503,7 +504,7 @@ export default function registerSetupImport(ctx) {
       const rows = rowsOf(req, res); if (!rows) return;
       const suppliers = await Supplier.find(tenantScope(req), { name: 1 }).lean();
       const byName = new Map(suppliers.map(s => [String(s.name || '').trim().toLowerCase(), s]));
-      const created = [], skipped = [];
+      const created = [], skipped = [], poNotes = [];
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i] || {};
         try {
@@ -521,16 +522,20 @@ export default function registerSetupImport(ctx) {
           if (dueDate === undefined) throw new Error(`"${r.dueDate}" is not a date.`);
           if (await Bill.exists({ supplierId: supplier._id, supplierInvoiceNo: invoiceNo })) throw new Error(`${supplier.name}'s ${invoiceNo} was already carried in.`);
           const billNumber = await mkSeqRef('BILL');
-          await Bill.create({
+          const made = await Bill.create({
             businessType: BUSINESS_TYPE, ...tenantScope(req),
             billNumber, supplierId: supplier._id, supplierName: supplier.name,
             source: 'Opening', supplierInvoiceNo: invoiceNo,
+            poNumber: text(r.poNumber ?? r['PO No'] ?? r.po).slice(0, 60),
             description: text(r.description) || `Unpaid at switch-over - invoice ${invoiceNo}`,
             amount, status: 'Approved', dueDate: dueDate || null,
             approvedBy: req.user?.name || '', approvedAt: new Date(),
             createdBy: req.user?.name || '',
             ...(billDate ? { createdAt: billDate } : {}),
           });
+          // A PO number that is an order here links for real, and closes it.
+          const poNote = await linkImportedBill(mongoose, made, tenantScope(req));
+          if (poNote) poNotes.push(poNote);
           created.push({ row: i + 1, billNumber, supplier: supplier.name, invoiceNo, amount });
         } catch (e) {
           skipped.push({ row: i + 1, error: e.message });
@@ -540,7 +545,7 @@ export default function registerSetupImport(ctx) {
       await logAudit(req, { action: 'import', entity: 'Bill', entityId: 'open-payables', after: { created: created.length, skipped: skipped.length, total } });
       emitToMgr('erpUpdated');
       res.json({
-        success: true, created: created.length, bills: created, skipped, total,
+        success: true, created: created.length, bills: created, skipped, total, problems: poNotes,
         note: `₱${total.toLocaleString('en-PH', { minimumFractionDigits: 2 })} owed to suppliers, Approved and ready to pay in Bills (AP). Nothing posted - the opening Accounts Payable already holds it.`,
       });
     } catch (err) { fail(req, res, err); }
