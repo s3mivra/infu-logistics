@@ -267,7 +267,7 @@ describe('A/R ageing report', () => {
     await setClientLimit(500);
     await owe(700, 10);
     const res = await request(app).get('/api/finance/ar-ageing').set(auth(superToken));
-    const row = res.body.clients.find(c => c.client === 'CREDIT CLIENT');
+    const row = res.body.clients.find(c => String(c.client).toUpperCase() === 'CREDIT CLIENT');
     expect(row.creditLimit).toBe(500);
     expect(row.total).toBe(700);
     expect(row.available).toBe(0);
@@ -280,7 +280,7 @@ describe('A/R ageing report', () => {
     await setClientLimit(1000);
     await placeOrder(600);                       // Pending - not yet a book receivable
     const res = await request(app).get('/api/finance/ar-ageing').set(auth(superToken));
-    const row = res.body.clients.find(c => c.client === 'CREDIT CLIENT');
+    const row = res.body.clients.find(c => String(c.client).toUpperCase() === 'CREDIT CLIENT');
     expect(row).toBeTruthy();
     expect(row.total).toBe(0);                   // nothing aged yet
     expect(row.exposure).toBe(600);              // but credit IS committed
