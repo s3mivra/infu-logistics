@@ -124,8 +124,7 @@ export default function ClientsTab() {
   const [inviteLink, setInviteLink] = useState('');
   const createInvite = async (e) => {
     e.preventDefault();
-    const name = inviteName.trim();
-    if (!name) return;
+    const name = inviteName.trim();   // may be blank: the client then types their own
     setInviting(true);
     try {
       const d = await (await apiFetch('/api/client-accounts/invite', {
@@ -436,15 +435,15 @@ export default function ClientsTab() {
       {showInvite && can('clients.invite') && (
         <form onSubmit={createInvite} className="bg-surface border border-white/10 rounded-2xl p-4 space-y-3">
           <p className="text-xs text-fg/70 font-bold">
-            Type the client's name only. They open the link (good for 7 days) and fill in their phone, email, username and password.
+            Type the client's name, or leave it blank and they will fill it in themselves. They open the link (good for 7 days) and enter their phone, email, username and password.
           </p>
           <div className="flex flex-wrap gap-2">
             <input value={inviteName} onChange={e => setInviteName(e.target.value)} autoFocus
-              placeholder="Client name" aria-label="Client name"
+              placeholder="Client name (optional)" aria-label="Client name (optional)"
               className="flex-1 min-w-[180px] bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm placeholder-fg/70 outline-none focus:border-brand/60" />
-            <button type="submit" disabled={inviting || !inviteName.trim()}
+            <button type="submit" disabled={inviting}
               className="bg-brand text-on-brand font-bold px-4 py-2.5 rounded-xl text-xs uppercase tracking-wider disabled:opacity-50">
-              {inviting ? 'Creating…' : 'Create & copy link'}
+              {inviting ? 'Creating…' : inviteName.trim() ? 'Create & copy link' : 'Create link with no name'}
             </button>
           </div>
           {inviteLink && (

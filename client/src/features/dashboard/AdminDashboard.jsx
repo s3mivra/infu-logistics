@@ -54,6 +54,7 @@ import { setUpdateGuard } from '../../shared/autoUpdate.js';
 // Tabs are lazy-loaded so only the active tab's code ships on first dashboard
 // paint; the rest load on demand when the operator opens them.
 const AnalyticsTab  = lazy(() => import('../analytics/AnalyticsTab'));
+const OwnerOverview = lazy(() => import('../owner/OwnerOverview'));
 const OrdersTab     = lazy(() => import('../orders/OrdersTab'));
 const HistoryTab    = lazy(() => import('../orders/HistoryTab'));
 const InventoryTab  = lazy(() => import('../inventory/InventoryTab'));
@@ -3764,6 +3765,16 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
     if (!rfDisbForm.description.trim()) return ui.alert('Description is required.');
     setRfDisbSubmitting(true);
     try {
+      if (!can('funds.spend')) {
+        const slip = await (await apiFetch('/api/requisition-slips', {
+          method: 'POST',
+          body: JSON.stringify({ type: 'petty-cash', fundId: rfActiveFund._id, amount: amt, description: rfDisbForm.description.trim(), categoryCode: rfDisbForm.categoryCode, payee: (rfDisbForm.payee || '').trim(), refNo: (rfDisbForm.refNo || '').trim() }),
+        })).json();
+        if (!slip.success) return ui.alert(slip.error || 'Failed to file the requisition slip.');
+        setRfDisbModal(false);
+        ui.alert(`Requisition Slip ${slip.slip.slipNumber} filed. The fund is not touched until it is approved.`);
+        return;
+      }
       const res = await apiFetch(`/api/revolving-funds/${rfActiveFund._id}/disburse`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -8075,7 +8086,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   // date: when the money actually moved. An advance is usually filed after
   // the fact, so stamping 'now' would put it in the wrong period and the
   // ledger would stop matching the bank.
-  const ADV_ISSUE_BLANK = { type: 'employee', clientId: '', payeeName: '', amount: '', purpose: '', sourceAccount: '111000', referenceNumber: '', date: '' };
+  const ADV_ISSUE_BLANK = { type: 'employee', clientId: '', payeeId: '', payeeName: '', amount: '', purpose: '', sourceAccount: '111000', referenceNumber: '', date: '' };
   const [advIssueModal, setAdvIssueModal] = useState(null); // null | {...ADV_ISSUE_BLANK}
   const submitIssueAdvance = async () => {
     const f = advIssueModal;
@@ -8084,7 +8095,15 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     if (!amt || amt <= 0) return ui.alert('Enter a valid amount.');
     setAdvBusy(true);
     try {
-      const res = await apiFetch('/api/advances', { method: 'POST', body: JSON.stringify({ ...f, amount: amt }) });
+      // A supplier typed exactly as one already on file IS that supplier: use
+      // their name as filed and tie the advance to them.
+      let payee = {};
+      if (f.type === 'supplier') {
+        const typed = f.payeeName.trim().toLowerCase();
+        const s = (suppliers || []).find(x => String(x._id) === String(f.payeeId)) || (suppliers || []).find(x => String(x.name || '').trim().toLowerCase() === typed);
+        payee = s ? { payeeId: String(s._id), payeeName: s.name } : { payeeId: '' };
+      }
+      const res = await apiFetch('/api/advances', { method: 'POST', body: JSON.stringify({ ...f, ...payee, amount: amt }) });
       const d = await res.json();
       if (!d.success) { ui.alert(d.error || 'Failed to issue advance.'); return; }
       setAdvIssueModal(null);
@@ -9492,6 +9511,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       )}
 
       {/* --- ANALYTICS DASHBOARD TAB --- */}
+      {activeTab === 'owner' && <Suspense fallback={<TabFallback />}><OwnerOverview apiFetch={apiFetch} can={can} go={setActiveTab} /></Suspense>}
       {activeTab === 'analytics' && <Suspense fallback={<TabFallback />}><AnalyticsTab ctx={ctx} /></Suspense>}
 
       {/* --- ACTIVE ORDERS TAB (Kitchen & Bar View) --- */}

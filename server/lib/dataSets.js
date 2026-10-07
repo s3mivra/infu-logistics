@@ -596,6 +596,25 @@ export const DATASETS = {
     },
   },
 
+  openPurchaseOrders: {
+    label: 'Purchase Orders', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/purchase-orders/import',
+      intro: 'Purchase orders you already have with suppliers - one row per item, rows with the same poNumber make one order. They arrive as open orders in Procurement; nothing posts and no stock moves. Give the same poNumber on an Open Payables or Bills row and the two are linked: an order whose payable is already in the books closes on its own, one still to be delivered stays open to receive.',
+      columns: [
+        { name: 'poNumber', required: true, note: 'Your own PO number. Repeat it on every row of the same order.', example: 'PO-2026-0412' },
+        { name: 'supplier', required: true, note: 'Must match a supplier - add them on the Suppliers sheet first.', example: 'Metro Packaging Corp' },
+        { name: 'orderDate', note: 'YYYY-MM-DD. When it was ordered.', example: '2026-08-01' },
+        { name: 'expectedDate', note: 'YYYY-MM-DD. When delivery is expected.', example: '2026-08-10' },
+        { name: 'itemCode', note: 'The stock item code, as on the Inventory sheet. Links the line to that item.', example: 'PKG-001' },
+        { name: 'itemName', required: true, note: 'What was ordered.', example: 'Cartons 12x12' },
+        { name: 'qty', required: true, note: 'How many were ordered.', example: '500' },
+        { name: 'unitCost', required: true, note: 'Price each, in pesos.', example: '250' },
+        { name: 'notes', note: 'Anything worth keeping with the order.', example: 'August delivery' },
+      ],
+    },
+  },
+
   openPayables: {
     label: 'Open Payables', templateOnly: true, importable: true, columns: [],
     importSpec: {

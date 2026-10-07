@@ -21,6 +21,8 @@ export const TEMPLATES = [
   { key: 'pnlHistory', sheet: 'P&L History', perm: books },
   { key: 'openingBalances', sheet: 'Opening Balances', perm: books },
   { key: 'openReceivables', sheet: 'Open Receivables', perm: books },
+  // Before the payables and bills, which can name one of these by PO number.
+  { key: 'openPurchaseOrders', sheet: 'Purchase Orders', perm: (can) => can('accounting.manage') && can('procurement.manage') },
   { key: 'openPayables', sheet: 'Open Payables', perm: books },
   // After Clients and Suppliers: a credit balance lives on one of them.
   { key: 'openDeposits', sheet: 'Open Deposits & Advances', perm: books },
@@ -43,6 +45,7 @@ export const endpointFor = (key) => ({
   pnlHistory: 'setup/pnl-history/import',
   openingBalances: 'setup/opening-balances/import',
   openReceivables: 'setup/open-receivables/import',
+  openPurchaseOrders: 'setup/purchase-orders/import',
   openPayables: 'setup/open-payables/import',
   openDeposits: 'setup/open-deposits/import',
   suppliers: 'suppliers/import',
@@ -228,6 +231,7 @@ export async function buildSetupWorkbook(XLSX, available, apiFetch, { businessTy
     [],
     ['Moving over from books you already keep? Fill Chart of Accounts (only if your books use their own codes), P&L History, Opening Balances, Open Receivables, Open Payables and Open Deposits & Advances.'],
     ['Opening Balances is your balance sheet on the switch-over day, and it is the only sheet that posts balances. Stock, fixed assets, the open invoices and bills, and the deposits and advances still unused are then registered without posting - they are the detail behind that balance sheet - and the result checks that each one adds up to it.'],
+    ['Orders already placed with suppliers go on Purchase Orders. Put the same poNumber on an Open Payables or Bills row (for the same total) and the two arrive linked - nothing to connect by hand afterwards.'],
     ['Or keep it in Google Sheets and link it: Settings → Setup workbook from Google Sheets.'],
     [],
     ['Sheet', 'What it adds', 'Done in this order because'],

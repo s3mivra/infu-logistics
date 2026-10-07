@@ -1,6 +1,7 @@
 ﻿// admin-tools routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { reopenOrdersClosedByPendingBills } from '../lib/billPoLink.js';
 import { roundMoney } from '../lib/money.js';
 import { saleDebitAccount } from '../lib/saleAccounts.js';
 import { captureError } from '../lib/errorLog.js';
@@ -1430,6 +1431,8 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
     // (sequence numbers - left as-is so new records don't reuse old
     // reference/order numbers).
 
+    // An order closed by a link to a bill that is now gone is open again.
+    try { await reopenOrdersClosedByPendingBills(mongoose); } catch (err) { log.error?.({ err }, 'purge: linked purchase orders not re-checked'); }
     await logAudit(req, { action: 'purge-data', entity: 'Tenant', entityId: BUSINESS_TYPE, after: { categories: [...selected], ...deleted } });
     emitToMgr('erpUpdated');
     if (selected.has('menu')) emitToAll('menuUpdated');

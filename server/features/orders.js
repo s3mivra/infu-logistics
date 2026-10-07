@@ -4167,9 +4167,10 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
       lines.push(...saleRevenueLines({ gross: newCharge, vatAmount: newVat }));
     }
     if (Math.abs(netDelta) > 0.005) {
-      lines.push(netDelta > 0
-        ? { accountCode: creditAcct.code, accountName: creditAcct.name, debit: netDelta, credit: 0 }
-        : { accountCode: creditAcct.code, accountName: creditAcct.name, debit: 0, credit: -netDelta });
+      // Money back on a split sale comes off what is still owed first, then
+      // out of cash - the same rule a refund follows (refundCreditLines).
+      if (netDelta > 0) lines.push({ accountCode: creditAcct.code, accountName: creditAcct.name, debit: netDelta, credit: 0 });
+      else lines.push(...refundCreditLines(order, +(-netDelta).toFixed(2)));
     }
 
     // --- Inventory / COGS - return side (reuses the exact restock mechanism partial-refund uses) ---

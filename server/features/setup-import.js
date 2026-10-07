@@ -499,6 +499,88 @@ export default function registerSetupImport(ctx) {
   // ── OPEN PAYABLES ──────────────────────────────────────────────────────────
   // Each unpaid supplier bill, Approved and ready to pay - with no posting,
   // since Accounts Payable on the opening balance sheet already holds it.
+  // ── PURCHASE ORDERS ALREADY PLACED ───────────────────────────────────────────
+  // One row per item; rows sharing a poNumber are one order. Registered as open
+  // orders - no entry, no stock - so the payables and bills that follow can
+  // name them, and the ones still to be delivered can be received as usual.
+  app.post('/api/setup/purchase-orders/import', verifyToken, ...canPost, requirePermission('procurement.manage'), async (req, res) => {
+    try {
+      const rows = rowsOf(req, res); if (!rows) return;
+      const PurchaseOrder = mongoose.model('PurchaseOrder');
+      const [suppliers, inventory] = await Promise.all([
+        Supplier.find(tenantScope(req), { name: 1 }).lean(),
+        mongoose.model('Inventory').find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }, { itemName: 1, itemCode: 1, unit: 1, displayUnit: 1, packSize: 1 }).lean(),
+      ]);
+      const supByName = new Map(suppliers.map(s => [String(s.name || '').trim().toLowerCase(), s]));
+      const invByCode = new Map(inventory.filter(i => i.itemCode).map(i => [String(i.itemCode).trim().toLowerCase(), i]));
+      const invByName = new Map(inventory.map(i => [String(i.itemName || '').trim().toLowerCase(), i]));
+
+      const skipped = [], problems = [], groups = new Map();
+      rows.forEach((r, i) => {
+        const no = text(r.poNumber ?? r['PO No']);
+        if (!no && !text(r.itemName) && !text(r.supplier)) return;          // an empty row
+        if (!no) { skipped.push({ row: i + 1, error: 'A PO number is required.' }); return; }
+        const key = no.toLowerCase();
+        if (!groups.has(key)) groups.set(key, { no, rows: [] });
+        groups.get(key).rows.push({ r: r || {}, row: i + 1 });
+      });
+
+      const created = [];
+      for (const g of groups.values()) {
+        const first = g.rows[0];
+        try {
+          const supplierName = text(g.rows.map(x => x.r.supplier).find(v => text(v)));
+          if (!supplierName) throw new Error('Supplier is required.');
+          const supplier = supByName.get(supplierName.toLowerCase());
+          if (!supplier) throw new Error(`No supplier named "${supplierName}" - add them on the Suppliers sheet.`);
+          const esc = g.no.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          if (await PurchaseOrder.exists({ poNumber: { $regex: `^${esc}$`, $options: 'i' }, ...tenantScope(req) })) throw new Error(`${g.no} is already in the app.`);
+          const orderDate = dateOf(g.rows.map(x => x.r.orderDate).find(v => text(v)));
+          if (orderDate === undefined) throw new Error('The order date is not a date.');
+          const expectedDate = dateOf(g.rows.map(x => x.r.expectedDate).find(v => text(v)));
+          if (expectedDate === undefined) throw new Error('The expected date is not a date.');
+
+          const lines = [];
+          for (const { r, row } of g.rows) {
+            const itemName = text(r.itemName);
+            const qty = parseAmount(r.qty), unitCost = parseAmount(r.unitCost);
+            if (!itemName) throw new Error(`Row ${row}: what was ordered (itemName) is required.`);
+            if (!(qty > 0)) throw new Error(`Row ${row}: the quantity must be more than zero.`);
+            if (Number.isNaN(unitCost) || unitCost < 0) throw new Error(`Row ${row}: "${r.unitCost}" is not a price.`);
+            const code = text(r.itemCode);
+            const item = (code && invByCode.get(code.toLowerCase())) || invByName.get(itemName.toLowerCase()) || null;
+            lines.push({
+              purchaseType: 'inventory', invId: item?._id || null,
+              itemName: item?.itemName || itemName, itemCode: item?.itemCode || code,
+              unit: item?.displayUnit || item?.unit || '', packSize: item?.packSize || null,
+              orderedQty: qty, unitCost: r2(unitCost),
+            });
+          }
+          const estTotal = r2(lines.reduce((sum, l) => sum + l.orderedQty * l.unitCost, 0));
+          const unlinked = lines.filter(l => !l.invId).length;
+          await PurchaseOrder.create({
+            ...tenantScope(req), poNumber: g.no, supplier: supplier.name, supplierId: supplier._id, status: 'Ordered',
+            expectedDate: expectedDate || undefined, lines, estTotal,
+            notes: text(g.rows.map(x => x.r.notes).find(v => text(v))).slice(0, 1000),
+            createdBy: req.user?.name || '',
+            ...(orderDate ? { createdAt: orderDate } : {}),
+          });
+          created.push({ row: first.row, poNumber: g.no, supplier: supplier.name, total: estTotal, lines: lines.length });
+          if (unlinked) problems.push(`${g.no}: ${unlinked} item(s) matched no stock item by code or name - receiving them will not add stock until the line is pointed at one. (Stock from this workbook lands after its preview; import the orders again afterwards if they are still to be received.)`);
+        } catch (e) {
+          skipped.push({ row: first.row, error: e.message });
+        }
+      }
+      const total = r2(created.reduce((sum, x) => sum + x.total, 0));
+      await logAudit(req, { action: 'import', entity: 'PurchaseOrder', entityId: 'setup-purchase-orders', after: { created: created.length, skipped: skipped.length, total } });
+      emitToMgr('erpUpdated');
+      res.json({
+        success: true, created: created.length, orders: created, skipped, problems, total,
+        note: `${created.length} purchase order(s), ₱${total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}, registered as open orders. Nothing posted and no stock moved.`,
+      });
+    } catch (err) { fail(req, res, err); }
+  });
+
   app.post('/api/setup/open-payables/import', verifyToken, ...canPost, async (req, res) => {
     try {
       const rows = rowsOf(req, res); if (!rows) return;
@@ -525,7 +607,7 @@ export default function registerSetupImport(ctx) {
           const made = await Bill.create({
             businessType: BUSINESS_TYPE, ...tenantScope(req),
             billNumber, supplierId: supplier._id, supplierName: supplier.name,
-            source: 'Opening', supplierInvoiceNo: invoiceNo,
+            source: 'Opening', supplierInvoiceNo: invoiceNo, imported: true,
             poNumber: text(r.poNumber ?? r['PO No'] ?? r.po).slice(0, 60),
             description: text(r.description) || `Unpaid at switch-over - invoice ${invoiceNo}`,
             amount, status: 'Approved', dueDate: dueDate || null,

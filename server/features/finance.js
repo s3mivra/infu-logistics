@@ -1249,7 +1249,9 @@ app.post('/api/bank-deposits', verifyToken, requireStaff, permitAny('pos.use', '
   }
 }));
 
-app.get('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
+// Deposits are recorded at the till and listed on Shifts & Cash - readable by
+// the people who use either, and by accounting; not by every signed-in staff.
+app.get('/api/bank-deposits', verifyToken, requireStaff, permitAny('pos.use', 'shifts.view', 'accounting.view'), async (req, res) => {
   try {
     // String() coercion: req.query.shiftId can arrive as a nested object
     // (e.g. ?shiftId[$exists]=true, parsed by express's extended query
@@ -1589,12 +1591,13 @@ app.post('/api/revolving-funds', verifyToken, requireSuperAdmin, atomic(mongoose
   }
 }));
 
-// POST disburse from a fund (any staff - they need to log what they spend).
-// Deliberately NOT approval-gated: an expense against a revolving fund is
+// POST disburse from a fund - for those given "Spend from a revolving fund".
+// Everyone else files a petty-cash requisition slip, which waits for approval.
+// Deliberately NOT approval-gated here: an expense against a revolving fund is
 // capped by its own currentBalance (can never overdraw it) and reflects
 // immediately - see 'fund-replenish' below for why money going the OTHER
 // way (topping the fund back up) is held for approval instead.
-app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, atomic(mongoose, async (req, res) => {
+app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, permit('funds.spend'), atomic(mongoose, async (req, res) => {
   try {
     const fund = await RevolvingFund.findById(req.params.id);
     if (!fund || !fund.isActive) return res.status(404).json({ success: false, error: 'Fund not found.' });

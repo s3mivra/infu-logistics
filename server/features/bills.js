@@ -213,7 +213,7 @@ export default function registerBills(ctx) {
             businessType: BUSINESS_TYPE, ...tenantScope(req),
             billNumber, supplierId: supplier._id, supplierName: supplier.name,
             source: 'Manual', description: description.slice(0, 500), amount: amt,
-            expenseAccountCode: accountCode, dueDate,
+            expenseAccountCode: accountCode, dueDate, imported: true,
             poNumber: String(r.poNumber ?? r['PO No'] ?? '').trim().slice(0, 60),
             ...(invoiceNo ? { supplierInvoiceNo: invoiceNo, supplierInvoiceKey: normalizeInvoiceNo(invoiceNo) } : {}),
             createdBy: req.user?.name || '',
@@ -418,6 +418,12 @@ export default function registerBills(ctx) {
       const bill = await Bill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
       if (!bill) return res.status(404).json({ success: false, error: 'Not found' });
       if (bill.source === 'PO') return res.status(409).json({ success: false, error: `This bill came from ${bill.poNumber || 'a purchase order'} - its PO number cannot be changed.` });
+      // Linking by hand is for payables carried in from before - through the
+      // setup workbook. A purchase made in the app gets its bill, already
+      // linked, by receiving the order.
+      if (!bill.imported && bill.source !== 'Opening') {
+        return res.status(409).json({ success: false, error: 'A PO number can be added by hand only to a payable carried in through the setup workbook. For a purchase made here, receive the purchase order - its bill is raised and linked for you.' });
+      }
       const before = bill.poNumber || '';
       const wanted = String(req.body?.poNumber ?? '').trim().slice(0, 60);
       const { po, error, status } = await findLinkablePo(mongoose, { wanted, bill, scope: tenantScope(req) });

@@ -46,6 +46,10 @@ export const PERMISSIONS = [
   { key: 'procurement.delete', group: 'Procurement', label: 'Delete POs & suppliers' },
   { key: 'accounting.view',    group: 'Accounting',  label: 'View accounting / ledger' },
   { key: 'accounting.manage',  group: 'Accounting',  label: 'Post journal entries / manage books' },
+  // Paying something straight out of a revolving fund. It was open to every
+  // signed-in staff member; now it is given by name. Anyone without it files a
+  // petty-cash requisition slip instead, which waits for approval.
+  { key: 'funds.spend',        group: 'Accounting',  label: 'Spend from a revolving fund (without it: file a slip for approval)' },
   // Split out from accounting.* on purpose: accounting.view unlocks the whole
   // Ledger tab (trial balance, journal, bills, ...), which is far more than
   // "can this person see the Approvals queue". Someone reviewing requisition
@@ -84,6 +88,9 @@ export const PERMISSIONS = [
   { key: 'shifts.view',        group: 'Reports',     label: 'View shift history & staff time-clock records' },
   { key: 'reports.view',       group: 'Reports',     label: 'View reports' },
   { key: 'analytics.view',     group: 'Reports',     label: 'View analytics dashboard' },
+  // The owner's one-page summary: sales, the month's profit, cash, what is
+  // owed either way, stock value, and what is waiting for a decision.
+  { key: 'owner.view',         group: 'Reports',     label: 'See the Owner Overview (sales, profit, cash, debts, stock at a glance)' },
   { key: 'audit.view',         group: 'Reports',     label: 'View audit report' },
   { key: 'scheduling.manage',  group: 'Admin',       label: 'Build & publish staff rosters' },
   { key: 'users.manage',       group: 'Admin',       label: 'Manage staff & permissions' },
@@ -172,17 +179,17 @@ export const ROLE_DEFAULT_PERMISSIONS = {
             'inventory.view', 'inventory.manage', 'inventory.delete', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage', 'procurement.delete',
-            'accounting.view', 'payroll.view', 'assets.view', 'bankrec.view',
+            'accounting.view', 'funds.spend', 'payroll.view', 'assets.view', 'bankrec.view',
             'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'],
   // Operations lead: full ops (incl. building rosters), no books/settings/staff.
   manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'clients.links', 'clients.invite', 'clients.create',
             'inventory.view', 'inventory.manage', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
-            'procurement.view', 'procurement.manage',
+            'procurement.view', 'procurement.manage', 'funds.spend',
             'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage'],
   // The books role: view + post accounting, plus read-only ops context.
   finance: ['orders.view', 'inventory.view', 'procurement.view', 'production.view',
-            'accounting.view', 'accounting.manage',
+            'accounting.view', 'accounting.manage', 'funds.spend',
             'payroll.view', 'payroll.manage', 'assets.view', 'assets.manage', 'bankrec.view', 'bankrec.manage', 'pricing.approve', 'credit.approve',
             'reports.view', 'analytics.view', 'audit.view'],
   cashier: ['pos.use', 'orders.view', 'orders.manage', 'orders.comp', 'inventory.view', 'inventory.waste', 'inventory.count', 'products.view', 'procurement.view'],
@@ -193,6 +200,17 @@ export const ROLE_DEFAULT_PERMISSIONS = {
 // (the routes only asked "is staff"). Applied once to every stored role and
 // per-person list by the startup migration, so nobody loses a floor action on
 // upgrade; after that an admin can take each one away.
+// The Owner role: sees everything a business owner needs and signs off what
+// waits for a decision, but does not key in day-to-day work. Seeded once as an
+// ordinary role, so the superadmin can adjust it like any other.
+export const OWNER_ROLE_NAME = 'Owner';
+export const OWNER_ROLE_PERMISSIONS = [
+  'owner.view', 'reports.view', 'analytics.view', 'audit.view', 'shifts.view',
+  'orders.view', 'inventory.view', 'products.view', 'procurement.view', 'production.view',
+  'accounting.view', 'payroll.view', 'assets.view', 'bankrec.view', 'requisitions.view',
+  'requisitions.approve', 'production.approve', 'pricing.approve', 'journal.approve', 'credit.approve',
+];
+
 export function withSplitScreens(list = []) {
   const set = new Set(list);
   if (set.has('accounting.view')) { set.add('payroll.view'); set.add('assets.view'); set.add('bankrec.view'); }

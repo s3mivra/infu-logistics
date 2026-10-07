@@ -375,7 +375,7 @@ app.get('/api/inventory/eod-history/:dateString/variance', verifyToken, requireS
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.get('/api/inventory/history/:id', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/inventory/history/:id', verifyToken, requireStaff, permit('inventory.view'), async (req, res) => {
   try {
     // Capped and lean: a busy item accumulates a row per sale, and hydrating
     // the whole lifetime of one ingredient to show a history panel is what
@@ -397,7 +397,7 @@ app.get('/api/inventory/history/:id', verifyToken, requireStaff, async (req, res
 // memory) the whole trading history of the business to print one day of it.
 // The range is now applied here, and the result is capped rather than
 // unbounded - a report is a window, not a dump.
-app.get('/api/inventory/history', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/inventory/history', verifyToken, requireStaff, permit('inventory.view'), async (req, res) => {
   try {
     const q = {};
     if (req.query.start || req.query.end) {
@@ -744,7 +744,7 @@ app.get('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => {
 });
 
 // Cross-location analytics: on-hand qty & value grouped by storage location.
-app.get('/api/stock-analytics/by-location', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/stock-analytics/by-location', verifyToken, requireStaff, permit('inventory.view'), async (req, res) => {
   try {
     const items = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) },
       { itemName: 1, stockQty: 1, unitCost: 1, stockLocation: 1, unit: 1, lowStockThreshold: 1 }).lean();

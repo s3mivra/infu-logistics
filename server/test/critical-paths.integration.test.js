@@ -193,7 +193,7 @@ describe('finance: every money endpoint posts a balanced double-entry', () => {
     const fundId = open.body.fund._id;
 
     // Disbursement is immediate - no approval, just capped by currentBalance.
-    const dis = await auth('post', `/api/revolving-funds/${fundId}/disburse`, tok.staff)
+    const dis = await auth('post', `/api/revolving-funds/${fundId}/disburse`, tok.manager)
       .send({ amount: 100, description: 'Snacks', categoryCode: '650000' });
     expect(dis.status).toBe(200);
     expect(dis.body.fund.currentBalance).toBeCloseTo(900, 2);

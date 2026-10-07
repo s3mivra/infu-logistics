@@ -1165,6 +1165,59 @@ const runStartupTasks = async () => {
       log.error({ err }, 'Split-screen permission migration failed');
     }
 
+    // Once: the Owner role, ready to give to an account. An ordinary role from
+    // here on - the superadmin can change what it holds, or delete it.
+    try {
+      const done = await Settings.findOne({ key: 'ownerRoleSeedV1' }).lean();
+      if (!done) {
+        const { OWNER_ROLE_NAME, OWNER_ROLE_PERMISSIONS } = await import('./lib/authz.js');
+        if (!(await Role.exists({ name: { $regex: `^${OWNER_ROLE_NAME}$`, $options: 'i' } }))) {
+          await Role.create({ name: OWNER_ROLE_NAME, permissions: OWNER_ROLE_PERMISSIONS });
+          log.info('✅ Owner role created');
+        }
+        await Settings.findOneAndUpdate({ key: 'ownerRoleSeedV1' }, { key: 'ownerRoleSeedV1', value: true }, { upsert: true });
+      }
+    } catch (err) {
+      log.error({ err }, 'Owner role seed failed');
+    }
+
+    // Once: spending from a revolving fund became a permission. Custom roles
+    // and per-person lists that already see the books keep it; everyone else
+    // files a slip from now on.
+    try {
+      const done = await Settings.findOne({ key: 'permsFundsSpendV1' }).lean();
+      if (!done) {
+        const add = (list) => [...new Set([...(list || []), 'funds.spend'])];
+        const ownerName = (await import('./lib/authz.js')).OWNER_ROLE_NAME.toLowerCase();
+        for (const r of await Role.find({ permissions: 'accounting.view' }).lean()) {
+          if (String(r.name).toLowerCase() === ownerName) continue;
+          await Role.updateOne({ _id: r._id }, { $set: { permissions: add(r.permissions) } });
+        }
+        for (const u of await User.find({ permissions: 'accounting.view' }, { permissions: 1 }).lean()) await User.updateOne({ _id: u._id }, { $set: { permissions: add(u.permissions) } });
+        await Settings.findOneAndUpdate({ key: 'permsFundsSpendV1' }, { key: 'permsFundsSpendV1', value: true }, { upsert: true });
+      }
+    } catch (err) {
+      log.error({ err }, 'Fund spend permission carry-over failed');
+    }
+
+    // Once: the Daily Sales Report page became two views of the Sales page.
+    // Anyone who could open the old page and not the Sales page keeps their
+    // access - they are given the Sales page in its place.
+    try {
+      const done = await Settings.findOne({ key: 'permsSalesPageMergeV1' }).lean();
+      if (!done) {
+        const OLD = 'screen.reports.salesline', NEW = 'screen.reports.salessummary';
+        const merged = (list) => [...new Set(list.map(k => (k === OLD ? NEW : k)))];
+        let changed = 0;
+        for (const r of await Role.find({ permissions: OLD }).lean()) { await Role.updateOne({ _id: r._id }, { $set: { permissions: merged(r.permissions || []) } }); changed++; }
+        for (const u of await User.find({ permissions: OLD }, { permissions: 1 }).lean()) { await User.updateOne({ _id: u._id }, { $set: { permissions: merged(u.permissions || []) } }); changed++; }
+        await Settings.findOneAndUpdate({ key: 'permsSalesPageMergeV1' }, { key: 'permsSalesPageMergeV1', value: true }, { upsert: true });
+        if (changed) log.info({ changed }, '✅ Daily Sales Report access carried over to the Sales page');
+      }
+    } catch (err) {
+      log.error({ err }, 'Sales page permission merge failed');
+    }
+
     // Once: products made for packed items sold a whole display unit per sale.
     try {
       const done = await Settings.findOne({ key: 'packRecipeFixV1' }).lean();
@@ -1175,6 +1228,20 @@ const runStartupTasks = async () => {
       }
     } catch (err) {
       log.error({ err }, 'Packed-item recipe repair failed');
+    }
+
+    // Once: every bill already here that did not come from a delivery counts
+    // as carried in (the app could not tell them apart before), so the ones
+    // imported so far keep their "+ Add PO no.".
+    try {
+      const done = await Settings.findOne({ key: 'billsImportedFlagV1' }).lean();
+      if (!done) {
+        const r = await Bill.updateMany({ source: { $ne: 'PO' }, imported: { $ne: true } }, { $set: { imported: true } });
+        await Settings.findOneAndUpdate({ key: 'billsImportedFlagV1' }, { key: 'billsImportedFlagV1', value: true }, { upsert: true });
+        if (r.modifiedCount) log.info({ bills: r.modifiedCount }, '✅ Existing bills marked as carried in');
+      }
+    } catch (err) {
+      log.error({ err }, 'Marking carried-in bills failed');
     }
 
     // Once: orders closed by a link to a bill that was still pending reopen -
@@ -2911,6 +2978,9 @@ const ClientAccountSchema = new mongoose.Schema({
   requiresQuote:            { type: Boolean, default: false },
   onboardingToken:          { type: String, default: null, index: true },
   onboardingTokenExpiresAt: { type: Date, default: null },
+  // A link made with no name: the account carries a placeholder until the
+  // client types their own name on the sign-up page.
+  namePending: { type: Boolean, default: false },
   // Running credit balance from overpaying an invoice - a LIABILITY (we owe
   // it back to them), separate from whatever they still owe us on open
   // orders. Grows when an A/R settlement exceeds the order's remaining
@@ -3358,6 +3428,9 @@ const BillSchema = new mongoose.Schema({
   source:            { type: String, enum: ['PO', 'Manual', 'Opening'], required: true },
   purchaseOrderId:   { type: mongoose.Schema.Types.ObjectId, ref: 'PurchaseOrder', default: null },
   poNumber:          { type: String, default: '' },
+  // Carried in through the setup workbook (Open Payables or Bills sheet), not
+  // typed in on screen. Only these can be given a PO number by hand.
+  imported:          { type: Boolean, default: false },
   description:       { type: String, default: '' },               // required context for Manual bills
   supplierInvoiceNo: { type: String, default: '' },               // the supplier's own number for it
   amount:            { type: Number, required: true },

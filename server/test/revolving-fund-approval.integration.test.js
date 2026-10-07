@@ -25,7 +25,7 @@ const auth = (t) => ({ Authorization: `Bearer ${t}` });
 beforeAll(async () => {
   ({ app, stop } = await bootApp({ businessType: 'log', jwtSecret: 'rf-approval-test-secret-0123456789' }));
   await makeUser({ name: 'RfBoss', role: 'superadmin', password: 'pw' });
-  await makeUser({ name: 'RfStaff', role: 'staff', password: 'pw', permissions: ['requisitions.view', 'requisitions.approve'] });
+  await makeUser({ name: 'RfStaff', role: 'staff', password: 'pw', permissions: ['requisitions.view', 'requisitions.approve', 'funds.spend'] });
   await mongoose.model('User').updateMany({}, { $set: { tenantId: null } });
   superToken = await loginStaff(app, 'RfBoss', 'pw');
   staffToken = await loginStaff(app, 'RfStaff', 'pw');
@@ -87,7 +87,7 @@ describe('revolving fund creation requires approval for non-superadmin', () => {
 });
 
 describe('revolving fund: disbursement is immediate, replenishment always needs approval', () => {
-  it('a plain staff member can disburse immediately - capped by the current balance, no approval', async () => {
+  it('a staff member given the permission can disburse immediately - capped by the current balance, no approval', async () => {
     const open = await request(app).post('/api/revolving-funds').set(auth(superToken))
       .send({ name: 'Ops Fund', initialAmount: 500, sourceAccount: '111000' });
     const fundId = open.body.fund._id;

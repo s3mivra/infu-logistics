@@ -767,21 +767,24 @@ app.get('/api/client-accounts/links', verifyToken, requireStaff, requirePermissi
 // else (credit line, terms, payment method) can be set here.
 app.post('/api/client-accounts/invite', verifyToken, requireStaff, requirePermission('clients.invite'), async (req, res) => {
   try {
-    const cleanName = partyName(req.body?.name ?? '');
-    if (!cleanName) return res.status(400).json({ success: false, error: 'Client name is required.' });
-    if (await ClientAccount.exists({ name: { $regex: `^${escapeRegex(cleanName)}$`, $options: 'i' } })) {
-      return res.status(409).json({ success: false, error: `"${cleanName}" already exists.` });
+    // The name is optional: left blank, the client types their own when they
+    // open the link, and until then the account shows under a placeholder.
+    const typedName = partyName(req.body?.name ?? '');
+    if (typedName && await ClientAccount.exists({ name: { $regex: `^${escapeRegex(typedName)}$`, $options: 'i' } })) {
+      return res.status(409).json({ success: false, error: `"${typedName}" already exists.` });
     }
     const clientCode = await generateNextSequence(ClientAccount, 'CUS-1000', 'clientCode');
+    const cleanName = typedName || `NEW CLIENT ${clientCode}`;
     const password = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
     const token = crypto.randomBytes(24).toString('hex');
     const client = await ClientAccount.create({
       clientCode, username: `_pending_${clientCode.toLowerCase()}`, password, name: cleanName,
+      namePending: !typedName,
       onboardingToken: token,
       onboardingTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
-    await logAudit(req, { action: 'onboard_link_created', entity: 'ClientAccount', entityId: client._id, after: { clientCode, name: cleanName } });
-    res.json({ success: true, client: { _id: client._id, clientCode, name: cleanName, onboardingPath: `/client-onboard/${token}` } });
+    await logAudit(req, { action: 'onboard_link_created', entity: 'ClientAccount', entityId: client._id, after: { clientCode, name: cleanName, namePending: !typedName } });
+    res.json({ success: true, client: { _id: client._id, clientCode, name: cleanName, namePending: !typedName, onboardingPath: `/client-onboard/${token}` } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -810,11 +813,12 @@ app.post('/api/client-accounts/:id/onboard-link', verifyToken, requireSuperAdmin
 // handed to the client directly), same trust model as a password-reset link.
 app.get('/api/client-onboard/:token', async (req, res) => {
   try {
-    const client = await ClientAccount.findOne({ onboardingToken: req.params.token }, { name: 1, clientCode: 1, phone: 1, email: 1, onboardingTokenExpiresAt: 1 });
+    const client = await ClientAccount.findOne({ onboardingToken: req.params.token }, { name: 1, namePending: 1, clientCode: 1, phone: 1, email: 1, onboardingTokenExpiresAt: 1 });
     if (!client || !client.onboardingTokenExpiresAt || client.onboardingTokenExpiresAt < new Date()) {
       return res.status(404).json({ success: false, error: 'This link is invalid or has expired. Ask the shop to send you a new one.' });
     }
-    res.json({ success: true, client: { name: client.name, clientCode: client.clientCode, phone: client.phone, email: client.email } });
+    // A placeholder name is not shown: the client is asked for their own.
+    res.json({ success: true, client: { name: client.namePending ? '' : client.name, nameRequired: !!client.namePending, clientCode: client.clientCode, phone: client.phone, email: client.email } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -835,7 +839,16 @@ app.post('/api/client-onboard/:token', async (req, res) => {
     const emailVal = cleanEmail(email);
     if (emailVal === null) return res.status(400).json({ success: false, error: 'Email is not a valid address.' });
 
-    if (name && partyName(name)) client.name = partyName(name);
+    const newName = partyName(name ?? '');
+    if (client.namePending && !newName) return res.status(400).json({ success: false, error: 'Please enter your name or business name.' });
+    if (newName && newName !== client.name) {
+      // The name is how the shop finds this account - two accounts under one
+      // name could not be told apart on an invoice or a statement.
+      const taken = await ClientAccount.exists({ _id: { $ne: client._id }, name: { $regex: `^${escapeRegex(newName)}$`, $options: 'i' } });
+      if (taken) return res.status(409).json({ success: false, error: 'An account with that name already exists. Add something to tell yours apart (a branch or location), or ask the shop.' });
+      client.name = newName;
+    }
+    if (newName) client.namePending = false;
     if (phone !== undefined) client.phone = cleanPhone(phone);
     client.email = emailVal;
     client.username = cleanUsername;

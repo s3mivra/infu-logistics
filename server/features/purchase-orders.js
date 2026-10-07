@@ -601,6 +601,18 @@ export default function registerPurchaseOrders(ctx) {
       }
       const pendingLinked = carriedBills[0] || null;
 
+      // A stock line with no item behind it (an order carried in before its
+      // stock was) is pointed at the item of the same code or name now, so the
+      // delivery lands on the shelf instead of being silently skipped.
+      for (const line of po.lines) {
+        if (line.invId || (line.purchaseType && line.purchaseType !== 'inventory')) continue;
+        const code = String(line.itemCode || '').trim(), name = String(line.itemName || '').trim();
+        const rx = (v) => ({ $regex: `^${v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' });
+        const item = (code && await Inventory.findOne({ ...tenantScope(req), itemCode: rx(code) }, { _id: 1 }).lean())
+          || (name && await Inventory.findOne({ ...tenantScope(req), itemName: rx(name) }, { _id: 1 }).lean());
+        if (item) line.invId = item._id;
+      }
+
       const received = Array.isArray(req.body?.received) ? req.body.received : [];
       // Map incoming actuals onto lines - accept a line _id or a positional index.
       // Each entry is what arrived in THIS delivery (a delta), not a replacement total.

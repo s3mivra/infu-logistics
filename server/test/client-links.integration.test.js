@@ -88,8 +88,11 @@ describe('new client link from a name', () => {
     expect(await M('ClientAccount').countDocuments({ name: /kasa lokal/i })).toBe(1);
   });
 
-  it('needs a name', async () => {
-    expect((await as(tok.inviter, 'post', '/api/client-accounts/invite').send({ name: '  ' })).status).toBe(400);
+  it('a blank name makes a link the client names themselves', async () => {
+    const r = await as(tok.inviter, 'post', '/api/client-accounts/invite').send({ name: '  ' });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.client.namePending).toBe(true);
+    expect(r.body.client.name).toMatch(/^NEW CLIENT CUS-/);
   });
 
   it('copying links alone is not enough to create one', async () => {
@@ -209,5 +212,27 @@ describe('client list at the till', () => {
     await makeUser({ name: 'clNobody', role: 'staff', permissions: ['inventory.view'] });
     const t = await loginStaff(app, 'clNobody');
     expect((await as(t, 'get', '/api/client-accounts')).status).toBe(403);
+  });
+});
+
+describe('a link with no name on it', () => {
+  it('lets the client supply their own name when they sign up', async () => {
+    const made = await request(app).post('/api/client-accounts/invite').set('Authorization', `Bearer ${tok.inviter}`).send({});
+    expect(made.status, JSON.stringify(made.body)).toBe(200);
+    expect(made.body.client.namePending).toBe(true);
+    const path = made.body.client.onboardingPath.replace('/client-onboard/', '/api/client-onboard/');
+
+    const seen = await request(app).get(path);
+    expect(seen.body.client).toMatchObject({ name: '', nameRequired: true });
+
+    const blank = await request(app).post(path).send({ username: 'nonameuser', password: 'secret12' });
+    expect(blank.status).toBe(400);
+    expect(blank.body.error).toMatch(/name/i);
+
+    const done = await request(app).post(path).send({ name: 'Fresh Bakes Cafe', username: 'nonameuser', password: 'secret12' });
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    expect(done.body.client.name).toBe('FRESH BAKES CAFE');
+    const saved = await mongoose.model('ClientAccount').findOne({ username: 'nonameuser' }).lean();
+    expect([saved.name, saved.namePending]).toEqual(['FRESH BAKES CAFE', false]);
   });
 });

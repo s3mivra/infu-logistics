@@ -25,7 +25,7 @@ beforeAll(async () => {
   app = ctx.app;
   await makeUser({ name: 'rfOwner', role: 'superadmin' });
   // The custodian spends; the accountant validates; neither is the other.
-  await makeUser({ name: 'rfCustodian', role: 'staff', permissions: ['accounting.view', 'accounting.manage'] });
+  await makeUser({ name: 'rfCustodian', role: 'staff', permissions: ['accounting.view', 'accounting.manage', 'funds.spend'] });
   await makeUser({ name: 'rfAccountant', role: 'staff', permissions: ['accounting.view', 'accounting.manage'] });
   tok.owner = await loginStaff(app, 'rfOwner');
   tok.custodian = await loginStaff(app, 'rfCustodian');

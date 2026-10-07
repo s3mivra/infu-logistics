@@ -3919,7 +3919,7 @@ It posts only what is not already accrued for that month.`)) return;
                     <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Type</label>
                     <div className="grid grid-cols-3 gap-2 mb-4">
                       {[['employee', 'Employee'], ['supplier', 'Supplier'], ['customer', 'Customer']].map(([v, label]) => (
-                        <button key={v} onClick={() => setAdvIssueModal(f => ({ ...f, type: v, ...(v !== 'customer' ? { clientId: '' } : {}) }))}
+                        <button key={v} onClick={() => { setAdvIssueModal(f => ({ ...f, type: v, payeeId: '', ...(v !== 'customer' ? { clientId: '' } : {}) })); if (v === 'supplier' && !(suppliers || []).length) fetchSuppliers?.(); }}
                           className={`px-2 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition ${
                             advIssueModal.type === v ? 'bg-brand text-on-brand' : 'bg-white/5 text-fg/75 hover:text-fg'}`}>
                           {label}
@@ -3946,9 +3946,36 @@ It posts only what is not already accrued for that month.`)) return;
                       {advIssueModal.type === 'customer' ? 'Customer' : advIssueModal.type === 'supplier' ? 'Supplier' : 'Employee'} name
                     </label>
                     <input type="text" value={advIssueModal.payeeName} autoFocus disabled={!!advIssueModal.clientId}
-                      onChange={e => setAdvIssueModal(f => ({ ...f, payeeName: e.target.value }))}
+                      onChange={e => setAdvIssueModal(f => ({ ...f, payeeName: e.target.value, payeeId: '' }))}
+                      onFocus={() => { if (advIssueModal.type === 'supplier' && !(suppliers || []).length) fetchSuppliers?.(); }}
                       placeholder="Who is this for?"
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
+                      className={`w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg outline-none focus:border-brand ${advIssueModal.type === 'supplier' ? 'mb-1' : 'mb-4'}`} />
+                    {/* A supplier already on file: offered as the name is typed, so
+                        the advance goes to that supplier rather than to a second,
+                        slightly different spelling of them. */}
+                    {advIssueModal.type === 'supplier' && (() => {
+                      const typed = advIssueModal.payeeName.trim().toLowerCase();
+                      const exact = typed && (suppliers || []).find(s => String(s.name || '').trim().toLowerCase() === typed);
+                      const picked = advIssueModal.payeeId && (suppliers || []).find(s => String(s._id) === String(advIssueModal.payeeId));
+                      const near = typed && !picked ? (suppliers || []).filter(s => String(s.name || '').toLowerCase().includes(typed)).slice(0, 6) : [];
+                      return (
+                        <div className="mb-4">
+                          {picked || exact ? (
+                            <p className="text-[11px] text-success font-bold">Existing supplier: {(picked || exact).name}</p>
+                          ) : near.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              <span className="text-[10px] text-fg/70 font-bold uppercase tracking-widest self-center">Already on file:</span>
+                              {near.map(s => (
+                                <button type="button" key={s._id} onClick={() => setAdvIssueModal(f => ({ ...f, payeeName: s.name, payeeId: String(s._id) }))}
+                                  className="px-2 py-1 rounded-lg bg-brand/15 border border-brand/30 text-brand-text text-[11px] font-bold hover:bg-brand/25">{s.name}</button>
+                              ))}
+                            </div>
+                          ) : typed ? (
+                            <p className="text-[11px] text-fg/65">No supplier with this name on file - it will be recorded under the name as typed.</p>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
 
                     <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Amount</label>
                     <input type="number" step="0.01" min="0" value={advIssueModal.amount}
@@ -5054,7 +5081,7 @@ It posts only what is not already accrued for that month.`)) return;
                               ) : (
                                 <span className="block text-[11px] mt-0.5">
                                   {b.poNumber && <span className="font-mono text-fg/80" title={b.purchaseOrderId ? 'Linked to this purchase order in Procurement' : 'A reference only - no purchase order with this number in the app'}>PO: {b.poNumber}{b.purchaseOrderId ? ' (linked) ' : ' '}</span>}
-                                  {b.source !== 'PO' && can('accounting.manage') && (
+                                  {b.source !== 'PO' && (b.imported || b.source === 'Opening') && can('accounting.manage') && (
                                     <button onClick={() => setBillPoEdit({ id: b._id, value: b.poNumber || '' })} className="text-brand-text font-bold hover:underline">{b.poNumber ? 'Change' : '+ Add PO no.'}</button>
                                   )}
                                 </span>

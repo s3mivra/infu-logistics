@@ -10,6 +10,7 @@ const TABS = [
   'Procurement',
   'Clients',
   'Menu Setup',
+  'Owner Overview',
   'Analytics',
   'Reports',
   'Ledger',
@@ -143,6 +144,42 @@ test('the optional accounting modules open once they are switched on', async ({ 
 
 // Approvals used to be a page under Ledger -> Setup. It has its own sidebar
 // entry now, and opens by itself - none of the Ledger's page tabs around it.
+// The screens changed most recently, opened and clicked through: a render
+// crash in any of them would otherwise only be found by a person.
+test('the Sales report shows each of its four views', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await login(page);
+  await page.getByRole('button', { name: 'Reports', exact: true }).first().click();
+  await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
+  await expect(page.getByRole('tablist', { name: 'How to show the sales' })).toBeVisible();
+  for (const view of ['Daily', 'Orders', 'Detailed', 'Summary']) {
+    await page.getByRole('tab', { name: view, exact: true }).click();
+    await expect(page.getByRole('tab', { name: view, exact: true })).toHaveAttribute('aria-selected', 'true');
+    await page.waitForTimeout(300);
+  }
+  expect(errors, errors.join('\n')).toHaveLength(0);
+});
+
+test('a check voucher can be started by hand, and Analytics shows the reorder forecast', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await login(page);
+  await page.getByRole('button', { name: 'Reports', exact: true }).first().click();
+  await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
+  // Report pages are grouped; Check Vouchers sits under Payable.
+  await page.getByRole('button', { name: 'Payable', exact: true }).first().click();
+  await page.getByRole('button', { name: /^Check Vouchers/ }).first().click();
+  await page.getByRole('button', { name: '+ New voucher' }).click();
+  await expect(page.getByRole('heading', { name: 'New check voucher' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Issue voucher' })).toBeDisabled();
+
+  await page.getByRole('button', { name: 'Analytics', exact: true }).first().click();
+  await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
+  await expect(page.getByRole('heading', { name: /Reorder Forecast/i })).toBeVisible({ timeout: 20000 });
+  expect(errors, errors.join('\n')).toHaveLength(0);
+});
+
 test('Approvals opens on its own, and is no longer under Ledger', async ({ page }) => {
   await login(page);
 

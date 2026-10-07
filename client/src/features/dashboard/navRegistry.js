@@ -49,6 +49,8 @@ export const NAV_GROUPS = [
     label: 'Management',
     mode: 'negotium',
     items: [
+      // The owner's one page: sales, profit, cash, debts, stock, decisions waiting.
+      { id: 'owner', label: 'Owner Overview', icon: BarChart3, perm: 'owner.view', hint: 'The business at a glance' },
       { id: 'analytics', label: 'Analytics', icon: BarChart3, perm: 'analytics.view', hint: 'Sales dashboard' },
       { id: 'reports', label: 'Reports', icon: BarChart2, perm: 'reports.view', sub: 'salessummary', hint: 'Sales summaries' },
       { id: 'ledger', label: 'Ledger', icon: FileText, perm: 'accounting.view', sub: 'journal', hint: 'Journal entries' },

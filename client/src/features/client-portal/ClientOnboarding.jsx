@@ -18,6 +18,8 @@ export default function ClientOnboarding() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [form, setForm] = useState({ name: '', phone: '', email: '', username: '', password: '', confirm: '', showPassword: false });
+  // The shop sent a link with no name on it: the client supplies their own.
+  const [nameRequired, setNameRequired] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
@@ -29,6 +31,7 @@ export default function ClientOnboarding() {
         const data = await res.json();
         if (!data.success) { setLoadError(data.error || 'This link is invalid or has expired.'); return; }
         setForm(f => ({ ...f, name: data.client.name || '', phone: data.client.phone || '', email: data.client.email || '' }));
+        setNameRequired(!!data.client.nameRequired);
       } catch {
         setLoadError('Network error. Please try again.');
       } finally {
@@ -40,6 +43,7 @@ export default function ClientOnboarding() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    if (nameRequired && !form.name.trim()) { setError('Please enter your name or business name.'); return; }
     if (!form.username.trim() || !form.password) { setError('Choose a username and password.'); return; }
     if (form.password.length < 6) { setError('Password must be at least 6 characters.'); return; }
     if (form.password !== form.confirm) { setError('Passwords do not match.'); return; }
@@ -99,7 +103,8 @@ export default function ClientOnboarding() {
             )}
             <div>
               <label className={label}>Full Name</label>
-              <input className={input} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+              <input className={input} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                placeholder={nameRequired ? 'Your name or business name (required)' : ''} aria-required={nameRequired} />
               <p className="text-fg/65 text-[11px] mt-1">Just how your name shows up - not what you sign in with.</p>
             </div>
             <div className="grid grid-cols-2 gap-3">

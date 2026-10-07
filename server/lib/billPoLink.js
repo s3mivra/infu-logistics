@@ -38,6 +38,15 @@ export async function findLinkablePo(mongoose, { wanted, bill, scope = {} }) {
     return { po, status: 400, error: `${po.poNumber} is an order to ${po.supplier || 'another supplier'}, not ${bill.supplierName || 'this supplier'}.` };
   }
   if (po.status === 'Cancelled') return { po, status: 400, error: `${po.poNumber} was cancelled.` };
+  // The bill has to be for the whole order: the same total, to the centavo.
+  // A bill for a different amount is for something else (or only part of it),
+  // and linking it would make the order look settled when it is not.
+  const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const poTotal = Math.round((Number(po.estTotal) || 0) * 100) / 100;
+  const billTotal = Math.round((Number(bill.amount) || 0) * 100) / 100;
+  if (Math.abs(poTotal - billTotal) > 0.005) {
+    return { po, status: 400, error: `${po.poNumber} totals ${peso(poTotal)} but this bill is ${peso(billTotal)}. They must be the same amount to be linked.` };
+  }
   // One order, one such bill: an order already linked cannot be linked again.
   const taken = await Bill.findOne({ ...carriedBillsFilter(po), _id: { $ne: bill._id } }, { billNumber: 1 }).lean();
   if (taken) return { po, status: 409, error: `${po.poNumber} is already linked to ${taken.billNumber}. An order can be linked to one bill only.` };

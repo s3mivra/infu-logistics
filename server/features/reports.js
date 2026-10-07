@@ -1031,6 +1031,84 @@ app.get('/api/reports/cashier-variance', verifyToken, ...canViewReports, require
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
+// ── OWNER OVERVIEW ───────────────────────────────────────────────────────────
+// One read for the owner's page: sales, the month's result, cash, what is owed
+// either way, stock, and what is waiting for a decision. Money figures come
+// from the ledger wherever the ledger holds them, so this page and the
+// reports it links to cannot disagree.
+app.get('/api/owner/overview', verifyToken, requireStaff, requirePermission('owner.view'), async (req, res) => {
+  try {
+    const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+    const now = new Date();
+    const todayKey = businessDateStr(now);
+    const todayStart = dayStart(todayKey);
+    const monthStart = dayStart(`${todayKey.slice(0, 7)}-01`);
+    const lastMonthSameDay = new Date(now); lastMonthSameDay.setMonth(lastMonthSameDay.getMonth() - 1);
+    const lastMonthKey = businessDateStr(lastMonthSameDay);
+    const lastMonthStart = dayStart(`${lastMonthKey.slice(0, 7)}-01`);
+    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const salesBetween = async (from, to) => {
+      const [row] = await Order.aggregate([
+        { $match: { ...bizScope, status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: from, $lte: to } } },
+        { $group: { _id: null, total: { $sum: '$total' }, count: { $sum: 1 } } },
+      ]);
+      return { total: r2(row?.total), count: row?.count || 0 };
+    };
+    // Net movement per account prefix: debit minus credit.
+    const ledger = async (match) => {
+      const rows = await JournalEntry.aggregate([
+        ...(match ? [{ $match: match }] : []),
+        { $unwind: '$lines' },
+        { $group: { _id: { $substrCP: ['$lines.accountCode', 0, 3] }, net: { $sum: { $subtract: [{ $ifNull: ['$lines.debit', 0] }, { $ifNull: ['$lines.credit', 0] }] } } } },
+      ]);
+      return (test) => r2(rows.filter(r => test(String(r._id || ''))).reduce((sum, r) => sum + r.net, 0));
+    };
+    const [today, mtd, lastMtd, all, thisMonth, arOrders, bills, items, requisitions, fundSpends, changes, openOrders] = await Promise.all([
+      salesBetween(todayStart, now),
+      salesBetween(monthStart, now),
+      salesBetween(lastMonthStart, lastMonthSameDay),
+      ledger(null),
+      ledger({ date: { $gte: monthStart, $lte: now } }),
+      Order.find({ ...bizScope, status: 'Completed', paymentMethod: AR_PAYMENT_METHOD_FILTER, isComplimentary: { $ne: true }, arSettled: { $ne: true } },
+        { total: 1, arPaidAmount: 1, refundedAmount: 1, arDueDate: 1 }).limit(20000).lean(),
+      Bill.find({ ...bizScope, status: { $in: ['Pending', 'Approved', 'Partially Paid'] } }, { amount: 1, paidAmount: 1, dueDate: 1, status: 1 }).lean(),
+      Inventory.find(bizScope, { stockQty: 1, unitCost: 1, lowStockThreshold: 1 }).lean(),
+      mongoose.model('RequisitionSlip').countDocuments({ status: 'Pending' }),
+      RevolvingFundTx.countDocuments({ type: 'disbursement', 'validation.status': 'Unvalidated' }),
+      ChangeRequest.countDocuments({ status: 'Pending' }),
+      mongoose.model('PurchaseOrder').countDocuments({ ...tenantScope(req), status: { $in: ['Ordered', 'Processing', 'Incomplete'] } }),
+    ]);
+
+    const owed = arOrders.map(o => Math.max(0, r2((o.total || 0) - (o.arPaidAmount || 0) - (o.refundedAmount || 0)))).map((bal, i) => ({ bal, due: arOrders[i].arDueDate })).filter(x => x.bal > 0.004);
+    const overdueAr = owed.filter(x => x.due && new Date(x.due) < now);
+    const openBills = bills.map(b => ({ left: Math.max(0, r2((b.amount || 0) - (b.paidAmount || 0))), due: b.dueDate, status: b.status })).filter(b => b.left > 0.004);
+    const in7 = new Date(now.getTime() + 7 * 86400000);
+    const income = -thisMonth(c => c.startsWith('4'));
+    const costOfSales = thisMonth(c => c.startsWith('51'));
+    const expenses = r2(thisMonth(c => /^[5-9]/.test(c)) - costOfSales);
+    const cash = { onHand: all(c => c === '111'), bank: all(c => c === '112'), eWallet: all(c => c === '113'), petty: all(c => c === '114') };
+
+    res.json({
+      success: true, asOf: now,
+      sales: { today: today.total, todayCount: today.count, monthToDate: mtd.total, monthCount: mtd.count, lastMonthToDate: lastMtd.total },
+      month: { income: r2(income), costOfSales, expenses, netIncome: r2(income - costOfSales - expenses) },
+      cash: { ...cash, total: r2(cash.onHand + cash.bank + cash.eWallet + cash.petty) },
+      receivables: { total: r2(owed.reduce((s, x) => s + x.bal, 0)), count: owed.length, overdue: r2(overdueAr.reduce((s, x) => s + x.bal, 0)), overdueCount: overdueAr.length },
+      payables: {
+        total: r2(openBills.reduce((s, b) => s + b.left, 0)), count: openBills.length,
+        overdue: r2(openBills.filter(b => b.due && new Date(b.due) < todayStart).reduce((s, b) => s + b.left, 0)),
+        dueSoon: r2(openBills.filter(b => b.due && new Date(b.due) >= todayStart && new Date(b.due) <= in7).reduce((s, b) => s + b.left, 0)),
+      },
+      stock: {
+        value: r2(items.reduce((s, i) => s + Math.max(0, i.stockQty || 0) * (i.unitCost || 0), 0)),
+        out: items.filter(i => (i.stockQty || 0) <= 0).length,
+        low: items.filter(i => (i.stockQty || 0) > 0 && (i.lowStockThreshold || 0) > 0 && i.stockQty <= i.lowStockThreshold).length,
+      },
+      waiting: { requisitions, fundSpends, bills: bills.filter(b => b.status === 'Pending').length, changes, openOrders },
+    });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 // ── REPORT: PURCHASE ORDER SUGGESTION (from low stock + velocity) ────────────
 app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (req, res) => {
   try {
