@@ -135,6 +135,9 @@ export default function CustomerMenu() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderNotes, setOrderNotes] = useState('');
+  // Asked only when the shop has switched Dine-in / Take-out on (Menu Setup).
+  const [askServiceMode, setAskServiceMode] = useState(false);
+  const [serviceMode, setServiceMode] = useState('');   // 'dine-in' | 'take-out'
 
   const [activeCategory, setActiveCategory] = useState('All');
   // Large catalogues (logistics especially) are slow to browse by category
@@ -196,7 +199,10 @@ export default function CustomerMenu() {
     fetchProducts();
     fetch(`${API_URL}/api/public/portal-settings`)
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.success && d.settings?.businessLogo) setBusinessLogo(d.settings.businessLogo); })
+      .then(d => {
+        if (d?.success && d.settings?.businessLogo) setBusinessLogo(d.settings.businessLogo);
+        if (d?.success && d.settings?.serviceModeEnabled === true) setAskServiceMode(true);
+      })
       .catch(() => {});
 
     const validateSessionAndCheckMemory = async () => {
@@ -561,6 +567,7 @@ export default function CustomerMenu() {
           customerName: customerName.trim(),
           sessionId: sessionToken,
           orderNotes: orderNotes.trim(),
+          ...(askServiceMode && serviceMode ? { serviceMode } : {}),
         })
       });
 
@@ -1019,12 +1026,25 @@ export default function CustomerMenu() {
                   <p className="text-[10px] text-fg/65 text-right mt-0.5">{orderNotes.length}/300</p>
                 )}
               </div>
+              {askServiceMode && (
+                <div>
+                  <p className="text-[11px] text-fg/70 font-bold uppercase tracking-wider mb-1.5">Dine in or take out? *</p>
+                  <div role="radiogroup" aria-label="Dine in or take out" className="grid grid-cols-2 gap-2">
+                    {[['dine-in', 'Dine in'], ['take-out', 'Take out']].map(([v, label]) => (
+                      <button key={v} type="button" role="radio" aria-checked={serviceMode === v} onClick={() => setServiceMode(v)}
+                        className={`py-3 rounded-xl border font-black text-sm uppercase tracking-wider transition ${serviceMode === v ? 'bg-brand text-on-brand border-brand' : 'bg-white/5 text-fg border-white/10'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <button
                 onClick={async () => { await confirmOrder(); setCartOpen(false); }}
-                disabled={isSubmitting}
+                disabled={isSubmitting || (askServiceMode && !serviceMode)}
                 className="w-full bg-brand hover:bg-brand-dark text-on-brand font-black py-4 rounded-2xl text-lg transition shadow-2xl shadow-brand/30 uppercase tracking-widest active:scale-95 disabled:opacity-60"
               >
-                {isSubmitting ? 'Sending…' : `Send to ${SEND_TARGET}`}
+                {isSubmitting ? 'Sending…' : (askServiceMode && !serviceMode) ? 'Choose dine in or take out' : `Send to ${SEND_TARGET}`}
               </button>
             </div>
           </div>

@@ -288,7 +288,7 @@ export default function OrdersTab({ ctx }) {
     const lines = barCupLines(order)
       .map(l => ({ index: l.index, qty: Math.min(l.left, Math.max(0, Number(takeOut?.qty?.[l.index] ?? l.left))) }))
       .filter(l => l.qty > 0);
-    if (!lines.length) return ui.alert('Enter how many are being taken out.');
+    if (!lines.length) return ui.alert('Tick the drinks that are being taken out.');
     setTakeOut(t => ({ ...t, busy: true }));
     try {
       const res = await apiFetch(`/api/orders/${order._id}/take-out`, { method: 'POST', body: JSON.stringify({ lines }) });
@@ -680,7 +680,27 @@ export default function OrdersTab({ ctx }) {
                     )}
                     {/* Dine-in in the bar's own cups: the take-out cup, lid and
                         straw in each recipe stay on the shelf. */}
-                    {BUSINESS_TYPE === 'fb' && posTable === 'Dine-In' && (
+                    {/* Dine-in / Take-out switched on in Menu Setup: every order says
+                        which it is. A Dine-In table is dine-in and anything
+                        leaving the shop is take-out; a walk-in is asked. */}
+                    {BUSINESS_TYPE === 'fb' && systemSettings.serviceModeEnabled === true && (
+                      posTable === 'Walk In' ? (
+                        <div role="radiogroup" aria-label="Dine in or take out" className="grid grid-cols-2 gap-2">
+                          {[[true, 'Dine in', 'Own cups - no take-out packaging used'], [false, 'Take out', 'Uses take-out cups, lids, straws']].map(([dineIn, label, hint]) => (
+                            <button key={label} type="button" role="radio" aria-checked={!!posBarCups === dineIn} onClick={() => setPosBarCups?.(dineIn)}
+                              className={`px-3 py-2 rounded-xl border text-left transition ${!!posBarCups === dineIn ? 'bg-brand/10 border-brand/40' : 'bg-page-bg border-white/10'}`}>
+                              <span className="text-xs font-bold text-fg block">{label}</span>
+                              <span className="text-[10px] text-fg/65 block">{hint}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] font-bold text-fg/75 px-1">
+                          {posTable === 'Dine-In' ? 'Dine in - own cups, no take-out packaging used.' : 'Take out - uses take-out cups, lids and straws.'}
+                        </p>
+                      )
+                    )}
+                    {BUSINESS_TYPE === 'fb' && systemSettings.serviceModeEnabled !== true && posTable === 'Dine-In' && (
                       <button type="button" onClick={() => setPosBarCups?.(!posBarCups)} aria-pressed={!!posBarCups}
                         title="Serve in the bar's own cups - take-out cups, lids and straws are not taken from stock. If they leave with it, use Make take-out on the completed order."
                         className={`flex items-center justify-between gap-3 px-3 py-2 rounded-xl border text-left transition ${posBarCups ? 'bg-brand/10 border-brand/40' : 'bg-page-bg border-white/10'}`}>
@@ -1671,13 +1691,23 @@ export default function OrdersTab({ ctx }) {
                                 takeOut?.orderId === order._id ? (
                                   <div className="flex flex-col gap-2 bg-black/20 border border-white/10 rounded-lg p-3">
                                     <p className="text-[10px] font-black uppercase tracking-widest text-fg/75">Make take-out - how many?</p>
-                                    {barCupLines(order).map(l => (
+                                    {barCupLines(order).map(l => {
+                                      // Ticked = this drink is leaving; unticked stays dine-in.
+                                      const picked = Number(takeOut.qty?.[l.index] ?? l.left) > 0;
+                                      return (
                                       <div key={l.index} className="flex items-center justify-between gap-2">
-                                        <span className="text-xs font-bold text-fg truncate" title={l.name}>{l.name} <span className="text-fg/65 font-normal">({l.left} in bar cups)</span></span>
-                                        <QtyInput value={Math.min(l.left, Number(takeOut.qty?.[l.index] ?? l.left)) || 1} max={l.left} label={`Take-out quantity of ${l.name}`}
-                                          onChange={q => setTakeOut(t => ({ ...t, qty: { ...t.qty, [l.index]: q } }))} />
+                                        <label className="flex items-center gap-2 min-w-0 text-xs font-bold text-fg">
+                                          <input type="checkbox" checked={picked} aria-label={`Take out ${l.name}`}
+                                            onChange={e => setTakeOut(t => ({ ...t, qty: { ...t.qty, [l.index]: e.target.checked ? l.left : 0 } }))} />
+                                          <span className="truncate" title={l.name}>{l.name} <span className="text-fg/65 font-normal">({l.left} dine-in)</span></span>
+                                        </label>
+                                        {picked && (
+                                          <QtyInput value={Math.min(l.left, Number(takeOut.qty?.[l.index] ?? l.left)) || 1} max={l.left} label={`Take-out quantity of ${l.name}`}
+                                            onChange={q => setTakeOut(t => ({ ...t, qty: { ...t.qty, [l.index]: q } }))} />
+                                        )}
                                       </div>
-                                    ))}
+                                      );
+                                    })}
                                     <p className="text-[10px] text-fg/70">Takes the take-out cup, lid and straw for these from stock now.</p>
                                     <div className="flex gap-2">
                                       <button onClick={() => setTakeOut(null)} disabled={takeOut.busy} className="flex-1 border border-white/15 text-fg/80 py-2 rounded-lg font-bold text-xs transition disabled:opacity-50">Cancel</button>

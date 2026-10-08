@@ -203,6 +203,8 @@ const emitSetting = (payload) => {
 // here is effectively public. Never add operational settings (credit limits,
 // auto-close, ...) to this list.
 const PUBLIC_PORTAL_KEYS = [
+  // The customer's QR menu asks "dine in or take out?" when this is on.
+  'serviceModeEnabled',
   'portalWelcomeTitle',
   'portalWelcomeMessage',
   'portalAnnouncement',

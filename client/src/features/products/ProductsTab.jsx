@@ -541,6 +541,35 @@ export default function ProductsTab({ ctx }) {
             {/* 1. Menu Items List */}
             {/* Wraps on a phone: with shrink-0 on the actions, "New product"
                 was pushed off the right edge and cut to "NEW PROD". */}
+            {BUSINESS_TYPE !== 'log' && (() => {
+              const on = ctx.systemSettings?.serviceModeEnabled === true;
+              const canSet = can('settings.manage');
+              return (
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4 p-3 rounded-xl border border-white/10 bg-white/5">
+                  <div className="min-w-0">
+                    <p className="text-sm font-black text-fg">Dine-in / Take-out</p>
+                    <p className="text-[11px] text-fg/70 mt-0.5">
+                      {on
+                        ? 'On. Every order says which it is - at the till and on the customer\'s QR menu. Dine-in is served in your own cups: take-out packaging and any ingredient ticked "Take-out only" on a product stay in stock.'
+                        : 'Off. Orders are not asked, and every order uses its take-out packaging. Turn on to ask "dine in or take out?" on each order.'}
+                    </p>
+                  </div>
+                  <button type="button" disabled={!canSet} aria-pressed={on} aria-label="Dine-in / Take-out"
+                    title={canSet ? '' : 'Changing this needs the settings permission'}
+                    onClick={async () => {
+                      try {
+                        const d = await (await apiFetch('/api/settings/serviceModeEnabled', { method: 'PATCH', body: JSON.stringify({ value: !on }) })).json();
+                        if (!d.success) return ui.alert(d.error || 'Could not save.');
+                        ctx.setSystemSettings?.(p => ({ ...p, serviceModeEnabled: !on }));
+                        ctx.fetchSettings?.();
+                      } catch { ui.alert('Network error.'); }
+                    }}
+                    className={`w-12 h-6 rounded-full relative shrink-0 transition disabled:opacity-40 ${on ? 'bg-brand' : 'bg-white/15'}`}>
+                    <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${on ? 'left-[26px]' : 'left-0.5'}`} />
+                  </button>
+                </div>
+              );
+            })()}
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mb-4 border-b border-white/10 pb-2">
               <h3 className="text-xl font-bold text-fg whitespace-nowrap">{BUSINESS_TYPE === 'log' ? 'Catalog Items' : 'Menu Items'}</h3>
               <div className="flex flex-wrap items-center gap-2 sm:gap-3">

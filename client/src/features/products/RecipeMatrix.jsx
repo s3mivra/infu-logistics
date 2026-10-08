@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import SearchSelect from '../../shared/ui/SearchSelect';
-import { matrixRows, setCell, removeRow, addSizeColumn, removeSizeColumn, columnsOf, marginOf, rowKeyOf } from '../../shared/recipeMatrix';
+import { matrixRows, setCell, removeRow, addSizeColumn, removeSizeColumn, columnsOf, marginOf, rowKeyOf, setRowTakeoutOnly } from '../../shared/recipeMatrix';
 
 const TARGET_MARGIN = 0.3;          // the same 30% the old "Set 30% margin" button used
 const NON_STOCK_UNITS = ['ml', 'L', 'g', 'kg', 'lb', 'pcs'];
@@ -120,6 +120,20 @@ export default function RecipeMatrix({ form, setForm, inventory = [], calcRecipe
                   <span className="text-[11px] font-normal text-fg/70">
                     {isLog && r.packBase > 1 ? `packs of ${r.packBase}` : r.unit}{r.nonStock ? ' · not stock' : ''}
                   </span>
+                  {/* Cafe: a cup, lid or straw that only a take-out order uses.
+                      A dine-in order leaves it on the shelf. An item already
+                      set as take-out packaging in Inventory is one everywhere. */}
+                  {!isLog && r.invId && !r.nonStock && (() => {
+                    const always = inventory.find((i) => String(i._id) === String(r.invId))?.takeoutPackaging === true;
+                    return (
+                      <label className="flex items-center gap-1.5 mt-0.5 text-[11px] font-normal text-fg/80" title={always ? 'Set as take-out packaging on the stock item itself (Inventory) - it applies to every product.' : 'Tick for a disposable cup, lid or straw: a dine-in order will not take it from stock.'}>
+                        <input type="checkbox" checked={always || !!r.takeoutOnly} disabled={always}
+                          onChange={(e) => setForm(setRowTakeoutOnly(form, r.key, e.target.checked))}
+                          aria-label={`${r.name} is used for take-out only`} />
+                        Take-out only{always ? ' (set in Inventory)' : ''}
+                      </label>
+                    );
+                  })()}
                 </th>
                 {cols.map((_, ci) => (
                   <td key={ci} className="px-2 py-1.5">

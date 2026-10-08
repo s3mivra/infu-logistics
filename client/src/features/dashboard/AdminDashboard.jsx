@@ -2559,8 +2559,14 @@ export default function AdminDashboard() {
       dispatchStatus: (isDelivery || isPickup) ? 'Preparing' : '',
       orderNotes: posNotes.trim(),
       guestCount: Math.max(1, parseInt(posGuestCount) || 1),
-      // Only a dine-in order can be served in the bar's cups.
-      ...(BUSINESS_TYPE === 'fb' && posTable === 'Dine-In' && posBarCups ? { useBarCups: true } : {}),
+      // With Dine-in / Take-out on (Menu Setup) every order says which it is:
+      // a Dine-In table is dine-in, a walk-in is whichever was picked, and
+      // everything that leaves the shop is take-out. With it off, only the
+      // bar-cups switch on a dine-in order applies, as before.
+      ...(BUSINESS_TYPE !== 'fb' ? {}
+        : systemSettings.serviceModeEnabled === true
+          ? { serviceMode: (posTable === 'Dine-In' || (posTable === 'Walk In' && posBarCups)) ? 'dine-in' : 'take-out' }
+          : (posTable === 'Dine-In' && posBarCups ? { useBarCups: true } : {})),
       location: posBranch || '',
     };
 
@@ -9123,7 +9129,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     // ── Profit by Category ───────────────────────────────────────────────────
     profitByCategory, fetchProfitByCategory,
     // ── System Settings / QR Toggle ─────────────────────────────────────────
-    systemSettings, toggleQROrders, toggleAutoClose, toggleImages, saveSetting,
+    systemSettings, setSystemSettings, fetchSettings, toggleQROrders, toggleAutoClose, toggleImages, saveSetting,
     // Settings owns the module switches, but the SIDEBAR owns the copy that
     // decides which tabs exist. Without this the switch moved and the tab
     // did not appear until a manual reload.

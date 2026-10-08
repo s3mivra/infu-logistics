@@ -517,6 +517,9 @@ const zRecipe = z.array(z.object({
   // being dropped on save, and the edit form then reset every quantity to one
   // full pack to compensate, silently discarding what the user had entered.
   packBase: z.number().optional(),
+  // Used only when the order leaves the shop (a disposable cup, a lid, a
+  // straw): a dine-in order leaves it on the shelf.
+  takeoutOnly: z.boolean().optional(),
 })).optional();
 
 // Schemas for the previously raw `Model.create(req.body)` routes (mass-assignment fixes)
@@ -1474,7 +1477,7 @@ const AddOnSchema = new mongoose.Schema({
   name: { type: String, required: true },
   price: { type: Number, required: true },
   category: { type: String, default: 'Extras' },
-  recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean, packBase: Number }]
+  recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean, packBase: Number, takeoutOnly: Boolean }]
 }, { timestamps: true });
 const AddOn = mongoose.model('AddOn', AddOnSchema);
 
@@ -1543,15 +1546,15 @@ const ProductSchema = new mongoose.Schema({
   }],
   baseSize: String,
   costOverride: Number,
-  baseRecipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean, packBase: Number }],
+  baseRecipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean, packBase: Number, takeoutOnly: Boolean }],
   sizes: [{
     sizeCode: String,
     name: String,
     price: Number,
     costOverride: Number,
-    recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean, packBase: Number }]
+    recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean, packBase: Number, takeoutOnly: Boolean }]
   }],
-  addOns: [{ name: String, price: Number, recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean, packBase: Number }] }],
+  addOns: [{ name: String, price: Number, recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String, nonStock: Boolean, packBase: Number, takeoutOnly: Boolean }] }],
   image: String,
   // Renamed from "86'd". `isAvailable === false` means REMOVED from the menu
   // (and from reporting too - unless the product still has stock, in which
@@ -1785,6 +1788,10 @@ items: [{
   // Dine-in, served in the bar's cups rather than take-out ones (cafe). The
   // take-out packaging in each recipe is left on the shelf at completion.
   useBarCups: { type: Boolean, default: false },
+  // Cafe, when "Dine-in / Take-out" is switched on in Menu Setup: which one
+  // this order is. Dine-in is served in the shop's own cups (useBarCups), so
+  // take-out packaging stays on the shelf. '' = not asked.
+  serviceMode: { type: String, enum: ['', 'dine-in', 'take-out'], default: '' },
   stockMoves: [{
     _id: false,
     invId: String,

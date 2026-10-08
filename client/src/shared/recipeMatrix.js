@@ -33,8 +33,10 @@ export function matrixRows(form, pending = []) {
         rows.set(key, {
           key, invId: line.invId ? String(line.invId) : null, name: line.name || '', unit: line.unit || '',
           packBase: pb(line.packBase), nonStock: !!line.nonStock, cost: Number(line.cost) || 0, cells: [],
+          takeoutOnly: false,
         });
       }
+      if (line.takeoutOnly) rows.get(key).takeoutOnly = true;
       rows.get(key).cells[ci] = +((Number(line.qty) || 0) / pb(line.packBase)).toFixed(6);
     }
   });
@@ -53,6 +55,7 @@ export function setCell(form, row, col, value) {
     ...(row.invId ? { invId: row.invId } : {}),
     name: row.name, qty, cost: Number(row.cost) || 0, unit: row.unit, packBase: pb(row.packBase),
     ...(row.nonStock ? { nonStock: true } : {}),
+    ...(row.takeoutOnly ? { takeoutOnly: true } : {}),
   };
   const apply = (recipe = []) => {
     const i = recipe.findIndex((l) => rowKeyOf(l) === row.key);
@@ -64,6 +67,18 @@ export function setCell(form, row, col, value) {
   };
   if (col === 0) return { ...form, baseRecipe: apply(form.baseRecipe) };
   return { ...form, sizes: (form.sizes || []).map((s, j) => (j === col - 1 ? { ...s, recipe: apply(s.recipe) } : s)) };
+}
+
+// Mark an ingredient as used only when the order leaves the shop (a cup, a lid,
+// a straw) - in every size that has it. A dine-in order then leaves it on the
+// shelf.
+export function setRowTakeoutOnly(form, key, on) {
+  const mark = (recipe = []) => recipe.map((l) => {
+    if (rowKeyOf(l) !== key) return l;
+    const { takeoutOnly: _drop, ...rest } = l;
+    return on ? { ...rest, takeoutOnly: true } : rest;
+  });
+  return { ...form, baseRecipe: mark(form.baseRecipe), sizes: (form.sizes || []).map((s) => ({ ...s, recipe: mark(s.recipe) })) };
 }
 
 // Take an ingredient out of every size.

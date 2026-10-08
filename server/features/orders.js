@@ -1177,6 +1177,21 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       billingNumber = `${billingLabel}-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${billingCounter.seq.toString().padStart(4, '0')}`;
     }
 
+    let serviceFields = {};
+    if (BUSINESS_TYPE === 'fb') {
+      const modeOn = (await Settings.findOne({ key: 'serviceModeEnabled' }).lean())?.value === true;
+      if (modeOn) {
+        const asked = String(req.body.serviceMode || '').toLowerCase();
+        // Not said: a delivery or a "Takeout" counter sale is take-out, a
+        // table is dine-in.
+        const leaves = /take\s*-?\s*out|delivery|grab|panda|lalamove|pickup/i.test(String(table || ''));
+        const mode = asked === 'dine-in' || asked === 'take-out' ? asked : (leaves ? 'take-out' : 'dine-in');
+        serviceFields = { serviceMode: mode, useBarCups: mode === 'dine-in' };
+      } else if (!selfServiceOrder && req.body.useBarCups === true) {
+        serviceFields = { useBarCups: true };
+      }
+    }
+
     // Resolve payment method: client pre-set → body override → default Cash
     const resolvedPaymentMethod = paymentsInput?.length > 0
       ? (paymentsInput.length === 1 ? paymentsInput[0].method : 'Split')
@@ -1319,9 +1334,11 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       salesperson: String((!selfServiceOrder && req.body.salesperson) || buyerRep || (selfServiceOrder ? '' : cashier) || '').trim().slice(0, 100),
       ...(creditOverride && { creditOverride }),
       ...(paymentsInput?.length > 0 && { payments: paymentsInput }),
-      // Dine-in in the bar's own cups (cafe): the till's choice, never a
-      // customer's - a QR order is switched by staff on the order itself.
-      ...(BUSINESS_TYPE === 'fb' && !selfServiceOrder && req.body.useBarCups === true && { useBarCups: true }),
+      // Dine-in in the bar's own cups (cafe). With "Dine-in / Take-out" on
+      // (Menu Setup) every order says which it is - the customer on the QR
+      // menu included - and dine-in means the shop's own cups. With it off it
+      // stays the till's own switch, never a customer's.
+      ...serviceFields,
       ...(paymentReference && { paymentReference }),
       ...(paymentCheckDate && { paymentCheckDate }),
     });
@@ -1830,7 +1847,11 @@ const completeOrderOnce = async (req, res, mayRetry) => {
 
     // Dine-in in the bar's own cups, or take-out cups after all - decided any
     // time up to the moment the order is completed, which is when stock moves.
-    if (typeof req.body.useBarCups === 'boolean' && BUSINESS_TYPE === 'fb') order.useBarCups = req.body.useBarCups;
+    if (typeof req.body.useBarCups === 'boolean' && BUSINESS_TYPE === 'fb') {
+      order.useBarCups = req.body.useBarCups;
+      // Kept in step when the order carries the dine-in / take-out answer.
+      if (order.serviceMode) order.serviceMode = req.body.useBarCups ? 'dine-in' : 'take-out';
+    }
 
     if (status !== undefined) {
       // The generic update may only move an order along its normal life.
@@ -2113,6 +2134,9 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       const barCupIds = (BUSINESS_TYPE === 'fb' && order.useBarCups)
         ? new Set((await Inventory.find({ businessType: BUSINESS_TYPE, takeoutPackaging: true }, { _id: 1 }).session(session).lean()).map(i => String(i._id)))
         : null;
+      // What a dine-in order leaves on the shelf: stock flagged as take-out
+      // packaging, and any recipe line ticked "take-out only" on its product.
+      const staysForDineIn = (invId, ing) => !!barCupIds && (barCupIds.has(String(invId)) || ing?.takeoutOnly === true);
       const keptOnShelf = new Map();   // lineIndex -> Map(invId -> { invId, name, qty per unit })
       const keepOnShelf = (lineIndex, invId, name, perUnit) => {
         if (!keptOnShelf.has(lineIndex)) keptOnShelf.set(lineIndex, new Map());
@@ -2169,7 +2193,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
             for (const ing of compRecipe) {
               const invId = await resolveIngInvId(ing, session);
               if (!invId) continue;
-              if (barCupIds?.has(String(invId))) { keepOnShelf(lineIndex, invId, ing.name, ing.qty * (comp.quantity || 1)); continue; }
+              if (staysForDineIn(invId, ing)) { keepOnShelf(lineIndex, invId, ing.name, ing.qty * (comp.quantity || 1)); continue; }
               const deductQty = (ing.qty * (comp.quantity || 1) * item.quantity);
               const invItem = await Inventory.findOneAndUpdate(
                 { _id: invId, // Only stock that is not held for another client can be sold.
@@ -2248,7 +2272,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         for (const ing of recipeToUse) {
           const invId = await resolveIngInvId(ing, session);
           if (!invId) continue;
-          if (barCupIds?.has(String(invId))) { keepOnShelf(lineIndex, invId, ing.name, ing.qty); continue; }
+          if (staysForDineIn(invId, ing)) { keepOnShelf(lineIndex, invId, ing.name, ing.qty); continue; }
           const deductQty = (ing.qty * item.quantity);
           const invItem = await Inventory.findOneAndUpdate(
             { _id: invId, // Only stock that is not held for another client can be sold.
@@ -2291,7 +2315,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
             for (const ing of resolvedRecipe) {
               const invId = await resolveIngInvId(ing, session);
               if (!invId) continue;
-              if (barCupIds?.has(String(invId))) { keepOnShelf(lineIndex, invId, ing.name, ing.qty); continue; }
+              if (staysForDineIn(invId, ing)) { keepOnShelf(lineIndex, invId, ing.name, ing.qty); continue; }
               const deductQty = (ing.qty * item.quantity);
               const invItem = await Inventory.findOneAndUpdate(
                 { _id: invId, // Only stock that is not held for another client can be sold.

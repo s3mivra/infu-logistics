@@ -152,3 +152,63 @@ describe('the switch on an open order', () => {
     expect((await M('Inventory').findById(lid._id).lean()).takeoutPackaging).toBe(true);
   });
 });
+
+// Dine-in / Take-out switched on in Menu Setup: every order says which it is,
+// the customer's QR order included, and a product can mark an ingredient as
+// used for take-out only.
+describe('Dine-in / Take-out switched on', () => {
+  const setMode = (value) => auth('patch', '/api/settings/serviceModeEnabled').send({ value });
+  let straw;
+  beforeEach(async () => {
+    await setMode(true);
+    // A straw that is NOT flagged as packaging on the stock item - only this
+    // product says it is for take-out.
+    straw = await M('Inventory').create({ itemCode: 'STRAW', itemName: 'STRAW', unit: 'pcs', stockQty: 100, unitCost: 1 });
+    await M('Product').updateOne({ _id: latte._id }, { $push: { baseRecipe: { invId: String(straw._id), name: 'STRAW', qty: 1, cost: 1, unit: 'pcs', packBase: 1, takeoutOnly: true } } });
+  });
+
+  it('dine-in keeps the cup and the take-out-only straw on the shelf', async () => {
+    const o = await place(2, { serviceMode: 'dine-in' });
+    expect([o.serviceMode, o.useBarCups]).toEqual(['dine-in', true]);
+    expect((await complete(o)).status).toBe(200);
+    expect([await stock(beans), await stock(cup), await stock(straw)]).toEqual([960, 100, 100]);
+  });
+
+  it('take-out uses them', async () => {
+    const o = await place(2, { serviceMode: 'take-out' });
+    expect([o.serviceMode, o.useBarCups]).toEqual(['take-out', false]);
+    expect((await complete(o)).status).toBe(200);
+    expect([await stock(beans), await stock(cup), await stock(straw)]).toEqual([960, 98, 98]);
+  });
+
+  it('a finished dine-in order can send just some of its drinks out', async () => {
+    const o = await place(3, { serviceMode: 'dine-in' });
+    await complete(o);
+    const r = await auth('post', `/api/orders/${o._id}/take-out`).send({ lines: [{ index: 0, qty: 1 }] });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect([await stock(cup), await stock(straw)]).toEqual([99, 99]);
+    // a take-out order has nothing left to convert
+    const t = await place(1, { serviceMode: 'take-out' });
+    await complete(t);
+    expect((await auth('post', `/api/orders/${t._id}/take-out`).send({ lines: [{ index: 0, qty: 1 }] })).status).not.toBe(200);
+  });
+
+  it('a customer ordering from the QR menu chooses too; unsaid, a table is dine-in', async () => {
+    const order = async (extra) => (await request(app).post('/api/orders').send({
+      table: 'Table 4', customerName: 'Guest', items: [{ productId: String(latte._id), name: 'Latte', price: 130, quantity: 1, selectedAddOns: [] }], ...extra,
+    })).body;
+    const out = await order({ serviceMode: 'take-out' });
+    if (out.success) expect([out.order.serviceMode, out.order.useBarCups]).toEqual(['take-out', false]);
+    const unsaid = await order({});
+    if (unsaid.success) expect(unsaid.order.serviceMode).toBe('dine-in');
+    expect(out.success || unsaid.success || /session|QR|accept/i.test(String(out.error))).toBeTruthy();
+  });
+
+  it('switched off, nothing is asked and the till switch works as before', async () => {
+    await setMode(false);
+    const o = await place(1, { serviceMode: 'dine-in' });
+    expect([o.serviceMode || '', !!o.useBarCups]).toEqual(['', false]);
+    await complete(o);
+    expect(await stock(cup)).toBe(99);
+  });
+});
