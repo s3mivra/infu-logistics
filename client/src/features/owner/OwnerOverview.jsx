@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw, ChevronRight } from 'lucide-react';
+import RangePresets from '../../shared/RangePresets';
+import { presetRange, matchPreset, RANGE_PRESETS } from '../../shared/businessDay.js';
 
 // What a business owner opens the app to find out, on one page: how sales are
 // going, whether the month is making money, where the cash is, who owes the
@@ -32,15 +34,18 @@ const Line = ({ label, value, tone = 'text-fg/80' }) => (
 export default function OwnerOverview({ apiFetch, go, can }) {
   const [d, setD] = useState(null);
   const [loading, setLoading] = useState(false);
+  // The period sales and profit cover. Cash, debts and stock are always now.
+  const [range, setRange] = useState(() => presetRange('thisMonth'));
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await (await apiFetch('/api/owner/overview')).json();
+      const r = await (await apiFetch(`/api/owner/overview?start=${range.start}&end=${range.end}`)).json();
       setD(r.success ? r : { error: r.error || 'Could not load the overview.' });
     } catch { setD({ error: 'Network error.' }); }
     finally { setLoading(false); }
-  }, [apiFetch]);
+  }, [apiFetch, range.start, range.end]);
   useEffect(() => { load(); }, [load]);
+  const periodName = (() => { const k = matchPreset(range); return k ? RANGE_PRESETS.find(p => p.key === k).label.toLowerCase() : `${range.start} to ${range.end}`; })();
 
   // A link only where the person can open the screen it goes to.
   const open = (tab, perm) => (!perm || can(perm) ? () => go(tab) : undefined);
@@ -56,7 +61,7 @@ export default function OwnerOverview({ apiFetch, go, can }) {
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-xl font-black text-fg">Owner Overview</h2>
-          <p className="text-fg/70 text-xs mt-1">Where the business stands right now. As of {new Date(d.asOf).toLocaleString()}.</p>
+          <p className="text-fg/70 text-xs mt-1">Sales and profit for {periodName}. Cash, what is owed and stock as of {new Date(d.asOf).toLocaleString()}.</p>
         </div>
         <button onClick={load} disabled={loading} aria-label="Refresh"
           className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/80 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition disabled:opacity-40">
@@ -64,18 +69,29 @@ export default function OwnerOverview({ apiFetch, go, can }) {
         </button>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <RangePresets value={range} onChange={r => setRange(r)} />
+        <input type="date" value={range.start} max={range.end} aria-label="From"
+          onChange={e => e.target.value && setRange(r => ({ ...r, start: e.target.value }))}
+          className="bg-white/5 border border-white/10 rounded-xl px-2.5 py-2 text-fg text-xs font-bold outline-none focus:border-brand" />
+        <span className="text-fg/70 text-xs font-bold">to</span>
+        <input type="date" value={range.end} min={range.start} aria-label="To"
+          onChange={e => e.target.value && setRange(r => ({ ...r, end: e.target.value }))}
+          className="bg-white/5 border border-white/10 rounded-xl px-2.5 py-2 text-fg text-xs font-bold outline-none focus:border-brand" />
+      </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
         <Card title="Sales" onOpen={open('reports', 'reports.view')}>
-          <Big value={peso(sales.today)} tone="text-brand-text" />
-          <p className="text-fg/70 text-xs mb-2">today, from {sales.todayCount} order(s)</p>
-          <Line label="This month so far" value={peso(sales.monthToDate)} />
-          <Line label="Same days last month" value={peso(sales.lastMonthToDate)} />
+          <Big value={peso(sales.monthToDate)} tone="text-brand-text" />
+          <p className="text-fg/70 text-xs mb-2">{periodName}, from {sales.monthCount} order(s)</p>
+          <Line label={`Before that (${d.period.previousStart} to ${d.period.previousEnd})`} value={peso(sales.lastMonthToDate)} />
+          <Line label="Today" value={`${peso(sales.today)} · ${sales.todayCount}`} />
           {change !== null && <Line label="Change" value={`${change >= 0 ? '▲' : '▼'} ${Math.abs(change).toFixed(1)}%`} tone={change >= 0 ? 'text-success' : 'text-danger'} />}
         </Card>
 
-        <Card title="This month's profit" onOpen={open('ledger', 'accounting.view')}>
+        <Card title="Profit" onOpen={open('ledger', 'accounting.view')}>
           <Big value={peso(month.netIncome)} tone={month.netIncome >= 0 ? 'text-success' : 'text-danger'} />
-          <p className="text-fg/70 text-xs mb-2">income less everything spent, so far this month</p>
+          <p className="text-fg/70 text-xs mb-2">income less everything spent, {periodName}</p>
           <Line label="Income" value={peso(month.income)} />
           <Line label="Cost of goods sold" value={peso(month.costOfSales)} />
           <Line label="Expenses" value={peso(month.expenses)} />

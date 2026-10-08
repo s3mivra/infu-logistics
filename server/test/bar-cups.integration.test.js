@@ -212,3 +212,21 @@ describe('Dine-in / Take-out switched on', () => {
     expect(await stock(cup)).toBe(99);
   });
 });
+
+describe('an item not on the menu', () => {
+  it('is rung up by staff at its typed price, takes nothing from stock, and is refused from a QR menu', async () => {
+    const before = [await stock(beans), await stock(cup)];
+    const r = await auth('post', '/api/orders').send({
+      table: 'Takeout', paymentMethod: 'Cash', customerName: 'Walk-in',
+      items: [{ name: 'Affogato (special)', price: 165, quantity: 2, selectedAddOns: [], isOpenItem: true, department: 'Kitchen' }],
+    });
+    expect(r.body.success, JSON.stringify(r.body)).toBe(true);
+    const line = r.body.order.items[0];
+    expect([line.name, line.price, line.isOpenItem]).toEqual(['Affogato (special)', 165, true]);
+    expect(r.body.order.total).toBe(330);
+    expect((await complete(r.body.order)).status).toBe(200);
+    expect([await stock(beans), await stock(cup)]).toEqual(before);
+    const qr = await request(app).post('/api/orders').send({ table: 'Table 2', customerName: 'Guest', items: [{ name: 'Affogato (special)', price: 1, quantity: 1, selectedAddOns: [] }] });
+    expect(qr.body.success).toBe(false);
+  });
+});

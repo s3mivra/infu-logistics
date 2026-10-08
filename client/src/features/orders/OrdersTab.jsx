@@ -152,6 +152,20 @@ export default function OrdersTab({ ctx }) {
   // UI-only hint for the walk-in picker below - not persisted; the real
   // guest-vs-regular classification comes from whether a customer name is entered.
   const [walkInMode, setWalkInMode] = React.useState('guest');
+  // Something the shop offers that is not on the menu: typed in at the till.
+  const [openItem, setOpenItem] = React.useState(null);   // { name, price, qty, department }
+  const departments = [...new Set((categories || []).map(c => c.department).filter(Boolean))];
+  const addOpenItem = (e) => {
+    e.preventDefault();
+    const name = openItem.name.trim(), price = Number(openItem.price), qty = Math.max(1, parseInt(openItem.qty, 10) || 1);
+    if (!name) return ui.alert('Type what it is.');
+    if (!(price >= 0) || openItem.price === '') return ui.alert('Type its price.');
+    setPosCart([...posCart, {
+      name, price, listPrice: price, quantity: qty, selectedAddOns: [], discountPercent: 0, isOpenItem: true,
+      department: openItem.department || departments[0] || (BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen'),
+    }]);
+    setOpenItem(null);
+  };
   // A split payment being typed on an open order: { [orderId]: parts }.
   const [splitParts, setSplitParts] = React.useState({});
   const [noteOpen, setNoteOpen] = React.useState(false);
@@ -740,6 +754,42 @@ export default function OrdersTab({ ctx }) {
                       </div>
                     );
                   })}
+
+                  {/* Not on the menu: the item is typed in with its price. It
+                      takes nothing from stock, since it has no recipe. */}
+                  <div className="px-3 pt-3">
+                    {!openItem ? (
+                      <button type="button" onClick={() => setOpenItem({ name: '', price: '', qty: 1, department: departments[0] || '' })}
+                        className="w-full text-[11px] font-bold uppercase tracking-wider text-brand-text border border-dashed border-brand/40 rounded-lg py-2 hover:bg-brand/10 transition">
+                        + Item not on the menu
+                      </button>
+                    ) : (
+                      <form onSubmit={addOpenItem} className="bg-white/5 border border-white/10 rounded-lg p-2.5 space-y-2">
+                        <input autoFocus value={openItem.name} onChange={e => setOpenItem(o => ({ ...o, name: e.target.value }))} maxLength={120}
+                          placeholder="What is it?" aria-label="Item name"
+                          className="w-full bg-page-bg border border-white/10 rounded-lg px-2.5 py-2 text-fg text-xs font-bold outline-none focus:border-brand/50" />
+                        <div className="flex gap-2">
+                          <input type="number" min="0" step="0.01" value={openItem.price} onChange={e => setOpenItem(o => ({ ...o, price: e.target.value }))}
+                            placeholder="Price ₱" aria-label="Price"
+                            className="w-1/2 bg-page-bg border border-white/10 rounded-lg px-2.5 py-2 text-fg text-xs font-bold outline-none focus:border-brand/50" />
+                          <input type="number" min="1" step="1" value={openItem.qty} onChange={e => setOpenItem(o => ({ ...o, qty: e.target.value }))}
+                            placeholder="Qty" aria-label="Quantity"
+                            className="w-1/4 bg-page-bg border border-white/10 rounded-lg px-2.5 py-2 text-fg text-xs font-bold outline-none focus:border-brand/50" />
+                          {departments.length > 1 && (
+                            <select value={openItem.department} onChange={e => setOpenItem(o => ({ ...o, department: e.target.value }))} aria-label="Made by"
+                              className="w-1/4 bg-page-bg border border-white/10 rounded-lg px-1.5 py-2 text-fg text-xs font-bold outline-none">
+                              {departments.map(d => <option key={d} value={d}>{d}</option>)}
+                            </select>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <button type="submit" className="flex-1 bg-brand text-on-brand rounded-lg py-1.5 text-[11px] font-black uppercase tracking-wider">Add to order</button>
+                          <button type="button" onClick={() => setOpenItem(null)} className="flex-1 bg-white/5 text-fg/80 rounded-lg py-1.5 text-[11px] font-bold uppercase tracking-wider">Cancel</button>
+                        </div>
+                        <p className="text-[10px] text-fg/65">Not on the menu, so nothing is taken from stock. Add it in Menu Setup if it is sold often.</p>
+                      </form>
+                    )}
+                  </div>
 
                   {/* Cart items */}
                   <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar min-h-[140px] max-h-[50vh] lg:max-h-none">

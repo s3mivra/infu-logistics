@@ -1042,10 +1042,18 @@ app.get('/api/owner/overview', verifyToken, requireStaff, requirePermission('own
     const now = new Date();
     const todayKey = businessDateStr(now);
     const todayStart = dayStart(todayKey);
-    const monthStart = dayStart(`${todayKey.slice(0, 7)}-01`);
-    const lastMonthSameDay = new Date(now); lastMonthSameDay.setMonth(lastMonthSameDay.getMonth() - 1);
-    const lastMonthKey = businessDateStr(lastMonthSameDay);
-    const lastMonthStart = dayStart(`${lastMonthKey.slice(0, 7)}-01`);
+    // The period sales and profit cover (default: this month so far), and the
+    // one just before it of the same length, to compare against. What is owed,
+    // the cash and the stock are always as of now - a balance, not a period.
+    const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+    const startKey = isDay(req.query.start) ? req.query.start : `${todayKey.slice(0, 7)}-01`;
+    const endKey = isDay(req.query.end) ? req.query.end : todayKey;
+    if (startKey > endKey) return res.status(400).json({ success: false, error: 'The start date is after the end date.' });
+    const monthStart = dayStart(startKey);
+    const periodEnd = endKey >= todayKey ? now : dayEnd(endKey);
+    const spanMs = periodEnd.getTime() - monthStart.getTime();
+    const lastMonthStart = new Date(monthStart.getTime() - spanMs - 1);
+    const lastMonthSameDay = new Date(monthStart.getTime() - 1);
     const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
     const salesBetween = async (from, to) => {
       const [row] = await Order.aggregate([
@@ -1065,10 +1073,10 @@ app.get('/api/owner/overview', verifyToken, requireStaff, requirePermission('own
     };
     const [today, mtd, lastMtd, all, thisMonth, arOrders, bills, items, requisitions, fundSpends, changes, openOrders] = await Promise.all([
       salesBetween(todayStart, now),
-      salesBetween(monthStart, now),
+      salesBetween(monthStart, periodEnd),
       salesBetween(lastMonthStart, lastMonthSameDay),
       ledger(null),
-      ledger({ date: { $gte: monthStart, $lte: now } }),
+      ledger({ date: { $gte: monthStart, $lte: periodEnd } }),
       Order.find({ ...bizScope, status: 'Completed', paymentMethod: AR_PAYMENT_METHOD_FILTER, isComplimentary: { $ne: true }, arSettled: { $ne: true } },
         { total: 1, arPaidAmount: 1, refundedAmount: 1, arDueDate: 1 }).limit(20000).lean(),
       Bill.find({ ...bizScope, status: { $in: ['Pending', 'Approved', 'Partially Paid'] } }, { amount: 1, paidAmount: 1, dueDate: 1, status: 1 }).lean(),
@@ -1089,7 +1097,7 @@ app.get('/api/owner/overview', verifyToken, requireStaff, requirePermission('own
     const cash = { onHand: all(c => c === '111'), bank: all(c => c === '112'), eWallet: all(c => c === '113'), petty: all(c => c === '114') };
 
     res.json({
-      success: true, asOf: now,
+      success: true, asOf: now, period: { start: startKey, end: endKey, previousStart: businessDateStr(lastMonthStart), previousEnd: businessDateStr(lastMonthSameDay) },
       sales: { today: today.total, todayCount: today.count, monthToDate: mtd.total, monthCount: mtd.count, lastMonthToDate: lastMtd.total },
       month: { income: r2(income), costOfSales, expenses, netIncome: r2(income - costOfSales - expenses) },
       cash: { ...cash, total: r2(cash.onHand + cash.bank + cash.eWallet + cash.petty) },

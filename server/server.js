@@ -1655,6 +1655,9 @@ items: [{
     // the books call "COMMERCIAL BLEND"). The customer's ORIGINAL copy shows
     // it; the office DUPLICATE, stock, reports and the ledger keep `name`.
     printName: { type: String, default: '' },
+    // Rung up at the till for something not on the menu: its name and price
+    // were typed in, and it takes nothing from stock (it has no recipe).
+    isOpenItem: { type: Boolean, default: false },
     price: Number,
     // The product's SRP when it was sold (its size's price for a size, the
     // combo's price for a combo) - so the sales report can show it beside what

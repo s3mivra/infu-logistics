@@ -90,6 +90,8 @@ const shift = (s, days) => { const [y, m, d] = ymd(s); return fmt(new Date(Date.
 export const RANGE_PRESETS = [
   { key: 'today', label: 'Today' },
   { key: 'yesterday', label: 'Yesterday' },
+  { key: 'thisWeek', label: 'This week' },
+  { key: 'lastWeek', label: 'Last week' },
   { key: '7d', label: 'Last 7 days' },
   { key: 'thisMonth', label: 'This month' },
   { key: 'lastMonth', label: 'Last month' },
@@ -99,6 +101,12 @@ export const RANGE_PRESETS = [
   { key: 'lastYear', label: 'Last year' },
 ];
 
+// 0 for a Monday ... 6 for a Sunday, for a YYYY-MM-DD date.
+function weekdayFromMonday(day) {
+  const [y, m, d] = ymd(day);
+  return (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+}
+
 // -> { start, end } for a preset key, as of `today` (defaults to the business's today).
 export function presetRange(key, today = todayStr()) {
   const [y, m] = ymd(today);
@@ -106,6 +114,9 @@ export function presetRange(key, today = todayStr()) {
   switch (key) {
     case 'today': return { start: today, end: today };
     case 'yesterday': { const d = shift(today, -1); return { start: d, end: d }; }
+    // Weeks run Monday to Sunday.
+    case 'thisWeek': return { start: shift(today, -weekdayFromMonday(today)), end: today };
+    case 'lastWeek': { const mon = shift(today, -weekdayFromMonday(today) - 7); return { start: mon, end: shift(mon, 6) }; }
     case '7d': return { start: shift(today, -6), end: today };
     case '30d': return { start: shift(today, -29), end: today };
     case 'thisMonth': return { start: `${y}-${pad(m)}-01`, end: today };

@@ -36,6 +36,18 @@ describe('the Owner role', () => {
     expect(r.body.waiting).toMatchObject({ requisitions: 0, fundSpends: 0 });
   });
 
+  it('takes a period for sales and profit, and compares it with the one before', async () => {
+    const day = (d) => d.toISOString().slice(0, 10);
+    const longAgo = await as(tok.ovOwner, 'get', '/api/owner/overview?start=2020-01-01&end=2020-01-31');
+    expect(longAgo.status, JSON.stringify(longAgo.body)).toBe(200);
+    expect([longAgo.body.sales.monthToDate, longAgo.body.month.income]).toEqual([0, 0]);
+    expect(longAgo.body.period).toMatchObject({ start: '2020-01-01', end: '2020-01-31', previousEnd: '2019-12-31' });
+    expect(longAgo.body.cash.onHand).toBe(500);                       // a balance is always as of now
+    const wide = await as(tok.ovOwner, 'get', `/api/owner/overview?start=2020-01-01&end=${day(new Date(Date.now() + 86400000))}`);
+    expect(wide.body.sales.monthToDate).toBe(500);
+    expect((await as(tok.ovOwner, 'get', '/api/owner/overview?start=2026-02-01&end=2026-01-01')).status).toBe(400);
+  });
+
   it('looks but does not key in work', async () => {
     expect((await as(tok.ovOwner, 'get', '/api/reports/sales-summary')).status).toBe(200);
     expect((await as(tok.ovOwner, 'post', '/api/check-vouchers').send({ payeeName: 'X', amount: 1, sourceAccount: '111000', chargeAccount: '760000', notes: 'x' })).status).toBe(403);
