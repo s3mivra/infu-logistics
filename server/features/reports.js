@@ -1087,6 +1087,12 @@ app.get('/api/owner/overview', verifyToken, requireStaff, requirePermission('own
       ChangeRequest.countDocuments({ status: 'Pending' }),
       mongoose.model('PurchaseOrder').countDocuments({ ...tenantScope(req), status: { $in: ['Ordered', 'Processing', 'Incomplete'] } }),
     ]);
+    // Backdated sales in the period with no cost of goods sold behind them:
+    // while there are any, the profit shown is too high.
+    const uncosted = await Order.countDocuments({
+      ...bizScope, isBackdated: true, status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: monthStart, $lte: periodEnd },
+      $and: [{ $or: [{ costPosted: { $exists: false } }, { costPosted: { $lte: 0 } }] }, { $or: [{ stockMoves: { $exists: false } }, { stockMoves: { $size: 0 } }] }],
+    });
 
     const owed = arOrders.map(o => Math.max(0, r2((o.total || 0) - (o.arPaidAmount || 0) - (o.refundedAmount || 0)))).map((bal, i) => ({ bal, due: arOrders[i].arDueDate })).filter(x => x.bal > 0.004);
     const overdueAr = owed.filter(x => x.due && new Date(x.due) < now);
@@ -1100,7 +1106,7 @@ app.get('/api/owner/overview', verifyToken, requireStaff, requirePermission('own
     res.json({
       success: true, asOf: now, period: { start: startKey, end: endKey, previousStart: businessDateStr(lastMonthStart), previousEnd: businessDateStr(lastMonthSameDay) },
       sales: { today: today.total, todayCount: today.count, monthToDate: mtd.total, monthCount: mtd.count, lastMonthToDate: lastMtd.total },
-      month: { income: r2(income), costOfSales, expenses, netIncome: r2(income - costOfSales - expenses) },
+      month: { income: r2(income), costOfSales, expenses, netIncome: r2(income - costOfSales - expenses), uncostedSales: uncosted },
       cash: { ...cash, total: r2(cash.onHand + cash.bank + cash.eWallet + cash.petty) },
       receivables: { total: r2(owed.reduce((s, x) => s + x.bal, 0)), count: owed.length, overdue: r2(overdueAr.reduce((s, x) => s + x.bal, 0)), overdueCount: overdueAr.length },
       payables: {

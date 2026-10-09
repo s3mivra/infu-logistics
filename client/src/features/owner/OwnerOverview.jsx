@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw, ChevronRight } from 'lucide-react';
+import * as ui from '../../shared/ui';
 import RangePresets from '../../shared/RangePresets';
 import { presetRange, matchPreset, RANGE_PRESETS } from '../../shared/businessDay.js';
 
@@ -46,6 +47,27 @@ export default function OwnerOverview({ apiFetch, go, can }) {
   }, [apiFetch, range.start, range.end]);
   useEffect(() => { load(); }, [load]);
   const periodName = (() => { const k = matchPreset(range); return k ? RANGE_PRESETS.find(p => p.key === k).label.toLowerCase() : `${range.start} to ${range.end}`; })();
+
+  // Backdated sales with no cost behind them: book it from here, and say what
+  // could not be costed and why - so a zero is never left unexplained.
+  const [costing, setCosting] = useState(false);
+  const bookCosts = async () => {
+    setCosting(true);
+    try {
+      const r = await (await apiFetch('/api/admin/backdate-sale/book-costs', { method: 'POST' })).json();
+      if (!r.success) return ui.alert(r.error || 'Could not book the cost.');
+      const lines = [`${r.booked} of ${r.checked} sale(s) costed - ${peso(r.total)} booked as cost of goods sold.`];
+      if ((r.noCost || []).length) {
+        lines.push('', 'No cost found for these items - their stock item is missing, or its unit cost in Inventory is 0:');
+        r.noCost.slice(0, 15).forEach(n => lines.push(`- ${n}`));
+        if (r.noCost.length > 15) lines.push(`...and ${r.noCost.length - 15} more`);
+      }
+      if ((r.problems || []).length) { lines.push('', 'Skipped:'); r.problems.slice(0, 5).forEach(n => lines.push(`- ${n}`)); }
+      ui.alert(lines.join('\n'));
+      load();
+    } catch { ui.alert('Network error - try again; sales already costed are skipped.'); }
+    finally { setCosting(false); }
+  };
 
   // A link only where the person can open the screen it goes to.
   const open = (tab, perm) => (!perm || can(perm) ? () => go(tab) : undefined);
@@ -95,6 +117,17 @@ export default function OwnerOverview({ apiFetch, go, can }) {
           <Line label="Income" value={peso(month.income)} />
           <Line label="Cost of goods sold" value={peso(month.costOfSales)} />
           <Line label="Expenses" value={peso(month.expenses)} />
+          {month.uncostedSales > 0 && (
+            <div className="mt-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30">
+              <p className="text-[11px] text-warning font-bold">{month.uncostedSales} backdated sale(s) in this period have no cost of goods sold yet, so this profit is too high.</p>
+              {can('sales.backdate') && (
+                <button type="button" onClick={bookCosts} disabled={costing}
+                  className="mt-2 bg-brand text-on-brand px-3 py-1.5 rounded-lg font-bold text-[11px] uppercase tracking-wider disabled:opacity-40">
+                  {costing ? 'Working…' : 'Book their cost now'}
+                </button>
+              )}
+            </div>
+          )}
         </Card>
 
         <Card title="Cash and bank" onOpen={open('ledger', 'accounting.view')}>

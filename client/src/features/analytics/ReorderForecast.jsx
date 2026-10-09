@@ -6,6 +6,11 @@ import Pager from '../../shared/Pager';
 // What to buy, and when: every stock item that sells, with how long it lasts at
 // the pace it is selling, what is already on its way on open purchase orders,
 // and how much more to order to be covered for the next two weeks or month.
+// Logistics sells whole pieces: "sold per day", in whole numbers. A café uses
+// grams and millilitres out of recipes, so there it stays "used per day".
+const IS_LOG = String(import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase() === 'log';
+const RATE_LABEL = IS_LOG ? 'Sold per day' : 'Used per day';
+
 const STATUS = {
   out: ['Out of stock', 'bg-danger/15 text-danger'],
   now: ['Order now', 'bg-danger/15 text-danger'],
@@ -29,11 +34,26 @@ export default function ReorderForecast({ rows = [], settings = {}, analyticsDis
   // What to buy is a whole number of units - nobody orders 4.92 pieces. (Used
   // per day stays a fraction: an item that sells one every three days uses 0.33.)
   const buy = (item, n) => { const d = analyticsDisplay(item); const whole = Math.ceil(Number(n || 0) / d.mult - 1e-9); return whole > 0 ? `${whole.toLocaleString('en-PH')} ${d.unit}` : '-'; };
+  // A piece-seller's pace as a whole number: 7 a day, or - for something that
+  // moves less than one a day - one every so many days.
+  const pace = (item) => {
+    if (!IS_LOG) return q(item, item.dailyUse);
+    const d = analyticsDisplay(item);
+    const perDay = Number(item.dailyUse || 0) / d.mult;
+    if (perDay >= 1) return `${Math.round(perDay).toLocaleString('en-PH')} ${d.unit}`;
+    const every = Math.max(2, Math.round(1 / perDay));
+    return `1 ${d.unit} every ${every} days`;
+  };
+  const onHand = (item) => {
+    if (!IS_LOG) return q(item, item.stockQty);
+    const d = analyticsDisplay(item);
+    return `${Math.floor(Number(item.stockQty || 0) / d.mult + 1e-9).toLocaleString('en-PH')} ${d.unit}`;
+  };
   const lasts = (r) => (r.daysLeft == null ? '-' : r.daysLeft <= 0 ? 'Out' : `${r.daysLeft} day${r.daysLeft === 1 ? '' : 's'}`);
 
   const exportXlsx = async () => {
     const XLSX = await import('xlsx');
-    const head = ['Item', 'Code', 'Unit', 'On hand', 'Used per day', 'Lasts (days)', 'Runs out on', 'On order', 'Buy for 2 weeks', 'Buy for 1 month', 'Status'];
+    const head = ['Item', 'Code', 'Unit', 'On hand', RATE_LABEL, 'Lasts (days)', 'Runs out on', 'On order', 'Buy for 2 weeks', 'Buy for 1 month', 'Status'];
     const body = shown.map(r => { const d = analyticsDisplay(r); const n = (v) => +(Number(v || 0) / d.mult).toFixed(2); return [r.itemName, r.itemCode || '', d.unit, n(r.stockQty), n(r.dailyUse), r.daysLeft ?? '', r.runsOutOn || '', n(r.onOrder), Math.ceil(n(r.buy14) - 1e-9), Math.ceil(n(r.buy30) - 1e-9), STATUS[r.status]?.[0] || '']; });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body]), 'Reorder forecast');
@@ -68,7 +88,7 @@ export default function ReorderForecast({ rows = [], settings = {}, analyticsDis
             <table className="w-full text-left text-xs min-w-[760px]">
               <thead className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/10">
                 <tr>
-                  <th className="py-2 pr-2">Item</th><th className="py-2 px-2 text-right">On hand</th><th className="py-2 px-2 text-right">Used per day</th>
+                  <th className="py-2 pr-2">Item</th><th className="py-2 px-2 text-right">On hand</th><th className="py-2 px-2 text-right">{RATE_LABEL}</th>
                   <th className="py-2 px-2">Lasts</th><th className="py-2 px-2 text-right">On order</th>
                   <th className="py-2 px-2 text-right">Buy for 2 weeks</th><th className="py-2 px-2 text-right">Buy for 1 month</th><th className="py-2 pl-2"></th>
                 </tr>
@@ -77,10 +97,11 @@ export default function ReorderForecast({ rows = [], settings = {}, analyticsDis
                 {page.pageItems.map(r => (
                   <tr key={r._id} className="border-b border-white/5">
                     <td className="py-2 pr-2 font-bold text-fg max-w-[220px] truncate" title={r.itemName}>{r.itemName}
-                      {r.trendPct != null && Math.abs(r.trendPct) >= 10 && <span className="block text-[10px] font-normal text-fg/65">selling {Math.abs(r.trendPct).toFixed(0)}% {r.trendPct > 0 ? 'faster' : 'slower'} this week</span>}
+                      {r.trendPct != null && r.trendPct <= -99.5 && <span className="block text-[10px] font-normal text-fg/65">none sold in the last 7 days</span>}
+                      {r.trendPct != null && r.trendPct > -99.5 && Math.abs(r.trendPct) >= 10 && <span className="block text-[10px] font-normal text-fg/65">selling {Math.abs(r.trendPct).toFixed(0)}% {r.trendPct > 0 ? 'faster' : 'slower'} this week</span>}
                     </td>
-                    <td className="py-2 px-2 text-right tabular-nums text-fg/80">{q(r, r.stockQty)}</td>
-                    <td className="py-2 px-2 text-right tabular-nums text-fg/80">{q(r, r.dailyUse)}</td>
+                    <td className="py-2 px-2 text-right tabular-nums text-fg/80">{onHand(r)}</td>
+                    <td className="py-2 px-2 text-right tabular-nums text-fg/80 whitespace-nowrap">{pace(r)}</td>
                     <td className="py-2 px-2 text-fg/80 whitespace-nowrap">{lasts(r)}{r.runsOutOn && r.daysLeft > 0 && <span className="block text-[10px] text-fg/65">until {r.runsOutOn}</span>}</td>
                     <td className="py-2 px-2 text-right tabular-nums text-fg/80">{r.onOrder > 0 ? q(r, r.onOrder) : '-'}</td>
                     <td className="py-2 px-2 text-right tabular-nums font-black text-fg">{buy(r, r.buy14)}</td>
