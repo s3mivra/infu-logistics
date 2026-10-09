@@ -1487,7 +1487,7 @@ app.get('/api/products/:id/price-history', verifyToken, requireStaff, async (req
 
 // PATCH /api/products/:id/availability - superadmin toggle. Permanently REMOVES
 // the product from menu + POS. Reporting still surfaces it while stock remains.
-app.patch('/api/products/:id/availability', verifyToken, requireSuperAdmin, async (req, res) => {
+app.patch('/api/products/:id/availability', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const { isAvailable } = req.body;
     if (typeof isAvailable !== 'boolean')
@@ -1536,7 +1536,7 @@ app.patch('/api/products/:id/qr', verifyToken, requireStaff, permit('products.ma
 // PATCH /api/products/:id/oos - toggle "Out of Stock". Distinct from Removed -
 // OOS products still appear in menu (with a badge) and in all reports. Use this
 // for a temporary stockout; use /availability for permanent removal.
-app.patch('/api/products/:id/oos', verifyToken, requireSuperAdmin, async (req, res) => {
+app.patch('/api/products/:id/oos', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const { isOutOfStock } = req.body;
     if (typeof isOutOfStock !== 'boolean')
@@ -1634,17 +1634,17 @@ app.get('/api/modifier-groups', verifyToken, requireStaff, async (req, res) => {
   catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.post('/api/modifier-groups', verifyToken, requireSuperAdmin, validate(modifierGroupSchema), async (req, res) => {
+app.post('/api/modifier-groups', verifyToken, requireStaff, requirePermission('products.manage'), validate(modifierGroupSchema), async (req, res) => {
   try { const group = await ModifierGroup.create(req.body); emitToAll('menuUpdated'); res.json({ success: true, group }); }
   catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.put('/api/modifier-groups/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/modifier-groups/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try { const group = await ModifierGroup.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after', runValidators: true }); emitToAll('menuUpdated'); res.json({ success: true, group }); }
   catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.delete('/api/modifier-groups/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/modifier-groups/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try { await ModifierGroup.findByIdAndDelete(req.params.id); emitToAll('menuUpdated'); res.json({ success: true }); }
   catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
@@ -1657,7 +1657,7 @@ app.get('/api/combos', async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.post('/api/combos', verifyToken, requireSuperAdmin, validate(comboSchema), async (req, res) => {
+app.post('/api/combos', verifyToken, requireStaff, requirePermission('products.manage'), validate(comboSchema), async (req, res) => {
   try {
     if (!req.body.name || !(req.body.price > 0)) return res.status(400).json({ success: false, error: 'Name and a positive price are required.' });
     if (!Array.isArray(req.body.items) || req.body.items.length === 0) return res.status(400).json({ success: false, error: 'A combo needs at least one component product.' });
@@ -1676,12 +1676,12 @@ app.post('/api/combos', verifyToken, requireSuperAdmin, validate(comboSchema), a
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.put('/api/combos/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/combos/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try { const combo = await Combo.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' }); emitToAll('menuUpdated'); res.json({ success: true, combo }); }
   catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.delete('/api/combos/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/combos/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try { await Combo.findByIdAndDelete(req.params.id); emitToAll('menuUpdated'); res.json({ success: true }); }
   catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
@@ -1694,7 +1694,7 @@ app.get('/api/sales', verifyToken, requireStaff, async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.post('/api/sales', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/sales', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const { name, description, startsAt, endsAt, rules } = req.body;
     if (!name?.trim()) return res.status(400).json({ success: false, error: 'Sale name is required.' });
@@ -1706,7 +1706,7 @@ app.post('/api/sales', verifyToken, requireSuperAdmin, async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.put('/api/sales/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/sales/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const { name, description, startsAt, endsAt, isActive, rules } = req.body;
     if (startsAt && endsAt && new Date(startsAt) >= new Date(endsAt))
@@ -1721,7 +1721,7 @@ app.put('/api/sales/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.delete('/api/sales/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/sales/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     await Sale.findByIdAndDelete(req.params.id);
     emitToAll('menuUpdated');

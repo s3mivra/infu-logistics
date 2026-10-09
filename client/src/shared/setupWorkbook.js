@@ -17,7 +17,7 @@ export const TEMPLATES = [
   { key: 'inventory', sheet: 'Inventory', perm: (can, su) => su, preview: true },
   // After Inventory: its products are what the tiers price. Prices for products
   // the Inventory preview has not created yet wait and apply once it is confirmed.
-  { key: 'priceTiers', sheet: 'Price Tiers', perm: (can, su) => su },
+  { key: 'priceTiers', sheet: 'Price Tiers', perm: (can) => can('pricing.tiers') },
   { key: 'pnlHistory', sheet: 'P&L History', perm: books },
   { key: 'openingBalances', sheet: 'Opening Balances', perm: books },
   { key: 'openReceivables', sheet: 'Open Receivables', perm: books },

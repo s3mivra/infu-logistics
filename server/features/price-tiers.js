@@ -42,7 +42,7 @@ export default function registerPriceTiers(ctx) {
   });
 
   // ── CREATE ───────────────────────────────────────────────────────────────────
-  app.post('/api/price-tiers', verifyToken, requireSuperAdmin, async (req, res) => {
+  app.post('/api/price-tiers', verifyToken, requireStaff, requirePermission('pricing.tiers'), async (req, res) => {
     try {
       const name = cleanName(req.body?.name);
       if (!name) return res.status(400).json({ success: false, error: 'Tier name is required.' });
@@ -238,7 +238,7 @@ export default function registerPriceTiers(ctx) {
   // export's own layout. See lib/tierPriceImport.js. Prices for products that
   // do not exist yet (the setup workbook makes them from its Inventory sheet,
   // confirmed after this runs) wait and are applied when they are created.
-  app.post('/api/setup/price-tiers/import', verifyToken, requireSuperAdmin, async (req, res) => {
+  app.post('/api/setup/price-tiers/import', verifyToken, requireStaff, requirePermission('pricing.tiers'), async (req, res) => {
     try {
       const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
       if (!rows.length) return res.status(400).json({ success: false, error: 'No rows to import.' });
@@ -330,7 +330,7 @@ export default function registerPriceTiers(ctx) {
   // ── DELETE ───────────────────────────────────────────────────────────────────
   // Refused while clients still carry the tag - deleting would silently drop
   // their rate. Deactivate instead (isActive:false) to retire a tier gradually.
-  app.delete('/api/price-tiers/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+  app.delete('/api/price-tiers/:id', verifyToken, requireStaff, requirePermission('pricing.tiers'), async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Tier not found.' });
       const tier = await PriceTier.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });

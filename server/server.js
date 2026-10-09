@@ -1791,6 +1791,10 @@ items: [{
   // Dine-in, served in the bar's cups rather than take-out ones (cafe). The
   // take-out packaging in each recipe is left on the shelf at completion.
   useBarCups: { type: Boolean, default: false },
+  // Cost of goods sold booked for this sale from a cost figure alone (an
+  // imported order with no product lines) - see account 139000. Recorded so
+  // the same cost is never booked twice.
+  costPosted: { type: Number, default: 0 },
   // Cafe, when "Dine-in / Take-out" is switched on in Menu Setup: which one
   // this order is. Dine-in is served in the shop's own cups (useBarCups), so
   // take-out packaging stays on the shelf. '' = not asked.

@@ -3029,7 +3029,7 @@ app.post('/api/orders/archive', verifyToken, requireStaff, permit('orders.delete
 // The journal entry is dated on the deposit date, because that is when the
 // asset account actually moved.
 // ============================================================
-app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, atomic(mongoose, async (req, res) => {
+app.post('/api/orders/:id/settle-ar', verifyToken, requireStaff, requirePermission('ar.collect'), atomic(mongoose, async (req, res) => {
   try {
     const {
       amount, paymentMethod, note, referenceNumber, collectionDate, depositDate, collectedBy,
@@ -3221,7 +3221,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, atomic(mon
 // them) directly against an order's outstanding A/R. No cash moves; this is
 // purely "use what they're already owed instead of collecting more cash."
 // Same gate as settle-ar - both actually move AR/credit balances.
-app.post('/api/client-accounts/:id/credit/apply', verifyToken, requireSuperAdmin, atomic(mongoose, async (req, res) => {
+app.post('/api/client-accounts/:id/credit/apply', verifyToken, requireStaff, requirePermission('ar.collect'), atomic(mongoose, async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Client not found.' });
     const client = await ClientAccount.findOne({ _id: req.params.id, ...tenantScope(req) });
@@ -3279,7 +3279,7 @@ app.post('/api/client-accounts/:id/credit/apply', verifyToken, requireSuperAdmin
 // actually leaves: a real disbursement, with the same paper trail (Check
 // Voucher) a supplier payment gets, rather than sitting as an invisible
 // liability forever.
-app.post('/api/client-accounts/:id/credit/refund', verifyToken, requireSuperAdmin, atomic(mongoose, async (req, res) => {
+app.post('/api/client-accounts/:id/credit/refund', verifyToken, requireStaff, requirePermission('ar.collect'), atomic(mongoose, async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Client not found.' });
     const client = await ClientAccount.findOne({ _id: req.params.id, ...tenantScope(req) });
@@ -3734,7 +3734,7 @@ const dropRemainingOnce = async (req, res, mayRetry) => {
 };
 
 // ── REFUND FLOW ───────────────────────────────────────────────────────────────
-app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req, res) => {
+app.post('/api/orders/:id/refund', verifyToken, requireStaff, requirePermission('orders.refund'), async (req, res) => {
   await runWithStatsRetry(refundOnce, req, res);
 });
 
@@ -3901,7 +3901,7 @@ const refundOnce = async (req, res, mayRetry) => {
 // carried through proportionally, never recomputed. Capped against what's
 // already been refunded across prior partial passes so the running total can
 // never exceed the order's collected amount.
-app.post('/api/orders/:id/partial-refund', verifyToken, requireSuperOrAdmin, async (req, res) => {
+app.post('/api/orders/:id/partial-refund', verifyToken, requireStaff, requirePermission('orders.refund'), async (req, res) => {
   await runWithStatsRetry(partialRefundOnce, req, res);
 });
 
@@ -4111,7 +4111,7 @@ const partialRefundOnce = async (req, res, mayRetry) => {
 // prorated against anything). Whichever is bigger, the customer pays the
 // difference or gets it back - never both a refund AND a separate charge.
 // v1 scope: replacement items are base-product only (no size/add-on picker).
-app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (req, res) => {
+app.post('/api/orders/:id/exchange', verifyToken, requireStaff, requirePermission('orders.refund'), async (req, res) => {
   const session = await mongoose.startSession();
   const fail = async (status, error) => {
     await session.abortTransaction(); session.endSession();

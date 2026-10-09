@@ -774,7 +774,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
     const DEADSTOCK_MIN_AGE_DAYS = 30;
     const NEW_SKU_DAYS = 14;
     const nowMs = Date.now();
-    const ageDays = (item) => item?.createdAt ? Math.max(0, (nowMs - new Date(item.createdAt).getTime()) / 86400000) : Infinity;
+    const ageDays = (item) => item?.createdAt ? Math.max(historyDays, (nowMs - new Date(item.createdAt).getTime()) / 86400000) : Infinity;
     const aduByName = Object.fromEntries(rmEntries.map(e => [e.name.toLowerCase(), e]));
     const uOf = (item) => aduByName[(item.itemName || '').toLowerCase()];
 
@@ -790,6 +790,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
           unit:        invItem?.unit,
           displayUnit: invItem?.displayUnit,
           packSize:    invItem?.packSize,
+          unitMultiplier: invItem?.unitMultiplier,
           dailyAvg: burn,
           daysLeft: burn > 0 ? Math.floor(i.currentStock / burn) : Infinity,
           weeklyNeed: Math.ceil(burn * 7),

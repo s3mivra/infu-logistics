@@ -18,6 +18,12 @@ export const ACCOUNTS = {
   '118000': { name: 'Unassigned Receipts',        type: 'asset', parent: '110000' },
   '120000': { name: 'Accounts Receivable',        type: 'asset', parent: '100000' },
   '130000': { name: 'Inventory',                  type: 'asset', parent: '100000' },
+  // Contra to Inventory. The cost of a sale known only as a total (an imported
+  // order with no product lines) cannot come off any one item, so it waits
+  // here, and the next stock count - which finds those goods gone - clears it
+  // instead of booking the same goods again as shrinkage. Kept off 130000 so
+  // that account keeps agreeing with the items on the shelf.
+  '139000': { name: 'Cost of Sales Awaiting Stock Count', type: 'asset', parent: '100000' },
   '140000': { name: 'Fixed Assets',               type: 'asset', isParent: true, parent: '100000' },
   // Both 140000 and 150000 were headers with no children, so equipment could
   // not be recorded at all and the balance sheet understated what the business

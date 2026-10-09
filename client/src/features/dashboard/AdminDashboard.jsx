@@ -8668,7 +8668,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   // Granular permission check for UI gating (server still enforces). Superadmin ⇒ all.
   const can = (perm) => isSuperAdmin || auth.can(perm);
   // Void / refund are allowed for superadmin OR admin (case-insensitive).
-  const canVoidRefund = ['superadmin', 'admin'].includes(String(activeAdmin?.role || '').toLowerCase());
+  const canVoidRefund = can('orders.refund');
   // Voiding follows the "Void / delete orders" permission, as the server does,
   // so granting it to a role (a head barista, say) is all it takes.
   const canVoid = can('orders.delete');
@@ -8974,7 +8974,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     // ── Price tiers (for the per-product segment override picker) ──
     priceTiers,
     // ── Market segment pricing table (Pricing Control) ──
-    pricingTable, fetchPricingTable, handleTierCellUpdate, handleTierPercentUpdate,
+    pricingTable, fetchPricingTable, fetchPriceTiers, handleTierCellUpdate, handleTierPercentUpdate,
     tierBreaksFor, addTierBulkBreak, removeTierBulkBreak,
     // ── Partial fulfillment ──
     partialModal, setPartialModal, partialQtys, setPartialQtys,

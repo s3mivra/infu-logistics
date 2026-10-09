@@ -406,7 +406,7 @@ export default function ClientsTab() {
               {[['Cash', 'Cash on Delivery'], ['E-Wallet', 'E-Wallet'], ['Bank Transfer', 'Bank Transfer'], ['Credit Card', 'Credit Card']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </div>
-          {isSuperAdmin && tiers.length > 0 && (
+          {can('clients.edit') && tiers.length > 0 && (
             <label className="flex items-center gap-2 text-xs font-bold text-fg/70">
               Price tier
               <select value={addForm.tier} onChange={e => setAddForm({ ...addForm, tier: e.target.value })} aria-label="Price tier"
@@ -556,7 +556,7 @@ export default function ClientsTab() {
                         return (
                           <div className="flex flex-wrap items-center gap-2 mb-3">
                             {/* Price tier */}
-                            {isSuperAdmin && tiers.length > 0 ? (
+                            {can('clients.edit') && tiers.length > 0 ? (
                               <label className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-fg/70">
                                 Price tier
                                 <select value={tier} onChange={e => setClientTier(c, e.target.value)} aria-label={`Price tier for ${c.name}`}

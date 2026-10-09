@@ -73,3 +73,49 @@ describe('spending from a revolving fund', () => {
     expect(seen.body.waiting).toMatchObject({ requisitions: 1, fundSpends: 1 });
   });
 });
+
+describe('the permissions that used to be owner-only', () => {
+  it('can be given to a person, and are refused without them', async () => {
+    await makeUser({ name: 'ovClerk', role: 'staff', permissions: ['orders.view', 'accounting.view', 'sales.backdate', 'ar.collect', 'clients.edit', 'orders.refund'] });
+    const clerk = await loginStaff(app, 'ovClerk');
+    const day = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const sale = await as(clerk, 'post', '/api/admin/backdate-sale').send({ date: day, amount: 300, paymentMethod: 'On Account', customerName: 'Late Co' });
+    expect(sale.status, JSON.stringify(sale.body)).toBe(200);
+    expect((await as(tok.ovCashier, 'post', '/api/admin/backdate-sale').send({ date: day, amount: 300, paymentMethod: 'Cash' })).status).toBe(403);
+
+    const paid = await as(clerk, 'post', `/api/orders/${sale.body.order._id}/settle-ar`).send({ amount: 300, settleAccount: 'Cash on Hand' });
+    expect(paid.status, JSON.stringify(paid.body)).not.toBe(403);
+    expect((await as(tok.ovManager, 'post', `/api/orders/${sale.body.order._id}/settle-ar`).send({ amount: 1 })).status).toBe(403);
+
+    const client = await mongoose.model('ClientAccount').create({ name: 'EDIT ME', clientCode: 'CUS-EDIT', username: 'editme', password: 'x' });
+    expect((await as(clerk, 'patch', `/api/client-accounts/${client._id}`).send({ phone: '0917' })).status).toBe(200);
+    expect((await as(tok.ovCashier, 'patch', `/api/client-accounts/${client._id}`).send({ phone: '0917' })).status).toBe(403);
+  });
+});
+
+describe('the rest of the owner-only actions', () => {
+  it('follow their permissions', async () => {
+    await makeUser({ name: 'ovStock', role: 'staff', permissions: ['inventory.view', 'inventory.setup', 'inventory.delete'] });
+    const stockTok = await loginStaff(app, 'ovStock');
+    const item = await mongoose.model('Inventory').create({ itemName: 'PERM ITEM', unit: 'pcs', stockQty: 5, unitCost: 2 });
+    expect((await as(stockTok, 'put', `/api/inventory/${item._id}`).send({ itemName: 'PERM ITEM 2' })).status).not.toBe(403);
+    expect((await as(tok.ovCashier, 'put', `/api/inventory/${item._id}`).send({ itemName: 'X' })).status).toBe(403);
+    expect((await as(stockTok, 'post', '/api/stock-locations').send({ name: 'Back room' })).status).not.toBe(403);
+    expect((await as(tok.ovCashier, 'post', '/api/stock-locations').send({ name: 'Nope' })).status).toBe(403);
+    expect((await as(stockTok, 'delete', `/api/inventory/${item._id}`)).status).not.toBe(403);
+    // a menu manager builds combos and add-ons, as the screen already offered
+    expect((await as(tok.ovManager, 'post', '/api/addons').send({ name: 'Extra Shot', price: 30 })).status).not.toBe(403);
+    expect((await as(tok.ovCashier, 'post', '/api/addons').send({ name: 'Nope', price: 1 })).status).toBe(403);
+  });
+});
+
+describe('price tiers', () => {
+  it('are created and removed by whoever is given the permission', async () => {
+    await makeUser({ name: 'ovTiers', role: 'staff', permissions: ['products.view', 'pricing.tiers'] });
+    const t = await loginStaff(app, 'ovTiers');
+    const made = await as(t, 'post', '/api/price-tiers').send({ name: 'Satellite', pricingMode: 'per_product', percent: 0 });
+    expect(made.status, JSON.stringify(made.body)).toBe(200);
+    expect((await as(tok.ovManager, 'post', '/api/price-tiers').send({ name: 'Nope' })).status).toBe(403);
+    expect((await as(t, 'delete', `/api/price-tiers/${made.body.tier._id}`)).status).toBe(200);
+  });
+});

@@ -46,6 +46,7 @@ export default function registerAdminTools(ctx) {
     sortBatchesFEFO,
     batchesTotal,
     requireStaff,
+    requirePermission,
     evaluateClientAccess,
     computePercentageTax,
     PERCENTAGE_TAX_RATE,
@@ -912,7 +913,92 @@ async function createBackdatedSale(payload, actorName) {
 // cancelled or voided one never happened, and a refund cannot be recreated
 // from a summary, so those are reported rather than guessed at.
 const ORDER_IMPORT_MAX_ROWS = 2000;
-app.post('/api/orders/import', verifyToken, requireSuperAdmin, async (req, res) => {
+// Cost of goods sold for a sale known only as a total: DR 510000 / CR 139000,
+// on the sale's own date. The stock count that later finds those goods gone
+// clears 139000 rather than booking them again (see inventory count).
+const postCostAwaitingCount = async (order, cost, actorName) => {
+  const amt = Math.round((Number(cost) || 0) * 100) / 100;
+  if (!(amt > 0)) return 0;
+  const lock = await periodLockFor(new Date(order.createdAt));
+  if (lock) throw new Error(`${order.orderNumber} is in ${lock.year}-${String(lock.month).padStart(2, '0')}, a closed month - its cost cannot be booked.`);
+  const reference = await mkSeqRef('COGS-IMP');
+  await JournalEntry.create({
+    date: new Date(order.createdAt), reference,
+    description: `Cost of goods sold for ${order.orderNumber} (imported cost - items taken at the next stock count)${actorName ? ` - ${actorName}` : ''}`,
+    lines: [
+      { accountCode: '510000', accountName: 'Cost of Goods Sold', debit: amt, credit: 0 },
+      { accountCode: '139000', accountName: 'Cost of Sales Awaiting Stock Count', debit: 0, credit: amt },
+    ],
+    totalDebit: amt, totalCredit: amt,
+  });
+  await Order.updateOne({ _id: order._id }, { $inc: { costPosted: amt } });
+  return amt;
+};
+
+// What the goods on an order cost, at what each stock item is carried at now:
+// each line's product is followed to its recipe (or, with none, to the stock
+// item of the same code), exactly as a sale that takes stock would.
+const costOfOrderFromStock = async (order) => {
+  let cost = 0; const unpriced = [];
+  for (const item of (order.items || [])) {
+    const qty = Number(item.quantity) || 0;
+    if (!(qty > 0)) continue;
+    const code = String(item.productCode || '').trim();
+    const product = (item.productId && mongoose.Types.ObjectId.isValid(String(item.productId)) && await Product.findById(item.productId).lean())
+      || (code && await Product.findOne({ productCode: { $regex: `^${code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } }).lean())
+      || await Product.findOne({ name: String(item.name || '').replace(/\s*\(.*?\)\s*$/, '').trim() }).lean();
+    if (!product) { unpriced.push(item.name); continue; }
+    let recipe = product.baseRecipe || [];
+    const sizeMatch = String(item.name || '').match(/\(([^)]+)\)$/);
+    if (sizeMatch) { const sz = product.sizes?.find(x => x.name === sizeMatch[1]); if (sz?.recipe?.length) recipe = sz.recipe; }
+    let plan = recipe.filter(r => r.invId && !r.nonStock && mongoose.Types.ObjectId.isValid(String(r.invId)))
+      .map(r => ({ invId: r.invId, qty: Number(r.qty) * qty }));
+    if (!plan.length) {
+      const linkInv = await resolveLinkedInventory(product, item.productCode || product.productCode);
+      if (linkInv) plan = [{ invId: linkInv._id, qty: qty * baseUnitsPerSale(product, linkInv) }];
+    }
+    if (!plan.length) { unpriced.push(item.name); continue; }
+    const invs = await Inventory.find({ _id: { $in: plan.map(x => x.invId) } }, { unitCost: 1 }).lean();
+    const costOf = new Map(invs.map(i => [String(i._id), Number(i.unitCost) || 0]));
+    const lineCost = plan.reduce((sum, x) => sum + (costOf.get(String(x.invId)) || 0) * x.qty, 0);
+    if (!(lineCost > 0)) unpriced.push(item.name);
+    cost += lineCost;
+  }
+  return { cost: Math.round(cost * 100) / 100, unpriced };
+};
+
+// Backdated sales that have their products but took no stock and carry no cost:
+// book each one's cost of goods sold from the stock items' cost. The goods are
+// not taken item by item (the stock on file may already be as of a later day),
+// so the cost waits in 139000 for the next stock count to clear - see
+// postCostAwaitingCount. Safe to run again: an order is costed once.
+app.post('/api/admin/backdate-sale/book-costs', verifyToken, requireStaff, requirePermission('sales.backdate'), async (req, res) => {
+  try {
+    const orders = await Order.find({
+      businessType: BUSINESS_TYPE, isBackdated: true, status: 'Completed', isComplimentary: { $ne: true },
+      $and: [{ $or: [{ costPosted: { $exists: false } }, { costPosted: { $lte: 0 } }] }, { $or: [{ stockMoves: { $exists: false } }, { stockMoves: { $size: 0 } }] }],
+    }, { items: 1, orderNumber: 1, createdAt: 1 }).limit(20000).lean();
+    let booked = 0, total = 0; const noCost = new Set(), problems = [];
+    for (const o of orders) {
+      try {
+        const { cost, unpriced } = await costOfOrderFromStock(o);
+        unpriced.forEach(n => n && noCost.add(n));
+        if (!(cost > 0)) continue;
+        total += await postCostAwaitingCount(o, cost, req.user?.name);
+        booked++;
+      } catch (e) { if (problems.length < 20) problems.push(e.message); }
+    }
+    total = Math.round(total * 100) / 100;
+    await logAudit(req, { action: 'backdate-book-costs', entity: 'Order', entityId: 'bulk', after: { checked: orders.length, booked, total } });
+    emitToMgr('erpUpdated');
+    res.json({ success: true, checked: orders.length, booked, total, noCost: [...noCost].slice(0, 40), problems });
+  } catch (err) {
+    log.error?.({ err }, 'POST /api/admin/backdate-sale/book-costs failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.post('/api/orders/import', verifyToken, requireStaff, requirePermission('sales.backdate'), async (req, res) => {
   try {
     const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
     const lineRows = Array.isArray(req.body?.lines) ? req.body.lines : [];
@@ -938,7 +1024,7 @@ app.post('/api/orders/import', verifyToken, requireSuperAdmin, async (req, res) 
     const prodByName = new Map(products.map(p => [String(p.name).toUpperCase(), p]));
     const clientByName = new Map(clients.map(c => [String(c.name || '').trim().toUpperCase(), c]));
 
-    const created = [], skipped = [], problems = [];
+    const created = [], skipped = [], problems = [], costed = [];
     let maxSeqByKey = {};
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i] || {};
@@ -952,8 +1038,16 @@ app.post('/api/orders/import', verifyToken, requireSuperAdmin, async (req, res) 
         // Already here? Leave it - unless it is an earlier re-import of this
         // same order that landed on a different total (one came in at its
         // subtotal, short of its delivery fee): that one is replaced.
-        const earlier = await Order.findOne({ importRef: no, isBackdated: true }, { total: 1, status: 1 }).lean();
+        const cost = Math.max(0, num(pick(r, 'Cost', 'cost', 'COGS')));
+        const earlier = await Order.findOne({ importRef: no, isBackdated: true }, { total: 1, status: 1, stockMoves: 1, costPosted: 1, orderNumber: 1, createdAt: 1 }).lean();
         const fixing = !!earlier && earlier.status === 'Completed' && Math.abs((Number(earlier.total) || 0) - total) > 0.005;
+        // Already here, and now the sheet says what it cost: book that once.
+        if (!fixing && earlier && earlier.status === 'Completed' && cost > 0
+            && !(earlier.stockMoves || []).length && !(Number(earlier.costPosted) > 0)) {
+          const amt = await postCostAwaitingCount(earlier, cost, req.user?.name);
+          costed.push({ row: i + 1, orderNumber: earlier.orderNumber, cost: amt });
+          continue;
+        }
         if (!fixing && (earlier || await Order.exists({ orderNumber: no }))) throw new Error(`${no} is already in the app - skipped.`);
 
         const date = pick(r, 'Date', 'date');
@@ -994,8 +1088,23 @@ app.post('/api/orders/import', verifyToken, requireSuperAdmin, async (req, res) 
         const result = await createBackdatedSale({
           ...payload, date, customerName: customer || undefined, paymentMethod: payment,
           importRef: no, orderNumber: no, clientId: client ? String(client._id) : '',
-          notes: `Re-imported - ${no}`, affectInventory: false, replaceExisting: fixing,
+          // With product lines and a cost, the goods come off the shelf as of
+          // the sale (cost of goods sold at what the stock is carried at).
+          notes: `Re-imported - ${no}`, affectInventory: cost > 0 && its.length > 0, replaceExisting: fixing,
         }, req.user?.name);
+        // With a total only, the cost waits for the next stock count.
+        if (cost > 0 && !its.length) {
+          const amt = await postCostAwaitingCount(result.order, cost, req.user?.name);
+          costed.push({ row: i + 1, orderNumber: result.order.orderNumber, cost: amt });
+        }
+        // Product lines but no Cost given: follow what the stock items cost.
+        if (!(cost > 0) && its.length) {
+          const fromStock = await costOfOrderFromStock(result.order);
+          if (fromStock.cost > 0) {
+            const amt = await postCostAwaitingCount(result.order, fromStock.cost, req.user?.name);
+            costed.push({ row: i + 1, orderNumber: result.order.orderNumber, cost: amt });
+          }
+        }
         if (fixing) problems.push(`${no}: was in at ${earlier.total}; replaced, now ${result.total}.`);
         if (Math.abs(Number(result.total) - total) > 0.005) problems.push(`${no}: imported at ${result.total}, the sheet says ${total} - check its lines.`);
         if (num(pick(r, 'Refunded')) > 0) problems.push(`${no}: had a refund of ${num(pick(r, 'Refunded'))} - imported at its full total; record the refund again.`);
@@ -1017,6 +1126,7 @@ app.post('/api/orders/import', verifyToken, requireSuperAdmin, async (req, res) 
     const itemized = created.filter(c => c.itemized).length;
     res.json({
       success: true, created: created.length, skipped, problems, total,
+      costed: costed.length, costTotal: Math.round(costed.reduce((sum, c) => sum + c.cost, 0) * 100) / 100,
       note: `${created.length} order(s), ₱${total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}, back on their own dates with their own numbers and posted to the books.`
         + (created.length && itemized < created.length ? ` ${created.length - itemized} came from a summary-only export, so each has one summary line instead of its products (stock was not touched).` : ''),
     });
@@ -1026,7 +1136,7 @@ app.post('/api/orders/import', verifyToken, requireSuperAdmin, async (req, res) 
   }
 });
 
-app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/admin/backdate-sale', verifyToken, requireStaff, requirePermission('sales.backdate'), async (req, res) => {
   try {
     const result = await createBackdatedSale(req.body, req.user?.name);
     await logAudit(req, { action: 'backdate-sale', entity: 'Order', entityId: result.order._id, after: { orderNumber: result.order.orderNumber, date: result.dt, total: result.total, paymentMethod: result.method, itemized: result.itemized, affectInventory: result.affectInventory } });
@@ -1043,7 +1153,7 @@ app.post('/api/admin/backdate-sale', verifyToken, requireSuperAdmin, async (req,
 // bulk Excel imports alike - both hit the route above), newest-posted first so
 // an operator can confirm a batch went through without hunting the main Orders
 // list. Paginated; `page`/`limit` optional.
-app.get('/api/admin/backdate-sale/history', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/admin/backdate-sale/history', verifyToken, requireStaff, requirePermission('sales.backdate'), async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 25));
@@ -1065,7 +1175,7 @@ app.get('/api/admin/backdate-sale/history', verifyToken, requireSuperAdmin, asyn
 // of being silently defaulted to Cash or dropped. `/queue/:id/save` supplies
 // the missing piece and posts it through the exact same path as a direct
 // backdated sale.
-app.post('/api/admin/backdate-sale/queue', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/admin/backdate-sale/queue', verifyToken, requireStaff, requirePermission('sales.backdate'), async (req, res) => {
   try {
     const rows = Array.isArray(req.body.items) ? req.body.items : [];
     if (rows.length === 0) return res.status(400).json({ success: false, error: 'No rows to queue.' });
@@ -1107,7 +1217,7 @@ app.post('/api/admin/backdate-sale/queue', verifyToken, requireSuperAdmin, async
   }
 });
 
-app.get('/api/admin/backdate-sale/queue', verifyToken, requireSuperAdmin, async (req, res) => {
+app.get('/api/admin/backdate-sale/queue', verifyToken, requireStaff, requirePermission('sales.backdate'), async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 25));
@@ -1123,7 +1233,7 @@ app.get('/api/admin/backdate-sale/queue', verifyToken, requireSuperAdmin, async 
   }
 });
 
-app.post('/api/admin/backdate-sale/queue/:id/save', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/admin/backdate-sale/queue/:id/save', verifyToken, requireStaff, requirePermission('sales.backdate'), async (req, res) => {
   try {
     const q = await BackdateQueueItem.findById(req.params.id);
     if (!q || q.status !== 'pending') return res.status(404).json({ success: false, error: 'Queue item not found or already resolved.' });
@@ -1151,7 +1261,7 @@ app.post('/api/admin/backdate-sale/queue/:id/save', verifyToken, requireSuperAdm
   }
 });
 
-app.delete('/api/admin/backdate-sale/queue/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/admin/backdate-sale/queue/:id', verifyToken, requireStaff, requirePermission('sales.backdate'), async (req, res) => {
   try {
     const q = await BackdateQueueItem.findById(req.params.id);
     if (!q || q.status !== 'pending') return res.status(404).json({ success: false, error: 'Queue item not found or already resolved.' });

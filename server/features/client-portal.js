@@ -532,7 +532,7 @@ app.post('/api/client-accounts', verifyToken, requireStaff, requirePermission('c
 // - and hands back a link per client. Nobody can log in until they have used
 // theirs.
 const CLIENT_IMPORT_MAX_ROWS = 500;
-app.post('/api/client-accounts/import', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/client-accounts/import', verifyToken, requireStaff, requirePermission('clients.create'), async (req, res) => {
   try {
     const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
     if (rows.length === 0) return res.status(400).json({ success: false, error: 'No rows to import.' });
@@ -604,7 +604,7 @@ app.post('/api/client-accounts/import', verifyToken, requireSuperAdmin, async (r
   }
 });
 
-app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.patch('/api/client-accounts/:id', verifyToken, requireStaff, requirePermission('clients.edit'), async (req, res) => {
   try {
     const { username, password, name, paymentMethod, isActive, creditLimit, creditTermsDays, segments, phone, email, contactNotes, requiresQuote, isVatRegistered, tin, registeredName, registeredAddress, assignedSalesperson } = req.body;
     const update = {};

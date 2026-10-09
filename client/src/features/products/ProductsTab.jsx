@@ -1225,7 +1225,7 @@ export default function ProductsTab({ ctx }) {
             {/* 3. MANAGE GLOBAL ADD-ONS - attaching an add-on to a product needs one to exist first */}
             {canManage && (<div className="mt-8 border-t border-white/10 pt-6">
               <h3 className="text-xl font-bold mb-4 text-fg border-b border-white/10 pb-2">Manage Add-Ons</h3>
-              {isSuperAdmin && (
+              {canManage && (
               <form onSubmit={handleSaveAddOn} className="flex flex-wrap gap-3 mb-6">
                 <div className="w-full flex flex-wrap items-center gap-3">
                   <label className="flex items-center gap-2 text-xs font-bold text-fg/80 cursor-pointer select-none">
@@ -1969,7 +1969,7 @@ export default function ProductsTab({ ctx }) {
         </div>
 
         {/* Creating a sale is superadmin-only on the server. */}
-        {isSuperAdmin && <SalesSection apiFetch={apiFetch} products={products} isSuperAdmin={isSuperAdmin} />}
+        {canManage && <SalesSection apiFetch={apiFetch} products={products} isSuperAdmin={canManage} />}
     </>
   );
 }

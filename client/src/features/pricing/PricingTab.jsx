@@ -51,7 +51,7 @@ export default function PricingTab({ ctx }) {
     posDiscountType, posDiscountValue, posGrandTotal, posPage, posPayment,
     posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable,
     pricingItemsPerPage, pricingPage, printOrderSlip, printXReading, products,
-    priceTiers, pricingTable, fetchPricingTable, handleTierCellUpdate, handleTierPercentUpdate,
+    priceTiers, pricingTable, fetchPricingTable, fetchPriceTiers, handleTierCellUpdate, handleTierPercentUpdate,
     tierBreaksFor, addTierBulkBreak, removeTierBulkBreak, fetchTierPriceHistory,
     exportPriceTiersExcel, priceTierImportPreview, setPriceTierImportPreview, parsePriceTierExcel, submitPriceTierImport, priceTierImporting,
     removeAddOnFromOrder, removeComplimentary, removeMaterial, removeSize, restockData,
@@ -322,14 +322,14 @@ export default function PricingTab({ ctx }) {
                     <th className="pb-3 text-right uppercase tracking-wider text-xs">Selling Price</th>
                     <th className="pb-3 text-right uppercase tracking-wider text-xs">{BUSINESS_TYPE === 'log' ? 'Unit Cost' : 'Recipe Cost'}</th>
                     <th className="pb-3 text-right uppercase tracking-wider text-xs">Margin</th>
-                    {isSuperAdmin && <th className="pb-3 text-center uppercase tracking-wider text-xs">Removed</th>}
-                    {isSuperAdmin && <th className="pb-3 text-center uppercase tracking-wider text-xs">OOS</th>}
+                    {(isSuperAdmin || can?.('products.manage')) && <th className="pb-3 text-center uppercase tracking-wider text-xs">Removed</th>}
+                    {(isSuperAdmin || can?.('products.manage')) && <th className="pb-3 text-center uppercase tracking-wider text-xs">OOS</th>}
                     {showQrCol && <th className="pb-3 text-center uppercase tracking-wider text-xs" title="Shown on the table QR menu, or counter-only">QR</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {filteredSortedProducts.length === 0 ? (
-                    <tr><td colSpan={isSuperAdmin ? 8 : 6} className="py-4 text-center text-fg/70">No products found.</td></tr>
+                    <tr><td colSpan={(isSuperAdmin || can?.('products.manage')) ? 8 : 6} className="py-4 text-center text-fg/70">No products found.</td></tr>
                   ) : localProducts.flatMap(p => {
                     // 1:1 logistics cost - no recipes in 'log' mode, so cost is
                     // always the linked inventory item's cost per named pack.
@@ -456,8 +456,8 @@ export default function PricingTab({ ctx }) {
                         )}
                       </td>
 
-                      {/* Removed toggle (superadmin only, base-product rows only). Permanently hides from menu - reports keep showing it while stock remains. */}
-                      {isSuperAdmin && (
+                      {/* Removed toggle (menu managers, base-product rows only). Permanently hides from menu - reports keep showing it while stock remains. */}
+                      {(isSuperAdmin || can?.('products.manage')) && (
                         <td className={`py-2 text-center ${row.name !== '' ? 'pt-4' : ''}`}>
                           {row.isBase ? (
                             <button
@@ -475,7 +475,7 @@ export default function PricingTab({ ctx }) {
                         </td>
                       )}
                       {/* OOS toggle. Stays on menu (with a badge) and in all reports - for temporary stockouts. */}
-                      {isSuperAdmin && (
+                      {(isSuperAdmin || can?.('products.manage')) && (
                         <td className={`py-2 text-center ${row.name !== '' ? 'pt-4' : ''}`}>
                           {row.isBase ? (
                             <button
@@ -769,7 +769,7 @@ export default function PricingTab({ ctx }) {
         {/* ═══════════════════════════════════════════════════════════════ */}
         {/* MARKET SEGMENT PRICING - dealer/satellite/wholesale price table  */}
         {/* ═══════════════════════════════════════════════════════════════ */}
-        {BUSINESS_TYPE === 'log' && priceTiers && priceTiers.length > 0 && (
+        {BUSINESS_TYPE === 'log' && ((priceTiers && priceTiers.length > 0) || can?.('pricing.tiers')) && (
           <div className="bg-surface border border-white/10 rounded-xl p-6 mt-6">
             <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-4 flex-wrap gap-2">
               <h3 className="text-xl font-bold text-brand-text flex items-center gap-2">
@@ -799,6 +799,40 @@ export default function PricingTab({ ctx }) {
               </div>
               </div>
             </div>
+            {/* The tiers themselves - added and removed here by whoever is
+                given "Create and remove price tiers". */}
+            {can?.('pricing.tiers') && (
+              <div className="flex flex-wrap items-center gap-2 mb-3 p-2.5 rounded-lg bg-white/5 border border-white/10">
+                <span className="text-[10px] font-black uppercase tracking-widest text-fg/70">Tiers</span>
+                {(priceTiers || []).map(t => (
+                  <span key={t._id} className="inline-flex items-center gap-1 text-[11px] font-bold text-fg bg-page-bg border border-white/10 rounded-full pl-2.5 pr-1 py-0.5">
+                    {t.name}
+                    <button type="button" aria-label={`Remove tier ${t.name}`} title="Remove this tier"
+                      onClick={async () => {
+                        if (!(await ui.confirm(`Remove price tier "${t.name}"?`))) return;
+                        const d = await (await apiFetch(`/api/price-tiers/${t._id}`, { method: 'DELETE' })).json();
+                        if (!d.success) return ui.alert(d.error || 'Could not remove the tier.');
+                        fetchPriceTiers?.(); fetchPricingTable?.();
+                      }}
+                      className="w-4 h-4 rounded-full text-fg/65 hover:text-danger hover:bg-red-500/10 leading-none">×</button>
+                  </span>
+                ))}
+                <form className="inline-flex items-center gap-1"
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const name = e.currentTarget.elements.tierName.value.trim();
+                    if (!name) return;
+                    const d = await (await apiFetch('/api/price-tiers', { method: 'POST', body: JSON.stringify({ name, pricingMode: 'per_product', percent: 0 }) })).json();
+                    if (!d.success) return ui.alert(d.error || 'Could not add the tier.');
+                    e.currentTarget.reset();
+                    fetchPriceTiers?.(); fetchPricingTable?.();
+                  }}>
+                  <input name="tierName" maxLength={60} placeholder="New tier, e.g. Dealer" aria-label="New tier name"
+                    className="bg-page-bg border border-white/10 rounded-lg px-2 py-1 text-xs text-fg outline-none focus:border-accent w-40" />
+                  <button type="submit" className="text-[10px] bg-accent text-on-brand px-2.5 py-1 rounded-lg font-bold uppercase tracking-wider">Add</button>
+                </form>
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-2 mb-3">
               <select value={tierCat} onChange={e => { setTierCat(e.target.value); setTierPage(1); }} aria-label="Filter by category"
                 className="bg-page-bg border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-accent">

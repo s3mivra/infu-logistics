@@ -197,7 +197,7 @@ app.get('/api/addons', async (req, res) => {
 });
 
 // requireSuperAdmin: only superadmin can create or remove add-ons (menu integrity)
-app.post('/api/addons', verifyToken, requireSuperAdmin, validate(addonSchema), async (req, res) => {
+app.post('/api/addons', verifyToken, requireStaff, permit('products.manage'), validate(addonSchema), async (req, res) => {
   try {
     const newAddOn = await AddOn.create(req.body);
     emitToAll('menuUpdated');
@@ -208,7 +208,7 @@ app.post('/api/addons', verifyToken, requireSuperAdmin, validate(addonSchema), a
 });
 
 // requireSuperAdmin: only superadmin can edit add-ons (menu integrity)
-app.patch('/api/addons/:id', verifyToken, requireSuperAdmin, validate(addonSchema), async (req, res) => {
+app.patch('/api/addons/:id', verifyToken, requireStaff, permit('products.manage'), validate(addonSchema), async (req, res) => {
   try {
     const before = await AddOn.findById(req.params.id).lean();
     if (!before) return res.status(404).json({ success: false, error: 'Add-on not found' });
@@ -249,7 +249,7 @@ app.patch('/api/addons/:id', verifyToken, requireSuperAdmin, validate(addonSchem
   }
 });
 
-app.delete('/api/addons/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/addons/:id', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
   try {
     await AddOn.findByIdAndDelete(req.params.id);
     emitToAll('menuUpdated');

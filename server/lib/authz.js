@@ -24,6 +24,10 @@ export const PERMISSIONS = [
   { key: 'orders.manage',      group: 'Sales',       label: 'Manage orders (edit/status)' },
   { key: 'orders.delete',      group: 'Sales',       label: 'Void / delete orders' },
   { key: 'orders.comp',        group: 'Sales',       label: 'Make an order complimentary (with an approver named)' },
+  // Were "superadmin or the admin role" by name; now given like anything else.
+  { key: 'orders.refund',      group: 'Sales',       label: 'Refund, partly refund or exchange a completed order' },
+  // Were superadmin-only: entering past sales, and bringing an Orders export back.
+  { key: 'sales.backdate',     group: 'Sales',       label: 'Enter backdated sales and import past orders' },
   // Copy only: the sign-in link, and an onboarding link an admin already
   // issued. Issuing one stays superadmin-only - it sets a client's login.
   { key: 'clients.links',      group: 'Sales',       label: 'Copy client links (portal sign-in and issued onboarding links)' },
@@ -32,9 +36,15 @@ export const PERMISSIONS = [
   { key: 'clients.create',     group: 'Sales',       label: 'Add clients (details only; the client sets their own login on a link)' },
   { key: 'clients.delete',     group: 'Sales',       label: 'Delete clients that have no orders, deposits, quotes or balance' },
   { key: 'clients.invite',     group: 'Sales',       label: 'Create client links (new client from a name, they fill in the rest)' },
+  // Was superadmin-only: a client's details, price tier, payment terms. A change
+  // to a credit limit still waits for pricing.approve (lib/changeApproval.js).
+  { key: 'clients.edit',       group: 'Sales',       label: "Edit a client's details, price tier and payment terms" },
   { key: 'inventory.view',     group: 'Inventory',   label: 'View inventory' },
   { key: 'inventory.manage',   group: 'Inventory',   label: 'Manage inventory (count/restock)' },
   { key: 'inventory.delete',   group: 'Inventory',   label: 'Delete inventory items' },
+  // Were superadmin-only.
+  { key: 'inventory.setup',    group: 'Inventory',   label: "Set up stock: edit an item's details and batches, import stock, manage locations and categories" },
+  { key: 'inventory.approve',  group: 'Inventory',   label: 'Approve stock transfers between locations' },
   // Floor actions, split out of "any staff" so a role can be narrowed: every
   // built-in role that did these before still does by default.
   { key: 'inventory.waste',    group: 'Inventory',   label: 'Log waste / spoilage' },
@@ -49,6 +59,9 @@ export const PERMISSIONS = [
   // Paying something straight out of a revolving fund. It was open to every
   // signed-in staff member; now it is given by name. Anyone without it files a
   // petty-cash requisition slip instead, which waits for approval.
+  // Was superadmin-only: recording what a customer paid on an unpaid sale, and
+  // spending or refunding a client's credit balance.
+  { key: 'ar.collect',         group: 'Accounting',  label: "Record customers' payments on unpaid sales, and use or refund their credit" },
   { key: 'funds.spend',        group: 'Accounting',  label: 'Spend from a revolving fund (without it: file a slip for approval)' },
   // Split out from accounting.* on purpose: accounting.view unlocks the whole
   // Ledger tab (trial balance, journal, bills, ...), which is far more than
@@ -69,6 +82,8 @@ export const PERMISSIONS = [
   // line - are held for sign-off unless the editor holds this. See
   // lib/changeApproval.js for exactly which fields are gated and why.
   { key: 'pricing.approve',    group: 'Accounting', label: 'Approve price, cost & credit-limit changes' },
+  // Was superadmin-only (and only in the Admin Panel): a new tier, or removing one.
+  { key: 'pricing.tiers',      group: 'Accounting', label: 'Create and remove price tiers' },
   // A journal entry typed by hand posts only with an approver's sign-off.
   // Holding this, a person's own entries post directly (and are recorded as
   // approved by them); without it, they wait for someone who does.
@@ -175,7 +190,8 @@ export function withScreens(list) {
 export const ROLE_DEFAULT_PERMISSIONS = {
   // Shop administrator: runs operations & config and can VIEW the books, but
   // cannot post journal entries (that's finance/superadmin) or manage staff.
-  admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'clients.links', 'clients.invite', 'clients.create', 'clients.delete',
+  admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'orders.refund', 'clients.links', 'clients.invite', 'clients.create', 'clients.delete', 'clients.edit',
+            'inventory.setup', 'inventory.approve',
             'inventory.view', 'inventory.manage', 'inventory.delete', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage', 'procurement.delete',
@@ -189,7 +205,7 @@ export const ROLE_DEFAULT_PERMISSIONS = {
             'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage'],
   // The books role: view + post accounting, plus read-only ops context.
   finance: ['orders.view', 'inventory.view', 'procurement.view', 'production.view',
-            'accounting.view', 'accounting.manage', 'funds.spend',
+            'accounting.view', 'accounting.manage', 'funds.spend', 'sales.backdate', 'ar.collect', 'clients.edit', 'pricing.tiers',
             'payroll.view', 'payroll.manage', 'assets.view', 'assets.manage', 'bankrec.view', 'bankrec.manage', 'pricing.approve', 'credit.approve',
             'reports.view', 'analytics.view', 'audit.view'],
   cashier: ['pos.use', 'orders.view', 'orders.manage', 'orders.comp', 'inventory.view', 'inventory.waste', 'inventory.count', 'products.view', 'procurement.view'],
@@ -208,7 +224,7 @@ export const OWNER_ROLE_PERMISSIONS = [
   'owner.view', 'reports.view', 'analytics.view', 'audit.view', 'shifts.view',
   'orders.view', 'inventory.view', 'products.view', 'procurement.view', 'production.view',
   'accounting.view', 'payroll.view', 'assets.view', 'bankrec.view', 'requisitions.view',
-  'requisitions.approve', 'production.approve', 'pricing.approve', 'journal.approve', 'credit.approve',
+  'requisitions.approve', 'production.approve', 'pricing.approve', 'journal.approve', 'credit.approve', 'inventory.approve',
 ];
 
 export function withSplitScreens(list = []) {

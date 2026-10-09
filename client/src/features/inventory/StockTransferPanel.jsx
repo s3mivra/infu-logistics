@@ -18,7 +18,7 @@ import SearchSelect from '../../shared/ui/SearchSelect';
 // doesn't fit this panel's one-line request form.
 export default function StockTransferPanel({
   inventory = [], stockTransfers = [], locationAnalytics = [],
-  requestStockTransfer, actOnStockTransfer, isSuperAdmin, peso, apiFetch,
+  requestStockTransfer, actOnStockTransfer, isSuperAdmin, canApprove, peso, apiFetch,
   exportStockTransfersPDF, itemDisplay,
 }) {
   const [fromItemId, setFromItemId] = useState('');
@@ -277,7 +277,7 @@ export default function StockTransferPanel({
                     <td className="py-2 pl-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${statusColor[t.status] || 'bg-white/10 text-white/50'}`}>{t.status}</span></td>
                     <td className="py-2 text-right">
                       <div className="flex gap-1.5 justify-end">
-                        {t.status === 'Requested' && isSuperAdmin && (
+                        {t.status === 'Requested' && (canApprove ?? isSuperAdmin) && (
                           <button onClick={() => actOnStockTransfer(t._id, 'approve')} className="text-[10px] font-bold uppercase px-2.5 py-1.5 rounded bg-blue-500/15 text-info hover:bg-blue-500/25 min-h-[32px]">Approve</button>
                         )}
                         {t.status === 'Approved' && (

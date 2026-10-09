@@ -395,6 +395,7 @@ export default function InventoryTab({ ctx }) {
                 requestStockTransfer={requestStockTransfer}
                 actOnStockTransfer={actOnStockTransfer}
                 isSuperAdmin={isSuperAdmin}
+                canApprove={can('inventory.approve')}
                 peso={peso}
                 apiFetch={apiFetch}
                 exportStockTransfersPDF={exportStockTransfersPDF}
@@ -602,7 +603,7 @@ export default function InventoryTab({ ctx }) {
                                   <button onClick={() => { fetchStockHistory(item); setOpenActionMenu(null); }} disabled={historyLoading} className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition disabled:opacity-50 disabled:cursor-wait">
                                     {historyLoading ? 'Loading…' : 'History'}
                                   </button>
-                                  {isSuperAdmin && (<button onClick={() => { openEditInventory(item); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-info transition">
+                                  {can('inventory.setup') && (<button onClick={() => { openEditInventory(item); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-info transition">
                                     Edit
                                   </button>)}
                                   {can('inventory.waste') && (<button onClick={() => {
@@ -630,7 +631,7 @@ export default function InventoryTab({ ctx }) {
                                       Forget recipe
                                     </button>
                                   )}
-                                  {isSuperAdmin && (<>
+                                  {can('inventory.delete') && (<>
                                   <div className="border-t border-white/8 mx-2 my-1" />
                                   <button onClick={() => { deleteInventory(item._id); setOpenActionMenu(null); }} className="w-full text-left px-4 py-2.5 text-xs font-bold text-danger hover:bg-red-500/10 hover:text-danger transition">
                                     Delete

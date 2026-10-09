@@ -248,6 +248,14 @@ app.post('/api/inventory/count', verifyToken, requireStaff, permit('inventory.co
 
     const { counts, reasons, adminName } = req.body;
     const items = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }).session(session);
+    // Cost of goods sold already booked from imported totals (139000, a credit
+    // balance) for goods whose items were never taken. The goods this count
+    // finds missing are those first; only what is left is shrinkage.
+    const [awaitRow] = await JournalEntry.aggregate([
+      { $unwind: '$lines' }, { $match: { 'lines.accountCode': '139000' } },
+      { $group: { _id: null, n: { $sum: { $subtract: [{ $ifNull: ['$lines.credit', 0] }, { $ifNull: ['$lines.debit', 0] }] } } } },
+    ]).session(session);
+    let awaitingCount = Math.max(0, Math.round((awaitRow?.n || 0) * 100) / 100);
 
     for (const item of items) {
       if (counts[item._id] === undefined || counts[item._id] === '') continue; 
@@ -273,12 +281,16 @@ app.post('/api/inventory/count', verifyToken, requireStaff, permit('inventory.co
           const reference = eodAdjRef;
 
           if (variance < 0) {
+            const sold = Math.min(Math.round(valueAbs * 100) / 100, awaitingCount);
+            awaitingCount = Math.round((awaitingCount - sold) * 100) / 100;
+            const lost = Math.round((valueAbs - sold) * 100) / 100;
+            const lines = [];
+            if (sold > 0) lines.push({ accountCode: '139000', accountName: 'Cost of Sales Awaiting Stock Count', debit: sold, credit: 0 });
+            if (lost > 0) lines.push({ accountCode: '535000', accountName: 'Spoilage, Variance & Waste Expense', debit: lost, credit: 0 });
+            lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: Math.round(valueAbs * 100) / 100 });
             await JournalEntry.create([{
-              reference, description: `Shrinkage (${specificReason}): ${item.itemName}`,
-              lines: [
-                { accountCode: '535000', accountName: 'Spoilage, Variance & Waste Expense', debit: valueAbs, credit: 0 },
-                { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: valueAbs }
-              ], totalDebit: valueAbs, totalCredit: valueAbs
+              reference, description: sold > 0 ? `Stock count: ${item.itemName} - sold (cost already booked)${lost > 0 ? ` and shrinkage (${specificReason})` : ''}` : `Shrinkage (${specificReason}): ${item.itemName}`,
+              lines, totalDebit: Math.round(valueAbs * 100) / 100, totalCredit: Math.round(valueAbs * 100) / 100,
             }], { session });
           } else {
             await JournalEntry.create([{
@@ -496,7 +508,7 @@ app.get('/api/stock-locations', verifyToken, requireStaff, async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.post('/api/stock-locations', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/stock-locations', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const name = title(String(req.body.name || '').trim());
     if (!name) return res.status(400).json({ success: false, error: 'Location name required.' });
@@ -507,7 +519,7 @@ app.post('/api/stock-locations', verifyToken, requireSuperAdmin, async (req, res
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.put('/api/stock-locations/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/stock-locations/:id', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const loc = await StorageLocation.findById(req.params.id);
     if (!loc) return res.status(404).json({ success: false, error: 'Location not found.' });
@@ -526,7 +538,7 @@ app.put('/api/stock-locations/:id', verifyToken, requireSuperAdmin, async (req, 
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.delete('/api/stock-locations/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/stock-locations/:id', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const loc = await StorageLocation.findById(req.params.id);
     if (!loc) return res.status(404).json({ success: false, error: 'Location not found.' });
@@ -545,7 +557,7 @@ app.get('/api/stock-categories', verifyToken, requireStaff, async (req, res) => 
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.post('/api/stock-categories', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/stock-categories', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const name = title(String(req.body.name || '').trim());
     if (!name) return res.status(400).json({ success: false, error: 'Category name required.' });
@@ -561,7 +573,7 @@ app.post('/api/stock-categories', verifyToken, requireSuperAdmin, async (req, re
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.put('/api/stock-categories/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/stock-categories/:id', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const cat = await StockCategory.findById(req.params.id);
     if (!cat) return res.status(404).json({ success: false, error: 'Category not found.' });
@@ -598,7 +610,7 @@ app.put('/api/stock-categories/:id', verifyToken, requireSuperAdmin, async (req,
 // the per-row derive (never overwrites a prefix that's already set, and skips
 // a category whose derived prefix would collide with another category's).
 // Purely additive/non-destructive: never touches any item's own itemCode.
-app.post('/api/stock-categories/backfill-prefixes', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/stock-categories/backfill-prefixes', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const cats = await StockCategory.find({ businessType: BUSINESS_TYPE, $or: [{ prefix: '' }, { prefix: { $exists: false } }] });
     const results = { checked: cats.length, filled: [], skipped: [] };
@@ -649,7 +661,7 @@ app.post('/api/stock-categories/backfill-prefixes', verifyToken, requireSuperAdm
 // StockCards key off inventoryId (unaffected) and a past order line is a
 // booked record of what was sold under the code THAT DAY, which must stay
 // exactly as it was for the books to still reconcile.
-app.post('/api/stock-categories/:id/renumber', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/stock-categories/:id/renumber', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
@@ -719,7 +731,7 @@ app.post('/api/stock-categories/:id/renumber', verifyToken, requireSuperAdmin, a
   }
 });
 
-app.delete('/api/stock-categories/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/stock-categories/:id', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const cat = await StockCategory.findById(req.params.id);
     if (!cat) return res.status(404).json({ success: false, error: 'Category not found.' });
@@ -813,7 +825,7 @@ app.post('/api/stock-transfers', verifyToken, requireStaff, requirePermission('i
 });
 
 // Approve (superadmin). Requested → Approved.
-app.post('/api/stock-transfers/:id/approve', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/stock-transfers/:id/approve', verifyToken, requireStaff, requirePermission('inventory.approve'), async (req, res) => {
   try {
     const t = await StockTransfer.findById(req.params.id);
     if (!t) return res.status(404).json({ success: false, error: 'Transfer not found.' });
@@ -1395,7 +1407,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, permit('invent
   }
 });
 
-app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/inventory/:id', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     // Whitelist editable fields - stockQty must NEVER be edited here
     // (would bypass StockCard audit trail and double-entry accounting).
@@ -1556,7 +1568,7 @@ app.get('/api/inventory/expiring', verifyToken, requireStaff, async (req, res) =
 });
 
 // --- BATCH MANAGEMENT: add a new expiry (or production-date) batch manually ---
-app.post('/api/inventory/:id/batches', verifyToken, requireSuperAdmin, atomic(mongoose, async (req, res) => {
+app.post('/api/inventory/:id/batches', verifyToken, requireStaff, requirePermission('inventory.setup'), atomic(mongoose, async (req, res) => {
   try {
     const { qty, expiryDate, productionDate, reference } = req.body;
     const n = positiveQty(qty);
@@ -1614,7 +1626,7 @@ app.post('/api/inventory/:id/batches', verifyToken, requireSuperAdmin, atomic(mo
 // tagged with. Setting expiryDate clears productionDate and vice versa - a
 // batch is dated one way or the other, never both (mirrors every other
 // expiry/production entry point in the app).
-app.patch('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmin, async (req, res) => {
+app.patch('/api/inventory/:id/batches/:batchIdx', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const item = await Inventory.findById(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Item not found' });
@@ -1647,7 +1659,7 @@ app.patch('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmin
 });
 
 // --- BATCH MANAGEMENT: delete a specific batch by index (use when physical stock no longer matches) ---
-app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmin, atomic(mongoose, async (req, res) => {
+app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireStaff, requirePermission('inventory.setup'), atomic(mongoose, async (req, res) => {
   try {
     const item = await Inventory.findById(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Item not found' });
@@ -1715,7 +1727,7 @@ app.patch('/api/inventory/:id/expiry', verifyToken, requireStaff, permit('invent
   }
 });
 
-app.delete('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/inventory/:id', verifyToken, requireStaff, requirePermission('inventory.delete'), async (req, res) => {
   try {
     const item = await Inventory.findByIdAndDelete(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Item not found.' });
@@ -1751,7 +1763,7 @@ const isTransientTxn = (err) => {
   return (err?.errorLabels || []).includes('TransientTransactionError') || /WriteConflict|Write conflict/i.test(msg);
 };
 
-app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/inventory/import', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   for (let attempt = 1; attempt <= IMPORT_TXN_ATTEMPTS; attempt++) {
     if (await runInventoryImport(req, res, attempt) !== IMPORT_RETRY) return;
     // A little jitter, so two imports that collided do not collide again.

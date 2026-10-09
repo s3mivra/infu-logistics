@@ -326,6 +326,26 @@ export default function LedgerTab({ ctx }) {
   // Check vouchers: writing one by hand, and the list as Excel / PDF (what is
   // on screen - the filters above it apply).
   const [cvNewOpen, setCvNewOpen] = useState(false);
+  // Cost of goods sold for backdated sales that have products but no cost yet.
+  const [bdCosting, setBdCosting] = useState(false);
+  const bookBackdatedCosts = async () => {
+    if (!(await ui.confirm({
+      title: 'Book cost of goods sold for backdated sales?',
+      message: 'Each backdated sale that has its products but no cost yet gets its cost of goods sold booked on its own date, from what its stock items cost now. Stock quantities are not changed. Sales already costed are left alone.',
+      confirmLabel: 'Book the cost',
+    }))) return;
+    setBdCosting(true);
+    try {
+      const d = await (await apiFetch('/api/admin/backdate-sale/book-costs', { method: 'POST' })).json();
+      if (!d.success) return ui.alert(d.error || 'Could not book the cost.');
+      const p2 = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      ui.alert(`${d.booked} of ${d.checked} sale(s) costed - ${p2(d.total)} booked as cost of goods sold.`
+        + ((d.noCost || []).length ? `\n\nNo cost found for (no stock item, or its cost is 0):\n- ${d.noCost.slice(0, 15).join('\n- ')}${d.noCost.length > 15 ? `\n...and ${d.noCost.length - 15} more` : ''}` : '')
+        + ((d.problems || []).length ? `\n\nSkipped:\n- ${d.problems.slice(0, 5).join('\n- ')}` : ''));
+      fetchERPData?.();
+    } catch { ui.alert('Network error - run it again; sales already costed are skipped.'); }
+    finally { setBdCosting(false); }
+  };
   const cvExportRows = () => (checkVouchers || []).map(v => [
     v.voucherNumber || '', v.date ? dateStr(v.date) : '', v.payeeName || '', v.payeeType || '', v.purpose || '',
     v.sourceAccountName || v.sourceAccount || '', v.referenceNumber || '', v.notes || '', v.status || '',
@@ -849,7 +869,7 @@ export default function LedgerTab({ ctx }) {
     if (!ok) return true;
     setBulkOpInProgress?.(true);
     try {
-      let created = 0, sum = 0; const skipped = [], problems = [];
+      let created = 0, sum = 0, costed = 0, costSum = 0; const skipped = [], problems = [];
       // In batches, so a long export is never one enormous request.
       for (let i = 0; i < rows.length; i += 200) {
         const part = rows.slice(i, i + 200);
@@ -858,13 +878,15 @@ export default function LedgerTab({ ctx }) {
           method: 'POST', body: JSON.stringify({ rows: part, lines: lines.filter(l => nums.has(String(l['Order No'] || '').trim())) }),
         })).json();
         if (!d.success) { ui.alert(d.error || 'The import failed - nothing more was imported.'); break; }
-        created += d.created || 0; sum += d.total || 0;
+        created += d.created || 0; sum += d.total || 0; costed += d.costed || 0; costSum += d.costTotal || 0;
         skipped.push(...(d.skipped || []).map(x => x.error)); problems.push(...(d.problems || []));
       }
       const already = skipped.filter(e => /already in the app/i.test(e)).length;
       const other = skipped.filter(e => !/already in the app/i.test(e));
       ui.alert(
         `${created} order(s) imported - ${php(sum)}.`
+        + (costed ? `
+Cost of goods sold booked for ${costed} order(s) - ${php(costSum)}.` : '')
         + (already ? `\n${already} were already in the app and were skipped.` : '')
         + (other.length ? `\n\nNot imported (${other.length}):\n- ${other.slice(0, 12).join('\n- ')}${other.length > 12 ? `\n...and ${other.length - 12} more` : ''}` : '')
         + (problems.length ? `\n\nCheck these:\n- ${problems.slice(0, 8).join('\n- ')}` : ''),
@@ -4359,7 +4381,7 @@ It posts only what is not already accrued for that month.`)) return;
                               {/* Recording a collection, or spending a client's credit on it,
                                   is the owner's (the server allows only the superadmin), so
                                   nobody else is shown buttons that can only be refused. */}
-                              {isSuperAdmin ? (<>
+                              {can('ar.collect') ? (<>
                               <button onClick={() => {
                                 let defaultMethod = 'Cash on Hand';
                                 if (o.paymentMethod === 'Bank Transfer') defaultMethod = 'Bank Transfer';
@@ -5850,7 +5872,10 @@ It posts only what is not already accrued for that month.`)) return;
 
           {/* ── TENANCY HEALTH + MY PERMISSIONS ───────────────────────────── */}
           {/* ── BACKDATE SALES (superadmin only) ──────────────────────────── */}
-          {ledgerSubTab === 'backdate' && (
+          {ledgerSubTab === 'backdate' && !can('sales.backdate') && (
+            <p className="text-fg/70 text-sm font-bold p-8 text-center">Entering backdated sales needs the "Enter backdated sales and import past orders" permission.</p>
+          )}
+          {ledgerSubTab === 'backdate' && can('sales.backdate') && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div>
@@ -5870,10 +5895,17 @@ It posts only what is not already accrued for that month.`)) return;
                   </div>
                 )}
               </div>
-              {!isSuperAdmin ? (
-                <p className="mt-2 text-[10px] uppercase tracking-widest font-black text-warning bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1.5 inline-flex items-center gap-1.5">
-                  <Lock size={11}/> Superadmin only
+              <div className="flex flex-wrap items-center gap-3 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                <p className="text-xs text-fg/80 flex-1 min-w-[220px]">
+                  <b className="text-fg">Cost of goods sold.</b> Backdated sales that have their products but took no stock carry no cost, so profit reads too high. This books each one's cost from what its stock items cost now. Stock counts are not changed - the next stock count settles them.
                 </p>
+                <button type="button" disabled={bdCosting} onClick={bookBackdatedCosts}
+                  className="bg-brand text-on-brand px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-40">
+                  {bdCosting ? 'Working…' : 'Book cost of goods sold'}
+                </button>
+              </div>
+              {false ? (
+                <p />
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
@@ -6062,7 +6094,7 @@ It posts only what is not already accrued for that month.`)) return;
               )}
 
               {/* ── BACKDATE SALE QUEUE ── rows a bulk import couldn't post blind (no Terms of Payment on the sheet) */}
-              {isSuperAdmin && bdQueue?.total > 0 && (
+              {can('sales.backdate') && bdQueue?.total > 0 && (
                 <div className="bg-surface border border-amber-500/30 rounded-xl overflow-hidden mt-2">
                   <div className="px-5 py-3 border-b border-amber-500/20 bg-amber-500/5 flex items-center gap-2 flex-wrap">
                     <AlertTriangle size={14} className="text-warning" />

@@ -189,6 +189,15 @@ const inventorySheetRows = (i, category, categorySource) => {
   });
 };
 
+// What the goods on an order cost: what its stock moves took (at the cost they
+// left at), plus any cost booked from a total alone. One line's share when a
+// line index is given.
+const orderCost = (o, lineIndex = null) => {
+  const moves = (o.stockMoves || []).filter(m => lineIndex === null || Number(m.lineIndex) === lineIndex);
+  const fromStock = moves.reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.unitCost) || 0), 0);
+  return Math.round((fromStock + (lineIndex === null ? Number(o.costPosted) || 0 : 0)) * 100) / 100;
+};
+
 export const DATASETS = {
   // ── Master data ──────────────────────────────────────────────────────────
   inventory: {
@@ -682,18 +691,19 @@ export const DATASETS = {
     sheetName: 'Orders',
     extraSheets: (docs) => [{
       name: 'Order Lines',
-      columns: ['Order No', 'Code', 'Product', 'Qty', 'Unit Price', 'Line Discount %'],
-      rows: docs.flatMap(o => (o.items || []).map(it => [
+      columns: ['Order No', 'Code', 'Product', 'Qty', 'Unit Price', 'Line Discount %', 'Line Cost'],
+      rows: docs.flatMap(o => (o.items || []).map((it, idx) => [
         o.orderNumber || '', it.productCode || '',
         (it.name || '') + ((it.selectedAddOns || []).length ? ` + ${(it.selectedAddOns || []).map(a => a.name).join(', ')}` : ''),
         Number(it.quantity) || 0,
         money((Number(it.price) || 0) + (it.selectedAddOns || []).reduce((s, a) => s + (Number(a.price) || 0), 0)),
         Math.max(Number(it.productDiscountPercent) || 0, Number(it.discountPercent) || 0),
+        money(orderCost(o, idx)),
       ])),
     }],
     importSpec: {
       endpoint: '/api/orders/import',
-      intro: 'Brings back an Orders export. Each completed order returns as a sale on its own date, with its own order number, posted to the books. Keep the "Order Lines" sheet with it to bring the products back too. An order already in the app is skipped, so importing twice does nothing.',
+      intro: 'Brings back an Orders export. Each completed order returns as a sale on its own date, with its own order number, posted to the books. Keep the "Order Lines" sheet with it to bring the products back too. A Cost figure books cost of goods sold: with product lines the stock is taken as of each sale; with a total only it waits for the next stock count. An order already in the app is skipped - except that a Cost added to it later is booked once.',
       columns: [
         { name: 'Order No', required: true, example: 'ORD-2026-A0742' },
         { name: 'Date', required: true, note: 'YYYY-MM-DD.', example: '2026-09-30' },
@@ -703,17 +713,18 @@ export const DATASETS = {
         { name: 'Subtotal', example: '126410' },
         { name: 'Discount', example: '0' },
         { name: 'Total', required: true, example: '126410' },
+        { name: 'Cost', note: 'Optional. What the goods sold cost. Books cost of goods sold for the sale.', example: '88200' },
       ],
     },
     // OR No. is what an examiner traces a sale by, and a total with no sight of
     // what was refunded or collected against it cannot be reconciled to the
     // books from the sheet alone.
-    columns: ['Order No', 'OR No', 'Date', 'Customer', 'Status', 'Payment', 'Subtotal', 'Discount', 'Total', 'Refunded', 'Collected', 'Items'],
+    columns: ['Order No', 'OR No', 'Date', 'Customer', 'Status', 'Payment', 'Subtotal', 'Discount', 'Total', 'Refunded', 'Collected', 'Items', 'Cost'],
     toRow: (o) => [
       o.orderNumber || '', o.orNumber || '', day(o.createdAt), o.customerName || '', o.status || '',
       o.paymentMethod || '', money(o.subtotal), money(o.discount), money(o.total),
       money(o.refundedAmount), money(o.arPaidAmount),
-      (o.items || []).length,
+      (o.items || []).length, money(orderCost(o)),
     ],
   },
 
