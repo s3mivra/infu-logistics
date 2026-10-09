@@ -2785,6 +2785,15 @@ const voidOrderOnce = async (req, res, mayRetry) => {
     const cashAccountName = _cashAcct.name;
 
     const lines = [];
+    // A sale costed from a figure alone (a backdated or imported sale that took
+    // no stock - account 139000) gives that cost back the way it was booked;
+    // there are no stock moves to return it through.
+    const heldCost = Math.round((Number(order.costPosted) || 0) * 100) / 100;
+    if (heldCost > 0) {
+      lines.push({ accountCode: '139000', accountName: 'Cost of Sales Awaiting Stock Count', debit: heldCost, credit: 0 });
+      lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: 0, credit: heldCost });
+      order.costPosted = 0;
+    }
     // Non-VAT: gross receipts = net collected + discount (no VAT separation)
     const grossSalesAmount = order.total + (order.discount || 0);
 

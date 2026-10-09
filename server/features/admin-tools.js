@@ -1122,12 +1122,12 @@ app.post('/api/orders/import', verifyToken, requireStaff, requirePermission('sal
         const result = await createBackdatedSale({
           ...payload, date, customerName: customer || undefined, paymentMethod: payment,
           importRef: no, orderNumber: no, clientId: client ? String(client._id) : '',
-          // With product lines and a cost, the goods come off the shelf as of
-          // the sale (cost of goods sold at what the stock is carried at).
-          notes: `Re-imported - ${no}`, affectInventory: cost > 0 && its.length > 0, replaceExisting: fixing,
+          // Stock quantities are never changed by an import - the stock on
+          // file may be as of a later day. Cost is booked below instead.
+          notes: `Re-imported - ${no}`, affectInventory: false, replaceExisting: fixing,
         }, req.user?.name);
-        // With a total only, the cost waits for the next stock count.
-        if (cost > 0 && !its.length) {
+        // A Cost given on the sheet is the cost; it waits for the next stock count.
+        if (cost > 0) {
           const amt = await postCostAwaitingCount(result.order, cost, req.user?.name);
           costed.push({ row: i + 1, orderNumber: result.order.orderNumber, cost: amt });
         }

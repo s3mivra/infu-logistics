@@ -703,7 +703,7 @@ export const DATASETS = {
     }],
     importSpec: {
       endpoint: '/api/orders/import',
-      intro: 'Brings back an Orders export. Each completed order returns as a sale on its own date, with its own order number, posted to the books. Keep the "Order Lines" sheet with it to bring the products back too. A Cost figure books cost of goods sold: with product lines the stock is taken as of each sale; with a total only it waits for the next stock count. An order already in the app is skipped - except that a Cost added to it later is booked once.',
+      intro: 'Brings back an Orders export. Each completed order returns as a sale on its own date, with its own order number, posted to the books. Keep the "Order Lines" sheet with it to bring the products back too. Cost of goods sold is booked for each sale: from the Cost column when it is filled in, otherwise from what the stock items of its products cost. Stock quantities are not changed - the next stock count settles them. An order already in the app is skipped - except that a Cost added to it later is booked once.',
       columns: [
         { name: 'Order No', required: true, example: 'ORD-2026-A0742' },
         { name: 'Date', required: true, note: 'YYYY-MM-DD.', example: '2026-09-30' },

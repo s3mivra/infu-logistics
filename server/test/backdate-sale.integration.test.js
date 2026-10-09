@@ -377,6 +377,10 @@ describe('importing an Orders export back', () => {
     const again = await auth('post', '/api/admin/backdate-sale', superTok).send({ ...body, replaceExisting: true, items: [{ ...body.items[0], quantity: 5 }] });
     expect(again.status, JSON.stringify(again.body)).toBe(200);
     expect(+((await cogs()) - before).toFixed(2)).toBe(500);                         // the old 400 came back off
+    // voiding it gives the cost back too
+    const v = await auth('post', `/api/orders/${again.body.order._id}/void`, superTok).send({ reason: 'Entered twice' });
+    expect(v.status, JSON.stringify(v.body)).toBe(200);
+    expect(+((await cogs()) - before).toFixed(2)).toBe(0);
   });
 
   it('only completed orders come back', async () => {
