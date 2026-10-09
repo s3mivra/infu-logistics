@@ -319,19 +319,22 @@ describe('importing an Orders export back', () => {
       return +(r?.n || 0).toFixed(2);
     };
     const cogsBefore = await bal('510000');
+    const waitingBefore = await bal('139000');
     // a summary order already imported without cost, then the same sheet with a Cost column
     await imp({ rows: [{ 'Order No': 'ORD-2026-A9020', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 1000, Discount: 0, Total: 1000 }] });
     const again = await imp({ rows: [{ 'Order No': 'ORD-2026-A9020', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 1000, Discount: 0, Total: 1000, Cost: 700 }] });
     expect(again.body.costed, JSON.stringify(again.body)).toBe(1);
     expect(await bal('510000')).toBe(+(cogsBefore + 700).toFixed(2));
-    expect(await bal('139000')).toBe(-700);
+    expect(+((await bal('139000')) - waitingBefore).toFixed(2)).toBe(-700);
     // a third time books nothing more
     expect((await imp({ rows: [{ 'Order No': 'ORD-2026-A9020', Date: LAST_MONTH, Status: 'Completed', Total: 1000, Cost: 700 }] })).body.costed).toBe(0);
     const o = await mongoose.model('Order').findOne({ orderNumber: 'ORD-2026-A9020' }).lean();
     expect(o.costPosted).toBe(700);
 
-    // The count finds ₱1,000 of goods gone: ₱700 is those sold goods, ₱300 is real shrinkage.
-    const item = await mongoose.model('Inventory').create({ itemName: 'COUNT ME', unit: 'pcs', stockQty: 100, unitCost: 10 });
+    // The count finds goods gone worth everything waiting plus ₱300: the waiting part is
+    // sold goods already costed, the ₱300 is real shrinkage.
+    const waiting = -(await bal('139000'));
+    const item = await mongoose.model('Inventory').create({ itemName: 'COUNT ME', unit: 'pcs', stockQty: waiting + 300, unitCost: 1 });
     const before535 = await bal('535000');
     const c = await auth('post', '/api/inventory/count', superTok).send({ counts: { [item._id]: 0 }, reasons: {}, adminName: 'x' });
     expect(c.status, JSON.stringify(c.body)).toBe(200);
@@ -359,6 +362,21 @@ describe('importing an Orders export back', () => {
     expect(+((await cogs()) - before).toFixed(2)).toBe(1200 + again.body.total);
     const third = await auth('post', '/api/admin/backdate-sale/book-costs', superTok).send({});
     expect(third.body.booked).toBe(0);
+  });
+
+  it('a backdated sale entered with its products is costed on its own, and a replacement is not costed twice', async () => {
+    const JE = mongoose.model('JournalEntry');
+    const cogs = async () => { const [r] = await JE.aggregate([{ $unwind: '$lines' }, { $match: { 'lines.accountCode': '510000' } }, { $group: { _id: null, n: { $sum: { $subtract: ['$lines.debit', '$lines.credit'] } } } }]); return +(r?.n || 0).toFixed(2); };
+    await mongoose.model('Inventory').create({ itemName: 'AUTO COST SYRUP', itemCode: 'P-AUTO-1', unit: 'pcs', stockQty: 50, unitCost: 100 });
+    const prod = await mongoose.model('Product').create({ name: 'AUTO COST SYRUP', productCode: 'P-AUTO-1', category: 'Any', basePrice: 250, baseRecipe: [] });
+    const before = await cogs();
+    const body = { date: LAST_MONTH, paymentMethod: 'Cash', customerName: 'Auto Cost', importRef: 'AUTO-REF-1', items: [{ productId: String(prod._id), name: 'AUTO COST SYRUP', price: 250, quantity: 4 }] };
+    const first = await auth('post', '/api/admin/backdate-sale', superTok).send(body);
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    expect(+((await cogs()) - before).toFixed(2)).toBe(400);                         // 4 x 100, no button pressed
+    const again = await auth('post', '/api/admin/backdate-sale', superTok).send({ ...body, replaceExisting: true, items: [{ ...body.items[0], quantity: 5 }] });
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(+((await cogs()) - before).toFixed(2)).toBe(500);                         // the old 400 came back off
   });
 
   it('only completed orders come back', async () => {

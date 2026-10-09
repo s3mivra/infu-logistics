@@ -541,6 +541,11 @@ async function reverseBackdatedSale(old, session, actorName, freeNumber = false)
   const sales = await JournalEntry.find({ description: new RegExp(`^Backdated sale: ${escapeRegex(old.orderNumber)}(\\s|$|\\()`) }).session(session).lean();
   if (!sales.length) throw fail(409, `${old.orderNumber} has no ledger entry to reverse - void it by hand, then import again.`);
   const fixes = await JournalEntry.find({ $or: sales.map(j => ({ description: { $regex: escapeRegex(`[fixes ${j.reference}]`) } })) }).session(session).lean();
+  // ...and the cost of goods sold booked for it from a cost figure or from the
+  // stock items' cost (postCostAwaitingCount), so the sale that replaces it is
+  // costed afresh rather than on top.
+  const costs = await JournalEntry.find({ description: new RegExp(`^Cost of goods sold for ${escapeRegex(old.orderNumber)} \\(`) }).session(session).lean();
+  sales.push(...costs);
   const lines = [...sales, ...fixes].flatMap(j => (j.lines || []).map(l => ({
     accountCode: l.accountCode, accountName: l.accountName, debit: Number(l.credit) || 0, credit: Number(l.debit) || 0,
   })));
@@ -972,26 +977,55 @@ const costOfOrderFromStock = async (order) => {
 // not taken item by item (the stock on file may already be as of a later day),
 // so the cost waits in 139000 for the next stock count to clear - see
 // postCostAwaitingCount. Safe to run again: an order is costed once.
+const bookBackdatedCosts = async (actorName) => {
+  const orders = await Order.find({
+    businessType: BUSINESS_TYPE, isBackdated: true, status: 'Completed', isComplimentary: { $ne: true },
+    $and: [{ $or: [{ costPosted: { $exists: false } }, { costPosted: { $lte: 0 } }] }, { $or: [{ stockMoves: { $exists: false } }, { stockMoves: { $size: 0 } }] }],
+  }, { items: 1, orderNumber: 1, createdAt: 1 }).limit(20000).lean();
+  let booked = 0, total = 0; const noCost = new Set(), problems = [];
+  for (const o of orders) {
+    try {
+      const { cost, unpriced } = await costOfOrderFromStock(o);
+      unpriced.forEach(n => n && noCost.add(n));
+      if (!(cost > 0)) continue;
+      total += await postCostAwaitingCount(o, cost, actorName);
+      booked++;
+    } catch (e) { if (problems.length < 20) problems.push(e.message); }
+  }
+  return { checked: orders.length, booked, total: Math.round(total * 100) / 100, noCost: [...noCost].slice(0, 40), problems };
+};
+
+// A backdated sale just recorded with its products but without taking stock:
+// its cost is booked straight away. Never fails the sale it follows.
+const costBackdatedSale = async (result, actorName) => {
+  try {
+    if (!result?.order || !result.itemized || result.affectInventory) return;
+    const fresh = await Order.findById(result.order._id, { items: 1, orderNumber: 1, createdAt: 1, isComplimentary: 1 }).lean();
+    if (!fresh || fresh.isComplimentary) return;
+    const { cost } = await costOfOrderFromStock(fresh);
+    if (cost > 0) await postCostAwaitingCount(fresh, cost, actorName);
+  } catch (err) { log.error?.({ err }, 'Could not book the cost of a backdated sale'); }
+};
+
+// Once, on its own: the backdated sales already here get their cost, so
+// nobody has to press anything after updating.
+const catchUpBackdatedCostsOnce = async () => {
+  try {
+    if (await Settings.findOne({ key: 'backdatedCostCatchUpV1' }).lean()) return;
+    const r = await bookBackdatedCosts('System');
+    await Settings.findOneAndUpdate({ key: 'backdatedCostCatchUpV1' }, { key: 'backdatedCostCatchUpV1', value: true }, { upsert: true });
+    if (r.booked) { log.info?.({ booked: r.booked, total: r.total }, '✅ Cost of goods sold booked for backdated sales'); emitToMgr('erpUpdated'); }
+  } catch (err) { log.error?.({ err }, 'Backdated cost catch-up failed'); }
+};
+if (mongoose.connection.readyState === 1) setTimeout(catchUpBackdatedCostsOnce, 15000);
+else mongoose.connection.once('open', () => setTimeout(catchUpBackdatedCostsOnce, 15000));
+
 app.post('/api/admin/backdate-sale/book-costs', verifyToken, requireStaff, requirePermission('sales.backdate'), async (req, res) => {
   try {
-    const orders = await Order.find({
-      businessType: BUSINESS_TYPE, isBackdated: true, status: 'Completed', isComplimentary: { $ne: true },
-      $and: [{ $or: [{ costPosted: { $exists: false } }, { costPosted: { $lte: 0 } }] }, { $or: [{ stockMoves: { $exists: false } }, { stockMoves: { $size: 0 } }] }],
-    }, { items: 1, orderNumber: 1, createdAt: 1 }).limit(20000).lean();
-    let booked = 0, total = 0; const noCost = new Set(), problems = [];
-    for (const o of orders) {
-      try {
-        const { cost, unpriced } = await costOfOrderFromStock(o);
-        unpriced.forEach(n => n && noCost.add(n));
-        if (!(cost > 0)) continue;
-        total += await postCostAwaitingCount(o, cost, req.user?.name);
-        booked++;
-      } catch (e) { if (problems.length < 20) problems.push(e.message); }
-    }
-    total = Math.round(total * 100) / 100;
-    await logAudit(req, { action: 'backdate-book-costs', entity: 'Order', entityId: 'bulk', after: { checked: orders.length, booked, total } });
+    const r = await bookBackdatedCosts(req.user?.name);
+    await logAudit(req, { action: 'backdate-book-costs', entity: 'Order', entityId: 'bulk', after: { checked: r.checked, booked: r.booked, total: r.total } });
     emitToMgr('erpUpdated');
-    res.json({ success: true, checked: orders.length, booked, total, noCost: [...noCost].slice(0, 40), problems });
+    res.json({ success: true, ...r });
   } catch (err) {
     log.error?.({ err }, 'POST /api/admin/backdate-sale/book-costs failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -1139,6 +1173,7 @@ app.post('/api/orders/import', verifyToken, requireStaff, requirePermission('sal
 app.post('/api/admin/backdate-sale', verifyToken, requireStaff, requirePermission('sales.backdate'), async (req, res) => {
   try {
     const result = await createBackdatedSale(req.body, req.user?.name);
+    await costBackdatedSale(result, req.user?.name);
     await logAudit(req, { action: 'backdate-sale', entity: 'Order', entityId: result.order._id, after: { orderNumber: result.order.orderNumber, date: result.dt, total: result.total, paymentMethod: result.method, itemized: result.itemized, affectInventory: result.affectInventory } });
     emitToMgr('erpUpdated');
     res.json({ success: true, order: result.order, journalReference: result.journalReference });
@@ -1248,6 +1283,7 @@ app.post('/api/admin/backdate-sale/queue/:id/save', verifyToken, requireStaff, r
       // The sheet's reference, so importing the same file again skips it.
       importRef: q.transNo || '',
     }, req.user?.name);
+    await costBackdatedSale(result, req.user?.name);
     q.status = 'resolved';
     q.resolvedOrderId = result.order._id;
     await q.save();
