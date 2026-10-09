@@ -944,29 +944,54 @@ const postCostAwaitingCount = async (order, cost, actorName) => {
 // each line's product is followed to its recipe (or, with none, to the stock
 // item of the same code), exactly as a sale that takes stock would.
 const costOfOrderFromStock = async (order) => {
+  const rx = (v) => ({ $regex: `^${String(v).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' });
+  const scope = { businessType: BUSINESS_TYPE };
   let cost = 0; const unpriced = [];
   for (const item of (order.items || [])) {
     const qty = Number(item.quantity) || 0;
     if (!(qty > 0)) continue;
     const code = String(item.productCode || '').trim();
+    const plainName = String(item.name || '').replace(/\s*\(.*?\)\s*$/, '').trim();
     const product = (item.productId && mongoose.Types.ObjectId.isValid(String(item.productId)) && await Product.findById(item.productId).lean())
-      || (code && await Product.findOne({ productCode: { $regex: `^${code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } }).lean())
-      || await Product.findOne({ name: String(item.name || '').replace(/\s*\(.*?\)\s*$/, '').trim() }).lean();
-    if (!product) { unpriced.push(item.name); continue; }
-    let recipe = product.baseRecipe || [];
+      || (code && await Product.findOne({ productCode: rx(code) }).lean())
+      || (plainName && await Product.findOne({ name: rx(plainName) }).lean())
+      || null;
+
+    // 1. The line's own item code IS the stock item's code for anything sold
+    //    as it is stocked - the surest link there is, and one that does not
+    //    depend on the product, or its recipe, still pointing at the right row.
+    const byCode = (code && await Inventory.findOne({ ...scope, itemCode: rx(code) }).lean())
+      || (product?.productCode && await Inventory.findOne({ ...scope, itemCode: rx(product.productCode) }).lean())
+      || null;
+
+    // 2. A recipe (a made product): each ingredient by its id, or - when the
+    //    stock was imported again and the id no longer exists - by its name.
+    let recipe = product?.baseRecipe || [];
     const sizeMatch = String(item.name || '').match(/\(([^)]+)\)$/);
-    if (sizeMatch) { const sz = product.sizes?.find(x => x.name === sizeMatch[1]); if (sz?.recipe?.length) recipe = sz.recipe; }
-    let plan = recipe.filter(r => r.invId && !r.nonStock && mongoose.Types.ObjectId.isValid(String(r.invId)))
-      .map(r => ({ invId: r.invId, qty: Number(r.qty) * qty }));
-    if (!plan.length) {
-      const linkInv = await resolveLinkedInventory(product, item.productCode || product.productCode);
-      if (linkInv) plan = [{ invId: linkInv._id, qty: qty * baseUnitsPerSale(product, linkInv) }];
+    if (sizeMatch) { const sz = product?.sizes?.find(x => x.name === sizeMatch[1]); if (sz?.recipe?.length) recipe = sz.recipe; }
+    const stockLines = recipe.filter(r => !r.nonStock && (r.invId || r.name));
+    const ownItemOnly = stockLines.length <= 1;           // a product that is just its own stock item
+
+    let lineCost = 0, found = false, zeroCost = false;
+    const add = (inv, baseQty) => { found = true; const c = Number(inv.unitCost) || 0; if (!(c > 0)) zeroCost = true; lineCost += c * baseQty; };
+
+    if (byCode && ownItemOnly) {
+      add(byCode, qty * baseUnitsPerSale(product || { name: plainName }, byCode));
+    } else if (stockLines.length) {
+      for (const r of stockLines) {
+        const inv = (r.invId && mongoose.Types.ObjectId.isValid(String(r.invId)) && await Inventory.findById(r.invId).lean())
+          || (r.name && await Inventory.findOne({ ...scope, itemName: rx(r.name) }).lean());
+        if (inv) add(inv, (Number(r.qty) || 0) * qty);
+      }
     }
-    if (!plan.length) { unpriced.push(item.name); continue; }
-    const invs = await Inventory.find({ _id: { $in: plan.map(x => x.invId) } }, { unitCost: 1 }).lean();
-    const costOf = new Map(invs.map(i => [String(i._id), Number(i.unitCost) || 0]));
-    const lineCost = plan.reduce((sum, x) => sum + (costOf.get(String(x.invId)) || 0) * x.qty, 0);
-    if (!(lineCost > 0)) unpriced.push(item.name);
+    // 3. Nothing yet: the stock item of the same name.
+    if (!found) {
+      const byName = byCode || (plainName && await Inventory.findOne({ ...scope, itemName: rx(plainName) }).lean());
+      if (byName) add(byName, qty * baseUnitsPerSale(product || { name: plainName }, byName));
+    }
+
+    if (!found) unpriced.push(`${item.name}${code ? ` [${code}]` : ''} - no stock item with this code or name`);
+    else if (zeroCost || !(lineCost > 0)) unpriced.push(`${item.name}${code ? ` [${code}]` : ''} - its stock item has no unit cost`);
     cost += lineCost;
   }
   return { cost: Math.round(cost * 100) / 100, unpriced };

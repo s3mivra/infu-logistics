@@ -383,6 +383,27 @@ describe('importing an Orders export back', () => {
     expect(+((await cogs()) - before).toFixed(2)).toBe(0);
   });
 
+  it('the cost follows the item code even when the product is gone or its recipe points at stock that was re-imported', async () => {
+    const JE = mongoose.model('JournalEntry');
+    const cogs = async () => { const [r] = await JE.aggregate([{ $unwind: '$lines' }, { $match: { 'lines.accountCode': '510000' } }, { $group: { _id: null, n: { $sum: { $subtract: ['$lines.debit', '$lines.credit'] } } } }]); return +(r?.n || 0).toFixed(2); };
+    const Inventory = mongoose.model('Inventory');
+    // (a) stock item only, no product at all; (b) a product whose recipe names a stock row that no longer exists
+    await Inventory.create({ itemName: 'CODE ONLY SYRUP', itemCode: 'P-CODE-1', unit: 'pcs', stockQty: 10, unitCost: 80 });
+    await Inventory.create({ itemName: 'STALE LINK POWDER', itemCode: 'P-CODE-2', unit: 'pcs', stockQty: 10, unitCost: 50 });
+    await mongoose.model('Product').create({ name: 'STALE LINK POWDER', productCode: 'P-CODE-2', category: 'Any', basePrice: 120,
+      baseRecipe: [{ invId: String(new mongoose.Types.ObjectId()), name: 'STALE LINK POWDER', qty: 1, unit: 'pcs', packBase: 1 }] });
+    const before = await cogs();
+    const r = await imp({
+      rows: [{ 'Order No': 'ORD-2026-A9040', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 640, Discount: 0, Total: 640 }],
+      lines: [
+        { 'Order No': 'ORD-2026-A9040', Code: 'p-code-1', Product: 'CODE ONLY SYRUP', Qty: 2, 'Unit Price': 200 },
+        { 'Order No': 'ORD-2026-A9040', Code: 'P-CODE-2', Product: 'STALE LINK POWDER', Qty: 2, 'Unit Price': 120 },
+      ],
+    });
+    expect(r.body.created, JSON.stringify(r.body)).toBe(1);
+    expect(+((await cogs()) - before).toFixed(2)).toBe(260);                         // 2 x 80 + 2 x 50
+  });
+
   it('only completed orders come back', async () => {
     const r = await imp({ rows: [{ 'Order No': 'ORD-2026-A9002', Date: LAST_MONTH, Status: 'Cancelled', Total: 500 }] });
     expect(r.body.created).toBe(0);
