@@ -199,6 +199,26 @@ export default function registerCollections(ctx) {
     return { order, payment };
   }
 
+  // Every part of the check that line belongs to. A check that paid one sale
+  // is just itself; one spread over several sales has a part on each, and
+  // they move together - it is a single piece of paper at the bank.
+  async function checkParts(req, { order, payment }) {
+    const parts = [{ order, payment }];
+    if (!payment.checkGroup) return parts;
+    const others = await Order.find({
+      _id: { $ne: order._id }, businessType: BUSINESS_TYPE, ...tenantScope(req),
+      arPayments: { $elemMatch: { checkGroup: payment.checkGroup, checkNumber: payment.checkNumber } },
+    });
+    const status = payment.checkStatus || 'On Hand';
+    for (const o of others) {
+      for (const p of o.arPayments) {
+        if (p.checkGroup === payment.checkGroup && p.checkNumber === payment.checkNumber && (p.checkStatus || 'On Hand') === status) parts.push({ order: o, payment: p });
+      }
+    }
+    return parts;
+  }
+  const partsTotal = (parts) => Math.round(parts.reduce((s, x) => s + (Number(x.payment.amount) || 0), 0) * 100) / 100;
+
   // ── LIST ─────────────────────────────────────────────────────────────────
   // Every check ever taken in, newest first, with the derived flags an
   // operator actually acts on: is this post-dated check depositable yet, and
@@ -242,6 +262,7 @@ export default function registerCollections(ctx) {
             checkDate: dated,
             checkBank: p.checkBank || '',
             checkDrawer: p.checkDrawer || '',
+            checkGroup: p.checkGroup || '',
             status: st,
             collectionDate: p.collectionDate || p.createdAt,
             collectedBy: p.collectedBy || '',
@@ -267,6 +288,11 @@ export default function registerCollections(ctx) {
 
       checks.sort((a, b) => new Date(b.collectionDate) - new Date(a.collectionDate));
 
+      // One check spread over several sales is still one check.
+      const groupCounts = {};
+      for (const c of checks) if (c.checkGroup) groupCounts[c.checkGroup] = (groupCounts[c.checkGroup] || 0) + 1;
+      for (const c of checks) c.groupSize = c.checkGroup ? groupCounts[c.checkGroup] : 1;
+      const countOf = (list) => new Set(list.map(c => c.checkGroup || String(c.paymentId))).size;
       const sumOf = (st) => Math.round(checks.filter(c => c.status === st).reduce((s, c) => s + c.amount, 0) * 100) / 100;
       const onHand = checks.filter(c => c.status === 'On Hand');
       res.json({
@@ -274,17 +300,17 @@ export default function registerCollections(ctx) {
         checks,
         summary: {
           onHandTotal: sumOf('On Hand'),
-          onHandCount: onHand.length,
+          onHandCount: countOf(onHand),
           // On-hand checks whose date has arrived: money sitting in a drawer
           // that could be in the bank today.
           readyToDepositTotal: Math.round(onHand.filter(c => !c.postDated).reduce((s, c) => s + c.amount, 0) * 100) / 100,
-          readyToDepositCount: onHand.filter(c => !c.postDated).length,
+          readyToDepositCount: countOf(onHand.filter(c => !c.postDated)),
           postDatedTotal: Math.round(onHand.filter(c => c.postDated).reduce((s, c) => s + c.amount, 0) * 100) / 100,
           inClearingTotal: sumOf('Deposited'),
-          inClearingCount: checks.filter(c => c.status === 'Deposited').length,
+          inClearingCount: countOf(checks.filter(c => c.status === 'Deposited')),
           clearedTotal: sumOf('Cleared'),
           bouncedTotal: sumOf('Bounced'),
-          bouncedCount: checks.filter(c => c.status === 'Bounced').length,
+          bouncedCount: countOf(checks.filter(c => c.status === 'Bounced')),
         },
       });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
@@ -295,7 +321,7 @@ export default function registerCollections(ctx) {
   // still an uncleared check, it has just changed hands. This is also the
   // point where the collection finally gets a deposit date, which is what the
   // deposit-basis collection report reads.
-  app.post('/api/collections/checks/:orderId/:paymentId/deposit', verifyToken, ...canActCheck, async (req, res) => {
+  app.post('/api/collections/checks/:orderId/:paymentId/deposit', verifyToken, ...canActCheck, atomic(mongoose, async (req, res) => {
     try {
       const found = await findCheck(req, res);
       if (!found) return;
@@ -309,15 +335,18 @@ export default function registerCollections(ctx) {
       if (payment.checkDate && dayStart(when) < dayStart(payment.checkDate))
         return res.status(400).json({ success: false, error: `Check #${payment.checkNumber} is dated ${new Date(payment.checkDate).toLocaleDateString()} and cannot be deposited before then.` });
 
-      payment.checkStatus = 'Deposited';
-      payment.checkDepositedAt = when;
-      payment.depositDate = when;
-      await order.save();
+      const parts = await checkParts(req, found);
+      for (const part of parts) {
+        part.payment.checkStatus = 'Deposited';
+        part.payment.checkDepositedAt = when;
+        part.payment.depositDate = when;
+        await part.order.save();
+      }
 
-      try { await logAudit?.(req, { action: 'depositCheck', entity: 'Order', entityId: order.orderNumber, after: { checkNumber: payment.checkNumber, amount: payment.amount, depositedAt: when } }); } catch { /* non-fatal */ }
-      res.json({ success: true, check: payment });
+      try { await logAudit?.(req, { action: 'depositCheck', entity: 'Order', entityId: parts.map(x => x.order.orderNumber).join(', '), after: { checkNumber: payment.checkNumber, amount: partsTotal(parts), depositedAt: when } }); } catch { /* non-fatal */ }
+      res.json({ success: true, check: payment, sales: parts.length });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
-  });
+  }));
 
   // ── CLEAR ────────────────────────────────────────────────────────────────
   // The bank honoured it: the money is finally real. Moves the amount out of
@@ -336,29 +365,33 @@ export default function registerCollections(ctx) {
       // Where the money landed. Defaults to Cash in Bank, which is where a
       // deposited check clears unless told otherwise.
       const toAcct = accountForPaymentMethod(req.body?.clearedTo || 'Cash in Bank');
-      const amt = Math.round((Number(payment.amount) || 0) * 100) / 100;
-      const reference = `${payment.journalRef || mkRef('ARS', order.orderNumber)}-CLR`;
+      // One entry per sale the check paid, each under that sale's own receipt
+      // reference, so every sale's history still shows its part clearing.
+      const parts = await checkParts(req, found);
+      for (const part of parts) {
+        const amt = Math.round((Number(part.payment.amount) || 0) * 100) / 100;
+        const reference = `${part.payment.journalRef || mkRef('ARS', part.order.orderNumber)}-CLR`;
+        const lines = [
+          { accountCode: toAcct.code, accountName: toAcct.name, debit: amt, credit: 0 },
+          { accountCode: '115000', accountName: 'Checks on Hand (Undeposited)', debit: 0, credit: amt },
+        ];
+        assertBalanced(lines, reference);
+        await JournalEntry.create({
+          date: when, reference,
+          description: `Check #${part.payment.checkNumber} cleared${part.payment.checkBank ? ` (${part.payment.checkBank})` : ''} - ${part.order.orderNumber}`,
+          lines, totalDebit: amt, totalCredit: amt,
+        });
 
-      const lines = [
-        { accountCode: toAcct.code, accountName: toAcct.name, debit: amt, credit: 0 },
-        { accountCode: '115000', accountName: 'Checks on Hand (Undeposited)', debit: 0, credit: amt },
-      ];
-      assertBalanced(lines, reference);
-      await JournalEntry.create({
-        date: when, reference,
-        description: `Check #${payment.checkNumber} cleared${payment.checkBank ? ` (${payment.checkBank})` : ''} - ${order.orderNumber}`,
-        lines, totalDebit: amt, totalCredit: amt,
-      });
+        part.payment.checkStatus = 'Cleared';
+        part.payment.checkClearedAt = when;
+        part.payment.checkClearedTo = toAcct.name;
+        if (!part.payment.checkDepositedAt) { part.payment.checkDepositedAt = when; part.payment.depositDate = when; }
+        await part.order.save();
+      }
 
-      payment.checkStatus = 'Cleared';
-      payment.checkClearedAt = when;
-      payment.checkClearedTo = toAcct.name;
-      if (!payment.checkDepositedAt) { payment.checkDepositedAt = when; payment.depositDate = when; }
-      await order.save();
-
-      try { await logAudit?.(req, { action: 'clearCheck', entity: 'Order', entityId: order.orderNumber, after: { checkNumber: payment.checkNumber, amount: amt, account: toAcct.code, clearedAt: when } }); } catch { /* non-fatal */ }
+      try { await logAudit?.(req, { action: 'clearCheck', entity: 'Order', entityId: parts.map(x => x.order.orderNumber).join(', '), after: { checkNumber: payment.checkNumber, amount: partsTotal(parts), account: toAcct.code, clearedAt: when } }); } catch { /* non-fatal */ }
       emitToMgr('erpUpdated');
-      res.json({ success: true, check: payment });
+      res.json({ success: true, check: payment, sales: parts.length });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   }));
 
@@ -379,55 +412,61 @@ export default function registerCollections(ctx) {
       if (Number.isNaN(when.getTime())) return res.status(400).json({ success: false, error: 'Invalid bounce date.' });
       const reason = String(req.body?.reason || '').trim().slice(0, 500);
 
-      const amt = Math.round((Number(payment.amount) || 0) * 100) / 100;
-      const reference = `${payment.journalRef || mkRef('ARS', order.orderNumber)}-BNC`;
+      // Every sale the check paid goes back to owing its part.
+      const parts = await checkParts(req, found);
+      const total = partsTotal(parts);
+      for (const part of parts) {
+        const o = part.order, pay = part.payment;
+        const amt = Math.round((Number(pay.amount) || 0) * 100) / 100;
+        const reference = `${pay.journalRef || mkRef('ARS', o.orderNumber)}-BNC`;
 
-      // Credit whichever asset currently holds the money. A check that already
-      // cleared and was later reversed by the bank takes it back out of the
-      // bank; one that never cleared comes out of Checks on Hand.
-      const wasCleared = payment.checkStatus === 'Cleared';
-      const fromAcct = wasCleared
-        ? accountForPaymentMethod(payment.checkClearedTo || 'Cash in Bank')
-        : { code: '115000', name: 'Checks on Hand (Undeposited)' };
+        // Credit whichever asset currently holds the money. A check that already
+        // cleared and was later reversed by the bank takes it back out of the
+        // bank; one that never cleared comes out of Checks on Hand.
+        const wasCleared = pay.checkStatus === 'Cleared';
+        const fromAcct = wasCleared
+          ? accountForPaymentMethod(pay.checkClearedTo || 'Cash in Bank')
+          : { code: '115000', name: 'Checks on Hand (Undeposited)' };
 
-      const lines = [
-        { accountCode: '120000', accountName: 'Accounts Receivable', debit: amt, credit: 0 },
-        { accountCode: fromAcct.code, accountName: fromAcct.name, debit: 0, credit: amt },
-      ];
-      assertBalanced(lines, reference);
-      await JournalEntry.create({
-        date: when, reference,
-        description: `Check #${payment.checkNumber} BOUNCED${payment.checkBank ? ` (${payment.checkBank})` : ''} - ${order.orderNumber} receivable reinstated${reason ? `: ${reason}` : ''}`,
-        lines, totalDebit: amt, totalCredit: amt,
-      });
-
-      payment.checkStatus = 'Bounced';
-      payment.checkBouncedAt = when;
-      payment.checkBounceReason = reason;
-
-      // Put the money back on the invoice. arPaidAmount drives every A/R view
-      // (see arBalance in lib/credit.js), so this alone reopens the receivable
-      // and puts it back in the ageing buckets and the collection worklist.
-      const paidAfter = Math.max(0, Math.round((((Number(order.arPaidAmount) || 0)) - amt) * 100) / 100);
-      order.arPaidAmount = paidAfter;
-      order.arSettled = isFullySettled({ ...order.toObject?.() ?? order, arPaidAmount: paidAfter });
-      await order.save();
-
-      try {
-        await logAudit?.(req, {
-          action: 'bounceCheck', entity: 'Order', entityId: order.orderNumber,
-          after: { checkNumber: payment.checkNumber, amount: amt, reason, reinstated: true, paidAfter, reopened: !order.arSettled },
+        const lines = [
+          { accountCode: '120000', accountName: 'Accounts Receivable', debit: amt, credit: 0 },
+          { accountCode: fromAcct.code, accountName: fromAcct.name, debit: 0, credit: amt },
+        ];
+        assertBalanced(lines, reference);
+        await JournalEntry.create({
+          date: when, reference,
+          description: `Check #${pay.checkNumber} BOUNCED${pay.checkBank ? ` (${pay.checkBank})` : ''} - ${o.orderNumber} receivable reinstated${reason ? `: ${reason}` : ''}`,
+          lines, totalDebit: amt, totalCredit: amt,
         });
-      } catch { /* non-fatal */ }
+
+        pay.checkStatus = 'Bounced';
+        pay.checkBouncedAt = when;
+        pay.checkBounceReason = reason;
+
+        // Put the money back on the invoice. arPaidAmount drives every A/R view
+        // (see arBalance in lib/credit.js), so this alone reopens the receivable
+        // and puts it back in the ageing buckets and the collection worklist.
+        const paidAfter = Math.max(0, Math.round((((Number(o.arPaidAmount) || 0)) - amt) * 100) / 100);
+        o.arPaidAmount = paidAfter;
+        o.arSettled = isFullySettled({ ...o.toObject?.() ?? o, arPaidAmount: paidAfter });
+        await o.save();
+
+        try {
+          await logAudit?.(req, {
+            action: 'bounceCheck', entity: 'Order', entityId: o.orderNumber,
+            after: { checkNumber: pay.checkNumber, amount: amt, reason, reinstated: true, paidAfter, reopened: !o.arSettled },
+          });
+        } catch { /* non-fatal */ }
+      }
 
       // Managers should hear about a bounced check immediately - it is money
       // they believed they had.
       emitToMgr('mgrAlert', {
-        kind: 'checkBounced', ref: order.orderNumber,
-        message: `Check #${payment.checkNumber} for ₱${amt.toFixed(2)} bounced - ${order.customerName || 'client'} owes it again.`,
+        kind: 'checkBounced', ref: parts.map(x => x.order.orderNumber).join(', '),
+        message: `Check #${payment.checkNumber} for ₱${total.toFixed(2)} bounced - ${order.customerName || 'client'} owes it again${parts.length > 1 ? ` on ${parts.length} sales` : ''}.`,
       });
       emitToMgr('erpUpdated');
-      res.json({ success: true, check: payment, balance: arBalance(order), reopened: !order.arSettled });
+      res.json({ success: true, check: payment, balance: arBalance(order), reopened: !order.arSettled, sales: parts.length });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   }));
 }

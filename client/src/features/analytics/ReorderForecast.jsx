@@ -18,7 +18,7 @@ const STATUS = {
   ok: ['Enough', 'bg-green-900/30 text-success'],
 };
 
-export default function ReorderForecast({ rows = [], settings = {}, analyticsDisplay }) {
+export default function ReorderForecast({ rows = [], settings = {}, analyticsDisplay, onMakeOrders }) {
   const [onlyNeeded, setOnlyNeeded] = useState(true);
   const [search, setSearch] = useState('');
   const shown = useMemo(() => {
@@ -75,6 +75,10 @@ export default function ReorderForecast({ rows = [], settings = {}, analyticsDis
           <label className="flex items-center gap-1.5 text-xs font-bold text-fg/80">
             <input type="checkbox" checked={onlyNeeded} onChange={e => setOnlyNeeded(e.target.checked)} /> Only what needs ordering
           </label>
+          {onMakeOrders && needCount > 0 && (
+            <button onClick={onMakeOrders} title="Opens Procurement with a draft purchase order per supplier for what needs ordering"
+              className="bg-brand text-on-brand px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider">Make purchase orders</button>
+          )}
           {shown.length > 0 && <button onClick={exportXlsx} className="flex items-center gap-1.5 bg-white/5 text-fg/80 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> Excel</button>}
         </div>
       </div>

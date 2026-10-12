@@ -104,6 +104,103 @@ export default function registerBills(ctx) {
 
   // ── CREATE (manual bill - no PO backing it) ─────────────────────────────────
   // POST /api/bills { supplierId, description, amount, dueDate, expenseAccountCode }
+  // ── REPEATING BILLS ──────────────────────────────────────────────────────────
+  // Entered once; each month's bill is raised as Pending for approval, by the
+  // button on the Bills page or on its own once a day (see the timer below).
+  const RecurringBill = mongoose.model('RecurringBill');
+  const monthKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const raiseRecurringBills = async (scope, actorName) => {
+    const month = monthKey();
+    const due = await RecurringBill.find({ businessType: BUSINESS_TYPE, ...scope, isActive: true, lastMonth: { $ne: month } });
+    const raised = [];
+    for (const r of due) {
+      // Claimed first, so two runs at once cannot both raise the same month.
+      const claimed = await RecurringBill.findOneAndUpdate({ _id: r._id, lastMonth: { $ne: month } }, { $set: { lastMonth: month } });
+      if (!claimed) continue;
+      const [y, m] = month.split('-').map(Number);
+      const billNumber = await mkSeqRef('BILL');
+      await Bill.create({
+        businessType: BUSINESS_TYPE, ...scope, billNumber,
+        supplierId: r.supplierId, supplierName: r.supplierName, source: 'Manual',
+        description: `${r.description} - ${month}`.slice(0, 500), amount: r.amount,
+        expenseAccountCode: r.expenseAccountCode,
+        dueDate: new Date(y, m - 1, Math.min(28, Math.max(1, r.dayOfMonth || 1)), 12),
+        createdBy: actorName || 'Repeating bill',
+      });
+      raised.push({ billNumber, supplier: r.supplierName, description: r.description, amount: r.amount });
+    }
+    return raised;
+  };
+
+  app.get('/api/recurring-bills', verifyToken, ...canViewAcct, async (req, res) => {
+    try {
+      const rows = await RecurringBill.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }).sort({ supplierName: 1, description: 1 }).lean();
+      res.json({ success: true, rows, month: monthKey() });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  app.post('/api/recurring-bills', verifyToken, ...canPostAcct, async (req, res) => {
+    try {
+      const { supplierId, description, amount, expenseAccountCode, dayOfMonth } = req.body || {};
+      if (!supplierId || !mongoose.Types.ObjectId.isValid(supplierId)) return res.status(400).json({ success: false, error: 'Pick the supplier.' });
+      const supplier = await Supplier.findOne({ _id: supplierId, ...tenantScope(req) }).lean();
+      if (!supplier) return res.status(404).json({ success: false, error: 'Supplier not found.' });
+      const amt = money(amount);
+      if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Enter the monthly amount.' });
+      if (!String(description || '').trim()) return res.status(400).json({ success: false, error: 'Say what it is for.' });
+      if (!expenseAccountCode || !acctMeta(expenseAccountCode)) return res.status(400).json({ success: false, error: 'Pick the account it is charged to.' });
+      const row = await RecurringBill.create({
+        businessType: BUSINESS_TYPE, ...tenantScope(req),
+        supplierId: supplier._id, supplierName: supplier.name, description: String(description).trim().slice(0, 200),
+        amount: amt, expenseAccountCode, dayOfMonth: Math.min(28, Math.max(1, parseInt(dayOfMonth, 10) || 1)),
+        createdBy: req.user?.name || '',
+      });
+      await logAudit(req, { action: 'create', entity: 'RecurringBill', entityId: row._id, after: { supplier: supplier.name, description: row.description, amount: amt } });
+      res.json({ success: true, row });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  app.patch('/api/recurring-bills/:id', verifyToken, ...canPostAcct, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const row = await RecurringBill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+      if (!row) return res.status(404).json({ success: false, error: 'Not found' });
+      const { isActive, amount, dayOfMonth } = req.body || {};
+      if (typeof isActive === 'boolean') row.isActive = isActive;
+      if (amount !== undefined) { const amt = money(amount); if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Enter the monthly amount.' }); row.amount = amt; }
+      if (dayOfMonth !== undefined) row.dayOfMonth = Math.min(28, Math.max(1, parseInt(dayOfMonth, 10) || 1));
+      await row.save();
+      res.json({ success: true, row });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  app.delete('/api/recurring-bills/:id', verifyToken, ...canPostAcct, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const gone = await RecurringBill.findOneAndDelete({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+      if (!gone) return res.status(404).json({ success: false, error: 'Not found' });
+      await logAudit(req, { action: 'delete', entity: 'RecurringBill', entityId: gone._id, before: { supplier: gone.supplierName, description: gone.description } });
+      res.json({ success: true });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  // Raise this month's, now. Bills raised earlier this month are not raised again.
+  app.post('/api/recurring-bills/raise', verifyToken, ...canPostAcct, async (req, res) => {
+    try {
+      const raised = await raiseRecurringBills(tenantScope(req), req.user?.name);
+      if (raised.length) await logAudit(req, { action: 'raise', entity: 'RecurringBill', entityId: 'month', after: { month: monthKey(), count: raised.length } });
+      res.json({ success: true, raised, month: monthKey() });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  // On its own, once a day: this month's repeating bills appear as Pending
+  // without anyone having to remember. Not in tests - a timer must not outlive them.
+  if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
+    const tick = () => raiseRecurringBills({}, 'Repeating bill').catch(() => {});
+    setTimeout(tick, 60 * 1000).unref?.();
+    setInterval(tick, 24 * 60 * 60 * 1000).unref?.();
+  }
+
   app.post('/api/bills', verifyToken, ...canPostAcct, async (req, res) => {
     try {
       const { supplierId, description, amount, dueDate, expenseAccountCode, claimInputVat, supplierInvoiceNo } = req.body || {};

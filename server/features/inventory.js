@@ -2127,15 +2127,6 @@ async function runInventoryImport(req, res, attempt) {
         } else if (diff < 0) {
           const r = consumeBatches(existing.expiryBatches || [], Math.abs(diff));
           existing.expiryBatches = r.batches;
-        } else if (diff > 0 && (expiryFromExcel || productionFromExcel)) {
-          existing.expiryBatches = addBatch(existing.expiryBatches || [], {
-            qty: diff,
-            expiryDate: expiryFromExcel ? new Date(expiryFromExcel) : null,
-            productionDate: productionFromExcel ? new Date(productionFromExcel) : null,
-            receivedAt: new Date(),
-            reference: impRef,
-            unitCost: unitCostForValuation
-          });
         }
         existing.expiryDate = soonestExpiry(existing.expiryBatches || []);
         await existing.save({ session });

@@ -3,6 +3,7 @@ import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, Trending
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
 import RangePresets from '../../shared/RangePresets';
+import DailyClosingCheck from './DailyClosingCheck';
 import * as ui from '../../shared/ui';
 
 import { todayStr } from '../../shared/businessDay.js';
@@ -143,7 +144,7 @@ export default function HistoryTab({ ctx }) {
 
   const histSubTabUI = (
     <div className="flex items-center gap-2 mb-6 flex-wrap">
-      {[['daily','Current Shift'],['shifts','Shift History'],['hours','Timesheets'],['deposits','Bank Deposits']].map(([id, label]) => (
+      {[['daily','Current Shift'],['closing','Daily Closing Check'],['shifts','Shift History'],['hours','Timesheets'],['deposits','Bank Deposits']].map(([id, label]) => (
         <button key={id}
           onClick={() => { setHistorySubTab(id); if (id === 'shifts') fetchShiftHistory(1); if (id === 'hours') fetchClockEntries(1); }}
           className={`px-5 py-2.5 rounded-xl font-black text-sm uppercase tracking-wider transition ${historySubTab === id ? 'bg-brand text-on-brand shadow-md' : 'bg-surface-2 text-fg/75 hover:text-fg'}`}
@@ -203,79 +204,8 @@ export default function HistoryTab({ ctx }) {
             </div>
           )}
 
-          {/* ===== SUMMARY SALES (channel breakdown) ===== */}
-          {historySubTab === 'sales' && (
-            <div className="space-y-4 animate-fade-in">
-              <div className="flex flex-wrap gap-3 items-center">
-                <RangePresets value={sssRange} onChange={r => setSssRange(p => ({ ...p, ...r }))} onRun={fetchSalesSummary} />
-                <input type="date" value={sssRange.start} onChange={e => setSssRange(p => ({ ...p, start: e.target.value }))}
-                  className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
-                <span className="text-fg/65 font-bold text-sm">→</span>
-                <input type="date" value={sssRange.end} onChange={e => setSssRange(p => ({ ...p, end: e.target.value }))}
-                  className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
-                <button onClick={fetchSalesSummary} className="px-5 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition">Load</button>
-                <div className="flex rounded-xl overflow-hidden border border-white/10">
-                  {[['order', 'Per Order'], ['day', 'Per Day']].map(([g, lbl]) => (
-                    <button key={g} onClick={() => setSssGroup(g)}
-                      className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition ${sssGroup === g ? 'bg-brand text-on-brand' : 'bg-surface text-fg/75 hover:text-fg'}`}>{lbl}</button>
-                  ))}
-                </div>
-                {salesSummary && <button onClick={exportSalesSummaryPDF} className="ml-auto bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition flex items-center gap-1.5"><Download size={13} /> PDF</button>}
-              </div>
-
-              {!salesSummary ? (
-                <p className="text-fg/65 text-sm text-center p-6 font-bold">Pick a range and click Load.</p>
-              ) : sssRows.length === 0 ? (
-                <p className="text-fg/65 text-sm text-center p-6 font-bold">No completed sales in this range.</p>
-              ) : (
-                <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs whitespace-nowrap">
-                      <thead className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
-                        <tr>
-                          <th className="px-3 py-2.5">Date</th>
-                          <th className="px-3 py-2.5">Customer ID</th>
-                          <th className="px-3 py-2.5">Customer Name</th>
-                          <th className="px-3 py-2.5">{sssGroup === 'day' ? 'Orders' : 'Order ID'}</th>
-                          {SSS_COLS.map(([label]) => (
-                            <th key={label} className="px-3 py-2.5 text-right">{label}</th>
-                          ))}
-                          <th className="px-3 py-2.5 text-right">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sssPage.pageItems.map((r, i) => (
-                          <tr key={i} className={`border-b border-white/5 ${i % 2 ? 'bg-white/[0.015]' : ''}`}>
-                            <td className="px-3 py-2.5 text-fg/70">{new Date(r.date).toLocaleDateString()}</td>
-                            <td className="px-3 py-2.5 text-fg/70">{sssGroup === 'day' ? '-' : (r.customerId || '-')}</td>
-                            <td className="px-3 py-2.5 text-fg/70">{sssGroup === 'day' ? '-' : (r.customerName || 'Guest')}</td>
-                            <td className="px-3 py-2.5 font-bold text-fg">{sssGroup === 'day' ? r.count : r.orderNumber}</td>
-                            {SSS_COLS.map(([label, methods]) => { const v = sssColVal(r, methods); return (
-                              <td key={label} className="px-3 py-2.5 text-right tabular-nums text-fg/80">{v ? `₱${v.toFixed(2)}` : '-'}</td>
-                            ); })}
-                            <td className="px-3 py-2.5 text-right tabular-nums font-black text-brand-text">₱{r.total.toFixed(2)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot>
-                        <tr className="border-t-2 border-white/10 bg-brand/5 font-black text-fg">
-                          <td className="px-3 py-3 uppercase text-[10px] tracking-wider">Totals</td>
-                          <td className="px-3 py-3"></td>
-                          <td className="px-3 py-3"></td>
-                          <td className="px-3 py-3"></td>
-                          {SSS_COLS.map(([label, methods]) => (
-                            <td key={label} className="px-3 py-3 text-right tabular-nums">₱{sssColTotal(methods).toFixed(2)}</td>
-                          ))}
-                          <td className="px-3 py-3 text-right tabular-nums text-brand-text">₱{(salesSummary.totals?.total || 0).toFixed(2)}</td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                  <div className="px-3"><Pager {...sssPage} label="rows" /></div>
-                </div>
-              )}
-            </div>
-          )}
+          {/* ===== DAILY CLOSING CHECK ===== */}
+          {historySubTab === 'closing' && <DailyClosingCheck apiFetch={apiFetch} />}
 
           {historySubTab === 'hours' && (
             <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">

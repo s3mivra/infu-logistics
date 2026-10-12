@@ -1032,6 +1032,58 @@ app.get('/api/reports/cashier-variance', verifyToken, ...canViewReports, require
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
+// ── DAILY CLOSING CHECK ──────────────────────────────────────────────────────
+// One day, three things side by side: what was sold (and how it was paid),
+// what the drawer was counted at against what it should have held, and what
+// went to the bank. A difference is caught the same day instead of at month end.
+app.get('/api/reports/daily-closing', verifyToken, requireStaff, requirePermission('shifts.view'), async (req, res) => {
+  try {
+    const dayKey = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || '')) ? req.query.date : businessDateStr();
+    const from = dayStart(dayKey), to = dayEnd(dayKey);
+    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+    const [orders, shifts, deposits] = await Promise.all([
+      Order.find({ ...bizScope, status: 'Completed', isComplimentary: { $ne: true }, isBackdated: { $ne: true }, createdAt: { $gte: from, $lte: to } },
+        { total: 1, paymentMethod: 1, payments: 1 }).lean(),
+      Shift.find({ shiftStart: { $gte: from, $lte: to } }).sort({ shiftStart: 1 }).lean(),
+      BankDeposit.find({ createdAt: { $gte: from, $lte: to } }).sort({ createdAt: 1 }).lean(),
+    ]);
+    // Sales by how they were paid; a split sale counts each part under its own.
+    const byMethod = {};
+    for (const o of orders) {
+      const parts = (o.payments || []).length ? o.payments : [{ method: o.paymentMethod || 'Cash', amount: o.total }];
+      for (const p of parts) byMethod[p.method || 'Cash'] = r2((byMethod[p.method || 'Cash'] || 0) + (Number(p.amount) || 0));
+    }
+    const cashSales = r2(byMethod.Cash || 0);
+    const drawers = shifts.map(sh => ({
+      _id: sh._id, cashier: sh.scope === 'drawer' ? 'Shop drawer' : (sh.cashierName || ''), status: sh.status,
+      startingCash: r2(sh.startingCash), cashSales: r2(sh.salesTotal), payIns: r2(sh.payInsTotal), payOuts: r2(sh.payOutsTotal),
+      expected: sh.expectedCash == null ? null : r2(sh.expectedCash), counted: sh.actualCash == null ? null : r2(sh.actualCash),
+      variance: sh.variance == null ? null : r2(sh.variance), needsReview: !!sh.needsReview,
+    }));
+    const closed = drawers.filter(d => d.status !== 'Open' && d.counted != null);
+    const variance = r2(closed.reduce((sum, d) => sum + (d.variance || 0), 0));
+    const deposited = r2(deposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0));
+    const counted = r2(closed.reduce((sum, d) => sum + (d.counted || 0), 0));
+    const floats = r2(closed.reduce((sum, d) => sum + (d.startingCash || 0), 0));
+    // What is still in the building: everything counted, less what went to the bank.
+    const issues = [];
+    const openCount = drawers.filter(d => d.status === 'Open').length;
+    if (openCount) issues.push(`${openCount} drawer session(s) still open - not counted yet.`);
+    if (orders.length && !drawers.length) issues.push('There were sales but no drawer session - nobody counted the cash.');
+    if (Math.abs(variance) > 0.005) issues.push(`The drawer count is ${variance > 0 ? 'over' : 'short'} by ₱${Math.abs(variance).toFixed(2)}.`);
+    if (drawers.some(d => d.needsReview)) issues.push('A drawer difference is large enough to need a review.');
+    if (closed.length && deposited > counted + 0.005) issues.push('More was deposited than was counted in the drawer.');
+    res.json({
+      success: true, date: dayKey,
+      sales: { total: r2(orders.reduce((sum, o) => sum + (o.total || 0), 0)), count: orders.length, cash: cashSales, byMethod },
+      drawers, totals: { counted, floats, variance, deposited, leftInDrawer: r2(counted - deposited) },
+      deposits: deposits.map(d => ({ _id: d._id, amount: r2(d.amount), by: d.depositedBy || '', reference: d.reference || '', at: d.createdAt })),
+      issues,
+    });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 // ── OWNER OVERVIEW ───────────────────────────────────────────────────────────
 // One read for the owner's page: sales, the month's result, cash, what is owed
 // either way, stock, and what is waiting for a decision. Money figures come

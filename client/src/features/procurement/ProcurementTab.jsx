@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo, useCallback } from 'react';
+﻿import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, ChevronDown, Search, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin, Download, Sparkles, Box, Upload } from 'lucide-react';
 import Attachments from '../../shared/Attachments';
 import * as ui from '../../shared/ui';
@@ -378,6 +378,16 @@ export default function ProcurementTab({ ctx }) {
       expiryDate: '',
     };
   };
+
+  // Sent here from the Reorder Forecast ("Make purchase orders"): draft them
+  // straight away, once the suppliers this needs have loaded.
+  const cameForSuggestion = useRef((() => { try { return sessionStorage.getItem('proc.suggest') === '1'; } catch { return false; } })());
+  useEffect(() => {
+    if (!cameForSuggestion.current || loading) return;
+    cameForSuggestion.current = false;
+    try { sessionStorage.removeItem('proc.suggest'); } catch { /* nothing to clear */ }
+    if (can('procurement.manage')) buildSuggestedPo();
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const buildSuggestedPo = async () => {
     setSuggesting(true); setError('');

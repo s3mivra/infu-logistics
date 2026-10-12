@@ -84,6 +84,15 @@ const TabFallback = () => (
 // - an UNSET var still falls back to the dev LAN box.
 import { API_URL, FRONTEND_URL } from '../../shared/apiBase.js';
 import { useManagerApproval } from '../../shared/ManagerApproval.jsx';
+import makeZReading from './makeZReading.js';
+import makeSalesDocuments from './makeSalesDocuments.js';
+import makeTimeClock from './makeTimeClock.js';
+import makeRefunds from './makeRefunds.js';
+import makeCashDrawerSettings from './makeCashDrawerSettings.js';
+import makeReportFetchers from './makeReportFetchers.js';
+import makeUnitHelpers from './makeUnitHelpers.js';
+import makeReportExports from './makeReportExports.js';
+import makeFinanceFetchers from './makeFinanceFetchers.js';
 const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
 // fb categories route to Kitchen; log categories route to Logistics. Every
 // catForm reset/fallback must use this so a new category in log mode isn't
@@ -845,9 +854,11 @@ export default function AdminDashboard() {
   const [invSearch, setInvSearch] = useState('');
   const [invSort, setInvSort] = useState('name-asc');
   const [invCategoryFilter, setInvCategoryFilter] = useState('');
+  // Only the items with no unit cost: each one makes profit read too high.
+  const [invNoCostOnly, setInvNoCostOnly] = useState(false);
 
   // Reset to page 1 when search/filter/sort changes
-  useEffect(() => { setInvPage(1); }, [invSearch, invSort, invCategoryFilter]);
+  useEffect(() => { setInvPage(1); }, [invSearch, invSort, invCategoryFilter, invNoCostOnly]);
 
   // Import progress (0-100, -1 = idle)
   const [importProgress, setImportProgress] = useState(-1);
@@ -2878,460 +2889,6 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
     } catch (err) { console.error('fetchShiftHistory', err); }
   };
 
-  // ===== FINANCE FETCHERS =====
-  const fetchPnl = async () => {
-    if (activeAdmin?.role !== 'superadmin') return;
-    try {
-      const res = await apiFetch(`/api/reports/pnl?start=${pnlRange.start}&end=${pnlRange.end}`);
-      const data = await res.json();
-      if (data.success) setPnlData(data);
-    } catch (err) { console.error('fetchPnl', err); }
-  };
-  const fetchPnlMonthly = async () => {
-    if (activeAdmin?.role !== 'superadmin') return;
-    try {
-      const res = await apiFetch(`/api/reports/pnl-monthly?start=${pnlmRange.start}&end=${pnlmRange.end}`);
-      const data = await res.json();
-      if (data.success) setPnlMonthly(data);
-    } catch (err) { console.error('fetchPnlMonthly', err); }
-  };
-  const exportPnlMonthlyPDF = async () => {
-    if (!pnlMonthly) return ui.alert('Load the Monthly P&L first.');
-    const { jsPDF, autoTable } = await loadPdfLibs();
-    const m = pnlMonthly;
-    const doc = new jsPDF(pnlmView === 'matrix' ? 'landscape' : 'portrait');
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Profit & Loss`, 14, 14);
-    doc.setFontSize(9); doc.text(`${pnlmRange.start} to ${pnlmRange.end}  ·  ${pnlmView === 'matrix' ? 'Monthly' : 'Period'}`, 14, 20);
-    const SECTIONS = [['revenue','REVENUE'],['contra','LESS: DISCOUNTS/RETURNS'],['cogs','COST OF SALES'],['opex','OPERATING EXPENSES'],['otherincome','OTHER INCOME'],['otherexpense','OTHER EXPENSES']];
-    const nr = m.grandTotals.netRevenue || 0;
-    if (pnlmView === 'matrix') {
-      const head = ['Account', ...m.months, 'Total'];
-      const body = [];
-      for (const [sec, label] of SECTIONS) {
-        body.push([{ content: label, colSpan: head.length, styles: { fontStyle: 'bold', fillColor: [235,235,235] } }]);
-        m.accounts.filter(a => a.section === sec).forEach(a => body.push([`  ${a.code} ${a.name}`, ...m.months.map(mm => pdfMoney(a.byMonth[mm] || 0)), pdfMoney(a.total)]));
-      }
-      body.push(['NET INCOME', ...m.months.map(mm => pdfMoney(m.monthTotals.netIncome[mm] || 0)), pdfMoney(m.grandTotals.netIncome)]);
-      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 6 }, headStyles: { fillColor: [30,30,30] } });
-    } else {
-      const head = ['Account', 'Amount', '% Rev', '% Parent'];
-      const parentTotals = {};
-      m.accounts.forEach(a => { parentTotals[a.parentCode] = (parentTotals[a.parentCode] || 0) + a.total; });
-      const body = [];
-      for (const [sec, label] of SECTIONS) {
-        const rows = m.accounts.filter(a => a.section === sec);
-        if (!rows.length) continue;
-        body.push([{ content: label, colSpan: 4, styles: { fontStyle: 'bold', fillColor: [235,235,235] } }]);
-        rows.forEach(a => body.push([`  ${a.code} ${a.name}`, pdfMoney(a.total), nr ? `${(a.total/nr*100).toFixed(1)}%` : '-', parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '-']));
-      }
-      body.push(['NET INCOME', pdfMoney(m.grandTotals.netIncome), nr ? `${(m.grandTotals.netIncome/nr*100).toFixed(1)}%` : '-', '']);
-      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 8 }, headStyles: { fillColor: [30,30,30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } } });
-    }
-    doc.save(`PnL-${pnlmRange.start}_to_${pnlmRange.end}.pdf`);
-  };
-  const fetchBsMonthly = async () => {
-    if (activeAdmin?.role !== 'superadmin') return;
-    try {
-      const res = await apiFetch(`/api/reports/balance-sheet-monthly?start=${bsmRange.start}&end=${bsmRange.end}`);
-      const data = await res.json();
-      if (data.success) setBsMonthly(data);
-    } catch (err) { console.error('fetchBsMonthly', err); }
-  };
-  const exportBsMonthlyPDF = async () => {
-    if (!bsMonthly) return ui.alert('Load the Monthly Balance Sheet first.');
-    const { jsPDF, autoTable } = await loadPdfLibs();
-    const b = bsMonthly;
-    const doc = new jsPDF(bsmView === 'matrix' ? 'landscape' : 'portrait');
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Balance Sheet`, 14, 14);
-    doc.setFontSize(9); doc.text(`${bsmRange.start} to ${bsmRange.end}  ·  ${bsmView === 'matrix' ? 'Monthly' : 'As of ' + b.asOf}`, 14, 20);
-    const SECTIONS = [['assets','ASSETS'],['liabilities','LIABILITIES'],['equity','EQUITY']];
-    const totalAssets = b.monthTotals.assets[b.asOf] || 0;
-    if (bsmView === 'matrix') {
-      const head = ['Account', ...b.months];
-      const body = [];
-      for (const [sec, label] of SECTIONS) {
-        body.push([{ content: label, colSpan: head.length, styles: { fontStyle: 'bold', fillColor: [235,235,235] } }]);
-        b[sec].forEach(a => body.push([`  ${a.code} ${a.name}`, ...b.months.map(mm => pdfMoney(a.byMonth[mm] || 0))]));
-        body.push([`  Total ${label}`, ...b.months.map(mm => pdfMoney(b.monthTotals[sec][mm] || 0))]);
-      }
-      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 6 }, headStyles: { fillColor: [30,30,30] } });
-    } else {
-      const head = ['Account', 'Amount', '% Assets', '% Parent'];
-      const parentTotals = {};
-      [...b.assets, ...b.liabilities, ...b.equity].forEach(a => { parentTotals[a.parentCode] = (parentTotals[a.parentCode] || 0) + a.total; });
-      const body = [];
-      for (const [sec, label] of SECTIONS) {
-        body.push([{ content: label, colSpan: 4, styles: { fontStyle: 'bold', fillColor: [235,235,235] } }]);
-        b[sec].forEach(a => body.push([`  ${a.code} ${a.name}`, pdfMoney(a.total), totalAssets ? `${(a.total/totalAssets*100).toFixed(1)}%` : '-', parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '-']));
-        body.push([`  Total ${label}`, pdfMoney(b.monthTotals[sec][b.asOf] || 0), '', '']);
-      }
-      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 8 }, headStyles: { fillColor: [30,30,30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } } });
-    }
-    doc.save(`BalanceSheet-${bsmRange.start}_to_${bsmRange.end}.pdf`);
-  };
-
-  // ── Reports that previously had no export - same jsPDF/autoTable/addLogoToPDF
-  // pattern as every export above, just matching each report's own on-screen columns.
-  // (Trial Balance and Percentage Tax export locally in LedgerTab.jsx instead -
-  // their source state (tb/ptax/ptaxRange) lives there, not here.)
-  const exportArPDF = async () => {
-    if (!arOutstanding?.orders) return ui.alert('Load AR first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('ACCOUNTS RECEIVABLE', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`Total outstanding: ${pdfMoney(arOutstanding.totalOutstanding)}`, 105, 28, { align: 'center' });
-    let y = 34;
-    if (arAgeing?.clients?.length) {
-      autoTable(doc, {
-        startY: y,
-        head: [['Client', 'Current', '31-60', '61-90', '91+', 'Total', 'Committed']],
-        body: arAgeing.clients.map(r => [r.client, pdfMoney(r.current), pdfMoney(r.d31_60), pdfMoney(r.d61_90), pdfMoney(r.d90_plus), pdfMoney(r.total), pdfMoney(r.exposure)]),
-        styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] },
-        columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
-      });
-      y = doc.lastAutoTable.finalY + 6;
-    }
-    autoTable(doc, {
-      startY: y,
-      head: [['Order #', 'Customer', 'Channel', 'Date', 'Due', 'Amount']],
-      body: arOutstanding.orders.map(o => [o.orderNumber, o.customerName, o.paymentMethod, new Date(o.createdAt).toLocaleDateString(), o.arDueDate ? new Date(o.arDueDate).toLocaleDateString() : '-', pdfMoney(o.total)]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 5: { halign: 'right' } },
-    });
-    doc.save(`AR-Outstanding-${todayStr()}.pdf`);
-  };
-
-  const exportApPDF = async () => {
-    if (!apData) return ui.alert('Load AP first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('ACCOUNTS PAYABLE', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`Outstanding: ${pdfMoney(apData.outstandingBalance)}  ·  Purchased on credit: ${pdfMoney(apData.totalCredit)}  ·  Paid: ${pdfMoney(apData.totalDebit)}`, 105, 28, { align: 'center' });
-    let y = 34;
-    if ((apData.bySupplier || []).length) {
-      autoTable(doc, {
-        startY: y,
-        head: [['Supplier', 'Purchased', 'Paid', 'Balance']],
-        body: apData.bySupplier.map(s => [s.supplier, pdfMoney(s.incurred), pdfMoney(s.paid), pdfMoney(s.balance)]),
-        styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
-        columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
-      });
-      y = doc.lastAutoTable.finalY + 6;
-    }
-    autoTable(doc, {
-      startY: y,
-      head: [['Date', 'Reference', 'Supplier', 'Description', 'Incurred', 'Paid']],
-      body: (apData.recent || []).map(e => [new Date(e.date).toLocaleDateString(), e.reference, e.supplierName || '-', e.description, e.credit ? pdfMoney(e.credit) : '', e.debit ? pdfMoney(e.debit) : '']),
-      styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' } },
-    });
-    doc.save(`AP-${todayStr()}.pdf`);
-  };
-
-  const exportPaymentsPDF = async () => {
-    if (!salesByPayment) return ui.alert('Load the Payments report first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('SALES BY PAYMENT METHOD', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${sbpRange.start} to ${sbpRange.end}  ·  Total: ${pdfMoney(salesByPayment.grandTotal)}`, 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Payment Method', 'Orders', 'Amount', '% Share']],
-      body: (salesByPayment.breakdown || []).map(r => [r.method || 'Unknown', r.count, pdfMoney(r.total), `${(r.pct || 0).toFixed(1)}%`]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
-    });
-    doc.save(`Sales-By-Payment-${sbpRange.start}_to_${sbpRange.end}.pdf`);
-  };
-
-  const exportProfitByCategoryPDF = async () => {
-    if (!profitByCategory) return ui.alert('Refresh Profit by Category first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('PROFIT BY CATEGORY', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Category', 'Revenue', 'Est. COGS', 'Gross Profit', 'Margin']],
-      body: (profitByCategory.categories || profitByCategory || []).map(c => [c.category, pdfMoney(c.revenue), pdfMoney(c.estimatedCOGS), pdfMoney(c.grossProfit), `${c.margin.toFixed(1)}%`]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
-    });
-    doc.save(`Profit-By-Category-${todayStr()}.pdf`);
-  };
-
-  const exportMenuEngineeringPDF = async () => {
-    if (!menuEngineering) return ui.alert('Refresh Menu Engineering first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('MENU ENGINEERING', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Item', 'Qty', 'Revenue', 'Margin', 'Class']],
-      body: (menuEngineering.items || menuEngineering || []).map(r => [r.name, r.qty, pdfMoney(r.revenue), `${r.margin.toFixed(1)}%`, r.quadrant]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
-    });
-    doc.save(`Menu-Engineering-${todayStr()}.pdf`);
-  };
-
-  const exportVariancePDF = async () => {
-    if (!cashierVariance) return ui.alert('Refresh Cashier Variance first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('CASHIER VARIANCE', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Cashier', 'Shifts', 'Avg Variance', 'Times Short', 'Worst']],
-      body: (cashierVariance.cashiers || []).map(c => [c.cashierName, c.shifts, pdfMoney(c.avgVariance), c.shortCount, pdfMoney(c.worstShort)]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
-    });
-    doc.save(`Cashier-Variance-${todayStr()}.pdf`);
-  };
-
-  const exportCommissionsPDF = async () => {
-    if (!commissions) return ui.alert('Refresh Commissions first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('COMMISSIONS', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Cashier', 'Orders', 'Sales', 'Rate', 'Commission']],
-      body: (commissions.sellers || []).map(c => [c.name, c.orderCount, pdfMoney(c.salesTotal), `${c.commissionRate}%`, pdfMoney(c.commissionEarned)]),
-      foot: [[{ content: 'Total', colSpan: 4 }, pdfMoney(commissions.totalCommission)]],
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], fontStyle: 'bold', textColor: 255 },
-      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 4: { halign: 'right' } },
-    });
-    doc.save(`Commissions-${todayStr()}.pdf`);
-  };
-
-  const exportBillsPDF = async () => {
-    if (!bills || bills.length === 0) return ui.alert('No bills to export.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('BILLS (ACCOUNTS PAYABLE)', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`Filter: ${billsFilter}  ·  ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Bill #', 'Supplier', 'Source', 'Description', 'Amount', 'Status']],
-      body: bills.map(b => [b.billNumber, b.supplierName || '-', b.source, b.description || b.poNumber || '-', pdfMoney(b.amount), b.status]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { halign: 'right' } },
-    });
-    doc.save(`Bills-${billsFilter}-${todayStr()}.pdf`);
-  };
-
-  const exportAuditLogPDF = async () => {
-    if (!auditLogEntries || auditLogEntries.length === 0) return ui.alert('No audit entries loaded - run a query first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 148, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('AUDIT LOG', 148, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleString(), 148, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['When', 'Actor', 'Action', 'Reference', 'Details']],
-      body: auditLogEntries.map(e => [new Date(e.timestamp).toLocaleString(), e.userId, e.action, e.targetReference, e.details ? JSON.stringify(e.details).slice(0, 120) : '-']),
-      styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { cellWidth: 120 } },
-    });
-    doc.save(`Audit-Log-${todayStr()}.pdf`);
-  };
-
-  const exportExpensesPDF = async () => {
-    if (!expenseList || (expenseList.expenses || []).length === 0) return ui.alert('No expenses to export.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('EXPENSES', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`Total: ${pdfMoney(expenseList.total)}`, 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Date', 'Reference', 'Category', 'Description', 'Amount']],
-      body: expenseList.expenses.map(e => [new Date(e.date).toLocaleDateString(), e.reference, e.categoryName, e.description, pdfMoney(e.amount)]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { halign: 'right' } },
-    });
-    doc.save(`Expenses-${todayStr()}.pdf`);
-  };
-
-  // ── Newly-added report exports ─────────────────────────────────────────────
-
-  const exportStockTransfersPDF = async () => {
-    if (!stockTransfers || stockTransfers.length === 0) return ui.alert('No transfers to export - load Inventory → Transfers first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('STOCK TRANSFER HISTORY', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleString(), 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Date', 'Reference', 'Item', 'From', 'To', 'Qty', 'Status', 'By']],
-      body: stockTransfers.map(t => [
-        new Date(t.createdAt).toLocaleDateString(), t.reference || '-', t.itemName || '-',
-        t.fromLocation || '-', t.toLocation || '-', `${t.qtyBase ?? 0} ${t.unit || ''}`.trim(),
-        t.status, t.releasedBy || t.approvedBy || t.requestedBy || '-',
-      ]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
-    });
-    doc.save(`Stock-Transfer-History-${todayStr()}.pdf`);
-  };
-
-  // Batches dated by production (goods with no real expiry - beans, etc, FPFO
-  // instead of FEFO) flattened out of every inventory item's expiryBatches -
-  // a full roast/production log across the whole catalogue, not just one item.
-  const exportProductionHistoryPDF = async () => {
-    const rows = [];
-    for (const item of (inventory || [])) {
-      for (const b of (item.expiryBatches || [])) {
-        if (!b.productionDate) continue;
-        rows.push({ item: item.itemName, date: b.productionDate, qty: b.qty, unit: item.unit, ref: b.reference || '-', received: b.receivedAt });
-      }
-    }
-    if (rows.length === 0) return ui.alert('No batches with a production date recorded yet.');
-    rows.sort((a, b) => new Date(b.date) - new Date(a.date));
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('PRODUCTION HISTORY', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${rows.length} batch(es) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Production Date', 'Item', 'Qty', 'Received', 'Reference']],
-      body: rows.map(r => [new Date(r.date).toLocaleDateString(), r.item, `${r.qty} ${r.unit}`, r.received ? new Date(r.received).toLocaleDateString() : '-', r.ref]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
-    });
-    doc.save(`Production-History-${todayStr()}.pdf`);
-  };
-
-  // Production Report - reconciled Production Orders (batchNumber, planned vs
-  // actual output, and the moisture/variance between them), distinct from
-  // exportProductionHistoryPDF above (that one reads Inventory's raw
-  // production-dated batches; this one reads the Production Orders
-  // themselves, so it's the only report that can show moisture at all).
-  const exportProductionOrdersPDF = async () => {
-    try {
-      const res = await apiFetch('/api/production-orders?fulfillmentStatus=Complete');
-      const res2 = await apiFetch('/api/production-orders?fulfillmentStatus=Partial');
-      const [d1, d2] = await Promise.all([res.json(), res2.json()]);
-      const rows = [...(d1.success ? d1.orders : []), ...(d2.success ? d2.orders : [])];
-      if (rows.length === 0) return ui.alert('No reconciled production batches yet - approve and reconcile a batch first.');
-      rows.sort((a, b) => new Date(b.reconciledAt) - new Date(a.reconciledAt));
-      const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-      await addLogoToPDF(doc);
-      doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-      doc.setFontSize(10); doc.text('PRODUCTION REPORT', 105, 22, { align: 'center' });
-      doc.setFontSize(9); doc.text(`${rows.length} batch(es) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
-      autoTable(doc, {
-        startY: 34,
-        head: [['Batch', 'Product', 'Planned', 'Actual', 'Moisture / Variance', 'Status', 'Reconciled']],
-        body: rows.map(r => [
-          r.batchNumber, r.outputName,
-          `${r.outputQty}${r.outputUnit}`, `${r.actualOutputQty}${r.outputUnit}`,
-          r.moistureLossPercent > 0 ? `-${r.moistureLossPercent}% loss` : r.moistureLossPercent < 0 ? `+${Math.abs(r.moistureLossPercent)}% over` : '0%',
-          r.fulfillmentStatus, r.reconciledAt ? new Date(r.reconciledAt).toLocaleDateString() : '-',
-        ]),
-        styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
-      });
-      doc.save(`Production-Report-${todayStr()}.pdf`);
-    } catch { ui.alert('Failed to load production orders for the report.'); }
-  };
-
-  const exportMenuItemsPDF = async () => {
-    if (!products || products.length === 0) return ui.alert('No menu items to export.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('MENU ITEMS', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${products.length} item(s) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
-    // Sizes (small/medium/large) is an fb menu concept - a log item has no
-    // sizes at all (always "-"), it has a unit/pack instead (e.g. "1kg",
-    // "pcs"). Show whichever actually applies to this business type.
-    const lastCol = BUSINESS_TYPE === 'log' ? 'Unit' : 'Sizes';
-    autoTable(doc, {
-      startY: 34,
-      head: [['Name', 'Category', 'Code', 'Price', 'Available', lastCol]],
-      body: products.map(p => [
-        p.name, p.category || '-', p.productCode || '-', pdfMoney(p.basePrice),
-        p.isAvailable === false ? 'Removed' : (p.isOutOfStock ? 'Out of Stock' : 'Yes'),
-        BUSINESS_TYPE === 'log' ? (p.baseSize || 'pcs') : ((p.sizes || []).map(s => s.name).join(', ') || '-'),
-      ]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' } },
-    });
-    doc.save(`Menu-Items-${todayStr()}.pdf`);
-  };
-
-  const exportRevolvingFundsPDF = async () => {
-    if (!rfFunds || rfFunds.length === 0) return ui.alert('No revolving funds to export.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('REVOLVING FUNDS', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleString(), 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Fund', 'Initial Amount', 'Current Balance', 'Used', 'Status']],
-      body: rfFunds.map(f => [f.name, pdfMoney(f.initialAmount), pdfMoney(f.currentBalance), pdfMoney(f.initialAmount - f.currentBalance), f.isActive === false ? 'Closed' : 'Active']),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
-    });
-    // If one fund's transactions happen to be loaded (drilled into), append them.
-    if (rfTxs && rfTxs.length > 0 && rfActiveFund) {
-      doc.addPage();
-      doc.setFontSize(12); doc.text(`${rfActiveFund.name} - Transactions`, 105, 15, { align: 'center' });
-      autoTable(doc, {
-        startY: 22,
-        head: [['Date', 'Type', 'Description', 'Amount', 'Balance After', 'By']],
-        body: rfTxs.map(t => [new Date(t.date).toLocaleDateString(), t.type, t.description, pdfMoney(t.amount), pdfMoney(t.balanceAfter), t.performedBy || '-']),
-        styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' } },
-      });
-    }
-    doc.save(`Revolving-Funds-${todayStr()}.pdf`);
-  };
-
-  const exportPricingMasterlistPDF = async () => {
-    if (!products || products.length === 0) return ui.alert('No products to export.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('PRODUCT PRICING MASTERLIST', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${products.length} item(s) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Name', 'Category', 'Price', 'Cost', 'Margin']],
-      body: products.map(p => {
-        const cost = p.costOverride != null ? p.costOverride : (calcRecipeCost(p.baseRecipe) || 0);
-        const margin = p.basePrice > 0 ? ((p.basePrice - cost) / p.basePrice) * 100 : 0;
-        return [p.name, p.category || '-', pdfMoney(p.basePrice), pdfMoney(cost), `${margin.toFixed(1)}%`];
-      }),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
-    });
-    doc.save(`Pricing-Masterlist-${todayStr()}.pdf`);
-  };
-
-  const exportPriceTiersPDF = async () => {
-    if (!pricingTable.tiers || pricingTable.tiers.length === 0) return ui.alert('No price tiers set up yet - open Pricing Control first (or Super Admin → Price Tiers) so this can load.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 148, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('MARKET SEGMENT PRICING', 148, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${pricingTable.tiers.length} tier(s) · ${new Date().toLocaleDateString()}`, 148, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Product', 'List Price', ...pricingTable.tiers.map(t => t.name)]],
-      body: (pricingTable.products || []).map(p => [
-        p.name, pdfMoney(p.basePrice),
-        ...pricingTable.tiers.map(t => pdfMoney(t.prices?.[String(p._id)] ?? p.basePrice)),
-      ]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
-    });
-    doc.save(`Market-Segment-Pricing-${todayStr()}.pdf`);
-  };
-
   // ── PRICE TIER EXCEL EXPORT/IMPORT ──────────────────────────────────────────
   // One sheet: Code | Product | <Tier 1> | <Tier 2> | ... Each tier column is
   // prefilled with what that tier currently charges (blank where a per_product
@@ -4609,144 +4166,6 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
   const deleteInventory = async (id) => { if(await ui.confirm('Delete inventory item?')) { await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' }); fetchERPData(); } };
 
   // --- OPEN EDIT INVENTORY MODAL: pre-fill from item ---
-  // ============================================================
-  // UNITS DISPLAY HELPER - base ↔ display conversion (mirrors server/lib/units.js)
-  // ============================================================
-  const UNIT_TABLE = {
-    g:   { base: 'g',   mult: 1 },
-    kg:  { base: 'g',   mult: 1000 },
-    ml:  { base: 'ml',  mult: 1 },
-    L:   { base: 'ml',  mult: 1000 },
-    pcs: { base: 'pcs', mult: 1 },
-  };
-  const resolveUnitFE = (u) => {
-    if (!u) return { base: 'pcs', mult: 1 };
-    const k = String(u).trim();
-    if (UNIT_TABLE[k]) return UNIT_TABLE[k];
-    const low = k.toLowerCase();
-    if (['l','liter','litre'].includes(low)) return UNIT_TABLE.L;
-    if (['kg','kilogram'].includes(low))     return UNIT_TABLE.kg;
-    if (['g','gram'].includes(low))          return UNIT_TABLE.g;
-    if (['ml','milliliter'].includes(low))   return UNIT_TABLE.ml;
-    if (['pcs','pc','piece'].includes(low))  return UNIT_TABLE.pcs;
-    return { base: k, mult: 1 };
-  };
-  // Effective display unit + multiplier for any inventory item.
-  // FORCED RULE: never display g or ml - auto-promote to kg / L.
-  // Returns { unit, mult } - use everywhere that needs to convert base ↔ display.
-  const effectiveDisplay = (item) => {
-    const baseUnit = item.unit || '';
-    let displayUnit = item.displayUnit;
-    let mult = (item.unitMultiplier && item.unitMultiplier > 0) ? item.unitMultiplier : null;
-    if (!displayUnit || displayUnit === 'g' || displayUnit === 'ml') {
-      if (baseUnit === 'g')        { displayUnit = 'kg';  mult = mult || 1000; }
-      else if (baseUnit === 'ml')  { displayUnit = 'L';   mult = mult || 1000; }
-      else                          { displayUnit = baseUnit || 'pcs'; mult = mult || 1; }
-    }
-    return { unit: displayUnit, mult: mult || 1 };
-  };
-  // LOG 1:1 - the pack size (how much ONE purchased unit holds) drives cost-per-pack
-  // and the "count of packages" stock display. Prefer the persisted item.packSize
-  // field (set on import/edit - see server InventorySchema.packSize) since imports
-  // now STRIP the size hint out of the item name (e.g. "Milk 1L" → name "Milk",
-  // packSize 1). Only fall back to parsing the name for legacy items that still
-  // carry their size embedded in it (pre-packSize-field imports).
-  // unitCost is stored per base unit, so packCost = unitCost × packBaseUnits.
-  const PACK_RE = /(\d+(?:\.\d+)?)\s*(mg|kg|g|ml|cl|l|pcs|pc|pack|unit)\b/i;
-  const PACK_TO_BASE = { mg: 0.001, g: 1, kg: 1000, ml: 1, cl: 10, l: 1000, pcs: 1, pc: 1, pack: 1, unit: 1 };
-  // A pack under one whole kg/L reads better in the sub-unit: 0.377kg → 377g,
-  // 0.5L → 500ml. Only the display string changes; packBase (used for costing)
-  // stays in the stored unit. Math.round strips the ×1000 float noise
-  // (0.377 × 1000 = 377.0000…6).
-  const fmtPackLabel = (value, unit) => {
-    const v = Number(value);
-    const u = String(unit || '');
-    if (!Number.isFinite(v) || v <= 0) return `${value}${unit}`;
-    const ul = u.toLowerCase();
-    if (ul === 'kg' && v < 1) return `${Math.round(v * 1000 * 1000) / 1000}g`;
-    if (ul === 'l' && v < 1) return `${Math.round(v * 1000 * 1000) / 1000}ml`;
-    return `${v}${u}`; // ≥1 or already a sub-unit - keep the entered unit casing
-  };
-  const packInfo = (item) => {
-    if (item.packSize && item.packSize > 0) {
-      const { unit, mult } = effectiveDisplay(item);
-      const packBase = item.packSize * mult;
-      return { packBase, label: fmtPackLabel(item.packSize, unit), cost: (item.unitCost || 0) * packBase };
-    }
-    const mt = (item.itemName || '').match(PACK_RE);
-    const baseFactor = PACK_TO_BASE[(item.unit || '').toLowerCase()] || 1;
-    // A PIECE size in a name is only a pack when the name says so ("100pcs/
-    // pack"). "12OZ ICED CUPS 50PCS" is cups counted one by one, and reading
-    // its "50PCS" as a pack showed every figure divided by fifty.
-    const pieceSize = mt && ['pcs', 'pc', 'pack', 'unit'].includes(mt[2].toLowerCase());
-    const saysPack = /\d\s*(pcs|pc)\s*\/\s*(pack|box|bag|sleeve|case|pk)\b/i.test(item.itemName || '');
-    if (mt && (!pieceSize || saysPack)) {
-      const val = parseFloat(mt[1]);
-      const f = PACK_TO_BASE[mt[2].toLowerCase()];
-      if (f !== undefined && val > 0) {
-        const packBase = val * (f / baseFactor);
-        return { packBase, label: fmtPackLabel(mt[1], mt[2]), cost: (item.unitCost || 0) * packBase };
-      }
-    }
-    const { unit, mult } = effectiveDisplay(item);
-    return { packBase: mult, label: unit, cost: (item.unitCost || 0) * mult };
-  };
-  // Convenience: { qty, unit, cost } already converted to display.
-  const itemDisplay = (item) => {
-    const { unit, mult } = effectiveDisplay(item);
-    const pack = packInfo(item);
-    // What the item is COUNTED in - on the Hub, at the end-of-day count, for
-    // waste, transfers and thresholds.
-    //
-    // Logistics counts packages: a carton, a sack, a can is the thing on the
-    // shelf, and that is what "pcs" means there. A cafe counts in the real
-    // measure - beans in kg, milk in L, cups one by one - the same units its
-    // recipes and stock card use. Counting a cafe in packs showed a 1 kg bag
-    // of beans with 940 g left as "0.94 packs", beside a recipe that said 20 g
-    // and a stock card that said -20; the end-of-day count's own comment
-    // always said "FB in kg/L", but this helper handed it the pack.
-    //
-    // packCost / packLabel still describe the pack, because that is what is
-    // BOUGHT: prices stay "P1,200 / 1kg".
-    const buysInPacks = pack.label !== unit;
-    const inPacks = BUSINESS_TYPE === 'log';
-    const countBase = inPacks ? pack.packBase : mult;
-    return {
-      qty:  (item.stockQty || 0) / mult,
-      unit,
-      cost: (item.unitCost || 0) * mult,
-      packCost: pack.cost,                                  // cost of one named pack (e.g. ₱200 for 250g)
-      packLabel: pack.label,                                // pack size label from the name (e.g. "250g")
-      packBase: countBase,                                  // base units in one COUNTED unit
-      packQty: countBase ? (item.stockQty || 0) / countBase : 0, // stock in counted units
-      // Counted in packs: logistics only, and only when a real pack size is
-      // known. Where it is false the unit reads kg / L / pcs.
-      isPacked: inPacks && buysInPacks,
-      // Bought in a named pack at all - for prices and the SET SIZE hint,
-      // which is about buying, not counting.
-      buysInPacks,
-    };
-  };
-  // Analytics display: for logistics, show pack-count (pcs) instead of kg/L -
-  // but ONLY when a real pack size is actually known (packSize field, or a
-  // size embedded in the item name like "250G"/"1L"). Without one, packInfo()
-  // silently falls back to effectiveDisplay's raw unit-conversion multiplier,
-  // which is NOT a piece count - labelling that number "pcs" prints the raw
-  // base-unit quantity (e.g. 59920 ml of milk) as if it were 59920 pieces.
-  // So an unconfigured item shows its real unit (kg/L/ml/g) instead, same as
-  // non-log businesses, until someone sets a pack size for it.
-  const analyticsDisplay = (item) => {
-    if (BUSINESS_TYPE === 'log') {
-      const pack = packInfo(item);
-      const { unit: rawUnit } = effectiveDisplay(item);
-      const isRealPack = pack.label !== rawUnit;
-      if (isRealPack) return { unit: 'pcs', mult: pack.packBase || 1 };
-    }
-    return effectiveDisplay(item);
-  };
-  // Pretty currency
-  const peso = (n) => `₱${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-
   // ============================================================
   // BULK EXCEL/CSV IMPORT - Stock-take semantics
   // ============================================================
@@ -6771,137 +6190,6 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     fetchParked();
   };
 
-  // ── Reports ───────────────────────────────────────────────────────────────────
-  const fetchMenuEngineering = async () => {
-    try { const res = await apiFetch('/api/reports/menu-engineering'); const d = await res.json(); if (d.success) setMenuEngineering(d); }
-    catch (err) { console.error('fetchMenuEngineering', err); }
-  };
-  const fetchCashierVariance = async () => {
-    try { const res = await apiFetch('/api/reports/cashier-variance'); const d = await res.json(); if (d.success) setCashierVariance(d); }
-    catch (err) { console.error('fetchCashierVariance', err); }
-  };
-  const fetchCommissions = async () => {
-    try { const res = await apiFetch('/api/reports/commissions'); const d = await res.json(); if (d.success) setCommissions(d); }
-    catch (err) { console.error('fetchCommissions', err); }
-  };
-  const fetchPurchaseOrder = async () => {
-    try {
-      const res = await apiFetch('/api/reports/purchase-order?days=7');
-      const d = await res.json();
-      if (d.success) setPurchaseOrder(d);
-      else ui.alert(d.error || 'Failed to generate purchase order.');
-    } catch (err) { console.error('fetchPurchaseOrder', err); ui.alert('Network error generating purchase order.'); }
-  };
-
-  // Purchase Order → PDF in the requested "Product | Qty Unit" format
-  const exportPurchaseOrderPDF = async () => {
-    if (!purchaseOrder || !(purchaseOrder.lines || []).length) return ui.alert('Generate a purchase order first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    const today = new Date().toLocaleDateString('en-PH');
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('PURCHASE ORDER', 105, 22, { align: 'center' });
-    doc.setFontSize(9);  doc.text(`${today}  ·  covers ~${purchaseOrder.coverDays || 7} days`, 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Product', 'Qty Unit']],
-      body: (purchaseOrder.lines || []).map(l => [
-        l.itemName + (l.lowStock ? '  (LOW)' : ''),
-        `${l.suggestedOrder} ${l.displayUnit}`,
-      ]),
-      styles: { fontSize: 10 },
-      headStyles: { fillColor: [30, 30, 30] },
-      columnStyles: { 1: { halign: 'right' } },
-    });
-    const y = doc.lastAutoTable.finalY + 8;
-    doc.setFontSize(10);
-    doc.text(`Estimated Total (PHP): ${pdfMoney(purchaseOrder.totalEstCost || 0)}`, 14, y);
-    doc.save(`Purchase-Order-${today.replace(/\//g, '-')}.pdf`);
-  };
-
-  // Profit & Loss → PDF (replaces CSV export)
-  const exportPnlPDF = async () => {
-    if (!pnlData) return ui.alert('Run the P&L report first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    const range = `${pnlRange.start} to ${pnlRange.end}`;
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text(`PROFIT & LOSS STATEMENT ${vatStmtSuffix}`, 105, 22, { align: 'center' });
-    doc.setFontSize(9);  doc.text(range, 105, 28, { align: 'center' });
-    const section = (title, rows, startY) => {
-      autoTable(doc, {
-        startY,
-        head: [[title, 'Amount (PHP)']],
-        body: rows.length ? rows.map(r => [r.accountName || r.name || r.label || '', pdfMoney(r.amount ?? r.total)]) : [['-', pdfMoney(0)]],
-        styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] },
-        columnStyles: { 1: { halign: 'right' } },
-      });
-      return doc.lastAutoTable.finalY + 4;
-    };
-    let y = 34;
-    y = section('Revenue', pnlData.revenue || [], y);
-    y = section('Cost of Goods Sold', pnlData.cogs || [], y);
-    y = section('Operating Expenses', pnlData.opex || pnlData.expenses || [], y);
-    // Summary totals - negatives shown in parentheses, no ± / ₱ glyph issues.
-    const t = pnlData.totals || {};
-    autoTable(doc, {
-      startY: y,
-      head: [['Summary', 'Amount (PHP)']],
-      body: [
-        ['Gross Profit', pdfMoney(t.grossProfit)],
-        ['Net Income', pdfMoney(t.netIncome)],
-        ...(t.netMargin !== undefined ? [['Net Margin', `${Number(t.netMargin).toFixed(1)}%`]] : []),
-      ],
-      styles: { fontSize: 10, fontStyle: 'bold' }, headStyles: { fillColor: [70, 70, 70], textColor: 255 },
-      columnStyles: { 1: { halign: 'right' } },
-    });
-    doc.save(`Profit-Loss-${pnlRange.start}_to_${pnlRange.end}.pdf`);
-  };
-
-  const exportBalanceSheetPDF = async () => {
-    if (!bsData) return ui.alert('Load the Balance Sheet first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    const asOf = bsData.asOf ? new Date(bsData.asOf).toLocaleDateString() : new Date().toLocaleDateString();
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text(`BALANCE SHEET ${vatStmtSuffix}`, 105, 22, { align: 'center' });
-    doc.setFontSize(9);  doc.text(`As of ${asOf}`, 105, 28, { align: 'center' });
-    const rowName = (r) => r.accountName || r.name || r.label || '';
-    const rowAmt = (r) => pdfMoney(r.amount ?? r.balance ?? r.total ?? 0);
-    const section = (title, rows, total, startY) => {
-      autoTable(doc, {
-        startY,
-        head: [[title, 'Amount (PHP)']],
-        body: [
-          ...(rows && rows.length ? rows.map(r => [rowName(r), rowAmt(r)]) : [['-', pdfMoney(0)]]),
-          [`Total ${title}`, pdfMoney(total ?? 0)],
-        ],
-        styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] },
-        columnStyles: { 1: { halign: 'right' } },
-        didParseCell: (d) => { if (d.row.index === (rows?.length || 1)) d.cell.styles.fontStyle = 'bold'; },
-      });
-      return doc.lastAutoTable.finalY + 4;
-    };
-    const t = bsData.totals || {};
-    let y = 34;
-    y = section('Assets', bsData.assets, t.assets, y);
-    y = section('Liabilities', bsData.liabilities, t.liabilities, y);
-    y = section('Equity', bsData.equity, t.equity, y);
-    const balanced = Math.abs((t.assets || 0) - ((t.liabilities || 0) + (t.equity || 0))) < 0.01;
-    autoTable(doc, {
-      startY: y,
-      head: [['Accounting Equation', '']],
-      body: [
-        ['Assets', pdfMoney(t.assets)],
-        ['Liabilities + Equity', pdfMoney((t.liabilities || 0) + (t.equity || 0))],
-        ['Status', balanced ? 'BALANCED' : 'OUT OF BALANCE'],
-      ],
-      styles: { fontSize: 10, fontStyle: 'bold' }, headStyles: { fillColor: [70, 70, 70], textColor: 255 },
-      columnStyles: { 1: { halign: 'right' } },
-    });
-    doc.save(`Balance-Sheet-${asOf.replace(/\//g, '-')}.pdf`);
-  };
-
   // ── Settings / QR toggle ────────────────────────────────────────────────────
   const fetchSettings = async () => {
     // The business's own clock, handed to the date helpers. Until this lands
@@ -6929,96 +6217,6 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       if (d.success) { fetchSettings(); setRequireCashShift(next); }
     } catch (err) { console.error('toggleRequireCashShift', err); }
   };
-  // ── Shared cash drawer settings ────────────────────────────────────────────
-  // Off by default, so an existing deployment keeps per-cashier floats until
-  // someone deliberately switches. Only ever affects the NEXT session opened -
-  // shifts already open or closed are untouched, and each carries its own
-  // `scope` so the two models stay tellable apart in history forever.
-  const toggleSharedDrawer = async () => {
-    const next = systemSettings.sharedDrawer !== true;
-    if (next && !await ui.confirm('Switch to one shared cash drawer? The float is declared once by whoever opens up, everyone rings on the same till, and one person counts at close. Shifts already open are left as they are.')) return;
-    try {
-      const res = await apiFetch('/api/settings/sharedDrawer', { method: 'PATCH', body: JSON.stringify({ value: next }) });
-      const d = await res.json();
-      if (d.success) { fetchSettings(); setSharedDrawer(next); }
-    } catch (err) { console.error('toggleSharedDrawer', err); }
-  };
-  // Ask who is ringing after every sale. Off by default: it is the right
-  // setting for a busy shared bar and the wrong one for a single-operator
-  // counter, and only the shop can say which it is.
-  const toggleAskOperatorEachSale = async () => {
-    const next = systemSettings.askOperatorEachSale !== true;
-    if (next && !await ui.confirm('Lock the register after every sale? Whoever rings the next one enters their PIN first. Attribution becomes exact, at the cost of a PIN on every sale. If nobody has a PIN yet the register stays open.')) return;
-    try {
-      const res = await apiFetch('/api/settings/askOperatorEachSale', { method: 'PATCH', body: JSON.stringify({ value: next }) });
-      const d = await res.json();
-      if (d.success) fetchSettings();
-    } catch (err) { console.error('toggleAskOperatorEachSale', err); }
-  };
-  const toggleBlindClose = async () => {
-    const next = systemSettings.blindClose === false;
-    if (!next && !await ui.confirm('Show the expected total before counting? Whoever counts will be able to read the figure they are meant to reach, so a short drawer can quietly be written up as an exact one.')) return;
-    try {
-      const res = await apiFetch('/api/settings/blindClose', { method: 'PATCH', body: JSON.stringify({ value: next }) });
-      const d = await res.json(); if (d.success) fetchSettings();
-    } catch (err) { console.error('toggleBlindClose', err); }
-  };
-  // Maximum hours a drawer session may stay open; 0 turns the boundary off.
-  // A duration rather than a midnight cut-off, because a 24/7 counter is at its
-  // busiest at the hour a clock-time close would fire.
-  const saveDrawerMaxHours = async (value) => {
-    const n = Number(value);
-    if (!Number.isFinite(n) || n < 0 || n > 168) return ui.alert('Enter between 0 hours (off) and 168 (one week).');
-    try {
-      const res = await apiFetch('/api/settings/drawerMaxHours', { method: 'PATCH', body: JSON.stringify({ value: n }) });
-      const d = await res.json();
-      if (d.success) fetchSettings(); else ui.alert(d.error || 'Could not save that.');
-    } catch (err) { console.error('saveDrawerMaxHours', err); }
-  };
-
-  const saveVarianceThreshold = async (value) => {
-    const n = Number(value);
-    if (!Number.isFinite(n) || n < 0) return ui.alert('The threshold must be zero or a positive amount.');
-    try {
-      const res = await apiFetch('/api/settings/varianceThreshold', { method: 'PATCH', body: JSON.stringify({ value: n }) });
-      const d = await res.json();
-      if (d.success) fetchSettings(); else ui.alert(d.error || 'Could not save that.');
-    } catch (err) { console.error('saveVarianceThreshold', err); }
-  };
-
-  // Superadmin-only: enable/disable the automatic midnight close & day archive.
-  const toggleAutoClose = async () => {
-    const next = systemSettings.autoCloseEnabled === false; // currently off → turning on
-    if (!next && !await ui.confirm('Disable automatic midnight close?\n\nThe day will stay OPEN past midnight and a superadmin must close & archive it manually.')) return;
-    try {
-      const res = await apiFetch('/api/settings/autoCloseEnabled', { method: 'PATCH', body: JSON.stringify({ value: next }) });
-      const d = await res.json(); if (d.success) fetchSettings();
-    } catch (err) { console.error('toggleAutoClose', err); }
-  };
-
-  // Toggle whether product images are shown across the app (menu, portal, product list).
-  // Generic setting writer for non-boolean settings (credit limit mode, global
-  // limit). The toggle* helpers above stay as they are - they encode their own
-  // confirm/labelling rules.
-  const saveSetting = async (key, value) => {
-    try {
-      const res = await apiFetch(`/api/settings/${encodeURIComponent(key)}`, {
-        method: 'PATCH', body: JSON.stringify({ value }),
-      });
-      const d = await res.json();
-      if (d.success) fetchSettings();
-      else ui.alert(d.error || 'Could not save setting.');
-    } catch (err) { console.error('saveSetting', err); ui.alert('Could not save setting.'); }
-  };
-
-  const toggleImages = async () => {
-    const next = systemSettings.imagesEnabled === false; // currently off -> turning on
-    try {
-      const res = await apiFetch('/api/settings/imagesEnabled', { method: 'PATCH', body: JSON.stringify({ value: next }) });
-      const d = await res.json(); if (d.success) fetchSettings();
-    } catch (err) { console.error('toggleImages', err); }
-  };
-
   // ── Profit by category ──────────────────────────────────────────────────────
   const fetchProfitByCategory = async () => {
     try { const res = await apiFetch('/api/reports/profit-by-category'); const d = await res.json(); if (d.success) setProfitByCategory(d); }
@@ -7249,418 +6447,6 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     doc.save(`Sales-Line-Items_${sliRange.start}_to_${sliRange.end}.pdf`);
   };
 
-  // ── Refund ──────────────────────────────────────────────────────────────────
-  const handleRefund = async () => {
-    if (!refundModal || !refundForm.reason.trim()) return ui.alert('Reason required.');
-    setRefundSubmitting(true);
-    try {
-      const res = await apiFetch(`/api/orders/${refundModal._id}/refund`, { method: 'POST', body: JSON.stringify({ reason: refundForm.reason, refundAmount: parseFloat(refundForm.refundAmount) || refundModal.total, inventoryAction: refundForm.inventoryAction }) });
-      const d = await res.json();
-      if (d.success) { setRefundModal(null); setRefundForm({ reason: '', refundAmount: '', inventoryAction: 'Restock' }); fetchOrders(); ui.alert('Refund processed. Reversal journal created.'); }
-      else ui.alert(d.error || 'Refund failed.');
-    } catch { ui.alert('Network error.'); }
-    finally { setRefundSubmitting(false); }
-  };
-
-  // Line-item + qty precise refund - not everything on the order has to come
-  // back, and not all of a line's qty either. `items` is [{ itemIndex, qty }].
-  const handlePartialRefund = async (items) => {
-    if (!refundModal || !refundForm.reason.trim()) return ui.alert('Reason required.');
-    if (!items || items.length === 0) return ui.alert('Select at least one item to refund.');
-    setRefundSubmitting(true);
-    try {
-      const res = await apiFetch(`/api/orders/${refundModal._id}/partial-refund`, {
-        method: 'POST',
-        body: JSON.stringify({ items, reason: refundForm.reason, inventoryAction: refundForm.inventoryAction }),
-      });
-      const d = await res.json();
-      if (d.success) {
-        setRefundModal(null);
-        setRefundForm({ reason: '', refundAmount: '', inventoryAction: 'Restock' });
-        fetchOrders();
-        ui.alert(d.fullyRefunded
-          ? `Refunded ₱${(d.refundAmount || 0).toFixed(2)} - every item on this order is now refunded.`
-          : `Refunded ₱${(d.refundAmount || 0).toFixed(2)}. The order stays Completed - the rest can still be refunded later.`);
-      } else ui.alert(d.error || 'Refund failed.');
-    } catch { ui.alert('Network error.'); }
-    finally { setRefundSubmitting(false); }
-  };
-
-  // Return some line(s)/qty and add a replacement item on the SAME order, net-
-  // settled in one cash movement. `returnItems` is [{ itemIndex, qty }] (may be
-  // empty - a pure add-on exchange), `newItems` is [{ productId, quantity }].
-  const handleExchange = async (returnItems, newItems) => {
-    if (!refundModal || !refundForm.reason.trim()) return ui.alert('Reason required.');
-    if (!newItems || newItems.length === 0) return ui.alert('Pick at least one replacement item.');
-    setRefundSubmitting(true);
-    try {
-      const res = await apiFetch(`/api/orders/${refundModal._id}/exchange`, {
-        method: 'POST',
-        body: JSON.stringify({ returnItems, newItems, reason: refundForm.reason, inventoryAction: refundForm.inventoryAction }),
-      });
-      const d = await res.json();
-      if (d.success) {
-        setRefundModal(null);
-        setRefundForm({ reason: '', refundAmount: '', inventoryAction: 'Restock' });
-        fetchOrders();
-        const delta = d.netDelta || 0;
-        ui.alert(Math.abs(delta) < 0.01
-          ? 'Exchange processed - even swap, no cash movement.'
-          : delta > 0
-            ? `Exchange processed - customer paid ₱${delta.toFixed(2)} more.`
-            : `Exchange processed - ₱${Math.abs(delta).toFixed(2)} refunded to the customer.`);
-      } else ui.alert(d.error || 'Exchange failed.');
-    } catch { ui.alert('Network error.'); }
-    finally { setRefundSubmitting(false); }
-  };
-
-  // ── Clock in/out ─────────────────────────────────────────────────────────────
-  // Apply any queued offline clock events on top of a base status so the gate /
-  // button reflect the staff member's optimistic state until the queue syncs.
-  const applyQueuedClock = (base) => {
-    let s = { ...base };
-    for (const e of getQueuedClock()) {
-      if (e.type === 'in')  s = { ...s, isClockedIn: true,  onBreak: false };
-      if (e.type === 'out') s = { ...s, isClockedIn: false, onBreak: false };
-    }
-    return s;
-  };
-  // Clock status is one PERSON's, and on a shared tablet the person changes
-  // without anyone signing out. One cache for the whole device meant the
-  // offline fallback could show the last person's status to the next one, so
-  // it is kept per user. Read from auth rather than from React state, because
-  // right after a PIN switch the state has not caught up yet but auth has.
-  const clockStateKey = () => `semivra_clock_state:${auth.getUser()?._id || 'anon'}`;
-  const fetchClockStatus = async () => {
-    // OFFLINE: rebuild status from the last cached server snapshot + queued events.
-    if (!navigator.onLine) {
-      let st = null;
-      try {
-        const cached = JSON.parse(localStorage.getItem(clockStateKey()) || 'null')
-          || { isClockedIn: false, entry: null, onBreak: false, breakUsedMinutes: 0, breakRemainingMinutes: 60 };
-        st = applyQueuedClock(cached);
-        setClockStatus(st);
-      } catch { /* ignore */ }
-      finally { setClockStatusLoaded(true); }
-      return st;
-    }
-    try {
-      const res = await apiFetch('/api/clock/status'); const d = await res.json();
-      if (d.success) {
-        const st = {
-          isClockedIn: d.isClockedIn, entry: d.entry,
-          onBreak: !!d.onBreak, breakStartedAt: d.breakStartedAt || null,
-          breakUsedMinutes: d.breakUsedMinutes || 0, breakRemainingMinutes: d.breakRemainingMinutes ?? 60,
-        };
-        setClockStatus(st);
-        try { localStorage.setItem(clockStateKey(), JSON.stringify(st)); } catch { /* ignore */ }
-        return st;
-      }
-    }
-    catch (err) { console.error('fetchClockStatus', err); }
-    finally { setClockStatusLoaded(true); }
-    return null;
-  };
-  const fetchClockEntries = async (page = 1) => {
-    try { const res = await apiFetch(`/api/clock/entries?page=${page}&limit=30`); const d = await res.json(); if (d.success) { setClockEntries(d.entries||[]); setClockEntriesTotal(d.total||0); setClockEntriesPage(page); } }
-    catch (err) { console.error('fetchClockEntries', err); }
-  };
-  const handleClockIn = async () => {
-    if (!navigator.onLine) {
-      queueClock('in');
-      setClockStatus((s) => ({ ...s, isClockedIn: true, onBreak: false }));
-      ui.alert('Clocked in (offline - will sync when back online).');
-      return;
-    }
-    try {
-      const res = await apiFetch('/api/clock/in', { method: 'POST', body: '{}' });
-      const d = await res.json();
-      if (d.success) { fetchClockStatus(); ui.alert('Clocked in.'); return; }
-      // The server is the record of who is clocked in. When it refuses, ask it
-      // what is actually true instead of repeating the refusal: an entry left
-      // open from an earlier shift, or a screen that had not caught up after a
-      // switch, left someone stuck behind a gate offering a button the server
-      // would never accept. If they are in, the gate lifts - and they are told
-      // since when, because an entry open since yesterday is worth a look.
-      const st = await fetchClockStatus();
-      if (st?.isClockedIn) {
-        const since = st.entry?.clockIn ? new Date(st.entry.clockIn) : null;
-        ui.alert(since
-          ? `You were already clocked in, since ${since.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}.`
-          : 'You were already clocked in.');
-      } else {
-        ui.alert(d.error || 'Clock-in failed.');
-      }
-    }
-    catch { ui.alert('Network error.'); }
-  };
-  // Pressing the clock button while working opens the choice modal (break vs end shift).
-  const handleClockButton = () => {
-    if (!clockStatus.isClockedIn) return handleClockIn();
-    if (clockStatus.onBreak) return endBreak();      // currently on break → resume
-    setClockModalOpen(true);                          // working → show options
-  };
-  const startBreak = async () => {
-    try {
-      const res = await apiFetch('/api/clock/break/start', { method: 'POST', body: '{}' });
-      const d = await res.json();
-      if (d.success) { setClockModalOpen(false); fetchClockStatus(); }
-      else ui.alert(d.error || 'Could not start break.');
-    } catch { ui.alert('Network error.'); }
-  };
-  const endBreak = async () => {
-    try {
-      const res = await apiFetch('/api/clock/break/end', { method: 'POST', body: '{}' });
-      const d = await res.json();
-      if (d.success) { fetchClockStatus(); } else ui.alert(d.error || 'Could not end break.');
-    } catch { ui.alert('Network error.'); }
-  };
-  const handleClockOut = async () => {
-    if (!navigator.onLine) {
-      queueClock('out');
-      setClockStatus((s) => ({ ...s, isClockedIn: false, onBreak: false }));
-      setClockModalOpen(false);
-      ui.alert('Clocked out (offline - will sync when back online).');
-      return;
-    }
-    try {
-      const res = await apiFetch('/api/clock/out', { method: 'POST', body: '{}' });
-      const d = await res.json();
-      if (d.success) {
-        setClockModalOpen(false); fetchClockStatus();
-        const m = d.entry?.workedMinutes ?? d.entry?.durationMinutes ?? 0;
-        const b = d.entry?.breakMinutes || 0;
-        ui.alert(`Clocked out. Worked ${Math.floor(m/60)}h ${m%60}m${b ? ` (${b}m break)` : ''}.`);
-      } else ui.alert(d.error||'Clock-out failed.');
-    } catch { ui.alert('Network error.'); }
-  };
-
-  // ── Billing Statement print (log mode) ──────────────────────────────────────
-  // Uses the shared A4 document template (same one the Procurement purchase-order
-  // print uses). Letterhead/payment/contact come from system settings, falling
-  // back to VITE_BILLING_* env then defaults.
-  const printBillingStatement = (order) => {
-    const dateStr = new Date(order.createdAt || Date.now()).toLocaleDateString('en-PH', {
-      year: 'numeric', month: 'long', day: 'numeric'
-    });
-    const transactionNo = order.billingNumber || order.orderNumber || '-';
-    const isDelivery = ['Manual Delivery', 'Lalamove'].includes(order.table);
-
-    // Who the invoice is made out to. A VAT-registered buyer is invoiced in
-    // their REGISTERED name with their TIN and registered address; that is what
-    // makes the document usable for their own input-VAT claim. Everyone else is
-    // billed to the name on the order, exactly as before.
-    const buyer = (clientAccounts || []).find(c =>
-      String(c._id) === String(order.clientId || order.clientAccountId || ''));
-    const billTo = {
-      name: (buyer?.isVatRegistered && buyer?.registeredName) || buyer?.name || order.customerName || '',
-      tin: buyer?.tin || '',
-      address: buyer?.registeredAddress || '',
-    };
-
-    const items = (order.items || []).map(item => {
-      const addOnTotal = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
-      const unitPrice  = item.price + addOnTotal;
-      const addOnDesc  = (item.selectedAddOns || []).map(a => a.name).join(', ');
-      return {
-        code: item.productCode || '',
-        desc: item.name + (item.size ? ` (${item.size})` : '') + (addOnDesc ? ` + ${addOnDesc}` : ''),
-        // The till's print name, on the customer's copy only (billingDocument.js).
-        printDesc: item.printName ? item.printName + (item.size ? ` (${item.size})` : '') + (addOnDesc ? ` + ${addOnDesc}` : '') : '',
-        qty: item.quantity,
-        unitPrice,
-        total: unitPrice * item.quantity,
-      };
-    });
-
-    const schedRows = [
-      order.scheduledTime   ? { label: `Scheduled ${isDelivery ? 'Delivery' : 'Pickup'} Time:`, value: order.scheduledTime } : null,
-      order.deliveryAddress ? { label: 'Delivery Address:', value: order.deliveryAddress } : null,
-      order.customerPhone   ? { label: 'Contact No.:', value: order.customerPhone } : null,
-    ].filter(Boolean);
-
-    printBillingDoc(buildBillingDocHTML({
-      docTitle: 'BILLING STATEMENT',
-      dateLabel: 'Submitted date',
-      dateStr,
-      settings: systemSettings,
-      metaFields: [
-        { label: 'Invoice For', value: billTo.name },
-        // A VAT-registered buyer needs their registered name, TIN and address on
-        // the invoice, or they cannot claim the VAT they just paid.
-        ...(billTo.tin ? [{ label: 'TIN', value: billTo.tin }] : []),
-        ...(billTo.address ? [{ label: 'Registered Address', value: billTo.address }] : []),
-        ...(order.scPwdName ? [{ label: order.scPwdKind === 'PWD' ? 'PWD Cardholder' : 'Senior Citizen', value: `${order.scPwdName} (ID ${order.scPwdIdNumber})` }] : []),
-        { label: 'Payable To', value: '' },
-        { label: 'Transaction No.', value: transactionNo },
-        // The registered serial, once the sale has completed and been issued
-        // one. An unfinished order has no receipt number to show.
-        ...(order.orNumber ? [{ label: 'OR No.', value: order.orNumber }] : []),
-        // Delivery receipts, one per delivery (logistics). Several when the
-        // order went out in parts.
-        ...((order.deliveryReceipts || []).length || order.drNumber ? [{ label: 'DR No.', value: (order.deliveryReceipts || []).map(d => d.drNumber).join(', ') || order.drNumber }] : []),
-      ],
-      subFields: [
-        { label: 'Terms of Payment', value: order.paymentMethod || '' },
-        { label: 'Order Type', value: order.table || '' },
-      ],
-      schedRows,
-      items,
-      totals: [
-        { label: 'Subtotal', value: order.subtotal || order.total || 0 },
-        { label: 'Discount', value: order.discount || 0 },
-        { label: 'Delivery Fee', value: order.deliveryFee || 0 },
-        // The VAT split, from the order's own stamped figures - a VAT invoice
-        // has to show what part of the total is tax.
-        ...((order.vatAmount || 0) > 0 ? [
-          { label: 'VATable Sales', value: order.vatableSales || 0 },
-          ...((order.vatExemptSales || 0) > 0 ? [{ label: 'VAT-Exempt Sales', value: order.vatExemptSales }] : []),
-          { label: 'VAT (' + Math.round((order.vatRate || 0) * 100) + '%)', value: order.vatAmount },
-        ] : []),
-        { label: 'TOTAL', value: order.total || 0, grand: true },
-      ],
-      // Prepared By pre-filled with whoever rang up the sale (falls back to the
-      // current user printing it, for legacy orders with no cashier on record).
-      // Checked/Received By stay blank ruled lines - those really do get signed
-      // by someone else after the fact.
-      signatures: [
-        `PREPARED BY${(order.cashier || activeAdmin?.name) ? `: ${order.cashier || activeAdmin?.name}` : ''} - Signature over Printed Name / Date`,
-        'CHECKED BY: Signature over Printed Name / Date',
-        'RECEIVED BY: Signature over Printed Name / Date',
-      ],
-    }));
-  };
-
-  // ── Delivery Receipt print (logistics) ───────────────────────────────────────
-  // Prints TWO copies in one job: ORIGINAL for the customer, DUPLICATE for the
-  // office. Both are identical apart from the copy label, so a signature on the
-  // duplicate is proof of delivery.
-  //
-  // Item lines are pre-filled from the order, but the delivery details (driver,
-  // plate, received-by, date, signature) are printed as blank ruled fields - the
-  // crew fills those in by hand at the drop-off, which is how the paper DR is
-  // actually used.
-  const printDeliveryReceipt = (order) => {
-    const win = window.open('', '_blank', 'width=900,height=1000');
-    if (!win) return ui.alert('Pop-up blocked - allow pop-ups for this site.');
-
-    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    const BILL_NAME  = import.meta.env.VITE_BILLING_NAME     || BIZ_NAME;
-    const BILL_ADDR1 = import.meta.env.VITE_BILLING_ADDRESS1 || '';
-    const BILL_ADDR2 = import.meta.env.VITE_BILLING_ADDRESS2 || '';
-    const BILL_PHONE = import.meta.env.VITE_BILLING_PHONE    || '';
-
-    const drNo = order.billingNumber || order.orderNumber || '';
-    const dateStr = new Date(order.createdAt || Date.now()).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
-
-    // The customer's ORIGINAL shows a line's print name when the till gave one;
-    // the office DUPLICATE always shows the real product name.
-    const rowsFor = (original) => (order.items || []).map((item, i) => {
-      const addOns = (item.selectedAddOns || []).map(a => a.name).join(', ');
-      const shown = original && item.printName ? item.printName : item.name;
-      const desc = esc(shown) + (item.size ? ` (${esc(item.size)})` : '') + (addOns ? ` + ${esc(addOns)}` : '');
-      return `<tr>
-        <td class="n">${i + 1}</td>
-        <td class="c">${esc(item.productCode || '')}</td>
-        <td class="d">${desc}</td>
-        <td class="q">${esc(item.quantity)}</td>
-        <td class="u"></td>
-      </tr>`;
-    }).join('');
-
-    // Pad to a fixed number of rows so the form keeps its shape and leaves room
-    // for hand-written additions.
-    const MIN_ROWS = 10;
-    const padding = Math.max(0, MIN_ROWS - (order.items || []).length);
-    const padRows = Array.from({ length: padding }, () =>
-      '<tr><td class="n">&nbsp;</td><td class="c"></td><td class="d"></td><td class="q"></td><td class="u"></td></tr>'
-    ).join('');
-
-    const copy = (label, note) => { const rows = rowsFor(label === 'ORIGINAL'); return `
-      <section class="dr">
-        <div class="copy-tag">${label}<span class="copy-note">${note}</span></div>
-        <header>
-          <div class="biz">
-            <div class="biz-name">${esc(BILL_NAME)}</div>
-            ${BILL_ADDR1 ? `<div class="biz-line">${esc(BILL_ADDR1)}</div>` : ''}
-            ${BILL_ADDR2 ? `<div class="biz-line">${esc(BILL_ADDR2)}</div>` : ''}
-            ${BILL_PHONE ? `<div class="biz-line">Tel: ${esc(BILL_PHONE)}</div>` : ''}
-          </div>
-          <div class="doc">
-            <div class="doc-title">DELIVERY RECEIPT</div>
-            <div class="doc-no">No. <b>${esc(drNo)}</b></div>
-            <div class="doc-date">Date: ${esc(dateStr)}</div>
-          </div>
-        </header>
-
-        <div class="party">
-          <div class="fld wide"><span class="lbl">Delivered To</span><span class="val">${esc(order.customerName || '')}</span></div>
-          <div class="fld wide"><span class="lbl">Address</span><span class="val"></span></div>
-          <div class="fld"><span class="lbl">P.O. / Ref No.</span><span class="val"></span></div>
-          <div class="fld"><span class="lbl">Terms</span><span class="val">${esc(order.termsOfPayment || '')}</span></div>
-        </div>
-
-        <table>
-          <thead>
-            <tr><th class="n">#</th><th class="c">Item Code</th><th class="d">Description</th><th class="q">Qty</th><th class="u">Unit</th></tr>
-          </thead>
-          <tbody>${rows}${padRows}</tbody>
-        </table>
-
-        ${order.orderNotes ? `<div class="notes"><b>Notes:</b> ${esc(order.orderNotes)}</div>` : ''}
-
-        <div class="sigs">
-          <div class="sig"><div class="line"></div><div class="cap">Prepared By${(order.cashier || activeAdmin?.name) ? `: ${esc(order.cashier || activeAdmin?.name)}` : ''}</div></div>
-          <div class="sig"><div class="line"></div><div class="cap">Driver / Plate No.</div></div>
-          <div class="sig"><div class="line"></div><div class="cap">Received By (Signature over Printed Name)</div></div>
-          <div class="sig narrow"><div class="line"></div><div class="cap">Date Received</div></div>
-        </div>
-        <div class="foot">Received the above goods in good order and condition.</div>
-      </section>`; };
-
-    win.document.write(`<!DOCTYPE html><html><head><title>Delivery Receipt ${esc(drNo)}</title><style>
-      * { box-sizing: border-box; }
-      body { font-family: Arial, Helvetica, sans-serif; margin:0; color:#000; font-size:11px; }
-      .dr { padding:10mm 10mm 6mm; border-bottom:1px dashed #999; position:relative; }
-      /* Each copy fills half a page so both land on one sheet; the second starts
-         a new page only if the content genuinely overflows. */
-      .copy-tag { position:absolute; top:4mm; right:10mm; font-size:10px; font-weight:bold; letter-spacing:1px; border:1px solid #000; padding:2px 8px; }
-      .copy-note { font-weight:normal; letter-spacing:0; margin-left:6px; color:#444; }
-      header { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #000; padding-bottom:4mm; margin-bottom:4mm; }
-      .biz-name { font-size:15px; font-weight:bold; text-transform:uppercase; }
-      .biz-line { font-size:10px; color:#333; }
-      .doc { text-align:right; }
-      .doc-title { font-size:14px; font-weight:bold; letter-spacing:1px; }
-      .doc-no, .doc-date { font-size:11px; margin-top:2px; }
-      .party { display:grid; grid-template-columns:1fr 1fr; gap:2mm 6mm; margin-bottom:4mm; }
-      .fld { display:flex; align-items:flex-end; gap:4px; }
-      .fld.wide { grid-column:span 2; }
-      .lbl { font-size:9px; text-transform:uppercase; color:#555; white-space:nowrap; }
-      .val { flex:1; border-bottom:1px solid #000; min-height:14px; padding:0 4px 1px; font-weight:bold; }
-      table { width:100%; border-collapse:collapse; }
-      th, td { border:1px solid #000; padding:3px 5px; }
-      th { background:#eee; font-size:9px; text-transform:uppercase; text-align:left; }
-      td { height:16px; }
-      .n { width:6%; text-align:center; } .c { width:16%; } .q { width:10%; text-align:center; } .u { width:12%; }
-      .notes { margin-top:3mm; font-size:10px; border:1px solid #000; padding:3px 5px; }
-      .sigs { display:flex; gap:6mm; margin-top:6mm; }
-      .sig { flex:1; } .sig.narrow { flex:0 0 28%; }
-      .line { border-bottom:1px solid #000; height:9mm; }
-      .cap { font-size:8.5px; text-transform:uppercase; color:#333; margin-top:2px; text-align:center; }
-      .foot { margin-top:3mm; font-size:9px; font-style:italic; color:#333; text-align:center; }
-      @media print {
-        @page { size:A4; margin:0; }
-        .dr { page-break-inside:avoid; }
-        body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-      }
-    </style></head><body>
-      ${copy('ORIGINAL', 'Customer&rsquo;s Copy')}
-      ${copy('DUPLICATE', 'Office Copy')}
-    </body></html>`);
-    win.document.close();
-    win.onload = () => { win.focus(); win.print(); };
-  };
-
   // ── Kitchen ticket print ─────────────────────────────────────────────────────
   const printKitchenTicket = (order) => {
     const win = window.open('', '_blank', 'width=320,height=600');
@@ -7698,89 +6484,6 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     </body></html>`);
     win.document.close();
     setTimeout(() => { win.print(); win.close(); }, 300);
-  };
-
-  // ── Z-Reading PDF ─────────────────────────────────────────────────────────────
-  const printZReading = async () => {
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    const today = new Date().toLocaleDateString('en-PH');
-    const now   = new Date().toLocaleTimeString('en-PH');
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text(vatRegLabel, 105, 21, { align: 'center' });
-    doc.setFontSize(12); doc.text('Z-READING', 105, 28, { align: 'center' });
-    doc.setFontSize(9);  doc.text(`${today}  ${now}  -  OFFICIAL END-OF-DAY REPORT`, 105, 34, { align: 'center' });
-    const completed  = archivedOrders.filter(o => o.status === 'Completed');
-    const voided     = archivedOrders.filter(o => o.status === 'Voided');
-    const cancelled  = archivedOrders.filter(o => o.status === 'Cancelled');
-    const comps      = completed.filter(o => o.isComplimentary);
-    const regular    = completed.filter(o => !o.isComplimentary);
-    const gross      = regular.reduce((s,o) => s+(o.subtotal||0), 0);
-    const discounts  = regular.reduce((s,o) => s+(o.discount||0), 0);
-    const payMethods = {};
-    regular.forEach(o => { const m = o.paymentMethod||'Cash'; if (!payMethods[m]) payMethods[m]={count:0,total:0}; payMethods[m].count++; payMethods[m].total+=(o.total||0); });
-    doc.setFontSize(8); doc.setTextColor(120); doc.text('All amounts in PHP. Negatives shown in (parentheses).', 105, 38, { align: 'center' }); doc.setTextColor(0);
-    autoTable(doc, {
-      startY: 42,
-      head: [['Summary', 'Amount (PHP)']],
-      body: [
-        ['Gross Sales',      pdfMoney(gross)],
-        ['Less: Discounts',  pdfMoney(-discounts)],
-        ['Net Sales',        pdfMoney(gross - discounts)],
-        ['Complimentary',    pdfMoney(-comps.reduce((s,o)=>s+(o.subtotal||0),0))],
-        ['Orders Completed', String(completed.length)],
-        ['Orders Voided',    String(voided.length)],
-        ['Orders Cancelled', String(cancelled.length)],
-      ],
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] },
-      columnStyles: { 1: { halign: 'right' } },
-    });
-    autoTable(doc, {
-      startY: doc.lastAutoTable.finalY + 6,
-      head: [['Payment Method', 'Orders', 'Amount (PHP)']],
-      body: Object.entries(payMethods).map(([m, d]) => [m, String(d.count), pdfMoney(d.total)]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] },
-      columnStyles: { 1: { halign: 'center' }, 2: { halign: 'right' } },
-    });
-    doc.save(`Z-Reading-${today.replace(/\//g,'-')}.pdf`);
-  };
-
-  // Toggle a product's manual availability flag (Removed on/off). Superadmin only.
-  const toggleProductAvailability = async (product) => {
-    try {
-      const next = !(product.isAvailable !== false); // default true → toggle to false
-      const res = await apiFetch(`/api/products/${product._id}/availability`, {
-        method: 'PATCH',
-        body: JSON.stringify({ isAvailable: next }),
-      });
-      if (res.ok) fetchData(); // refresh products
-      else ui.alert('Failed to update availability.');
-    } catch (err) { console.error('toggleProductAvailability', err); }
-  };
-
-  // Café: show on / hide from the table QR menu. Hidden = counter-only, still
-  // sold at the POS.
-  const toggleProductQr = async (product) => {
-    try {
-      const res = await apiFetch(`/api/products/${product._id}/qr`, {
-        method: 'PATCH',
-        body: JSON.stringify({ showOnQr: product.showOnQr === false }),
-      });
-      if (res.ok) fetchData();
-      else ui.alert((await res.json().catch(() => ({}))).error || 'Failed to update the QR menu setting.');
-    } catch (err) { console.error('toggleProductQr', err); }
-  };
-
-  // Toggle Out-Of-Stock flag. Stays on the menu (with a badge), still in reports.
-  const toggleProductOOS = async (product) => {
-    try {
-      const next = !product.isOutOfStock;
-      const res = await apiFetch(`/api/products/${product._id}/oos`, {
-        method: 'PATCH',
-        body: JSON.stringify({ isOutOfStock: next }),
-      });
-      if (res.ok) fetchData();
-      else ui.alert('Failed to update OOS status.');
-    } catch (err) { console.error('toggleProductOOS', err); }
   };
 
   // ── Change Password ────────────────────────────────────────────────────────
@@ -8425,6 +7128,79 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
   // While the silent refresh is resolving, show a neutral splash instead of
   // briefly flashing the login screen for an already-authenticated user.
+  // The groups of functions that live in their own files (./make*.js). They are
+  // created here, before any screen below is drawn, because every screen from
+  // this point on - the sign-in page and the clock-in gate included - uses them.
+  // from ./makeFinanceFetchers.js
+  const {
+    fetchPnlMonthly, fetchBsMonthly, fetchPnl, exportPnlMonthlyPDF, exportBsMonthlyPDF,
+  } = makeFinanceFetchers({
+    activeAdmin, apiFetch, pnlRange, setPnlData, pnlmRange, setPnlMonthly, pnlMonthly, loadPdfLibs,
+    pnlmView, addLogoToPDF, BIZ_NAME, pdfMoney, bsmRange, setBsMonthly, bsMonthly, bsmView,
+  });
+
+  // from ./makeReportExports.js
+  const {
+    exportArPDF, exportApPDF, exportPaymentsPDF, exportProfitByCategoryPDF, exportMenuEngineeringPDF, exportVariancePDF, exportCommissionsPDF, exportBillsPDF,
+    exportAuditLogPDF, exportExpensesPDF, exportStockTransfersPDF, exportProductionHistoryPDF, exportProductionOrdersPDF, exportMenuItemsPDF, exportRevolvingFundsPDF, exportPricingMasterlistPDF,
+    exportPriceTiersPDF,
+  } = makeReportExports({
+    arOutstanding, loadPdfLibs, addLogoToPDF, BIZ_NAME, pdfMoney, arAgeing, apData, salesByPayment,
+    sbpRange, profitByCategory, menuEngineering, cashierVariance, commissions, bills, billsFilter, auditLogEntries,
+    expenseList, stockTransfers, inventory, apiFetch, products, BUSINESS_TYPE, rfFunds, rfTxs,
+    rfActiveFund, calcRecipeCost, pricingTable,
+  });
+
+  // from ./makeUnitHelpers.js
+  const {
+    itemDisplay, resolveUnitFE, packInfo, effectiveDisplay, analyticsDisplay, peso,
+  } = makeUnitHelpers({
+    BUSINESS_TYPE,
+  });
+
+  // from ./makeReportFetchers.js
+  const {
+    fetchMenuEngineering, fetchCashierVariance, fetchPurchaseOrder, fetchCommissions, exportPnlPDF, exportBalanceSheetPDF, exportPurchaseOrderPDF,
+  } = makeReportFetchers({
+    apiFetch, setMenuEngineering, setCashierVariance, setCommissions, setPurchaseOrder, purchaseOrder, loadPdfLibs, addLogoToPDF,
+    BIZ_NAME, pdfMoney, pnlData, pnlRange, vatStmtSuffix, bsData,
+  });
+
+  // from ./makeCashDrawerSettings.js
+  const {
+    toggleSharedDrawer, toggleBlindClose, saveVarianceThreshold, saveDrawerMaxHours, toggleAskOperatorEachSale, toggleAutoClose, toggleImages, saveSetting,
+  } = makeCashDrawerSettings({
+    systemSettings, apiFetch, fetchSettings, setSharedDrawer,
+  });
+
+  // from ./makeRefunds.js
+  const {
+    handleRefund, handlePartialRefund, handleExchange,
+  } = makeRefunds({
+    refundModal, refundForm, setRefundSubmitting, apiFetch, setRefundModal, setRefundForm, fetchOrders,
+  });
+
+  // from ./makeTimeClock.js
+  const {
+    fetchClockStatus, handleClockIn, handleClockButton, fetchClockEntries, handleClockOut, startBreak, endBreak,
+  } = makeTimeClock({
+    setClockStatus, setClockStatusLoaded, apiFetch, setClockEntries, setClockEntriesTotal, setClockEntriesPage, clockStatus, setClockModalOpen,
+  });
+
+  // from ./makeSalesDocuments.js
+  const {
+    printBillingStatement, printDeliveryReceipt,
+  } = makeSalesDocuments({
+    clientAccounts, systemSettings, activeAdmin, BIZ_NAME,
+  });
+
+  // from ./makeZReading.js
+  const {
+    toggleProductAvailability, toggleProductOOS, toggleProductQr, printZReading,
+  } = makeZReading({
+    loadPdfLibs, BIZ_NAME, vatRegLabel, archivedOrders, pdfMoney, apiFetch, fetchData,
+  });
+
   if (authBootstrapping) {
     return (
       <div className="min-h-screen bg-page-bg flex items-center justify-center">
@@ -8622,6 +7398,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     if (invCategoryFilter) {
       list = list.filter(i => getInvCategory(i).toLowerCase() === invCategoryFilter.toLowerCase());
     }
+    if (invNoCostOnly) list = list.filter(i => !(Number(i.unitCost) > 0));
     // Sort
     switch (invSort) {
       case 'name-asc':  list.sort((a, b) => (a.itemName || '').localeCompare(b.itemName || '')); break;
@@ -9031,7 +7808,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     ordersPage, setOrdersPage, ordersItemsPerPage,
     // ── Inventory ───────────────────────────────────────────────────────────
     invSubTab, setInvSubTab, invForm, setInvForm, invPage, setInvPage, invItemsPerPage,
-    invSearch, setInvSearch, invSort, setInvSort, invCategoryFilter, setInvCategoryFilter,
+    invSearch, setInvSearch, invSort, setInvSort, invCategoryFilter, setInvCategoryFilter, invNoCostOnly, setInvNoCostOnly,
     importProgress,
     activeInventoryItem, setActiveInventoryItem, restockData, setRestockData,
     stockHistory, setStockHistory, historyModalOpen, setHistoryModalOpen, historyItemName, setHistoryItemName, historyItem, historyLoading,

@@ -378,41 +378,12 @@ export default function AnalyticsTab({ ctx }) {
             </div>
 
             <div className="grid grid-cols-1 gap-4">
-              <ReorderForecast rows={ad?.reorderForecast || []} settings={ad?.forecastSettings || {}} analyticsDisplay={analyticsDisplay} />
-              <div className="bg-surface border border-accent/30 rounded-xl p-5 flex flex-col shadow-lg shadow-accent/5">
-                <h3 className="text-brand-text text-sm font-bold uppercase tracking-wider mb-4 border-b border-accent/20 pb-2 flex items-center gap-2">
-                  <Zap size={14} className="text-brand-text" /> High Velocity & Forecast
-                </h3>
-                <div className="space-y-4">
-                  {mus.length === 0 ? (
-                    <p className="text-fg/65 text-xs">No sales data yet - complete orders to populate.</p>
-                  ) : musPage.pageItems.map((item, idx) => { const d = analyticsDisplay(item); return (
-                    <div key={idx} className="flex flex-col border-b border-accent/10 pb-3 last:border-0 last:pb-0">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-fg/80 font-bold text-sm truncate pr-2" title={String((item.name) ?? '')}>{item.name}</span>
-                        {item.isNewSku || item.trendPct == null ? (
-                          <span className="flex items-center gap-0.5 text-[10px] font-black px-2 py-0.5 rounded bg-blue-500/20 text-info">NEW SKU</span>
-                        ) : (
-                          <span className={`flex items-center gap-0.5 text-[10px] font-black px-2 py-0.5 rounded ${item.trend > 0.1 ? 'bg-danger/15 text-danger' : item.trend < -0.1 ? 'bg-green-900/30 text-success' : 'bg-accent/10 text-brand-text'}`}>
-                            {item.trend > 0.1 ? <ArrowUp size={10}/> : item.trend < -0.1 ? <ArrowDown size={10}/> : null}
-                            {Math.abs((item.trendPct ?? item.trend * 100)).toFixed(0)}% {item.trend > 0.1 ? 'rising' : item.trend < -0.1 ? 'easing' : 'stable'}
-                          </span>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                        {[['Daily Burn', `${((item.dailyAvg||0)/d.mult).toFixed(2)} ${d.unit}`], ['Lasts', item.daysLeft === Infinity || !isFinite(item.daysLeft) ? '∞' : `${item.daysLeft}d`], ['Buy 1wk', `${((item.weeklyNeed||0)/d.mult).toFixed(2)} ${d.unit}`], ['Buy 1mo', `${((item.monthlyNeed||0)/d.mult).toFixed(2)} ${d.unit}`]].map(([lbl, val]) => (
-                          <div key={lbl} className="bg-page-bg p-2 rounded flex flex-col items-center border border-white/10">
-                            <p className="text-[8px] text-fg/70 uppercase font-bold tracking-widest mb-1 text-center leading-tight">{lbl}</p>
-                            <p className="text-xs font-black text-fg">{val}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ); })}
-                  <Pager {...musPage} label="items" />
-                </div>
-              </div>
-
+              <ReorderForecast rows={ad?.reorderForecast || []} settings={ad?.forecastSettings || {}} analyticsDisplay={analyticsDisplay}
+                onMakeOrders={ctx.can?.('procurement.manage') ? () => {
+                  // Procurement drafts the orders itself (one per supplier) when it opens.
+                  try { sessionStorage.setItem('proc.suggest', '1'); } catch { /* it opens anyway */ }
+                  setActiveTab('procurement');
+                } : undefined} />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="bg-surface border border-red-900/30 rounded-xl p-5 flex flex-col">
                   <h3 className="text-danger text-sm font-bold uppercase tracking-wider mb-4 border-b border-red-900/30 pb-2 flex items-center gap-2">

@@ -59,7 +59,7 @@ export default function InventoryTab({ ctx }) {
     handleSaveCategory, handleSaveProduct, handleVoidOrder, historyItemName, historyModalOpen,
     historyPage, historySubTab, importModal, importRows, importSubmitting, importProgress,
     invBadgeCount, invForm, invItemsPerPage, invPage, invSubTab,
-    invSearch, setInvSearch, invSort, setInvSort, invCategoryFilter, setInvCategoryFilter,
+    invSearch, setInvSearch, invSort, setInvSort, invCategoryFilter, setInvCategoryFilter, invNoCostOnly, setInvNoCostOnly,
     inventory, isPosOpen, isStatusMenuOpen, isSuperAdmin, itemDisplay, packInfo,
     procurementCreditAccounts,
     stockLocations, stockCategories, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory, backfillStockCategoryPrefixes, renumberStockCategory,
@@ -454,10 +454,24 @@ export default function InventoryTab({ ctx }) {
                     <option value="price-desc">Cost High → Low</option>
                   </select>
 
+                  {/* Items with no unit cost sell at "no cost", so profit reads
+                      too high; this finds them all in one go. */}
+                  {(() => {
+                    const n = (inventory || []).filter(i => !(Number(i.unitCost) > 0)).length;
+                    if (!n && !invNoCostOnly) return null;
+                    return (
+                      <button type="button" onClick={() => setInvNoCostOnly?.(!invNoCostOnly)} aria-pressed={!!invNoCostOnly}
+                        title="Show only the items with no unit cost"
+                        className={`px-3 py-2 rounded-lg border text-xs font-bold transition ${invNoCostOnly ? 'bg-white text-gray-900 border-white' : 'bg-white/5 text-on-brand border-on-brand hover:bg-white/10'}`}>
+                        No cost ({n})
+                      </button>
+                    );
+                  })()}
+
                   {/* Active filter chips */}
-                  {(invSearch || invCategoryFilter || invSort !== 'name-asc') && (
+                  {(invSearch || invCategoryFilter || invNoCostOnly || invSort !== 'name-asc') && (
                     <button
-                      onClick={() => { setInvSearch(''); setInvCategoryFilter(''); setInvSort('name-asc'); }}
+                      onClick={() => { setInvSearch(''); setInvCategoryFilter(''); setInvSort('name-asc'); setInvNoCostOnly?.(false); }}
                       className="px-3 py-2 rounded-lg bg-white hover:bg-accent border hover:border-white text-gray-900 hover:text-on-brand text-xs font-bold transition flex items-center gap-1"
                     >
                       <X size={11} /> Reset

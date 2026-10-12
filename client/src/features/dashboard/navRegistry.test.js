@@ -16,7 +16,15 @@ const ledgerSrc = src('../ledger/LedgerTab.jsx');
 
 const ledgerPages = LEDGER_TAB_GROUPS.flatMap(([, items]) => items.map(([id]) => id));
 const reportPages = REPORT_TAB_GROUPS.flatMap(([, items]) => items.map(([id]) => id));
-const renderedPages = new Set([...ledgerSrc.matchAll(/ledgerSubTab === '([a-z0-9-]+)'/g)].map((m) => m[1]));
+// Most ledger pages live in their own file next to LedgerTab (AdvancesTab,
+// CollectionsTab, ...), each still opening on its own `ledgerSubTab === 'y'`.
+// A page counts only if LedgerTab actually mounts the file it is in.
+const ledgerDir = fileURLToPath(new URL('../ledger/', import.meta.url));
+const mountedPageSrc = fs.readdirSync(ledgerDir)
+  .filter((f) => /Tab\.jsx$/.test(f) && f !== 'LedgerTab.jsx' && ledgerSrc.includes(`<${f.replace('.jsx', '')}`))
+  .map((f) => fs.readFileSync(ledgerDir + f, 'utf8'));
+const renderedPages = new Set([ledgerSrc, ...mountedPageSrc]
+  .flatMap((text) => [...text.matchAll(/ledgerSubTab === '([a-z0-9-]+)'/g)].map((m) => m[1])));
 const renderedTabs = new Set([...dash.matchAll(/activeTab === '([a-z0-9-]+)'/g)].map((m) => m[1]));
 // Merged pages: several ids land on one screen (Accounts & Periods holds the
 // chart of accounts, the periods and payment routing).

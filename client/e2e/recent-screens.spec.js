@@ -54,21 +54,32 @@ test('split payment at the till, then the receivables tables and the revenue cha
   // ── 2. receivables: every column reachable, none run together ──
   await page.getByRole('button', { name: 'Ledger', exact: true }).first().click();
   await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
+  // A narrow window, like a small laptop: the tables must still fit.
+  await page.setViewportSize({ width: 1040, height: 900 });
   await page.getByRole('button', { name: /AR & AP/ }).first().click();
   const row = page.locator('tr').filter({ hasText: placed.order.orderNumber }).first();
   await expect(row).toBeVisible({ timeout: 20000 });
+  // Order | Customer | Owed | Action - four columns, all on screen with no sideways scroll.
   const cells = row.locator('td');
-  // Order | Customer | Channel | Date | Age | Due | Invoiced | Collected | Balance | Action
-  await expect(cells.nth(6)).toHaveText('₱1000.00');
-  await expect(cells.nth(7)).toContainText('₱400.00');
-  await expect(cells.nth(8)).toHaveText('₱600.00');
-  for (let i = 0; i < 9; i++) {
-    expect(boxesOverlap(await cells.nth(i).boundingBox(), await cells.nth(i + 1).boundingBox()), `columns ${i} and ${i + 1} overlap`).toBeFalsy();
+  await expect(cells).toHaveCount(4);
+  await expect(cells.nth(2)).toContainText('₱600.00');
+  await expect(cells.nth(2)).toContainText('of ₱1000.00 invoiced');
+  await expect(cells.nth(2)).toContainText('₱400.00 collected');
+  const covers = (a, b) => a && b && a.x < b.x + b.width - 1 && b.x < a.x + a.width - 1 && a.y < b.y + b.height - 1 && b.y < a.y + a.height - 1;
+  for (let i = 0; i < 3; i++) {
+    expect(covers(await cells.nth(i).boundingBox(), await cells.nth(i + 1).boundingBox()), `parts ${i} and ${i + 1} of the row overlap`).toBeFalsy();
   }
-  // The last column can be brought into view (the table scrolls sideways).
-  await cells.nth(9).scrollIntoViewIfNeeded();
-  await expect(cells.nth(9)).toBeInViewport();
+  // Every part of the row sits inside the card - nothing hangs off the right edge.
+  const inside = await row.evaluate((tr) => {
+    const card = tr.closest('table').getBoundingClientRect();
+    return [...tr.querySelectorAll('td')].every((td) => { const r = td.getBoundingClientRect(); return r.left >= card.left - 1 && r.right <= card.right + 1; });
+  });
+  expect(inside, 'part of a receivable row hangs outside its card').toBe(true);
+  const fits = await row.evaluate((tr) => { const box = tr.closest('table').parentElement; return box.scrollWidth <= box.clientWidth + 1; });
+  expect(fits, 'the receivables table scrolls sideways').toBe(true);
 
+  if (process.env.E2E_SHOT) await page.screenshot({ path: process.env.E2E_SHOT, fullPage: false });
+  await page.setViewportSize({ width: 1280, height: 720 });
   // ── 3. the revenue chart ──
   await page.getByRole('button', { name: 'Analytics', exact: true }).first().click();
   await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });

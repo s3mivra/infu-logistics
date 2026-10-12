@@ -64,6 +64,40 @@ export default function ClientsTab() {
     } catch { ui.alert('Network error.'); }
   };
 
+  // Everyday details, edited here rather than in the owner's Admin Panel
+  // (which keeps what is about logging in: passwords and sign-in links).
+  // Only what was actually changed is sent, so a blank box never wipes a
+  // detail this screen simply did not have.
+  const [edit, setEdit] = useState(null);   // { id, was: {...}, now: {...} }
+  const EDIT_FIELDS = ['name', 'phone', 'email', 'paymentMethod', 'creditTermsDays', 'contactNotes', 'isActive'];
+  const openEdit = async (c) => {
+    let full = {};
+    try {
+      const d = await (await apiFetch('/api/client-accounts')).json();
+      full = (d.clients || d.accounts || []).find(x => String(x._id) === String(c._id)) || {};
+    } catch { /* fall back to what the row has */ }
+    const was = {
+      name: full.name ?? c.name ?? '', phone: full.phone ?? '', email: full.email ?? '',
+      paymentMethod: full.paymentMethod ?? c.paymentMethod ?? 'Cash',
+      creditTermsDays: full.creditTermsDays ?? c.creditTermsDays ?? '', contactNotes: full.contactNotes ?? '',
+      isActive: (full.isActive ?? c.isActive) !== false,
+    };
+    setEdit({ id: c._id, was, now: { ...was } });
+  };
+  const saveEdit = async (e) => {
+    e.preventDefault();
+    const changed = Object.fromEntries(EDIT_FIELDS.filter(k => String(edit.now[k]) !== String(edit.was[k])).map(k => [k, edit.now[k]]));
+    if (!Object.keys(changed).length) return setEdit(null);
+    if ('name' in changed && !String(changed.name).trim()) return ui.alert('The client needs a name.');
+    try {
+      const d = await (await apiFetch(`/api/client-accounts/${edit.id}`, { method: 'PATCH', body: JSON.stringify(changed) })).json();
+      if (!d.success) return ui.alert(d.error || 'Could not save the changes.');
+      ui.toast('Client details saved.', { tone: 'success' });
+      setEdit(null);
+      load();
+    } catch { ui.alert('Network error.'); }
+  };
+
   // Each client's own link, shown in their row: the setup link while they have
   // not chosen a login, the sign-in page once they have.
   const [links, setLinks] = useState(null);   // clientId -> row from /links
@@ -587,6 +621,12 @@ export default function ClientsTab() {
                                 <span className="text-[10px] font-bold text-fg/65">Setup link expired - ask the owner for a new one</span>
                               )
                             )}
+                            {can('clients.edit') && (
+                              <button onClick={() => (edit?.id === c._id ? setEdit(null) : openEdit(c))} aria-expanded={edit?.id === c._id}
+                                className={`${chip} border border-white/15 text-fg/80 hover:bg-white/5`}>
+                                Edit details
+                              </button>
+                            )}
                             {data.showMoney && (
                               <button onClick={() => openStatement(c)} className={`${chip} bg-brand/10 hover:bg-brand/20 text-brand-text`}>
                                 <FileText size={13} /> Statement of account
@@ -598,6 +638,38 @@ export default function ClientsTab() {
                               </button>
                             )}
                           </div>
+                        );
+                      })()}
+                      {edit?.id === c._id && (() => {
+                        const box = 'w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/60';
+                        const set = (k) => (e) => setEdit(x => ({ ...x, now: { ...x.now, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value } }));
+                        return (
+                          <form onSubmit={saveEdit} onClick={e => e.stopPropagation()} className="bg-surface border border-white/10 rounded-xl p-3 mb-3 space-y-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-fg/70">Name
+                                <input value={edit.now.name} onChange={set('name')} maxLength={120} className={`${box} mt-1 normal-case tracking-normal`} /></label>
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-fg/70">Phone
+                                <input value={edit.now.phone} onChange={set('phone')} maxLength={40} className={`${box} mt-1 normal-case tracking-normal`} /></label>
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-fg/70">Email
+                                <input type="email" value={edit.now.email} onChange={set('email')} maxLength={120} className={`${box} mt-1 normal-case tracking-normal`} /></label>
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-fg/70">Usual payment
+                                <select value={edit.now.paymentMethod} onChange={set('paymentMethod')} className={`${box} mt-1 normal-case tracking-normal`}>
+                                  {[['Cash', 'Cash on Delivery'], ['E-Wallet', 'E-Wallet'], ['Bank Transfer', 'Bank Transfer'], ['Credit Card', 'Credit Card']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                                </select></label>
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-fg/70">Payment terms (days)
+                                <input type="number" min="0" step="1" value={edit.now.creditTermsDays} onChange={set('creditTermsDays')} placeholder="e.g. 30" className={`${box} mt-1 normal-case tracking-normal`} /></label>
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-fg/70">Notes
+                                <input value={edit.now.contactNotes} onChange={set('contactNotes')} maxLength={300} className={`${box} mt-1 normal-case tracking-normal`} /></label>
+                            </div>
+                            <label className="flex items-center gap-2 text-xs font-bold text-fg/80">
+                              <input type="checkbox" checked={!!edit.now.isActive} onChange={set('isActive')} /> Active - can order and be sold to
+                            </label>
+                            <p className="text-[11px] text-fg/65">A credit limit is changed with its own approval; passwords and sign-in links are in the owner's Admin Panel.</p>
+                            <div className="flex gap-2">
+                              <button type="submit" className="bg-brand text-on-brand px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider">Save</button>
+                              <button type="button" onClick={() => setEdit(null)} className="bg-white/5 text-fg/80 px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider">Cancel</button>
+                            </div>
+                          </form>
                         );
                       })()}
                       {!orders[c._id] ? (

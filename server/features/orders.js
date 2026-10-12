@@ -3044,6 +3044,8 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireStaff, requirePermissi
       amount, paymentMethod, note, referenceNumber, collectionDate, depositDate, collectedBy,
       checkNumber, checkDate, checkBank, checkDrawer,
     } = req.body;
+    // One check spread over several sales: the same group on every part.
+    const checkGroup = String(req.body.checkGroup || '').trim().slice(0, 60);
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
     if (order.paymentMethod === 'Cash')
@@ -3113,6 +3115,8 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireStaff, requirePermissi
         arPayments: { $elemMatch: {
           checkNumber: chequeNo,
           checkStatus: { $nin: ['Bounced'] },
+          // The other parts of this same check are not a double entry.
+          ...(checkGroup ? { checkGroup: { $ne: checkGroup } } : {}),
           ...(checkBank ? { checkBank: String(checkBank).trim() } : {}),
         } },
       }, { orderNumber: 1 }).lean();
@@ -3192,6 +3196,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireStaff, requirePermissi
         checkBank: String(checkBank || '').trim(),
         checkDrawer: String(checkDrawer || '').trim(),
         checkStatus: 'On Hand',
+        checkGroup,
       } : {}),
     });
     order.arPaidAmount = paidAfter;
