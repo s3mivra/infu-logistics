@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as XLSX from 'xlsx';
-import { TEMPLATES, availableTemplates, readSetupWorkbook, runSetupImport, bookChecks } from './setupWorkbook';
+import { TEMPLATES, availableTemplates, readSetupWorkbook, runSetupImport, bookChecks, mergeImportReplies } from './setupWorkbook';
 
 // The workbook as someone fills it in: a sheet per import, an untouched example
 // row on one of them, and a sheet left empty.
@@ -199,5 +199,55 @@ describe('an Orders export brought back', () => {
 
   it('is never written into the setup workbook itself', () => {
     expect(TEMPLATES.find(t => t.key === 'orders').notInWorkbook).toBe(true);
+  });
+});
+
+describe('a sheet longer than one request takes', () => {
+  it('goes up in batches, and names rows by where they sit in the whole sheet', async () => {
+    const rows = Array.from({ length: 1201 }, (_, i) => [`Supplier ${i + 1}`, 'Ana', '0917']);
+    const wb = book({ Suppliers: [['name', 'contactPerson', 'phone'], ...rows] });
+    const steps = await readSetupWorkbook(XLSX, wb, availableTemplates(can, true, 'log'), server());
+    const sent = [];
+    const apiFetch = async (path, init) => {
+      const body = JSON.parse(init.body);
+      sent.push(body.rows.length);
+      // The second row of every batch is refused.
+      return { json: async () => ({ success: true, created: body.rows.length - 1, skipped: [{ row: 2, error: 'already exists' }] }) };
+    };
+    const done = await runSetupImport(steps, { apiFetch, parseImportFile: vi.fn() });
+    expect(sent).toEqual([500, 500, 201]);
+    const r = done.results[0];
+    expect(r.ok).toBe(true);
+    expect(r.created).toBe(1198);
+    // Sheet rows: header is row 1, so the 2nd row of each batch is row 3, 503, 1003.
+    expect(r.skipped).toEqual(['Row 3: already exists', 'Row 503: already exists', 'Row 1003: already exists']);
+  });
+
+  it('adds the batches\' totals, which the closing checks compare with the balance sheet', () => {
+    const d = mergeImportReplies([
+      { offset: 0, d: { success: true, created: 500, total: 1000.1, totals: { customerDeposit: 5 } } },
+      { offset: 500, d: { success: true, created: 20, total: 0.2, totals: { customerDeposit: 2.5, supplierAdvance: 1 } } },
+    ]);
+    expect(d).toMatchObject({ success: true, created: 520, total: 1000.3, totals: { customerDeposit: 7.5, supplierAdvance: 1 } });
+  });
+
+  it('says so when one batch was refused and the others went in', () => {
+    const d = mergeImportReplies([
+      { offset: 0, d: { success: true, created: 500 } },
+      { offset: 500, d: { success: false, error: 'No connection.' } },
+    ]);
+    expect(d.success).toBe(true);
+    expect(d.partFailed).toBe(true);
+    expect(d.errors).toEqual(['No connection.']);
+  });
+
+  it('sends an order\'s product lines with the batch its order is in', async () => {
+    const orders = Array.from({ length: 501 }, (_, i) => ({ 'Order No': `ORD-${i + 1}`, Date: '2026-09-01', Customer: 'A', Total: 10 }));
+    const step = { key: 'orders', sheet: 'Orders', header: Object.keys(orders[0]), grid: [Object.keys(orders[0]), ...orders.map((o) => Object.values(o))],
+      sheetRows: orders.map((_, i) => i + 2), count: orders.length, lines: [{ 'Order No': 'ORD-1', Product: 'X' }, { 'Order No': 'ORD-501', Product: 'Y' }] };
+    const sent = [];
+    const apiFetch = async (path, init) => { const b = JSON.parse(init.body); sent.push(b.lines.map((l) => l['Order No'])); return { json: async () => ({ success: true, created: b.rows.length }) }; };
+    await runSetupImport([step], { apiFetch, parseImportFile: vi.fn() });
+    expect(sent).toEqual([['ORD-1'], ['ORD-501']]);
   });
 });

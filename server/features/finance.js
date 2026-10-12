@@ -1,6 +1,7 @@
 ﻿// finance routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { sheetDay, SHEET_DATE_HELP } from '../lib/sheetDate.js';
 import { positiveMoney } from '../lib/normalize.js';
 import { buildOpeningEntry } from '../lib/setupBooks.js';
 import { ageingBuckets, ageingByClient, resolveCreditLimit, resolveClientKey, arBalance, withArBalance, DEFAULT_CREDIT_MODE, RECEIVABLE_STATUSES } from '../lib/credit.js';
@@ -785,7 +786,11 @@ app.post('/api/expenses/import', verifyToken, ...canPostAcct, atomic(mongoose, a
     let totalAmount = 0;
     const skipped = [];
     for (let i = 0; i < rows.length; i++) {
-      const result = await createExpenseEntry(req, rows[i]);
+      // The date as a spreadsheet gives it (lib/sheetDate.js), not as JavaScript
+      // guesses it: a bare Excel date number used to post the expense in 1970.
+      const day = sheetDay(rows[i]?.date);
+      if (day === null) { skipped.push({ row: i + 1, error: `"${rows[i].date}" is not a date. ${SHEET_DATE_HELP}`, data: rows[i] }); continue; }
+      const result = await createExpenseEntry(req, { ...rows[i], date: day });
       if (result.ok) { created++; totalAmount += Number(result.je.totalDebit) || 0; }
       else skipped.push({ row: i + 1, error: result.error, data: rows[i] });
     }

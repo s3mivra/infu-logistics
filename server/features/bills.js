@@ -2,6 +2,7 @@
 // Models/helpers/middleware live in server.js and arrive via ctx.
 // See the BillSchema comment in server.js for the source:'PO' vs 'Manual'
 // distinction that drives when the A/P journal entry actually posts.
+import { sheetDay, SHEET_DATE_HELP } from '../lib/sheetDate.js';
 import { findLinkablePo, linkImportedBill, syncLinkedPo } from '../lib/billPoLink.js';
 import { captureError } from '../lib/errorLog.js';
 import { INPUT_VAT } from '../lib/vatPosting.js';
@@ -302,8 +303,9 @@ export default function registerBills(ctx) {
           }
 
           const rawDue = r.dueDate ?? r['Due Date'] ?? r.due;
-          const dueDate = rawDue ? new Date(rawDue) : null;
-          if (dueDate && Number.isNaN(dueDate.getTime())) throw new Error('Invalid due date.');
+          const dueDay = sheetDay(rawDue);
+          if (dueDay === null) throw new Error(`"${rawDue}" is not a due date. ${SHEET_DATE_HELP}`);
+          const dueDate = dueDay ? new Date(dueDay) : null;
 
           const billNumber = await mkSeqRef('BILL');
           const made = await Bill.create({

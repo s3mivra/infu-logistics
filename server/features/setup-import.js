@@ -23,6 +23,7 @@
 // When the two statements agree, Owner's Capital nets to nothing - so what is
 // left there is the difference between them, and the response says how much.
 import { linkImportedBill } from '../lib/billPoLink.js';
+import { sheetDay, SHEET_DATE_HELP } from '../lib/sheetDate.js';
 import { businessDateStr } from '../lib/businessTime.js';
 import { atomic } from '../lib/atomicRoute.js';
 import { captureError } from '../lib/errorLog.js';
@@ -68,11 +69,13 @@ export default function registerSetupImport(ctx) {
     const lock = await periodLockFor(date);
     return lock ? `${lock.year}-${String(lock.month).padStart(2, '0')} is a closed period. Reopen it first.` : null;
   };
-  // A date cell: a YYYY-MM-DD string (the client sends dates that way) or blank.
+  // A date cell -> the start of that day, null when blank, undefined when it
+  // is not a date. Read the same way by every importer (lib/sheetDate.js).
   const dateOf = (v) => {
-    const s = text(v);
-    if (!s) return null;
-    const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? dayStart(s) : new Date(s);
+    const day = sheetDay(v);
+    if (day === '') return null;
+    if (day === null) return undefined;
+    const d = day.length === 10 ? dayStart(day) : new Date(day);
     return Number.isNaN(d.getTime()) ? undefined : d;
   };
 
@@ -293,7 +296,7 @@ export default function registerSetupImport(ctx) {
         const code = resolve(raw);
         if (!code) { problems.push(`Row ${i + 1}: "${raw || '(no code)'}" is not an account - add it to the Chart of Accounts sheet.`); return; }
         const d = dateOf(r.asOf);
-        if (d === undefined) { problems.push(`Row ${i + 1}: "${r.asOf}" is not a date.`); return; }
+        if (d === undefined) { problems.push(`Row ${i + 1}: "${r.asOf}" is not a date. ${SHEET_DATE_HELP}`); return; }
         if (d) {
           if (asOf && asOf.getTime() !== d.getTime()) { problems.push(`Row ${i + 1}: every row must be as of the same date.`); return; }
           asOf = d;
@@ -363,9 +366,10 @@ export default function registerSetupImport(ctx) {
           if (!invoiceNo) throw new Error('The invoice number is required - it is how the payment will be matched to it.');
           if (!(amount > 0)) throw new Error('Amount still owed must be more than zero.');
           const invoiceDate = dateOf(r.invoiceDate);
+          if (invoiceDate === undefined) throw new Error(`"${r.invoiceDate}" is not a date. ${SHEET_DATE_HELP}`);
           if (!invoiceDate) throw new Error('Invoice date is required (YYYY-MM-DD) - it is what ages the debt.');
           const dueDate = dateOf(r.dueDate);
-          if (dueDate === undefined) throw new Error(`"${r.dueDate}" is not a date.`);
+          if (dueDate === undefined) throw new Error(`"${r.dueDate}" is not a date. ${SHEET_DATE_HELP}`);
           if (await Order.exists({ orderNumber: invoiceNo })) throw new Error(`${invoiceNo} is already in the system - it was carried in before, or an order has that number.`);
           const client = clientByName.get(customer.toLowerCase());
           await Order.create({
@@ -434,7 +438,7 @@ export default function registerSetupImport(ctx) {
           if (!(amount > 0)) throw new Error('Amount remaining must be more than zero.');
           if (amount > 999_999_999.99) throw new Error('Amount remaining is too large.');
           const date = dateOf(r.date);
-          if (date === undefined) throw new Error(`"${r.date}" is not a date.`);
+          if (date === undefined) throw new Error(`"${r.date}" is not a date. ${SHEET_DATE_HELP}`);
           const key = `${kind.key}|${name.toLowerCase()}|${reference.toLowerCase()}`;
           if (done.has(key)) throw new Error(`${kind.label} ${reference} for ${name} was already carried in.`);
 
@@ -536,9 +540,9 @@ export default function registerSetupImport(ctx) {
           const esc = g.no.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           if (await PurchaseOrder.exists({ poNumber: { $regex: `^${esc}$`, $options: 'i' }, ...tenantScope(req) })) throw new Error(`${g.no} is already in the app.`);
           const orderDate = dateOf(g.rows.map(x => x.r.orderDate).find(v => text(v)));
-          if (orderDate === undefined) throw new Error('The order date is not a date.');
+          if (orderDate === undefined) throw new Error(`The order date is not a date. ${SHEET_DATE_HELP}`);
           const expectedDate = dateOf(g.rows.map(x => x.r.expectedDate).find(v => text(v)));
-          if (expectedDate === undefined) throw new Error('The expected date is not a date.');
+          if (expectedDate === undefined) throw new Error(`The expected date is not a date. ${SHEET_DATE_HELP}`);
 
           const lines = [];
           for (const { r, row } of g.rows) {
@@ -566,7 +570,7 @@ export default function registerSetupImport(ctx) {
             ...(orderDate ? { createdAt: orderDate } : {}),
           });
           created.push({ row: first.row, poNumber: g.no, supplier: supplier.name, total: estTotal, lines: lines.length });
-          if (unlinked) problems.push(`${g.no}: ${unlinked} item(s) matched no stock item by code or name - receiving them will not add stock until the line is pointed at one. (Stock from this workbook lands after its preview; import the orders again afterwards if they are still to be received.)`);
+          if (unlinked) problems.push(`${g.no}: ${unlinked} item(s) match no stock item yet. Stock from this workbook lands after its preview; once it is confirmed, each line finds its item by code or name when the order is received. A line that still matches nothing then will not add stock.`);
         } catch (e) {
           skipped.push({ row: first.row, error: e.message });
         }
@@ -599,9 +603,9 @@ export default function registerSetupImport(ctx) {
           if (!invoiceNo) throw new Error("The supplier's invoice number is required - it is what they will quote when chasing it.");
           if (!(amount > 0)) throw new Error('Amount still owed must be more than zero.');
           const billDate = dateOf(r.invoiceDate);
-          if (billDate === undefined) throw new Error(`"${r.invoiceDate}" is not a date.`);
+          if (billDate === undefined) throw new Error(`"${r.invoiceDate}" is not a date. ${SHEET_DATE_HELP}`);
           const dueDate = dateOf(r.dueDate);
-          if (dueDate === undefined) throw new Error(`"${r.dueDate}" is not a date.`);
+          if (dueDate === undefined) throw new Error(`"${r.dueDate}" is not a date. ${SHEET_DATE_HELP}`);
           if (await Bill.exists({ supplierId: supplier._id, supplierInvoiceNo: invoiceNo })) throw new Error(`${supplier.name}'s ${invoiceNo} was already carried in.`);
           const billNumber = await mkSeqRef('BILL');
           const made = await Bill.create({

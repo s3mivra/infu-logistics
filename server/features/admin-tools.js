@@ -1,6 +1,7 @@
 ﻿// admin-tools routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { sheetDay, SHEET_DATE_HELP } from '../lib/sheetDate.js';
 import { reopenOrdersClosedByPendingBills } from '../lib/billPoLink.js';
 import { roundMoney } from '../lib/money.js';
 import { saleDebitAccount } from '../lib/saleAccounts.js';
@@ -1109,7 +1110,9 @@ app.post('/api/orders/import', verifyToken, requireStaff, requirePermission('sal
         }
         if (!fixing && (earlier || await Order.exists({ orderNumber: no }))) throw new Error(`${no} is already in the app - skipped.`);
 
-        const date = pick(r, 'Date', 'date');
+        const rawDate = pick(r, 'Date', 'date');
+        const date = sheetDay(rawDate);
+        if (date === null) throw new Error(`"${rawDate}" is not a date. ${SHEET_DATE_HELP}`);
         const customer = String(pick(r, 'Customer', 'customer')).trim();
         const payment = String(pick(r, 'Payment', 'paymentMethod') || 'Cash').trim();
         const subtotal = num(pick(r, 'Subtotal', 'subtotal'));

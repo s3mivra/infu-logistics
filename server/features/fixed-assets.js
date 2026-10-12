@@ -11,6 +11,7 @@
 // Cost and accumulated depreciation are deliberately kept in separate accounts.
 // Netting them loses the difference between "a P60,000 machine that is half
 // worn out" and "a P30,000 machine", which are not the same fact.
+import { sheetDay, SHEET_DATE_HELP } from '../lib/sheetDate.js';
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import {
@@ -334,7 +335,9 @@ export default function registerFixedAssets(ctx) {
           if (salvage > cost) throw new Error('Salvage value cannot exceed cost.');
           if (!String(r.name || '').trim()) throw new Error('Name is required.');
 
-          const acqDate = r.acquisitionDate ? dayStart(r.acquisitionDate) : new Date();
+          const acqDay = sheetDay(r.acquisitionDate);
+          if (acqDay === null) throw new Error(`"${r.acquisitionDate}" is not an acquisition date. ${SHEET_DATE_HELP}`);
+          const acqDate = acqDay ? dayStart(acqDay) : new Date();
           if (Number.isNaN(acqDate.getTime())) throw new Error('Invalid acquisition date.');
           // Nothing posts in opening mode, so an old acquisition date is fine.
           const rowLocked = opening ? null : await closedPeriod(acqDate);

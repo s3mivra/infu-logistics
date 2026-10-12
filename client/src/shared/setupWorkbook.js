@@ -57,6 +57,36 @@ export const endpointFor = (key) => ({
   priceTiers: 'setup/price-tiers/import',
 }[key]);
 
+// Each importer takes only so many rows in one request. A sheet longer than
+// that goes up in batches, in order - for the sheets where each row stands on
+// its own. The rest must arrive whole: the P&L and the balance sheet are each
+// one all-or-nothing posting, and a purchase order's rows share its number.
+const BATCH = {
+  accounts: 500, suppliers: 500, clients: 500, bills: 500, expenses: 500, fixedAssets: 500,
+  openReceivables: 500, openPayables: 500, openDeposits: 500, orders: 500,
+};
+const sum = (a, b) => Math.round(((Number(a) || 0) + (Number(b) || 0)) * 100) / 100;
+
+// Several batches' answers -> one, as if the sheet had gone up in one request.
+// Row numbers are moved back to where the row sits in the whole sheet.
+export function mergeImportReplies(replies) {
+  const out = { success: replies.some((r) => r.d.success), created: 0, skipped: [], problems: [], total: 0, totals: {}, notes: [], errors: [] };
+  for (const { d, offset } of replies) {
+    if (!d.success) { out.errors.push(d.error || 'Import failed.'); continue; }
+    out.created += Number(d.created ?? d.imported ?? 0) || 0;
+    for (const x of d.skipped || []) out.skipped.push({ ...x, row: (Number(x.row) || 1) + offset });
+    for (const p of d.problems || []) out.problems.push(String(p).replace(/^Row (\d+):/, (_, n) => `Row ${Number(n) + offset}:`));
+    out.total = sum(out.total, d.total);
+    for (const [k, v] of Object.entries(d.totals || {})) out.totals[k] = sum(out.totals[k], v);
+    if (d.note) out.notes.push(d.note);
+  }
+  // One batch's note already reads right; several would repeat partial totals.
+  out.note = replies.length === 1 ? (out.notes[0] || '') : (out.created ? `${out.created} added, in ${replies.length} batches.` : '');
+  out.error = out.errors[0] || '';
+  out.partFailed = out.success && out.errors.length > 0;
+  return out;
+}
+
 const isBlank = (v) => v === '' || v === null || v === undefined;
 // A date the person typed arrives as a Date; the importers take YYYY-MM-DD,
 // on the calendar day shown - not the UTC one, a day earlier here.
@@ -136,7 +166,20 @@ export async function runSetupImport(steps, { apiFetch, parseImportFile, onProgr
     // "Row 3" from the server counts the rows it was sent; say the sheet's row.
     const sheetRow = (n) => s.sheetRows[(Number(n) || 1) - 1] ?? n;
     try {
-      const d = await (await apiFetch(`/api/${endpointFor(s.key)}`, { method: 'POST', body: JSON.stringify({ rows, ...extra }) })).json();
+      const size = BATCH[s.key] || rows.length || 1;
+      const replies = [];
+      for (let at = 0; at < rows.length; at += size) {
+        const part = rows.slice(at, at + size);
+        if (rows.length > size) onProgress(`Importing ${s.sheet}… ${Math.min(at + size, rows.length)} of ${rows.length}`);
+        // An order's product lines travel with the batch its order is in.
+        const partExtra = s.key === 'orders' && extra.lines
+          ? { lines: (() => { const nos = new Set(part.map((r) => String(r['Order No'] ?? '').trim())); return extra.lines.filter((l) => nos.has(String(l['Order No'] ?? '').trim())); })() }
+          : extra;
+        const d = await (await apiFetch(`/api/${endpointFor(s.key)}`, { method: 'POST', body: JSON.stringify({ rows: part, ...partExtra }) })).json();
+        replies.push({ d, offset: at });
+      }
+      const single = replies.length === 1 ? replies[0].d : null;
+      const d = single || mergeImportReplies(replies);
       if (d.success) outcome[s.key] = d;
       results.push({
         key: s.key, sheet: s.sheet, ok: !!d.success,
@@ -144,6 +187,7 @@ export async function runSetupImport(steps, { apiFetch, parseImportFile, onProgr
         skipped: [
           ...(d.skipped || []).map((x) => `Row ${sheetRow(x.row)}: ${x.error || x.reason || 'not added'}`),
           ...(d.problems || []).map((p) => String(p).replace(/^Row (\d+):/, (_, n) => `Row ${sheetRow(n)}:`)),
+          ...(d.partFailed ? d.errors.map((e) => `A batch was refused: ${e}`) : []),
         ],
         error: d.success ? '' : (d.error || 'Import failed.'),
         extra: d.note || '',

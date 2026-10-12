@@ -200,3 +200,29 @@ describe('carrying the books in', () => {
     expect(await M('JournalEntry').countDocuments({})).toBe(before);
   });
 });
+
+describe('dates, however the spreadsheet gives them', () => {
+  const inv = (invoiceNo, invoiceDate, dueDate = '') => ({ customer: 'Date Tester', invoiceNo, amountOwed: 100, invoiceDate, dueDate });
+  const day = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+
+  it('reads month-first, written-out and Excel-number dates as the same day', async () => {
+    const res = await importRows('open-receivables', [
+      inv('DT-1', '9/30/2026', '10/30/2026'), inv('DT-2', 46295, 'Oct 30, 2026'), inv('DT-3', '30/09/2026'), inv('DT-4', '2026-09-30'),
+    ]);
+    expect(res.body.skipped).toEqual([]);
+    const made = await M('Order').find({ orderNumber: /^DT-/ }).sort({ orderNumber: 1 }).lean();
+    expect(made.map(o => day(o.createdAt))).toEqual(['2026-09-30', '2026-09-30', '2026-09-30', '2026-09-30']);
+    expect(day(made[0].arDueDate)).toBe('2026-10-30');
+    expect(day(made[1].arDueDate)).toBe('2026-10-30');
+  });
+
+  it('refuses a date that is not one, and says how to write it', async () => {
+    const res = await importRows('open-receivables', [
+      inv('DX-1', '########'), inv('DX-2', '2026-09-31'), inv('DX-3', '2026-09-30', '13/13/2026'), inv('DX-4', 12),
+    ]);
+    expect(res.body.created).toBe(0);
+    expect(res.body.skipped).toHaveLength(4);
+    for (const s of res.body.skipped) expect(s.error).toMatch(/is not a date\. Write it as YYYY-MM-DD/);
+    expect(await M('Order').countDocuments({ orderNumber: /^DX-/ })).toBe(0);
+  });
+});
