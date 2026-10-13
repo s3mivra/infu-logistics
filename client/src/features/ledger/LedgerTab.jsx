@@ -22,6 +22,9 @@ import RevolvingFundLiquidation from './RevolvingFundLiquidation';
 import FundSpendsToCheck from './FundSpendsToCheck';
 import ManualVoucherForm from './ManualVoucherForm';
 import RecurringBills from './RecurringBills';
+import { PrepListReport, FeedbackReport } from '../cafe/CafeExtras';
+import { SupplierStatementReport } from '../ops/OpsExtras';
+import { WasteReport, SalesByHourReport, CashForecastReport, CashierPerformanceReport, SupplierPricesReport, SalesTargetsReport, DeliverySheetReport } from './InsightReports';
 import CollectFromClient from './CollectFromClient';
 import AdvancesTab from './AdvancesTab';
 import CollectionsTab from './CollectionsTab';
@@ -40,7 +43,7 @@ import SupplierPaymentsTab from './SupplierPaymentsTab';
 import BalanceSheetTab from './BalanceSheetTab';
 import SalesDocsTab from './SalesDocsTab';
 import SalesByOrderTab from './SalesByOrderTab';
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
 // ── LedgerTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
@@ -2077,7 +2080,7 @@ It posts only what is not already accrued for that month.`)) return;
 
           {/* ===== BALANCE SHEET SUB-TAB ===== */}
           <BalanceSheetTab
-            ledgerSubTab={ledgerSubTab} bsData={bsData} reconcileInventory={reconcileInventory} exportBalanceSheetPDF={exportBalanceSheetPDF} fetchBalanceSheet={fetchBalanceSheet} />
+            ledgerSubTab={ledgerSubTab} bsData={bsData} reconcileInventory={reconcileInventory} exportBalanceSheetPDF={exportBalanceSheetPDF} fetchBalanceSheet={fetchBalanceSheet} arOutstanding={arOutstanding} />
 
           {/* ===== MONTHLY BALANCE SHEET (period + matrix, % of assets & % of parent) ===== */}
           {ledgerSubTab === 'bsmonthly' && (() => {
@@ -2339,7 +2342,7 @@ It posts only what is not already accrued for that month.`)) return;
                 </div>
               </div>
               {!menuEngineering ? (
-                <p className="text-fg/65 text-sm text-center p-6 font-bold">Click Refresh to analyse the menu.</p>
+                <p className="text-fg/65 text-sm text-center p-6 font-bold">Click Refresh to analyse {BUSINESS_TYPE === 'log' ? 'the products' : 'the menu'}.</p>
               ) : (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[520px]">
@@ -2410,6 +2413,16 @@ It posts only what is not already accrued for that month.`)) return;
           {ledgerSubTab === 'salescustomer' && <SalesByCustomerReport apiFetch={apiFetch} />}
           {ledgerSubTab === 'budget' && <BudgetReport apiFetch={apiFetch} can={can} />}
           {ledgerSubTab === 'exceptions' && <ExceptionsReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'waste' && <WasteReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'saleshours' && <SalesByHourReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'cashierperf' && <CashierPerformanceReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'cashforecast' && <CashForecastReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'supplierprices' && <SupplierPricesReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'salestargets' && <SalesTargetsReport apiFetch={apiFetch} can={can} />}
+          {ledgerSubTab === 'deliverysheet' && <DeliverySheetReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'supplierstatement' && <SupplierStatementReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'preplist' && <PrepListReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'feedback' && <FeedbackReport apiFetch={apiFetch} />}
           {ledgerSubTab === 'closing' && <ClosingChecklist apiFetch={apiFetch} can={can} />}
 
           {/* ===== COMMISSIONS ===== */}

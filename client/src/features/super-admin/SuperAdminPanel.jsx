@@ -9,7 +9,7 @@ import {
   KeyRound, Copy, AlertTriangle, RefreshCw, Settings, Database
 } from 'lucide-react';
 
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
@@ -223,6 +223,7 @@ export default function SuperAdminPanel() {
     return () => { cancelled = true; };
   }, []);
   const [loginForm, setLoginForm]   = useState({ name: '', password: '', showPassword: false });
+  const [loginNeedsCode, setLoginNeedsCode] = useState(false);   // two-step sign-in: password was right, now the code
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
 
@@ -375,9 +376,14 @@ export default function SuperAdminPanel() {
     try {
       const res = await apiFetch('/api/users/login', {
         method: 'POST',
-        body: JSON.stringify({ name: loginForm.name, password: loginForm.password }),
+        body: JSON.stringify({ name: loginForm.name, password: loginForm.password, ...(loginForm.code ? { code: loginForm.code } : {}) }),
       });
       const data = await res.json();
+      if (!data.success && data.needsCode) {
+        setLoginNeedsCode(true);
+        setLoginError(data.message || 'Enter the 6-digit code from your authenticator app.');
+        return;
+      }
       if (data.success) {
         auth.setToken(data.token);
         const lvl = panelAccess();
@@ -966,6 +972,15 @@ export default function SuperAdminPanel() {
                 {loginForm.showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
+            {loginNeedsCode && (
+              <input
+                type="text" inputMode="numeric" autoComplete="one-time-code" autoFocus
+                aria-label="Sign-in code" placeholder="6-digit code, or a backup code"
+                value={loginForm.code || ''}
+                onChange={e => setLoginForm(f => ({ ...f, code: e.target.value }))}
+                className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm tracking-widest"
+              />
+            )}
           </div>
 
           <button

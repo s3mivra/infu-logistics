@@ -10,7 +10,7 @@ import { paletteDestinations } from './navRegistry';
 // the people using this. Both routes open the same panel, and the list is
 // tappable - arrow keys are an accelerator, not a requirement.
 
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
 export default function CommandPalette({ open, onClose }) {
   const { setActiveTab, setNavMode, setLedgerSubTab, can, isSuperAdmin, moduleOn, navigate } = useDashboard();

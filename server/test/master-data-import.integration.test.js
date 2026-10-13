@@ -21,7 +21,8 @@ const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
 const M = (n) => mongoose.model(n);
 
 beforeAll(async () => {
-  ctx = await bootApp({ businessType: 'fb' });
+  // Logistics: the client list comes with sign-in links, which a cafe does not have.
+  ctx = await bootApp({ businessType: 'log' });
   app = ctx.app;
   await makeUser({ name: 'ImpSuper', role: 'superadmin' });
   tok = await loginStaff(app, 'ImpSuper');

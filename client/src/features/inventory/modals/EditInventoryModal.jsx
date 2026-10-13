@@ -3,7 +3,7 @@ import { useDashboard } from '../../dashboard/DashboardContext';
 
 
 import { PACK_UNIT } from '../../../shared/packUnit.js';
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { BUSINESS_TYPE } from '../../../shared/businessType.js';
 // Edit an inventory item's identity/costing fields. Quantity is deliberately
 // NOT editable here - stock only moves through Restock or Waste so every change
 // leaves a stock-card trail and a journal entry.

@@ -6,7 +6,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
-import { bootApp, makeUser, makeClient, loginStaff, loginClient, trialBalance } from './helpers/harness.js';
+import jwt from 'jsonwebtoken';
+import { bootApp, makeUser, makeClient, loginStaff, trialBalance } from './helpers/harness.js';
 
 let ctx, app, prod, inv;
 const tok = {};
@@ -37,7 +38,11 @@ beforeAll(async () => {
   await makeUser({ name: 'afBarista', role: 'staff', permissions: ['pos.use', 'orders.view'] });
   await makeClient({ username: 'afClient' });
   for (const n of ['afSuper', 'afStaff', 'afNoComp', 'afAdmin', 'afDelegate', 'afBarista']) tok[n] = await loginStaff(app, n);
-  clientTok = await loginClient(app, 'afClient');
+  // This file runs as a cafe (it needs table QR sessions), and a cafe has no
+  // client sign-in. The rule under test - a client session cannot discount its
+  // own order - must hold for any client session, so one is signed directly.
+  const afClient = await mongoose.model('ClientAccount').findOne({ username: 'afClient' }).lean();
+  clientTok = jwt.sign({ _id: afClient._id, clientId: String(afClient._id), username: afClient.username, name: afClient.name, role: 'client', paymentMethod: afClient.paymentMethod, aud: 'client' }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
   const Category = mongoose.model('Category');
   await Category.create({ name: 'AFCat', department: 'Bar' });

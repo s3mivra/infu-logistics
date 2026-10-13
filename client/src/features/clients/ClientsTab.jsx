@@ -1,5 +1,7 @@
 ﻿import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { Users, Search, ChevronDown, ChevronRight, RefreshCw, AlertCircle, Upload, FileText, Download, Link2, UserPlus, Trash2 } from 'lucide-react';
+import { HAS_CLIENT_LOGIN, BUSINESS_NAME } from '../../shared/businessType.js';
+import { downloadClientRecord } from '../ops/OpsExtras';
+import { Users, Search, ChevronDown, ChevronRight, RefreshCw, AlertCircle, Upload, FileText, Download, Link2, UserPlus, Trash2, Mail } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import { socket } from '../../shared/staffSocket.js';
@@ -38,6 +40,9 @@ export default function ClientsTab() {
     } catch { ui.alert('Network error.'); }
   };
   const [importing, setImporting] = useState(false);
+  // Invitation and sign-in links exist only where clients sign in (logistics).
+  const canInvite = HAS_CLIENT_LOGIN && can('clients.invite');
+  const canLinks = HAS_CLIENT_LOGIN && can('clients.links');
   // Quick invite: only a name. The client opens the link and fills in the
   // rest (phone, email, username, password) themselves.
   // Add a client with its details. The login is never chosen here: the client
@@ -69,7 +74,7 @@ export default function ClientsTab() {
   // Only what was actually changed is sent, so a blank box never wipes a
   // detail this screen simply did not have.
   const [edit, setEdit] = useState(null);   // { id, was: {...}, now: {...} }
-  const EDIT_FIELDS = ['name', 'phone', 'email', 'paymentMethod', 'creditTermsDays', 'contactNotes', 'isActive'];
+  const EDIT_FIELDS = ['name', 'phone', 'email', 'paymentMethod', 'creditTermsDays', 'contactNotes', 'isActive', 'isAffiliate'];
   const openEdit = async (c) => {
     let full = {};
     try {
@@ -81,6 +86,7 @@ export default function ClientsTab() {
       paymentMethod: full.paymentMethod ?? c.paymentMethod ?? 'Cash',
       creditTermsDays: full.creditTermsDays ?? c.creditTermsDays ?? '', contactNotes: full.contactNotes ?? '',
       isActive: (full.isActive ?? c.isActive) !== false,
+      isAffiliate: (full.isAffiliate ?? c.isAffiliate) === true,
     };
     setEdit({ id: c._id, was, now: { ...was } });
   };
@@ -234,7 +240,7 @@ export default function ClientsTab() {
   const toggle = async (id) => {
     if (expanded === id) { setExpanded(null); return; }
     setExpanded(id);
-    if (!links && can('clients.links')) loadLinks();
+    if (!links && canLinks) loadLinks();
     if (orders[id]) return;
     try {
       const res = await apiFetch(`/api/clients/${id}/orders`);
@@ -262,6 +268,50 @@ export default function ClientsTab() {
   };
 
   const fmtDay = (d) => new Date(d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
+
+  // The statement as plain text, in the office's own mail app (a mailto link):
+  // addressed to the client, ready to read over and send. The period's lines
+  // are listed; a long statement is cut short and says so, because a mail
+  // link can only carry so much - the printed one is always complete.
+  const emailStatement = async () => {
+    if (!soa) return;
+    const money = (n) => `PHP ${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const shown = soa.rows.slice(-25);
+    const lines = [
+      `Dear ${soa.client.registeredName || soa.client.name},`,
+      '',
+      `Here is your statement of account for ${fmtDay(soa.period.start)} to ${fmtDay(soa.period.end)}.`,
+      '',
+      `Balance brought forward: ${money(soa.openingBalance)}`,
+      ...(soa.rows.length > shown.length ? [`(${soa.rows.length - shown.length} earlier entries not listed - ask us for the full statement)`] : []),
+      ...shown.map(r => `${fmtDay(r.at)}  ${r.reference || ''}  ${r.description || ''}  ${r.charge ? `+${money(r.charge)}` : ''}${r.payment ? `-${money(r.payment)}` : ''}  balance ${money(r.balance)}`.replace(/\s+/g, ' ')),
+      '',
+      `Charges this period: ${money(soa.totals.charges)}`,
+      `Payments received: ${money(soa.totals.payments)}`,
+      ...(soa.deposits > 0 ? [`Less deposits on hand: ${money(soa.deposits)}`] : []),
+      `AMOUNT DUE: ${money(soa.netDue)}`,
+      '',
+      `Overdue more than 30 days: ${money((soa.aged.d31_60 || 0) + (soa.aged.d61_90 || 0) + (soa.aged.d90_plus || 0))}`,
+      '',
+      'Please tell us if anything here does not match your records.',
+      '',
+      BUSINESS_NAME,
+    ];
+    const subject = `Statement of account - ${soa.client.name} - as of ${fmtDay(soa.period.end)}`;
+    const body = lines.join('\n');
+    const openMailApp = () => { window.location.href = `mailto:${encodeURIComponent(soa.client.email || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`; };
+    // With a mail account set up on the server the app sends it itself, to the
+    // address on the client's record. Without one - or without an address on
+    // file - it opens the office's own mail app with the statement written out.
+    if (!soa.client.email || !can('clients.edit')) return openMailApp();
+    if (!(await ui.confirm({ title: `Email this statement to ${soa.client.email}?`, message: `${soa.client.name} · amount due ${money(soa.netDue)}`, confirmLabel: 'Send' }))) return;
+    try {
+      const d = await (await apiFetch(`/api/clients/${soa.client._id}/statement/email`, { method: 'POST', body: JSON.stringify({ subject, text: body }) })).json();
+      if (d.success) return ui.toast(`Statement sent to ${d.to}.`, { tone: 'success' });
+      if (d.notSetUp) return openMailApp();
+      ui.alert(d.error || 'Could not send it.');
+    } catch { ui.alert('Network error.'); }
+  };
 
   // Printed on the shop's own letterhead, with the running balance column the
   // client will check against their own books.
@@ -344,7 +394,7 @@ export default function ClientsTab() {
       if (rows.length === 0) { ui.alert('That sheet has no rows.'); return; }
       const ok = await ui.confirm(
         `Import ${rows.length} client(s)?` + '\n\n' +
-        'No passwords are set. Each one gets a 7-day link and picks their own username and password.',
+        (HAS_CLIENT_LOGIN ? 'No passwords are set. Each one gets a 7-day link and picks their own username and password.' : 'They are added as customers to bill.'),
       );
       if (!ok) return;
 
@@ -400,7 +450,7 @@ export default function ClientsTab() {
             <UserPlus size={13} /> Add client
           </button>
         )}
-        {can('clients.invite') && (
+        {canInvite && (
           <button onClick={() => { setShowInvite(v => !v); setInviteLink(''); }} aria-expanded={showInvite}
             className={`flex items-center gap-1.5 text-[10px] px-3 py-2.5 rounded-xl font-bold uppercase tracking-wider transition ${showInvite ? 'bg-brand text-on-brand' : 'bg-brand/10 hover:bg-brand/20 text-brand-text'}`}>
             <Link2 size={13} /> New client link
@@ -430,7 +480,7 @@ export default function ClientsTab() {
       {showAdd && can('clients.create') && (
         <form onSubmit={addClient} className="bg-surface border border-white/10 rounded-2xl p-4 space-y-3">
           <p className="text-xs text-fg/70 font-bold">
-            New client. They get a link (good for 7 days) to choose their own username and password.
+            {HAS_CLIENT_LOGIN ? 'New client. They get a link (good for 7 days) to choose their own username and password.' : 'New customer to bill.'}
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
             <input required value={addForm.name} onChange={e => setAddForm({ ...addForm, name: e.target.value })} placeholder="Client name *" aria-label="Client name" className="bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm placeholder-fg/70 outline-none focus:border-brand/60" />
@@ -466,7 +516,7 @@ export default function ClientsTab() {
           <p className="text-[11px] text-fg/65">Credit line and terms are set from the client's credit request, not here.</p>
         </form>
       )}
-      {showInvite && can('clients.invite') && (
+      {showInvite && canInvite && (
         <form onSubmit={createInvite} className="bg-surface border border-white/10 rounded-2xl p-4 space-y-3">
           <p className="text-xs text-fg/70 font-bold">
             Type the client's name, or leave it blank and they will fill it in themselves. They open the link (good for 7 days) and enter their phone, email, username and password.
@@ -603,7 +653,7 @@ export default function ClientsTab() {
                               <span className="text-[10px] font-bold uppercase tracking-wider text-fg/70 bg-white/5 border border-white/10 rounded-xl px-3 py-2">Tier: {tier}</span>
                             ) : null}
                             {/* Their link */}
-                            {can('clients.links') && links && (
+                            {canLinks && links && (
                               setupUrl ? (
                                 <button onClick={() => copyText(setupUrl)} title={`Setup link - good until ${new Date(link.onboardingExpiresAt).toLocaleDateString('en-PH')}`}
                                   className={`${chip} bg-brand/10 hover:bg-brand/20 text-brand-text`}>
@@ -632,6 +682,12 @@ export default function ClientsTab() {
                                 <FileText size={13} /> Statement of account
                               </button>
                             )}
+                            {can('clients.edit') && (
+                              <button onClick={() => downloadClientRecord(apiFetch, c)} title="Everything held about this client, in one file - for when they ask"
+                                className={`${chip} border border-white/15 text-fg/80 hover:bg-white/5`}>
+                                <Download size={13} /> Their record
+                              </button>
+                            )}
                             {can('clients.delete') && orders[c._id] && orders[c._id].length === 0 && (
                               <button onClick={() => deleteClient(c)} className={`${chip} border border-danger/40 text-danger hover:bg-danger/10 ml-auto`}>
                                 <Trash2 size={13} /> Delete client
@@ -656,15 +712,21 @@ export default function ClientsTab() {
                                 <select value={edit.now.paymentMethod} onChange={set('paymentMethod')} className={`${box} mt-1 normal-case tracking-normal`}>
                                   {[['Cash', 'Cash on Delivery'], ['E-Wallet', 'E-Wallet'], ['Bank Transfer', 'Bank Transfer'], ['Credit Card', 'Credit Card']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                                 </select></label>
-                              <label className="text-[10px] font-bold uppercase tracking-wider text-fg/70">Payment terms (days)
-                                <input type="number" min="0" step="1" value={edit.now.creditTermsDays} onChange={set('creditTermsDays')} placeholder="e.g. 30" className={`${box} mt-1 normal-case tracking-normal`} /></label>
+                              {/* Payment terms are part of the credit line: an approver's to change. */}
+                              {can('pricing.approve') && (
+                                <label className="text-[10px] font-bold uppercase tracking-wider text-fg/70">Payment terms (days)
+                                  <input type="number" min="0" step="1" value={edit.now.creditTermsDays} onChange={set('creditTermsDays')} placeholder="e.g. 30" className={`${box} mt-1 normal-case tracking-normal`} /></label>
+                              )}
                               <label className="text-[10px] font-bold uppercase tracking-wider text-fg/70">Notes
                                 <input value={edit.now.contactNotes} onChange={set('contactNotes')} maxLength={300} className={`${box} mt-1 normal-case tracking-normal`} /></label>
                             </div>
                             <label className="flex items-center gap-2 text-xs font-bold text-fg/80">
                               <input type="checkbox" checked={!!edit.now.isActive} onChange={set('isActive')} /> Active - can order and be sold to
                             </label>
-                            <p className="text-[11px] text-fg/65">A credit limit is changed with its own approval; passwords and sign-in links are in the owner's Admin Panel.</p>
+                            <label className="flex items-center gap-2 text-xs font-bold text-fg/80">
+                              <input type="checkbox" checked={!!edit.now.isAffiliate} onChange={set('isAffiliate')} /> Affiliate or satellite - a related business; what it owes is totalled apart from customers on Receivables
+                            </label>
+                            <p className="text-[11px] text-fg/65">A credit limit is changed with its own approval{HAS_CLIENT_LOGIN ? "; passwords and sign-in links are in the owner's Admin Panel" : ''}.</p>
                             <div className="flex gap-2">
                               <button type="submit" className="bg-brand text-on-brand px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider">Save</button>
                               <button type="button" onClick={() => setEdit(null)} className="bg-white/5 text-fg/80 px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider">Cancel</button>
@@ -800,6 +862,12 @@ export default function ClientsTab() {
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => setSoaFor(null)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/70 hover:text-fg transition">Close</button>
+                {/* Opens the office's own mail app with the statement written out.
+                    Nothing is sent from here, and no mail account is set up in the app. */}
+                <button onClick={emailStatement} disabled={!soa} title={soa && !soa.client.email ? 'This client has no email on file - you can type the address in your mail app' : 'Open your mail app with this statement'}
+                  className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/80 disabled:opacity-50 font-bold text-sm px-4 py-2 rounded-xl transition">
+                  <Mail size={15} /> Email
+                </button>
                 <button onClick={printStatement} disabled={!soa}
                   className="flex items-center gap-2 bg-brand text-on-brand disabled:opacity-50 font-bold text-sm px-4 py-2 rounded-xl hover:bg-brand-dark transition">
                   <FileText size={15} /> Print

@@ -13,7 +13,9 @@ import SetupSheetCard from './SetupSheetCard';
 //
 // Self-contained: pulls only what it needs from ctx.
 
-const BUSINESS_TYPE = import.meta.env.VITE_BUSINESS_TYPE || 'fb';
+import { BUSINESS_TYPE } from '../../shared/businessType.js';
+import MailSettingsCard from './MailSettingsCard';
+import TwoStepCard from './TwoStepCard';
 
 // Reusable iOS-style toggle switch.
 function Toggle({ on, onChange, disabled }) {
@@ -354,6 +356,9 @@ export default function SettingsTab({ ctx }) {
       <div className="space-y-6">
         {/* QR display first: it is what a counter tablet is set up for. */}
         {BUSINESS_TYPE !== 'log' && (isSuperAdmin || ctx.can?.('settings.manage')) && <QrDevicesCard apiFetch={apiFetch} />}
+        {(isSuperAdmin || ctx.can?.('settings.manage')) && <MailSettingsCard apiFetch={apiFetch} />}
+        {/* Everyone can protect their own account. */}
+        <TwoStepCard apiFetch={apiFetch} isSuperAdmin={isSuperAdmin} />
 
         {/* Everything the business has to type in, kept in one linked sheet. */}
         {isSuperAdmin && (

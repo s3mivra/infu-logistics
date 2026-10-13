@@ -5,6 +5,7 @@
 import { positiveQty } from '../lib/normalize.js';
 import { atomic } from '../lib/atomicRoute.js';
 import crypto from 'node:crypto';
+import { AsyncResource } from 'node:async_hooks';
 import { businessDateStr } from '../lib/businessTime.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { mergeTrialBalances, buildPnl, buildBalanceSheet, unknownCodes } from '../lib/consolidate.js';
@@ -92,9 +93,12 @@ export default function registerHub(ctx) {
       signal: AbortSignal.timeout(15_000),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `Partner returned ${res.status}`);
+    if (!res.ok) throw Object.assign(new Error(data.error || `Partner returned ${res.status}`), { status: res.status });
     return data;
   }
+  // The partner answered and said no - asking again will not change that.
+  const refusedByPartner = (err) => err?.status >= 400 && err?.status < 500;
+  const str = (v, max = 200) => String(v ?? '').trim().slice(0, max);
 
   // Double-entry journal entry for hub stock movements.
   async function postHubJE({ reference, description, debitCode, debitName, creditCode, creditName, amount }) {
@@ -114,7 +118,9 @@ export default function registerHub(ctx) {
 
   // Hub info
   app.get('/api/hub/info', verifyToken, requireAuth, async (req, res) => {
-    const links = await LinkedBusiness.find({ businessType: BUSINESS_TYPE }).sort({ createdAt: -1 }).lean();
+    // Without the link token: it is the password the two servers use with each
+    // other, and this list goes to every signed-in member of staff.
+    const links = await LinkedBusiness.find({ businessType: BUSINESS_TYPE }, { linkToken: 0 }).sort({ createdAt: -1 }).lean();
     res.json({ tenant: TENANT, selfUrl: SELF_URL, links });
   });
 
@@ -193,9 +199,15 @@ export default function registerHub(ctx) {
     const { code } = req.body || {};
     if (!String(code || '').trim()) return res.status(400).json({ error: 'code is required.' });
 
-    const parts = String(code).trim().split('-');
-    if (parts.length < 2) return res.status(400).json({ error: 'Invalid code format. Paste the full code your hub gave you.' });
-    const hubSlug = parts[0];
+    // The code is "<hub's slug>-<random>", and a slug may itself contain
+    // hyphens (infusion-logistics-AB12...), so the slug is everything before
+    // the LAST hyphen. Taking the first piece sent "infusion-logistics" codes
+    // to a business called "infusion", which does not exist.
+    const clean = String(code).trim();
+    const cut = clean.lastIndexOf('-');
+    if (cut < 1 || cut === clean.length - 1) return res.status(400).json({ error: 'Invalid code format. Paste the full code your hub gave you.' });
+    const hubSlug = clean.slice(0, cut);
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,59}$/.test(hubSlug)) return res.status(400).json({ error: 'Invalid code format. Paste the full code your hub gave you.' });
     if (hubSlug === TENANT) return res.status(400).json({ error: 'Cannot link to yourself.' });
 
     const hubUrl = hubUrlFor(hubSlug);
@@ -206,14 +218,17 @@ export default function registerHub(ctx) {
       hubData = await fetch(`${hubUrl}/api/hub/internal/handshake`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: String(code).trim(), clientSlug: TENANT, clientUrl: SELF_URL, linkToken }),
+        body: JSON.stringify({ code: clean, clientSlug: TENANT, clientUrl: SELF_URL, linkToken }),
         signal: AbortSignal.timeout(20_000),
       }).then(async (r) => {
         const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d.error || `Hub returned ${r.status}`);
+        // The hub answered and said no (a used or expired code, say): that is
+        // its answer to pass on, not a failure to reach it.
+        if (!r.ok) throw Object.assign(new Error(d.error || `Hub returned ${r.status}`), { refused: r.status >= 400 && r.status < 500 });
         return d;
       });
     } catch (e) {
+      if (e.refused) return res.status(400).json({ error: `${hubSlug} did not accept the code: ${e.message}` });
       return res.status(502).json({ error: `Could not reach hub (${hubSlug}): ${e.message}` });
     }
 
@@ -255,7 +270,18 @@ export default function registerHub(ctx) {
 
   // Disconnect a partner
   app.delete('/api/hub/links/:partnerSlug', verifyToken, requireAuth, requireSuperAdmin, async (req, res) => {
+    const link = await LinkedBusiness.findOne({ businessType: BUSINESS_TYPE, partnerSlug: req.params.partnerSlug }).lean();
+    // Tell the other business, so it does not go on showing a live link whose
+    // every call is then refused. Best effort: it may be the reason for leaving.
+    if (link) { try { await partnerCall(link, '/api/hub/internal/unlink', {}); } catch { /* disconnect anyway */ } }
     await LinkedBusiness.deleteOne({ businessType: BUSINESS_TYPE, partnerSlug: req.params.partnerSlug });
+    try { await logAudit?.(req, { action: 'delete', entity: 'LinkedBusiness', entityId: req.params.partnerSlug }); } catch { /* non-fatal */ }
+    res.json({ ok: true });
+  });
+
+  // Internal: the partner disconnected. Their token stops working here at once.
+  app.post('/api/hub/internal/unlink', requireLinkToken, async (req, res) => {
+    await LinkedBusiness.updateOne({ _id: req.linkedPartner._id }, { $set: { status: 'suspended' } });
     res.json({ ok: true });
   });
 
@@ -385,27 +411,7 @@ export default function registerHub(ctx) {
     if (shortages.length) return res.status(409).json({ error: `Cannot approve - stock changed since this slip was filed. ${shortages.join(' ')}` });
 
     try {
-      await partnerCall(link, '/api/hub/internal/transfer-notify', {
-        shipmentRef,
-        fromSlug: TENANT,
-        fromName: TENANT,
-        items: lines.map(t => ({
-          reference: t.reference,
-          itemName:  t.itemName,
-          unit:      t.unit,
-          qtyBase:   t.qtyBase,
-          note:      t.note,
-          // Descriptors travel with the shipment - see the snapshot comment on
-          // CrossTransferSchema. A partner running an older build simply
-          // ignores the extra fields.
-          unitCost:       t.unitCost,
-          displayUnit:    t.displayUnit,
-          unitMultiplier: t.unitMultiplier,
-          packSize:       t.packSize,
-          itemCode:       t.itemCode,
-          stockCategory:  t.stockCategory,
-        })),
-      });
+      await partnerCall(link, '/api/hub/internal/transfer-notify', shipmentPayload(shipmentRef, lines));
     } catch (e) {
       return res.status(502).json({ error: `Approved nothing - could not notify partner: ${e.message}. The slip is still awaiting approval; try again.` });
     }
@@ -447,34 +453,52 @@ export default function registerHub(ctx) {
     res.json({ ok: true, shipmentRef, rejected: result.modifiedCount });
   });
 
-  // Internal: partner notifies us of inbound transfers
+  // Internal: partner notifies us of inbound transfers.
+  // Who it is from is whoever is calling - the link token says so. The body
+  // used to be believed instead, so one linked business could file a shipment
+  // in another's name. Every line is checked (a negative quantity would have
+  // taken stock OUT on acceptance), and a line already here is skipped, so the
+  // sender can safely announce the same shipment again after a dropped reply.
   app.post('/api/hub/internal/transfer-notify', requireLinkToken, async (req, res) => {
-    const { shipmentRef, fromSlug, fromName, items } = req.body || {};
-    const lines = Array.isArray(items) ? items : [];
+    const partner = req.linkedPartner;
+    const shipmentRef = str(req.body?.shipmentRef, 80);
+    const lines = Array.isArray(req.body?.items) ? req.body.items.slice(0, 200) : [];
+    if (!shipmentRef || !lines.length) return res.status(400).json({ error: 'shipmentRef and items[] are required.' });
     for (const line of lines) {
+      const qty = Number(line?.qtyBase);
+      if (!str(line?.reference, 80) || !str(line?.itemName) || !Number.isFinite(qty) || qty <= 0) {
+        return res.status(400).json({ error: 'Every line needs a reference, an item name and a quantity above zero.' });
+      }
+    }
+    let added = 0;
+    for (const line of lines) {
+      const reference = str(line.reference, 80);
+      const seen = await CrossTransfer.exists({ businessType: BUSINESS_TYPE, direction: 'inbound', partnerSlug: partner.partnerSlug, reference });
+      if (seen) continue;
       await CrossTransfer.create({
         businessType: BUSINESS_TYPE,
         direction: 'inbound',
-        partnerSlug: fromSlug,
-        partnerName: fromName || fromSlug,
-        itemName: line.itemName,
-        unit: line.unit,
+        partnerSlug: partner.partnerSlug,
+        partnerName: partner.partnerName || partner.partnerSlug,
+        itemName: str(line.itemName),
+        unit: str(line.unit, 40),
         qtyBase: Number(line.qtyBase),
         // Defaults keep a partner on an older build (which sends none of these)
         // working - it just receives at zero cost, exactly as before.
-        unitCost: Number(line.unitCost) || 0,
-        displayUnit: line.displayUnit || '',
-        unitMultiplier: Number(line.unitMultiplier) || 1,
-        packSize: line.packSize ?? null,
-        itemCode: line.itemCode || '',
-        stockCategory: line.stockCategory || '',
-        note: String(line.note || '').trim(),
-        reference: line.reference,
+        unitCost: Math.max(0, Number(line.unitCost) || 0),
+        displayUnit: str(line.displayUnit, 40),
+        unitMultiplier: Number(line.unitMultiplier) > 0 ? Number(line.unitMultiplier) : 1,
+        packSize: Number(line.packSize) > 0 ? Number(line.packSize) : null,
+        itemCode: str(line.itemCode, 60),
+        stockCategory: str(line.stockCategory, 80),
+        note: str(line.note, 500),
+        reference,
         shipmentRef,
         status: 'Pending',
       });
+      added++;
     }
-    res.json({ ok: true });
+    res.json({ ok: true, added });
   });
 
   // Accept inbound transfer - receive stock + post ledger JE
@@ -496,12 +520,23 @@ export default function registerHub(ctx) {
       targetItem = await Inventory.findOne({ _id: itemId, businessType: BUSINESS_TYPE });
       if (!targetItem) return res.status(404).json({ error: 'Target inventory item not found.' });
     } else if (createNew) {
+      // The same item code already here IS the item: receive into it rather
+      // than make a second one with the same code, which costing by item code
+      // could then not tell apart.
+      const code = String(transfer.itemCode || '').trim();
+      if (code) {
+        targetItem = await Inventory.findOne({
+          businessType: BUSINESS_TYPE,
+          itemCode: { $regex: `^${code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+        });
+      }
       // Carry the sender's descriptors through, so the new item arrives fully
-      // formed - named, priced, and with its display unit and pack size - not
-      // as a zero-cost stub someone has to go and fix by hand.
-      targetItem = await Inventory.create({
+      // formed - named, coded, priced, and with its display unit and pack size -
+      // not as a zero-cost stub someone has to go and fix by hand.
+      if (!targetItem) targetItem = await Inventory.create({
         businessType: BUSINESS_TYPE,
         itemName: transfer.itemName,
+        ...(code ? { itemCode: code } : {}),
         unit: transfer.unit,
         stockQty: 0,
         unitCost: incomingUnitCost,
@@ -573,14 +608,44 @@ export default function registerHub(ctx) {
     res.json({ ok: true, transfer });
   }));
 
-  // Ask each sender to release the goods this side received and it has not
-  // yet confirmed. Safe to repeat: the sender answers "already released".
+  // Everything the partner still has to hear from us, tried again. A call to
+  // the other business can fail at any moment (it is another server); each of
+  // these used to be attempted once and then forgotten, leaving the two sides
+  // disagreeing for good. All of them are safe to repeat.
+  //
+  //   1. goods we received and the sender has not yet taken off its stock
+  //   2. shipments we approved and the partner was never told about
+  //   3. shipments we turned down and the sender was never told about
+  //   4. transfer requests whose latest state the partner has not seen
+  const shipmentPayload = (shipmentRef, rows) => ({
+    shipmentRef, fromSlug: TENANT, fromName: TENANT,
+    items: rows.map(t => ({
+      reference: t.reference, itemName: t.itemName, unit: t.unit, qtyBase: t.qtyBase, note: t.note,
+      // Descriptors travel with the shipment - see the snapshot comment on
+      // CrossTransferSchema. A partner running an older build simply ignores
+      // the extra fields.
+      unitCost: t.unitCost, displayUnit: t.displayUnit, unitMultiplier: t.unitMultiplier,
+      packSize: t.packSize, itemCode: t.itemCode, stockCategory: t.stockCategory,
+    })),
+  });
+  const requestNotifyPayload = (doc) => ({
+    requestRef: doc.requestRef, fromSlug: doc.fromSlug, fromName: doc.fromName, toSlug: doc.toSlug, toName: doc.toName,
+    filedBySlug: doc.filedBySlug, lines: doc.originalLines?.length ? doc.originalLines : doc.lines, requestedBy: doc.requestedBy,
+  });
+
   const releasePending = async () => {
+    const links = new Map();
+    const linkTo = async (slug) => {
+      if (!links.has(slug)) links.set(slug, await LinkedBusiness.findOne({ businessType: BUSINESS_TYPE, partnerSlug: slug, status: 'active' }).lean());
+      return links.get(slug);
+    };
+
+    // 1. releases
     const pending = await CrossTransfer.find({
       businessType: BUSINESS_TYPE, direction: 'inbound', status: 'Received', releaseConfirmedAt: null,
     }).limit(200);
     for (const t of pending) {
-      const link = await LinkedBusiness.findOne({ businessType: BUSINESS_TYPE, partnerSlug: t.partnerSlug, status: 'active' }).lean();
+      const link = await linkTo(t.partnerSlug);
       if (!link) continue;
       try {
         const r = await partnerCall(link, '/api/hub/internal/transfer-release', { reference: t.reference });
@@ -591,15 +656,70 @@ export default function registerHub(ctx) {
         log?.warn?.({ err, reference: t.reference }, 'Hub transfer release not confirmed yet - will retry');
       }
     }
+
+    // 2. shipments to announce, one call per slip
+    const unannounced = await CrossTransfer.find({ businessType: BUSINESS_TYPE, direction: 'outbound', status: 'Pending', partnerTodo: 'notify' }).limit(400).lean();
+    const slips = new Map();
+    for (const t of unannounced) { if (!slips.has(t.shipmentRef)) slips.set(t.shipmentRef, []); slips.get(t.shipmentRef).push(t); }
+    for (const [shipmentRef, rows] of slips) {
+      const link = await linkTo(rows[0].partnerSlug);
+      if (!link) continue;
+      try {
+        await partnerCall(link, '/api/hub/internal/transfer-notify', shipmentPayload(shipmentRef, rows));
+        await CrossTransfer.updateMany({ _id: { $in: rows.map(r => r._id) } }, { $set: { partnerTodo: '' } });
+      } catch (err) {
+        log?.warn?.({ err, shipmentRef }, 'Hub shipment not announced to the partner yet - will retry');
+      }
+    }
+
+    // 3. rejections to pass on
+    const untold = await CrossTransfer.find({ businessType: BUSINESS_TYPE, direction: 'inbound', status: 'Rejected', partnerTodo: 'reject' }).limit(200).lean();
+    for (const t of untold) {
+      const link = await linkTo(t.partnerSlug);
+      if (!link) continue;
+      try {
+        await partnerCall(link, '/api/hub/internal/transfer-status', { reference: t.reference, status: 'Rejected' });
+        await CrossTransfer.updateOne({ _id: t._id }, { $set: { partnerTodo: '' } });
+      } catch (err) {
+        if (refusedByPartner(err)) await CrossTransfer.updateOne({ _id: t._id }, { $set: { partnerTodo: '' } });
+        else log?.warn?.({ err, reference: t.reference }, 'Hub rejection not passed on yet - will retry');
+      }
+    }
+
+    // 4. transfer requests the partner is behind on
+    const behind = await TransferRequest.find({ businessType: BUSINESS_TYPE, partnerSync: { $in: ['notify', 'sync'] } }).limit(200);
+    for (const doc of behind) {
+      const link = await linkTo(doc.fromSlug === TENANT ? doc.toSlug : doc.fromSlug);
+      if (!link) continue;
+      try {
+        if (doc.partnerSync === 'notify') await partnerCall(link, '/api/hub/internal/transfer-request-notify', requestNotifyPayload(doc));
+        if (doc.partnerSync === 'sync' || doc.status !== 'Pending') await partnerCall(link, '/api/hub/internal/transfer-request-sync', requestSyncPayload(doc));
+        await TransferRequest.updateOne({ _id: doc._id }, { $set: { partnerSync: '' } });
+      } catch (err) {
+        // Refused outright (it moved on without us): asking again changes nothing.
+        if (refusedByPartner(err)) await TransferRequest.updateOne({ _id: doc._id }, { $set: { partnerSync: '' } });
+        else log?.warn?.({ err, requestRef: doc.requestRef }, 'Hub transfer request not synced to the partner yet - will retry');
+      }
+    }
   };
   let sweepTimer = null;
+  // The sweep is often asked for from inside a request that is one database
+  // transaction (receiving a shipment is). A timer set there carries that
+  // transaction with it, and by the time it fires the transaction is over:
+  // every query in the sweep then failed with "expired session", so the sender
+  // was not told to release until the ten-minute sweep came round. Setting the
+  // timer from here, outside any request, leaves the transaction behind.
+  const outsideAnyRequest = new AsyncResource('hub-partner-sweep');
   const scheduleReleaseSweep = (delayMs = 1500) => {
     if (sweepTimer) return;
-    sweepTimer = setTimeout(() => {
-      sweepTimer = null;
-      releasePending().catch(err => log?.error?.({ err }, 'Hub release sweep failed'));
-    }, delayMs);
-    sweepTimer.unref?.();
+    outsideAnyRequest.runInAsyncScope(() => {
+      sweepTimer = setTimeout(() => {
+        sweepTimer = null;
+        if (mongoose.connection.readyState !== 1) return;   // shutting down
+        releasePending().catch(err => log?.error?.({ err }, 'Hub release sweep failed'));
+      }, delayMs);
+      sweepTimer.unref?.();
+    });
   };
   // And periodically, for a partner that was offline at the time.
   const releaseInterval = setInterval(() => scheduleReleaseSweep(0), 10 * 60 * 1000);
@@ -607,13 +727,28 @@ export default function registerHub(ctx) {
 
   // Internal: sender decrements stock after receiver accepted + posts JE
   app.post('/api/hub/internal/transfer-release', requireLinkToken, atomic(mongoose, async (req, res) => {
-    const { reference } = req.body || {};
-    const transfer = await CrossTransfer.findOne({ businessType: BUSINESS_TYPE, reference, direction: 'outbound' });
-    if (!transfer || transfer.status === 'Released') return res.json({ ok: true });
+    const reference = str(req.body?.reference, 80);
+    // Only a shipment that was sent TO the business calling. The reference
+    // alone used to be enough, so any linked business could take the stock of
+    // a shipment meant for another off our shelves.
+    const transfer = await CrossTransfer.findOne({
+      businessType: BUSINESS_TYPE, reference, direction: 'outbound', partnerSlug: req.linkedPartner.partnerSlug,
+    });
+    if (!transfer) {
+      log?.warn?.({ reference, partner: req.linkedPartner.partnerSlug }, 'Hub release asked for a shipment we never sent them');
+      return res.json({ ok: true });
+    }
+    if (transfer.status === 'Released') return res.json({ ok: true });
+    // Never approved here, so never announced: nothing of ours can have arrived.
+    if (transfer.status === 'Requested') return res.status(409).json({ error: 'That shipment was never approved.' });
 
     const item = await Inventory.findById(transfer.itemId);
     if (item) {
-      const releasedValue = (item.unitCost || 0) * transfer.qtyBase;
+      // At the cost the shipment carried, which is what the receiver booked it
+      // at - so the two businesses' clearing entries cancel exactly, and the
+      // consolidated books show nothing left between them. Only a shipment
+      // sent with no cost falls back to today's carrying cost.
+      const releasedValue = (Number(transfer.unitCost) > 0 ? Number(transfer.unitCost) : (item.unitCost || 0)) * transfer.qtyBase;
 
       // Exactly what left - the receiver already has it. Flooring this at zero
       // made the stock card say the whole shipment went while stock fell by
@@ -662,7 +797,11 @@ export default function registerHub(ctx) {
 
     const link = await LinkedBusiness.findOne({ businessType: BUSINESS_TYPE, partnerSlug: transfer.partnerSlug, status: 'active' }).lean();
     if (link) {
-      try { await partnerCall(link, '/api/hub/internal/transfer-status', { reference: transfer.reference, status: 'Rejected' }); } catch {}
+      try { await partnerCall(link, '/api/hub/internal/transfer-status', { reference: transfer.reference, status: 'Rejected' }); }
+      catch (err) {
+        // The sender has not heard. Keep trying, or its slip waits for ever.
+        if (!refusedByPartner(err)) { transfer.partnerTodo = 'reject'; await transfer.save(); scheduleReleaseSweep(60_000); }
+      }
     }
 
     res.json({ ok: true, transfer });
@@ -679,28 +818,53 @@ export default function registerHub(ctx) {
 
     // A slip still awaiting approval was never announced to the partner, so
     // there is nothing on their side to retract.
-    const wasAnnounced = transfer.status === 'Pending';
-    transfer.status = 'Cancelled';
-    transfer.rejectedBy = req.user?.name || '';
-    await transfer.save();
-
+    const wasAnnounced = transfer.status === 'Pending' && transfer.partnerTodo !== 'notify';
+    // An announced shipment is on the partner's screen, waiting to be received.
+    // It is withdrawn THERE first: cancelling only here left it receivable, and
+    // the goods then arrived for a shipment these books called cancelled.
     if (wasAnnounced) {
       const link = await LinkedBusiness.findOne({ businessType: BUSINESS_TYPE, partnerSlug: transfer.partnerSlug, status: 'active' }).lean();
       if (link) {
-        try { await partnerCall(link, '/api/hub/internal/transfer-status', { reference: transfer.reference, status: 'Rejected' }); } catch {}
+        try { await partnerCall(link, '/api/hub/internal/transfer-status', { reference: transfer.reference, status: 'Cancelled' }); }
+        catch (err) {
+          if (err.status === 409) return res.status(409).json({ error: `${transfer.partnerName || transfer.partnerSlug} has already received this - it can no longer be withdrawn.` });
+          return res.status(502).json({ error: `Not withdrawn - could not reach ${transfer.partnerName || transfer.partnerSlug}: ${err.message}. Try again.` });
+        }
       }
     }
+    transfer.status = 'Cancelled';
+    transfer.partnerTodo = '';
+    transfer.rejectedBy = req.user?.name || '';
+    await transfer.save();
 
     res.json({ ok: true, transfer });
   });
 
-  // Internal: partner updates transfer status on our outbound record
+  // Internal: the partner says what became of a shipment between us.
+  //   Rejected   they turned down one we sent      -> our outbound slip closes
+  //   Cancelled  they withdrew one they sent to us -> our inbound slip closes,
+  //              unless it has already been received (then they are told so)
+  // Only a shipment between us and the business calling, and only while it is
+  // still waiting. This used to set ANY status on ANY outbound slip by its
+  // reference alone, for any linked business.
   app.post('/api/hub/internal/transfer-status', requireLinkToken, async (req, res) => {
-    const { reference, status } = req.body || {};
-    await CrossTransfer.updateOne(
-      { businessType: BUSINESS_TYPE, reference, direction: 'outbound' },
-      { $set: { status } },
-    );
+    const reference = str(req.body?.reference, 80);
+    const status = str(req.body?.status, 20);
+    const partnerSlug = req.linkedPartner.partnerSlug;
+    if (!reference || !['Rejected', 'Cancelled'].includes(status)) return res.status(400).json({ error: 'Unsupported status.' });
+
+    if (status === 'Rejected') {
+      const r = await CrossTransfer.updateOne(
+        { businessType: BUSINESS_TYPE, reference, direction: 'outbound', partnerSlug, status: 'Pending' },
+        { $set: { status: 'Rejected' } },
+      );
+      if (r.matchedCount) return res.json({ ok: true });
+      // A partner on an older build says "Rejected" when it withdraws - fall through.
+    }
+    const inbound = await CrossTransfer.findOne({ businessType: BUSINESS_TYPE, reference, direction: 'inbound', partnerSlug });
+    if (!inbound) return res.json({ ok: true });
+    if (inbound.status === 'Received') return res.status(409).json({ error: 'Already received.' });
+    if (inbound.status === 'Pending') { inbound.status = 'Cancelled'; await inbound.save(); }
     res.json({ ok: true });
   });
 
@@ -721,23 +885,30 @@ export default function registerHub(ctx) {
   // already uses for cross-tenant sync. Non-fatal: our own copy is already
   // saved by the time this runs, so a delivery failure here is a "the other
   // side is stale, they'll see it next poll" problem, not a data-loss one.
+  function requestSyncPayload(doc) {
+    return {
+      requestRef: doc.requestRef,
+      fromSlug: doc.fromSlug, fromName: doc.fromName,
+      toSlug: doc.toSlug, toName: doc.toName,
+      filedBySlug: doc.filedBySlug,
+      status: doc.status,
+      lines: doc.lines,
+      originalLines: doc.originalLines,
+      round: doc.round,
+      history: doc.history,
+      respondedBy: doc.respondedBy,
+      linkedShipmentRef: doc.linkedShipmentRef,
+    };
+  }
   async function syncTransferRequest(link, doc) {
     try {
-      await partnerCall(link, '/api/hub/internal/transfer-request-sync', {
-        requestRef: doc.requestRef,
-        fromSlug: doc.fromSlug, fromName: doc.fromName,
-        toSlug: doc.toSlug, toName: doc.toName,
-        filedBySlug: doc.filedBySlug,
-        status: doc.status,
-        lines: doc.lines,
-        originalLines: doc.originalLines,
-        round: doc.round,
-        history: doc.history,
-        respondedBy: doc.respondedBy,
-        linkedShipmentRef: doc.linkedShipmentRef,
-      });
+      await partnerCall(link, '/api/hub/internal/transfer-request-sync', requestSyncPayload(doc));
     } catch (e) {
-      return `Saved here, but could not notify the partner: ${e.message}`;
+      if (refusedByPartner(e)) return `Saved here, but the partner's copy did not take it: ${e.message}`;
+      // Unreachable: remember, and try again until their copy matches ours.
+      if (doc.partnerSync !== 'notify') await TransferRequest.updateOne({ _id: doc._id }, { $set: { partnerSync: 'sync' } });
+      scheduleReleaseSweep(60_000);
+      return `Saved here. The partner could not be reached (${e.message}) - it will be sent again automatically.`;
     }
   }
 
@@ -778,12 +949,14 @@ export default function registerHub(ctx) {
 
     let warning;
     try {
-      await partnerCall(link, '/api/hub/internal/transfer-request-notify', {
-        requestRef, fromSlug, fromName, toSlug, toName, filedBySlug: TENANT,
-        lines, requestedBy: req.user?.name || '',
-      });
+      await partnerCall(link, '/api/hub/internal/transfer-request-notify', requestNotifyPayload(mine));
     } catch (e) {
-      warning = `Filed, but could not notify the partner: ${e.message}. They won't see it until you retry.`;
+      if (refusedByPartner(e)) warning = `Filed here, but the partner did not accept it: ${e.message}`;
+      else {
+        await TransferRequest.updateOne({ _id: mine._id }, { $set: { partnerSync: 'notify' } });
+        scheduleReleaseSweep(60_000);
+        warning = `Filed. The partner could not be reached (${e.message}) - it will be sent again automatically.`;
+      }
     }
 
     try { await logAudit?.(req, { action: 'create', entity: 'TransferRequest', entityId: requestRef, after: { partnerSlug, lines: lines.length } }); } catch { /* non-fatal */ }
@@ -938,6 +1111,14 @@ export default function registerHub(ctx) {
       if (line.itemId && mongoose.Types.ObjectId.isValid(line.itemId)) {
         item = await Inventory.findOne({ _id: line.itemId, businessType: BUSINESS_TYPE }).lean();
       }
+      // A request filed by the OTHER business carries its own stock ids, which
+      // mean nothing here: the same item is then found by its name.
+      if (!item && String(line.itemName || '').trim()) {
+        item = await Inventory.findOne({
+          businessType: BUSINESS_TYPE,
+          itemName: { $regex: `^${String(line.itemName).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+        }).lean();
+      }
       if (!item) { errors.push(`${line.itemName}: no matching inventory item selected - drop or re-pick this line before approving.`); continue; }
       if (item.stockQty < line.qty) { errors.push(`${item.itemName}: need ${line.qty}${line.unit}, only ${item.stockQty}${item.unit} on hand.`); continue; }
 
@@ -958,17 +1139,14 @@ export default function registerHub(ctx) {
     if (!created.length) return res.status(409).json({ error: `Could not create the shipment. ${errors.join(' ')}` });
 
     const link = await linkFor(doc.toSlug);
+    let announced = false;
     if (link) {
-      try {
-        await partnerCall(link, '/api/hub/internal/transfer-notify', {
-          shipmentRef, fromSlug: TENANT, fromName: TENANT,
-          items: created.map(t => ({
-            reference: t.reference, itemName: t.itemName, unit: t.unit, qtyBase: t.qtyBase, note: t.note,
-            unitCost: t.unitCost, displayUnit: t.displayUnit, unitMultiplier: t.unitMultiplier,
-            packSize: t.packSize, itemCode: t.itemCode, stockCategory: t.stockCategory,
-          })),
-        });
-      } catch { /* the shipment rows already exist locally; partner will still see them once reachable */ }
+      try { await partnerCall(link, '/api/hub/internal/transfer-notify', shipmentPayload(shipmentRef, created)); announced = true; }
+      catch { /* remembered just below, and sent again until it gets through */ }
+    }
+    if (!announced) {
+      await CrossTransfer.updateMany({ _id: { $in: created.map(t => t._id) } }, { $set: { partnerTodo: 'notify' } });
+      scheduleReleaseSweep(60_000);
     }
 
     doc.status = 'Approved';
@@ -1007,15 +1185,24 @@ export default function registerHub(ctx) {
     // linked partner of ours", not that you're THIS negotiation's other
     // side. Without this, any linked partner could inject a fake "ask" that
     // claims to be from a different business entirely (even from us).
-    if (req.linkedPartner.partnerSlug !== fromSlug && req.linkedPartner.partnerSlug !== toSlug) {
-      return res.status(403).json({ error: 'fromSlug/toSlug must include the authenticated partner.' });
+    const partnerSlug = req.linkedPartner.partnerSlug;
+    const between = [String(fromSlug), String(toSlug)].sort().join('|') === [partnerSlug, TENANT].sort().join('|');
+    // ...between the caller and US, and filed by the caller. "Includes the
+    // caller" alone let them file a request between themselves and a third
+    // business onto our list, or one that claimed we had filed it.
+    if (!between || filedBySlug !== partnerSlug) {
+      return res.status(403).json({ error: 'A request must be between the calling business and this one, filed by the caller.' });
     }
+    const clean = (Array.isArray(lines) ? lines : []).slice(0, 200)
+      .filter(l => l && str(l.itemName) && Number(l.qty) > 0 && Number.isFinite(Number(l.qty)))
+      .map(l => ({ itemId: str(l.itemId, 40), itemName: str(l.itemName), unit: str(l.unit, 40), qty: Number(l.qty), note: str(l.note, 500) }));
+    if (!clean.length) return res.status(400).json({ error: 'No valid line items.' });
     await TransferRequest.updateOne(
       { businessType: BUSINESS_TYPE, requestRef, side: 'received' },
       { $setOnInsert: {
         businessType: BUSINESS_TYPE, requestRef, side: 'received',
-        fromSlug, fromName, toSlug, toName, filedBySlug,
-        status: 'Pending', lines: lines || [], originalLines: lines || [], round: 1,
+        fromSlug, fromName: str(fromName), toSlug, toName: str(toName), filedBySlug,
+        status: 'Pending', lines: clean, originalLines: clean, round: 1,
         history: [{ by: requestedBy || '', slug: filedBySlug, action: 'filed', note: '', at: new Date() }],
         requestedBy: requestedBy || '',
       } },
@@ -1029,7 +1216,7 @@ export default function registerHub(ctx) {
   // document is already the source of truth for the new state, this just
   // mirrors it onto our copy of the SAME negotiation.
   app.post('/api/hub/internal/transfer-request-sync', requireLinkToken, async (req, res) => {
-    const { requestRef, status, lines, originalLines, round, history, respondedBy, linkedShipmentRef } = req.body || {};
+    const { requestRef, status, lines, history, respondedBy, linkedShipmentRef } = req.body || {};
     if (!requestRef || !TRANSFER_REQUEST_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid payload.' });
 
     // Load first so the caller's identity can be checked against THIS
@@ -1044,19 +1231,41 @@ export default function registerHub(ctx) {
       return res.status(403).json({ error: 'Not a party to this request.' });
     }
 
-    const result = await TransferRequest.updateOne(
+    // The same state again (a retry of a call whose reply was lost): nothing to do.
+    if (existing.status === status) return res.json({ ok: true });
+
+    // And only the step that is theirs to take. Being a party was enough
+    // before, so the business being asked could mark its own request
+    // "Approved", or rewrite the quantities while it was our turn to answer.
+    const partnerSlug = req.linkedPartner.partnerSlug;
+    const filer = existing.filedBySlug;
+    const other = filer === existing.fromSlug ? existing.toSlug : existing.fromSlug;
+    const allowed = {
+      Pending:        partnerSlug === other ? ['CounterPending', 'Declined', 'Approved'] : ['Cancelled'],
+      CounterPending: partnerSlug === filer ? ['AwaitingFinal', 'Declined', 'Cancelled'] : [],
+      AwaitingFinal:  partnerSlug === other ? ['Approved', 'Declined'] : [],
+    }[existing.status] || [];
+    if (!allowed.includes(status)) {
+      return res.status(409).json({ error: `This request is ${existing.status} here - it cannot become ${status} from your side.` });
+    }
+    // Only the business that would ship can approve, and only a counter-offer changes the lines.
+    if (status === 'Approved' && partnerSlug !== existing.fromSlug) return res.status(409).json({ error: 'Only the business that would ship the stock can approve this.' });
+    const countered = status === 'CounterPending' && Array.isArray(lines)
+      ? lines.slice(0, 200).filter(l => l && str(l.itemName) && Number(l.qty) > 0 && Number.isFinite(Number(l.qty)))
+          .map(l => ({ itemId: str(l.itemId, 40), itemName: str(l.itemName), unit: str(l.unit, 40), qty: Number(l.qty), note: str(l.note, 500) }))
+      : null;
+    if (status === 'CounterPending' && !countered?.length) return res.status(400).json({ error: 'A counter-offer needs at least one line item.' });
+
+    await TransferRequest.updateOne(
       { _id: existing._id },
       { $set: {
         status,
-        ...(lines ? { lines } : {}),
-        ...(originalLines ? { originalLines } : {}),
-        ...(round ? { round } : {}),
-        ...(history ? { history } : {}),
-        ...(respondedBy !== undefined ? { respondedBy } : {}),
-        ...(linkedShipmentRef ? { linkedShipmentRef } : {}),
+        ...(countered ? { lines: countered, round: 2 } : {}),
+        ...(Array.isArray(history) ? { history: history.slice(-100) } : {}),
+        ...(respondedBy !== undefined ? { respondedBy: str(respondedBy) } : {}),
+        ...(status === 'Approved' && linkedShipmentRef ? { linkedShipmentRef: str(linkedShipmentRef, 80) } : {}),
       } },
     );
-    if (!result.matchedCount) return res.status(404).json({ error: 'Unknown request on this side.' });
     res.json({ ok: true });
   });
 

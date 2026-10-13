@@ -252,12 +252,13 @@ describe('security: a linked partner cannot spoof or tamper with a negotiation i
     // other-biz partner's own sync must still work.
     await asPartner('/api/hub/internal/transfer-request-sync', 'third-party-token').send({ requestRef, status: 'Declined' });
 
+    // other-biz filed it and nobody has answered: withdrawing is its move.
     const legit = await asPartner('/api/hub/internal/transfer-request-sync', 'other-biz-token').send({
-      requestRef, status: 'Declined', respondedBy: 'Their Staffer',
+      requestRef, status: 'Cancelled', respondedBy: 'Their Staffer',
     });
     expect(legit.status).toBe(200);
     const after = await mongoose.model('TransferRequest').findOne({ requestRef }).lean();
-    expect(after.status).toBe('Declined');
+    expect(after.status).toBe('Cancelled');
   });
 });
 

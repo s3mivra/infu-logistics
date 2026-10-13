@@ -8,7 +8,7 @@ import Pager from '../../shared/Pager';
 // and how much more to order to be covered for the next two weeks or month.
 // Logistics sells whole pieces: "sold per day", in whole numbers. A café uses
 // grams and millilitres out of recipes, so there it stays "used per day".
-const IS_LOG = String(import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase() === 'log';
+import { IS_LOG } from '../../shared/businessType.js';
 const RATE_LABEL = IS_LOG ? 'Sold per day' : 'Used per day';
 
 const STATUS = {

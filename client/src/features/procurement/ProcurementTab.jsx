@@ -1,4 +1,5 @@
 ﻿import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import ScanBox, { findByCode } from '../../shared/ScanBox';
 import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, ChevronDown, Search, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin, Download, Sparkles, Box, Upload } from 'lucide-react';
 import Attachments from '../../shared/Attachments';
 import * as ui from '../../shared/ui';
@@ -33,7 +34,7 @@ const StatusBadge = ({ status }) => (
 );
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
 export default function ProcurementTab({ ctx }) {
   const { apiFetch, peso, inventory = [], isSuperAdmin, packInfo, effectiveDisplay, systemSettings = {}, loadPdfLibs,
@@ -772,6 +773,8 @@ export default function ProcurementTab({ ctx }) {
   // ── Receiving / reconciliation ────────────────────────────────────────────────
   const [receiveId, setReceiveId] = useState(null);
   const [receiveQtys, setReceiveQtys] = useState({});
+  // True once a delivery is being counted by scanning (boxes start at zero).
+  const [scanCounting, setScanCounting] = useState(false);
   const [receiveExpiry, setReceiveExpiry] = useState({});
   const [receiveProduction, setReceiveProduction] = useState({});
   const [receiveNotes, setReceiveNotes] = useState('');
@@ -871,6 +874,7 @@ export default function ProcurementTab({ ctx }) {
       }
     });
     setReceiveQtys(q);
+    setScanCounting(false);
     setReceiveExpiry(exp);
     setReceiveProduction(prod);
     setReceiveNotes(po.notes || '');
@@ -1272,6 +1276,25 @@ export default function ProcurementTab({ ctx }) {
                   <p className="text-[11px] font-black uppercase tracking-wider text-brand-text">
                     {po.status === 'Incomplete' ? 'Outstanding items only - enter what just arrived' : 'Enter actual quantities received'}
                   </p>
+                  {/* Counting a delivery with a scanner: start from zero and each scan
+                      adds one of that item. Without it, the boxes below start at
+                      what is still expected and are corrected by hand. */}
+                  {missingLines.length > 0 && (
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <ScanBox placeholder="Scan an item as it arrives" onScan={(code) => {
+                        const hit = findByCode(missingLines, code, { codeOf: (x) => x.l.itemCode, nameOf: (x) => x.l.itemName });
+                        if (!hit) return { ok: false, text: `"${code}" is not on this order.` };
+                        const start = scanCounting ? receiveQtys : Object.fromEntries(missingLines.map(x => [x.key, '0']));
+                        const now = (Number(start[hit.key]) || 0) + 1;
+                        setScanCounting(true);
+                        setReceiveQtys({ ...start, [hit.key]: String(now) });
+                        return now > hit.rem
+                          ? { ok: false, text: `${hit.l.itemName}: ${now} scanned, but only ${hit.rem} still expected.` }
+                          : { ok: true, text: `${hit.l.itemName}: ${now} of ${hit.rem}` };
+                      }} />
+                      {scanCounting && <span className="text-[11px] text-fg/70 font-bold">Counting by scan - every box started at zero.</span>}
+                    </div>
+                  )}
                   {missingLines.length === 0 ? (
                     <p className="text-fg text-sm font-bold py-2">Nothing outstanding on this PO.</p>
                   ) : (

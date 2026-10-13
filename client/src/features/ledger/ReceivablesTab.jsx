@@ -23,6 +23,12 @@ export default function ReceivablesTab({
             <div className="text-right">
               <p className="text-fg/65 text-[10px] font-bold uppercase whitespace-nowrap">Total Outstanding</p>
               <p className="text-2xl sm:text-3xl text-brand-text font-black tabular-nums whitespace-nowrap">₱{arOutstanding.totalOutstanding.toFixed(2)}</p>
+              {/* Related businesses apart from outside customers, when there are any. */}
+              {arOutstanding.affiliateOutstanding > 0 && (
+                <p className="text-[10px] text-fg/70 font-bold whitespace-nowrap mt-0.5">
+                  Customers ₱{Number(arOutstanding.tradeOutstanding || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })} · Affiliates ₱{Number(arOutstanding.affiliateOutstanding).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                </p>
+              )}
             </div>
             {arOutstanding.orders.length > 0 && <button onClick={exportArPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition shrink-0"><Download size={12} /> PDF</button>}
           </div>
@@ -130,7 +136,7 @@ export default function ReceivablesTab({
                         </span>
                       </td>
                       <td className="block flex-1 basis-[9rem] min-w-0">
-                        <span className="block text-fg/80 break-words">{o.customerName}</span>
+                        <span className="block text-fg/80 break-words">{o.customerName}{o.affiliate && <span className="ml-1.5 text-[9px] font-black uppercase tracking-wider text-fg/70 bg-white/5 border border-white/10 rounded px-1 py-0.5 align-middle">Affiliate</span>}</span>
                         <span className="inline-block mt-1 text-[10px] font-black uppercase tracking-wider bg-brand/20 text-brand-text px-2 py-0.5 rounded whitespace-nowrap">{o.paymentMethod}</span>
                         {o.arDueDate && (
                           o.overdue

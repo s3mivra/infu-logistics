@@ -379,7 +379,7 @@ export default function registerSetupImport(ctx) {
             items: [], subtotal: amount, total: amount,
             status: OPENING_AR_STATUS, paymentMethod: 'Credit',
             isArchived: true, arSettled: false, arDueDate: dueDate || null,
-            cashierName: req.user?.name || 'Setup import',
+            cashier: req.user?.name || 'Setup import',
             createdAt: invoiceDate,
           });
           created.push({ row: i + 1, invoiceNo, customer: client?.name || customer, amount, matchedClient: !!client });

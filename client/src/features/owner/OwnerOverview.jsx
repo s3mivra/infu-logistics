@@ -46,6 +46,13 @@ export default function OwnerOverview({ apiFetch, go, can }) {
     finally { setLoading(false); }
   }, [apiFetch, range.start, range.end]);
   useEffect(() => { load(); }, [load]);
+  // When the data was last safely copied - written by the platform's backup job.
+  const [backup, setBackup] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    apiFetch('/api/system/backup-status').then(r => r.json()).then(r => { if (alive && r.success) setBackup(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, [apiFetch]);
   const periodName = (() => { const k = matchPreset(range); return k ? RANGE_PRESETS.find(p => p.key === k).label.toLowerCase() : `${range.start} to ${range.end}`; })();
 
   // Backdated sales with no cost behind them: book it from here, and say what
@@ -171,6 +178,24 @@ export default function OwnerOverview({ apiFetch, go, can }) {
           </div>
         )}
       </Card>
+
+      {backup && (
+        <Card title="Your data">
+          <Line label="Last backup"
+            tone={backup.state === 'late' ? 'text-danger' : backup.state === 'ok' ? 'text-success' : 'text-fg/80'}
+            value={backup.state === 'unknown' ? 'Not known here'
+              : `${new Date(backup.lastBackupAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}${backup.hoursAgo >= 1 ? ` (${backup.hoursAgo < 48 ? `${backup.hoursAgo} h` : `${Math.floor(backup.hoursAgo / 24)} days`} ago)` : ''}`} />
+          <Line label="Last restore test"
+            tone={backup.lastRestoreTestAt && backup.restoreTestDaysAgo <= 90 ? 'text-success' : 'text-fg/80'}
+            value={backup.lastRestoreTestAt ? `${new Date(backup.lastRestoreTestAt).toLocaleDateString([], { dateStyle: 'medium' })}${backup.restoreTestDaysAgo > 0 ? ` (${backup.restoreTestDaysAgo} days ago)` : ''}` : 'Not done yet'} />
+          <p className="text-[11px] text-fg/65 mt-2">
+            {backup.state === 'late' ? 'The daily backup has not run for more than a day and a half. Ask whoever looks after the server to check the backup job.'
+              : backup.state === 'ok' ? 'Copied every day by the server, and each copy is checked that it reads back.'
+              : 'The backup job has not reported to this business yet. It does after its next run; if this still says so in two days, ask whoever looks after the server.'}
+            {(!backup.lastRestoreTestAt || backup.restoreTestDaysAgo > 90) && ' A backup is only proven by restoring it: ask for a restore test (make restore-drill on the server) every few months.'}
+          </p>
+        </Card>
+      )}
     </div>
   );
 }

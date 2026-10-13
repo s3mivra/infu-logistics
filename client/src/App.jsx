@@ -1,4 +1,5 @@
 ﻿import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { HAS_CLIENT_LOGIN } from './shared/businessType.js';
 import { lazy, Suspense, Component, useEffect, useState } from 'react';
 
 // Guards against the #1 mis-deployment: a client built for one BUSINESS_TYPE
@@ -99,14 +100,20 @@ function App() {
             <Route path="/admin" element={<AdminDashboard />} />
             <Route path="/admin/admin-panel" element={<SuperAdminPanel />} />
             <Route path="/generate-qr" element={<QRCodeComponent />} />
-            <Route path="/client-login" element={<ClientLogin />} />
-            <Route path="/client-order" element={<ClientOrderPage />} />
-            {/* Logistics client portal */}
-            <Route path="/client/portal" element={<ClientLogin />} />
-            <Route path="/client/portal/:userid" element={<ClientOrderPage />} />
-            <Route path="/client-onboard/:token" element={<ClientOnboarding />} />
+            {/* The client portal: logistics only. A cafe's customers order from
+                the table QR and have no account, so these pages do not exist
+                there (the server refuses the sign-in as well). */}
+            {HAS_CLIENT_LOGIN && <>
+              <Route path="/client-login" element={<ClientLogin />} />
+              <Route path="/client-order" element={<ClientOrderPage />} />
+              <Route path="/client/portal" element={<ClientLogin />} />
+              <Route path="/client/portal/:userid" element={<ClientOrderPage />} />
+              <Route path="/client-onboard/:token" element={<ClientOnboarding />} />
+            </>}
             <Route path="/privacy" element={<LegalPage doc="privacy" />} />
             <Route path="/terms" element={<LegalPage doc="terms" />} />
+            {/* An address that is not a page (a portal link opened on a cafe) goes home. */}
+            <Route path="*" element={<Navigate to="/admin" replace />} />
           </Routes>
         </Suspense>
       </Router>

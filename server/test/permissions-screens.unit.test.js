@@ -99,16 +99,19 @@ describe('the client agrees', () => {
   const client = (rel) => readFileSync(join(here, '..', '..', 'client', 'src', rel), 'utf8');
 
   // Page ids as the client's sub-navs spell them.
+  // A row is ['id', 'Label', Icon]; the label may also be a name that differs by
+  // business type (REPORT_NAMES.menueng), which is not a quoted string.
+  const PAGE_ROW = /\['([a-z]+)', (?:'[^']+'|[A-Za-z_.]+), [A-Za-z0-9]+]/g;
   const clientPages = {
     ledger: (() => {
       const src = client('features/dashboard/navRegistry.js');
       const block = src.slice(src.indexOf('LEDGER_TAB_GROUPS'), src.indexOf('REPORT_TAB_GROUPS'));
-      return [...block.matchAll(/\['([a-z]+)', '[^']+', [A-Za-z0-9]+]/g)].map((m) => m[1]);
+      return [...block.matchAll(PAGE_ROW)].map((m) => m[1]);
     })(),
     reports: (() => {
       const src = client('features/dashboard/navRegistry.js');
       const block = src.slice(src.indexOf('export const REPORT_TAB_GROUPS'), src.indexOf('export const navItemVisible'));
-      return [...block.matchAll(/\['([a-z]+)', '[^']+', [A-Za-z0-9]+]/g)].map((m) => m[1]);
+      return [...block.matchAll(PAGE_ROW)].map((m) => m[1]);
     })(),
     inventory: [...client('features/inventory/InventoryTab.jsx').matchAll(/can\('screen\.inventory\.([a-z]+)'\)/g)].map((m) => m[1]),
     hub: (() => {

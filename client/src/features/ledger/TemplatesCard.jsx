@@ -13,7 +13,7 @@
 import { useState } from 'react';
 import { Download, Upload, FileSpreadsheet } from 'lucide-react';
 import * as ui from '../../shared/ui';
-import { availableTemplates, buildSetupWorkbook, readSetupWorkbook, runSetupImport } from '../../shared/setupWorkbook';
+import { availableTemplates, buildSetupWorkbook, readSetupWorkbook, previewStep, runSetupImport } from '../../shared/setupWorkbook';
 import SetupImportReport from '../../shared/SetupImportReport';
 
 export default function TemplatesCard({ apiFetch, can, isSuperAdmin, businessType, parseImportFile, onImported }) {
@@ -34,6 +34,9 @@ export default function TemplatesCard({ apiFetch, can, isSuperAdmin, businessTyp
       ui.alert('Could not build the workbook. Check the connection and try again.');
     } finally { setBusy(''); }
   };
+
+  // Which sheet's first rows are shown in the plan.
+  const [openPreview, setOpenPreview] = useState('');
 
   const readWorkbook = async (file) => {
     if (!file) return;
@@ -90,16 +93,57 @@ export default function TemplatesCard({ apiFetch, can, isSuperAdmin, businessTyp
       {plan && (
         <div className="mt-4 border border-white/10 rounded-xl p-4 space-y-3">
           <p className="text-sm font-bold text-fg">This workbook will import:</p>
-          <ol className="space-y-1 text-sm">
-            {plan.steps.map((s, i) => (
-              <li key={s.key} className="flex justify-between gap-3">
-                <span className="text-fg">{i + 1}. {s.sheet}</span>
-                <span className="text-fg/75 tabular-nums">
-                  {s.count} row{s.count === 1 ? '' : 's'}{s.skippedExample ? ' (example row skipped)' : ''}{s.preview ? ' · opens a preview first' : ''}
-                </span>
-              </li>
-            ))}
+          {/* Each sheet, checked against its own template before anything posts:
+              what will go in, and the slips that can be seen from here. */}
+          <ol className="space-y-2 text-sm">
+            {plan.steps.map((s, i) => {
+              const pv = previewStep(s);
+              const openRow = openPreview === s.key;
+              return (
+                <li key={s.key} className="border border-white/10 rounded-lg">
+                  <button type="button" onClick={() => setOpenPreview(openRow ? '' : s.key)} aria-expanded={openRow}
+                    className="w-full flex justify-between items-center gap-3 px-3 py-2 text-left">
+                    <span className="text-fg font-bold">{i + 1}. {s.sheet}</span>
+                    <span className="text-fg/75 tabular-nums text-xs text-right">
+                      {s.count} row{s.count === 1 ? '' : 's'}{s.skippedExample ? ' (example row skipped)' : ''}{s.preview ? ' · opens a preview first' : ''}
+                      <span className={`block font-bold ${pv.ready ? 'text-success' : 'text-danger'}`}>
+                        {pv.ready ? 'Looks ready' : `${pv.problemRows || pv.problems.length} to fix`}{pv.unknownColumns.length ? ` · ${pv.unknownColumns.length} column(s) will be ignored` : ''}
+                      </span>
+                    </span>
+                  </button>
+                  {(openRow || !pv.ready) && (
+                    <div className="px-3 pb-3 space-y-2">
+                      {pv.problems.length > 0 && (
+                        <ul className="text-xs text-danger space-y-0.5 list-disc pl-5">
+                          {pv.problems.map((m) => <li key={m}>{m}</li>)}
+                          {pv.moreProblems > 0 && <li>...and {pv.moreProblems} more row(s).</li>}
+                        </ul>
+                      )}
+                      {pv.unknownColumns.length > 0 && (
+                        <p className="text-xs text-fg/70">Not part of this sheet's template, so left out: {pv.unknownColumns.join(', ')}.</p>
+                      )}
+                      {openRow && (
+                        <div className="overflow-x-auto">
+                          <table className="text-[11px] text-left min-w-full">
+                            <thead><tr>{pv.header.map((h, c) => <th key={c} className="px-2 py-1 text-fg/65 font-black uppercase tracking-wider whitespace-nowrap">{h}</th>)}</tr></thead>
+                            <tbody>
+                              {pv.sample.map((r, ri) => (
+                                <tr key={ri} className="border-t border-white/5">{r.map((v, c) => <td key={c} className="px-2 py-1 text-fg/80 whitespace-nowrap max-w-[220px] truncate">{v}</td>)}</tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {s.count > pv.sample.length && <p className="text-[10px] text-fg/65 mt-1">First {pv.sample.length} of {s.count} rows.</p>}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ol>
+          {plan.steps.some((s) => !previewStep(s).ready) && (
+            <p className="text-xs text-danger font-bold">Some rows have something to fix. You can still import: those rows are refused and the rest go in, or fix the file and bring it back.</p>
+          )}
           <p className="text-xs text-fg/70">
             Expenses and fixed assets post to the books as they import. Bills arrive as Pending and post nothing until approved.
           </p>

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as XLSX from 'xlsx';
-import { TEMPLATES, availableTemplates, readSetupWorkbook, runSetupImport, bookChecks, mergeImportReplies } from './setupWorkbook';
+import { TEMPLATES, availableTemplates, readSetupWorkbook, runSetupImport, bookChecks, mergeImportReplies, previewStep } from './setupWorkbook';
 
 // The workbook as someone fills it in: a sheet per import, an untouched example
 // row on one of them, and a sheet left empty.
@@ -249,5 +249,49 @@ describe('a sheet longer than one request takes', () => {
     const apiFetch = async (path, init) => { const b = JSON.parse(init.body); sent.push(b.lines.map((l) => l['Order No'])); return { json: async () => ({ success: true, created: b.rows.length }) }; };
     await runSetupImport([step], { apiFetch, parseImportFile: vi.fn() });
     expect(sent).toEqual([['ORD-1'], ['ORD-501']]);
+  });
+});
+
+describe('a look at a sheet before it is imported', () => {
+  const step = (header, rows, fields) => ({
+    key: 'openReceivables', sheet: 'Open Receivables', header, fields, columns: fields.map((f) => f.name),
+    grid: [header, ...rows], sheetRows: rows.map((_, i) => i + 2), count: rows.length,
+  });
+  const fields = [{ name: 'customer', required: true }, { name: 'invoiceNo', required: true }, { name: 'invoiceDate', required: true }, { name: 'dueDate' }, { name: 'amountOwed', required: true }];
+  const header = fields.map((f) => f.name);
+
+  it('says a clean sheet is ready, and shows its first rows as they will go in', () => {
+    const pv = previewStep(step(header, [
+      ['Reyes Hardware', 'SI-1', new Date(2026, 8, 30), '10/30/2026', '1,000.00'],
+      ['Dela Cruz', 'SI-2', '2026-09-01', '', 500],
+    ], fields));
+    expect(pv.ready).toBe(true);
+    expect(pv.problems).toEqual([]);
+    expect(pv.sample[0]).toEqual(['Reyes Hardware', 'SI-1', '2026-09-30', '10/30/2026', '1,000.00']);
+  });
+
+  it('names the row and the cell for each plain slip', () => {
+    const pv = previewStep(step(header, [
+      ['Reyes Hardware', '', '2026-09-30', '', 100],          // row 2: no invoice number
+      ['Dela Cruz', 'SI-2', '########', '', 'lots'],          // row 3: a too-narrow date, and not an amount
+      ['Good Co', 'SI-3', 'Sept 30, 2026', 46295, '(250)'],   // row 4: fine
+    ], fields));
+    expect(pv.ready).toBe(false);
+    expect(pv.problemRows).toBe(2);
+    expect(pv.problems[0]).toMatch(/^Row 2: invoiceNo is empty/);
+    expect(pv.problems[1]).toMatch(/^Row 3: invoiceDate shows "########".*amountOwed "lots" is not a number/);
+  });
+
+  it('says when a required column is not in the sheet at all, and which columns will be ignored', () => {
+    const pv = previewStep(step(['customer', 'invoiceNo', 'amountOwed', 'my notes'], [['A', 'SI-1', 10, 'x']], fields));
+    expect(pv.problems[0]).toMatch(/"invoiceDate" column is missing/);
+    expect(pv.unknownColumns).toEqual(['my notes']);
+  });
+
+  it('keeps the list short and says how many more there are', () => {
+    const rows = Array.from({ length: 30 }, (_, i) => [`C${i}`, '', '2026-09-30', '', 1]);
+    const pv = previewStep(step(header, rows, fields));
+    expect(pv.problems).toHaveLength(8);
+    expect(pv.moreProblems).toBe(22);
   });
 });

@@ -26,6 +26,10 @@ export default function defineClientModels({ BUSINESS_TYPE, log }) {
     contactNotes:  { type: String, default: '' },                 // free-form ("prefers SMS", "call after 5pm", etc.)
     paymentMethod: { type: String, default: 'Cash' },             // pre-set; can be overridden per order
     isActive:      { type: Boolean, default: true },
+    // A related business - a satellite or affiliate branch that buys from this
+    // one. What it owes is still a receivable, collected the same way, but the
+    // receivables screens total it apart from what outside customers owe.
+    isAffiliate:   { type: Boolean, default: false },
     // 'portal' = real client-portal login (username/password usable). 'pos' = auto-promoted
     // from a repeat POS walk-in (3+ Completed orders under the same name) - carries a
     // placeholder username/unusable password since it has no login of its own.
@@ -73,6 +77,9 @@ export default function defineClientModels({ BUSINESS_TYPE, log }) {
     // at their tier price should not have to wait for a human.
     requiresQuote:            { type: Boolean, default: false },
     onboardingToken:          { type: String, default: null, index: true },
+    // Sessions signed before this moment are refused: set when the office
+    // resets the password or issues a new login, so an old session ends there.
+    sessionsValidFrom: { type: Date, default: null },
     onboardingTokenExpiresAt: { type: Date, default: null },
     // A link made with no name: the account carries a placeholder until the
     // client types their own name on the sign-up page.

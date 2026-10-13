@@ -197,8 +197,17 @@ export default function registerClientPortal(ctx) {
     verifyOrderAuth,
   } = ctx;
 
+// Clients sign in to a logistics business only. A cafe's customers order from
+// the table QR code and have no account, so there the sign-in, the invitation
+// and onboarding links and the client password reset do not exist - on the
+// server too, not just hidden on the screens. Client records themselves (a
+// name to bill, a balance owed) are still kept by both.
+const clientLoginOnly = (req, res, next) => (BUSINESS_TYPE === 'log'
+  ? next()
+  : res.status(404).json({ success: false, error: 'Client sign-in is not part of this app.' }));
+
 // Client login - returns a short-lived JWT with role='client' and pre-set paymentMethod
-app.post('/api/client-auth/login', loginLimiter, async (req, res) => {
+app.post('/api/client-auth/login', clientLoginOnly, loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ success: false, error: 'Username and password are required.' });
@@ -406,7 +415,7 @@ app.post('/api/client/password', verifyClientToken, async (req, res) => {
 // the till (pos.use / orders.view): the POS customer picker and the invoice's
 // bill-to need it. Staff get only those fields - no contact details, credit
 // settings or login name.
-const TILL_CLIENT_FIELDS = { name: 1, clientCode: 1, paymentMethod: 1, isActive: 1, segments: 1, assignedSalesperson: 1,
+const TILL_CLIENT_FIELDS = { name: 1, clientCode: 1, paymentMethod: 1, isActive: 1, isAffiliate: 1, segments: 1, assignedSalesperson: 1,
   requiresQuote: 1, isVatRegistered: 1, registeredName: 1, tin: 1, registeredAddress: 1, createdAt: 1 };
 app.get('/api/client-accounts', verifyToken, requireStaff, async (req, res) => {
   try {
@@ -499,7 +508,8 @@ app.post('/api/client-accounts', verifyToken, requireStaff, requirePermission('c
       if (exists) return res.status(409).json({ success: false, error: 'Username already taken.' });
     }
     const hashed = await bcrypt.hash(withLogin ? String(password) : crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
-    const token = withLogin ? null : crypto.randomBytes(24).toString('hex');
+    // A sign-in link only where clients sign in (see clientLoginOnly).
+    const token = withLogin || BUSINESS_TYPE !== 'log' ? null : crypto.randomBytes(24).toString('hex');
     // A price tier changes what the client pays - the owner's call, like credit.
     const cleanSegments = isSuper && Array.isArray(segments) ? [...new Set(segments.map(s => String(s).trim()).filter(Boolean))] : [];
     // Standard customer ID format: CUS-1000-A0000 ("1000" is a fixed segment;
@@ -578,8 +588,8 @@ app.post('/api/client-accounts/import', verifyToken, requireStaff, requirePermis
           phone: cleanPhone(r.phone ?? r.Phone ?? ''),
           email: emailVal,
           contactNotes: String(r.contactNotes ?? r.Notes ?? '').trim().slice(0, 1000),
-          onboardingToken: token,
-          onboardingTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          // A sign-in link only where clients sign in (see clientLoginOnly).
+          ...(BUSINESS_TYPE === 'log' ? { onboardingToken: token, onboardingTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) } : {}),
         });
 
         created.push({
@@ -587,7 +597,7 @@ app.post('/api/client-accounts/import', verifyToken, requireStaff, requirePermis
           // The operator sends this on; it is the only way into the account.
           // The route the app actually serves - see App.jsx. Getting this
           // wrong hands the operator a list of links that all 404.
-          onboardingPath: `/client-onboard/${token}`,
+          ...(BUSINESS_TYPE === 'log' ? { onboardingPath: `/client-onboard/${token}` } : {}),
         });
       } catch (e) {
         skipped.push({ row: i + 1, error: e.message, data: r });
@@ -597,7 +607,9 @@ app.post('/api/client-accounts/import', verifyToken, requireStaff, requirePermis
     await logAudit(req, { action: 'import', entity: 'ClientAccount', entityId: 'bulk', after: { created: created.length, skipped: skipped.length } });
     res.json({
       success: true, created: created.length, skipped, clients: created,
-      note: 'No passwords were set. Each client has a 7-day onboarding link and picks their own username and password.',
+      note: BUSINESS_TYPE === 'log'
+        ? 'No passwords were set. Each client has a 7-day onboarding link and picks their own username and password.'
+        : 'Added as customers to bill. A cafe has no client sign-in, so no links were made.',
     });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -607,7 +619,26 @@ app.post('/api/client-accounts/import', verifyToken, requireStaff, requirePermis
 app.patch('/api/client-accounts/:id', verifyToken, requireStaff, requirePermission('clients.edit'), async (req, res) => {
   try {
     const { username, password, name, paymentMethod, isActive, creditLimit, creditTermsDays, segments, phone, email, contactNotes, requiresQuote, isVatRegistered, tin, registeredName, registeredAddress, assignedSalesperson } = req.body;
+    if (!mongoose.Types.ObjectId.isValid(String(req.params.id))) return res.status(404).json({ success: false, error: 'Client account not found.' });
     const update = {};
+    // clients.edit is for everyday details. Three things on this record are
+    // more than that, and each keeps the guard it has everywhere else:
+    //   the login      - a new password is the owner's reset, with their own
+    //                    password re-entered (reset-password below)
+    //   the credit line - an approver's decision (credit-request below)
+    //   the price tier  - whoever manages tiers
+    // Without these, anyone who could correct a phone number could also sign
+    // in as the client, or raise their credit limit past its approval.
+    const isSuper = String(req.user?.role || '').toLowerCase() === 'superadmin';
+    if (!isSuper) {
+      if (password || username) return res.status(403).json({ success: false, error: "Only the owner can change a client's username or password." });
+      if ((creditLimit !== undefined || creditTermsDays !== undefined) && !hasPermission(req.user, 'pricing.approve')) {
+        return res.status(403).json({ success: false, error: 'A credit limit or payment terms change needs approval - send it as a credit request.' });
+      }
+      if (Array.isArray(segments) && !hasPermission(req.user, 'pricing.tiers')) {
+        return res.status(403).json({ success: false, error: "Changing a client's price tier needs the price tiers permission." });
+      }
+    }
     // Which buyers are quoted before they buy. Sent explicitly so it can be
     // switched off again, not just on.
     if (typeof requiresQuote === 'boolean') update.requiresQuote = requiresQuote;
@@ -621,6 +652,7 @@ app.patch('/api/client-accounts/:id', verifyToken, requireStaff, requirePermissi
     if (name) update.name = partyName(name);
     if (paymentMethod) update.paymentMethod = paymentMethod;
     if (typeof isActive === 'boolean') update.isActive = isActive;
+    if (typeof req.body.isAffiliate === 'boolean') update.isAffiliate = req.body.isAffiliate;
     // Sent explicitly (including '' / null to clear it back to "no limit").
     if (creditLimit !== undefined) update.creditLimit = parseCreditLimit(creditLimit);
     if (creditTermsDays !== undefined) update.creditTermsDays = parseTermsDays(creditTermsDays);
@@ -634,7 +666,7 @@ app.patch('/api/client-accounts/:id', verifyToken, requireStaff, requirePermissi
     }
     if (contactNotes !== undefined) update.contactNotes = String(contactNotes ?? '').trim().slice(0, 1000);
     if (assignedSalesperson !== undefined) update.assignedSalesperson = String(assignedSalesperson ?? '').trim().slice(0, 100);
-    if (password) update.password = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    if (password) { update.password = await bcrypt.hash(password, BCRYPT_ROUNDS); update.sessionsValidFrom = new Date(); }
     const before = await ClientAccount.findById(req.params.id, { creditLimit: 1, creditTermsDays: 1, clientCode: 1, name: 1 }).lean();
     const client = await ClientAccount.findByIdAndUpdate(req.params.id, { $set: update }, { returnDocument: 'after', select: '-password' });
     if (!client) return res.status(404).json({ success: false, error: 'Client account not found.' });
@@ -706,7 +738,7 @@ function generateClientPassword(length = 12) {
   return out;
 }
 
-app.post('/api/client-accounts/:id/reset-password', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/client-accounts/:id/reset-password', clientLoginOnly, verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const confirmPassword = String(req.body?.confirmPassword || '');
     if (!confirmPassword) return res.status(400).json({ success: false, error: 'Re-enter your own password to confirm.' });
@@ -721,6 +753,7 @@ app.post('/api/client-accounts/:id/reset-password', verifyToken, requireSuperAdm
 
     const newPassword = generateClientPassword();
     client.password = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    client.sessionsValidFrom = new Date();   // whoever was signed in with the old one is signed out
     await client.save();
 
     await logAudit(req, { action: 'reset_password', entity: 'ClientAccount', entityId: client._id, after: { username: client.username } });
@@ -736,7 +769,7 @@ app.post('/api/client-accounts/:id/reset-password', verifyToken, requireSuperAdm
 // an admin has already issued, while it is still valid. Nothing here creates,
 // renews or changes a link - an onboarding link sets the client's username and
 // password, so issuing one stays with the superadmin (onboard-link above).
-app.get('/api/client-accounts/links', verifyToken, requireStaff, requirePermission('clients.links'), async (req, res) => {
+app.get('/api/client-accounts/links', clientLoginOnly, verifyToken, requireStaff, requirePermission('clients.links'), async (req, res) => {
   try {
     const now = new Date();
     const clients = await ClientAccount.find({}, { name: 1, clientCode: 1, username: 1, isActive: 1, onboardingToken: 1, onboardingTokenExpiresAt: 1 })
@@ -765,7 +798,7 @@ app.get('/api/client-accounts/links', verifyToken, requireStaff, requirePermissi
 // returns its 7-day onboarding link. The client sets their own username and
 // password when they redeem it, so the office never chooses a login. Nothing
 // else (credit line, terms, payment method) can be set here.
-app.post('/api/client-accounts/invite', verifyToken, requireStaff, requirePermission('clients.invite'), async (req, res) => {
+app.post('/api/client-accounts/invite', clientLoginOnly, verifyToken, requireStaff, requirePermission('clients.invite'), async (req, res) => {
   try {
     // The name is optional: left blank, the client types their own when they
     // open the link, and until then the account shows under a placeholder.
@@ -794,7 +827,7 @@ app.post('/api/client-accounts/invite', verifyToken, requireStaff, requirePermis
 // Generate: superadmin-only, from the Command Center. The client then opens
 // the link with NO auth at all (that's the point - they don't have a login
 // yet), fills in their own details, and sets their own username/password.
-app.post('/api/client-accounts/:id/onboard-link', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/client-accounts/:id/onboard-link', clientLoginOnly, verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const client = await ClientAccount.findById(req.params.id);
     if (!client) return res.status(404).json({ success: false, error: 'Client account not found.' });
@@ -811,7 +844,7 @@ app.post('/api/client-accounts/:id/onboard-link', verifyToken, requireSuperAdmin
 
 // Public - no auth. The token itself IS the proof of authorization (mailed/
 // handed to the client directly), same trust model as a password-reset link.
-app.get('/api/client-onboard/:token', async (req, res) => {
+app.get('/api/client-onboard/:token', clientLoginOnly, async (req, res) => {
   try {
     const client = await ClientAccount.findOne({ onboardingToken: req.params.token }, { name: 1, namePending: 1, clientCode: 1, phone: 1, email: 1, onboardingTokenExpiresAt: 1 });
     if (!client || !client.onboardingTokenExpiresAt || client.onboardingTokenExpiresAt < new Date()) {
@@ -824,7 +857,7 @@ app.get('/api/client-onboard/:token', async (req, res) => {
   }
 });
 
-app.post('/api/client-onboard/:token', async (req, res) => {
+app.post('/api/client-onboard/:token', clientLoginOnly, async (req, res) => {
   try {
     const client = await ClientAccount.findOne({ onboardingToken: req.params.token });
     if (!client || !client.onboardingTokenExpiresAt || client.onboardingTokenExpiresAt < new Date()) {
@@ -833,8 +866,13 @@ app.post('/api/client-onboard/:token', async (req, res) => {
     const { name, phone, email, username, password } = req.body || {};
     const cleanUsername = lower(username);
     if (!cleanUsername || !password) return res.status(400).json({ success: false, error: 'Username and password are required.' });
-    if (String(password).length < 6) return res.status(400).json({ success: false, error: 'Password must be at least 6 characters.' });
-    const clash = await ClientAccount.findOne({ username: cleanUsername, _id: { $ne: client._id } });
+    // The same rules as changing them later in the portal.
+    if (String(password).length < 8) return res.status(400).json({ success: false, error: 'Password must be at least 8 characters.' });
+    if (cleanUsername.length < 3 || cleanUsername.length > 40) return res.status(400).json({ success: false, error: 'Username must be 3-40 characters.' });
+    if (!/^[a-z0-9][a-z0-9._-]*$/.test(cleanUsername)) return res.status(400).json({ success: false, error: 'Username may use letters, digits, dot, dash and underscore only, and must start with a letter or digit.' });
+    // Whatever its case: sign-in ignores case, so two accounts differing only
+    // by case could not be told apart at the login box.
+    const clash = await ClientAccount.findOne({ username: { $regex: `^${escapeRegex(cleanUsername)}$`, $options: 'i' }, _id: { $ne: client._id } });
     if (clash) return res.status(409).json({ success: false, error: 'That username is already taken - pick another.' });
     const emailVal = cleanEmail(email);
     if (emailVal === null) return res.status(400).json({ success: false, error: 'Email is not a valid address.' });
@@ -854,6 +892,7 @@ app.post('/api/client-onboard/:token', async (req, res) => {
     client.username = cleanUsername;
     client.password = await bcrypt.hash(String(password), BCRYPT_ROUNDS);
     client.source = 'portal'; // now has a real, usable login
+    client.sessionsValidFrom = new Date();   // a login issued again ends the sessions of the old one
     client.onboardingToken = null;
     client.onboardingTokenExpiresAt = null;
     await client.save();

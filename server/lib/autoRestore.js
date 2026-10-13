@@ -1,3 +1,4 @@
+import { AsyncResource } from 'node:async_hooks';
 // Put a product back on the menu once what it is made from is back in stock.
 //
 // A sale that drains an ingredient to zero takes every product using it off
@@ -68,7 +69,14 @@ export function createAutoRestorer({ Product, Inventory, log, onRestored, delayM
       log?.warn?.({ err }, 'auto-restore check failed');
     } finally { running = false; }
   };
-  const schedule = () => { if (!timer) timer = setTimeout(run, delayMs); };
+  // Asked for from inside requests that are one database transaction (a
+  // restock is). A timer set there carries that transaction with it, and by
+  // the time it fires the transaction is over - every query in the check then
+  // failed with "expired session" and the products stayed off the menu until
+  // the periodic check came round. Setting the timer from outside any request
+  // leaves the transaction behind.
+  const outsideAnyRequest = new AsyncResource('auto-restore');
+  const schedule = () => { if (!timer) outsideAnyRequest.runInAsyncScope(() => { timer = setTimeout(run, delayMs); }); };
   const interval = intervalMs ? setInterval(run, intervalMs) : null;
   interval?.unref?.();
   return { schedule, runNow: run, stop: () => { if (timer) clearTimeout(timer); if (interval) clearInterval(interval); } };

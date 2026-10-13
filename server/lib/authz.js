@@ -153,6 +153,10 @@ export const SCREENS = [
     ['apreport', 'A/P Report'], ['supplierpay', 'Supplier Payments'], ['checkvouchers', 'Check Vouchers'], ['advances', 'Advances'],
     ['pnlmonthly', 'Monthly P&L'], ['bsmonthly', 'Monthly Balance Sheet'], ['cashflow', 'Cash Flow'], ['budget', 'Budget vs Actual'], ['percentagetax', 'Percentage Tax'], ['vatreturn', 'VAT Return'],
     ['pricelog', 'Price Changes'], ['variance', 'Cashier Variance'], ['commissions', 'Commissions'], ['exceptions', 'Exceptions'],
+    ['waste', 'Waste Log'], ['saleshours', 'Sales by Hour'], ['cashierperf', 'Cashier Performance'],
+    ['cashforecast', 'Cash Forecast'], ['supplierprices', 'Supplier Prices'],
+    ['salestargets', 'Sales Targets'], ['deliverysheet', 'Delivery Sheet'],
+    ['preplist', 'Prep List'], ['feedback', 'Customer Feedback'], ['supplierstatement', 'Supplier Statement'],
   ] },
 ];
 export const screenKey = (tab, page) => `screen.${tab}.${page}`;

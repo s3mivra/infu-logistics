@@ -9,17 +9,17 @@ import LegalLinks from '../../shared/LegalLinks';
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
 import { API_URL } from '../../shared/apiBase.js';
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { RateOrder } from '../cafe/CafeExtras';
+import { BUSINESS_TYPE, DEFAULT_DEPARTMENT, IS_FB } from '../../shared/businessType.js';
 // Order routing station. Every other order-entry surface (AdminDashboard,
 // OrdersTab, ProductsTab) resolves this per BUSINESS_TYPE - this QR-scanned
 // customer menu was the one place still hardcoded to 'Kitchen', so every
 // order placed via QR in a logistics deployment silently routed to a
 // "Kitchen" station that doesn't exist there instead of Logistics/Warehouse.
-const DEFAULT_DEPARTMENT = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
 // What the customer-facing copy calls the station an order is sent to. A
 // logistics business has no kitchen, so "Send to Kitchen" on its QR menu was
 // naming a station that doesn't exist. Mirrors SEND_TARGET in OrdersTab.
-const SEND_TARGET = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
+const SEND_TARGET = DEFAULT_DEPARTMENT;
 // transports: WebSocket first, then long-polling as a fallback. It used to be
 // websocket-only with upgrade:false, which meant that if anything between the
 // browser and the server declined to forward the upgrade - a proxy, a CDN, a
@@ -152,6 +152,8 @@ export default function CustomerMenu() {
   const [tableNum, setTableNum] = useState(null);
   const [successMessage, setSuccessMessage] = useState(false);
   const [lockedOrder, setLockedOrder] = useState(null);
+  // Kept after the order is cleared from the screen, so it can still be rated.
+  const [finishedOrderId, setFinishedOrderId] = useState('');
 
   const [isVibrating, setIsVibrating] = useState(false);
   const vibrationInterval = useRef(null);
@@ -419,6 +421,7 @@ export default function CustomerMenu() {
 
     if (lockedOrder) {
       localStorage.setItem(`received_${lockedOrder._id}`, 'true');
+      setFinishedOrderId(String(lockedOrder._id));
     }
 
     localStorage.removeItem('semivra_active_order');
@@ -660,6 +663,8 @@ export default function CustomerMenu() {
           </div>
           <h2 className="text-3xl font-black text-fg mb-3 uppercase tracking-widest">Thank You!</h2>
           <p className="text-fg/75 font-medium mb-8">We hope you enjoy your order. Come back soon!</p>
+          {/* A cafe asks how it was; one rating per order, no account needed. */}
+          {IS_FB && <RateOrder apiUrl={API_URL} orderId={lockedOrder?._id || finishedOrderId} />}
           <div className="border-t border-white/5 pt-6">
             <p className="text-fg/65 text-xs uppercase font-bold tracking-widest">You may now close this page.</p>
           </div>

@@ -45,7 +45,7 @@ export default function ClientOnboarding() {
     setError('');
     if (nameRequired && !form.name.trim()) { setError('Please enter your name or business name.'); return; }
     if (!form.username.trim() || !form.password) { setError('Choose a username and password.'); return; }
-    if (form.password.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    if (form.password.length < 8) { setError('Password must be at least 8 characters.'); return; }
     if (form.password !== form.confirm) { setError('Passwords do not match.'); return; }
     setSubmitting(true);
     try {
@@ -124,7 +124,7 @@ export default function ClientOnboarding() {
               <p className="text-fg/65 text-[11px] mt-1">This is what you'll type to sign in - not your name.</p>
             </div>
             <div>
-              <label className={label}>Choose a Password * (min 6 characters)</label>
+              <label className={label}>Choose a Password * (min 8 characters)</label>
               <div className="relative">
                 <input type={form.showPassword ? 'text' : 'password'} autoComplete="new-password" className={`${input} pr-11`} value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
                 <button type="button" onClick={() => setForm(f => ({ ...f, showPassword: !f.showPassword }))} className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/70 hover:text-fg">

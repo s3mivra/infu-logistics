@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { NAV_GROUPS, LEDGER_TAB_GROUPS, REPORT_TAB_GROUPS, paletteDestinations, visibleNavGroups } from './navRegistry';
+import { NAV_GROUPS, LEDGER_TAB_GROUPS, REPORT_TAB_GROUPS, TYPE_ONLY_REPORT_PAGES, paletteDestinations, visibleNavGroups } from './navRegistry';
 
 // Can you get to every screen, and does every screen exist?
 //
@@ -53,7 +53,10 @@ describe('every screen can be reached', () => {
     // A page is reachable from a Ledger / Reports tab, or straight from the
     // sidebar (Approvals has its own entry there, pointing at its page).
     const sidebarPages = NAV_GROUPS.flatMap((g) => g.items).map((it) => it.sub).filter(Boolean);
-    const known = new Set([...ledgerPages, ...reportPages, ...Object.keys(alias), ...sidebarPages]);
+    // The Ledger screen holds both kinds of business's pages; the menu only
+    // offers the ones this build is for, so the other kind's are not orphans.
+    const otherKind = Object.values(TYPE_ONLY_REPORT_PAGES).flat();
+    const known = new Set([...ledgerPages, ...reportPages, ...Object.keys(alias), ...sidebarPages, ...otherKind]);
     const orphans = [...renderedPages].filter((id) => !known.has(id));
     expect(orphans).toEqual([]);
   });

@@ -3,7 +3,7 @@ import { dateStr } from '../../shared/businessDay.js';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, History } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { BUSINESS_TYPE, BUSINESS_NAME } from '../../shared/businessType.js';
 
 // ── PricingTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
@@ -268,6 +268,39 @@ export default function PricingTab({ ctx }) {
     }
     return list;
   }, [pricingTable.products, pricingTable.tiers, tierSearch, tierCat, tierHas]);
+  // A tier's price list on paper: what that class of customer pays for each
+  // product, to hand or send to them. The products are the ones the filters
+  // above leave showing; a product the tier has no price for is left out,
+  // because that customer pays the list price for it like anyone else.
+  const printTierPriceList = (tierId) => {
+    const t = (pricingTable.tiers || []).find(x => String(x._id) === String(tierId));
+    if (!t) return;
+    const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const money = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const lines = tierFilteredProducts.filter(pr => t.prices?.[pr._id] != null)
+      .sort((a, b) => String(a.category || '').localeCompare(String(b.category || '')) || String(a.name).localeCompare(String(b.name)));
+    if (!lines.length) return ui.alert(`${t.name} has no prices among the products showing.`);
+    let lastCat = null;
+    const rows = lines.map((pr) => {
+      const head = pr.category !== lastCat ? `<tr class="cat"><td colspan="4">${esc(pr.category || 'Other')}</td></tr>` : '';
+      lastCat = pr.category;
+      const price = Number(t.prices[pr._id]);
+      const off = pr.basePrice > 0 && price < pr.basePrice ? `${Math.round((1 - price / pr.basePrice) * 100)}% off` : '';
+      return `${head}<tr><td>${esc(pr.productCode || '')}</td><td>${esc(pr.name)}</td><td class="r">${esc(money(pr.basePrice))}</td><td class="r"><b>${esc(money(price))}</b>${off ? `<br><small>${off}</small>` : ''}</td></tr>`;
+    }).join('');
+    const w = window.open('', '_blank', 'width=900,height=700');
+    if (!w) return ui.alert('Allow pop-ups for this site to print the price list.');
+    w.document.write(`<!doctype html><html><head><title>${esc(t.name)} price list</title><style>
+      body{font-family:Arial,sans-serif;font-size:12px;margin:28px;color:#000}h1{font-size:20px;margin:0}p{margin:4px 0 14px;color:#444}
+      table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #ccc;padding:6px 8px;text-align:left;vertical-align:top}
+      th{border-bottom:2px solid #000;font-size:11px;text-transform:uppercase}.r{text-align:right;white-space:nowrap}
+      .cat td{background:#f0f0f0;font-weight:bold;text-transform:uppercase;font-size:11px}small{color:#555}
+    </style></head><body><h1>${esc(BUSINESS_NAME || 'Price list')}</h1>
+      <p>${esc(t.name)} price list · ${new Date().toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })} · ${lines.length} product(s). Prices may change without notice.</p>
+      <table><thead><tr><th>Code</th><th>Product</th><th class="r">List price</th><th class="r">${esc(t.name)} price</th></tr></thead><tbody>${rows}</tbody></table></body></html>`);
+    w.document.close(); w.focus(); w.print();
+  };
+
   const tierCategories = useMemo(() => [...new Set((pricingTable.products || []).map(p => p.category).filter(Boolean))].sort(), [pricingTable.products]);
   const tierTotalPages = Math.max(1, Math.ceil(tierFilteredProducts.length / tierItemsPerPage));
   const tierPagedProducts = tierFilteredProducts.slice((tierPage - 1) * tierItemsPerPage, tierPage * tierItemsPerPage);
@@ -853,6 +886,14 @@ export default function PricingTab({ ctx }) {
               {tierFiltersOn && (
                 <button onClick={() => { setTierSearch(''); setTierCat(''); setTierHas(''); setTierPage(1); }}
                   className="text-[10px] font-bold uppercase tracking-wider text-fg/70 hover:text-fg px-2 py-1.5">Clear</button>
+              )}
+              {/* A price list to hand to that class of customer. */}
+              {(pricingTable.tiers || []).length > 0 && (
+                <select value="" onChange={e => { if (e.target.value) printTierPriceList(e.target.value); }} aria-label="Print a price list"
+                  className="bg-page-bg border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-accent ml-auto">
+                  <option value="">Print a price list…</option>
+                  {pricingTable.tiers.map(t => <option key={t._id} value={t._id}>{t.name}</option>)}
+                </select>
               )}
             </div>
             <p className="text-[11px] text-fg/70 mb-4 leading-relaxed">

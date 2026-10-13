@@ -8,7 +8,7 @@ import { PACK_UNIT } from '../../shared/packUnit.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import { useRefreshTick } from '../../shared/refreshBus';
 
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { BUSINESS_TYPE } from '../../shared/businessType.js';
 // Approval decision - Pending -> Approved/Rejected.
 const STATUS_CLS = {
   Pending:  'bg-yellow-500/15 text-warning',

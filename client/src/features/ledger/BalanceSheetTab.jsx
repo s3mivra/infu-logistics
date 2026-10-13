@@ -3,7 +3,7 @@ import { Package, Download, RefreshCw, Check } from 'lucide-react';
 // The balance sheet.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
 export default function BalanceSheetTab({
-  ledgerSubTab, bsData, reconcileInventory, exportBalanceSheetPDF, fetchBalanceSheet,
+  ledgerSubTab, bsData, reconcileInventory, exportBalanceSheetPDF, fetchBalanceSheet, arOutstanding,
 }) {
   return (
     <>
@@ -13,6 +13,14 @@ export default function BalanceSheetTab({
           <div>
             <h3 className="text-2xl font-black text-fg">Balance Sheet</h3>
             <p className="text-fg/65 text-xs font-bold uppercase tracking-widest mt-1">Snapshot as of {bsData ? new Date(bsData.asOf).toLocaleDateString() : 'today'}</p>
+            {/* Accounts Receivable is one account in the ledger; what related
+                businesses owe is told apart by the client record, so it is
+                shown here as a note on that line rather than a line of its own. */}
+            {arOutstanding?.affiliateOutstanding > 0 && (
+              <p className="text-fg/70 text-[11px] mt-1 normal-case">
+                Of Accounts Receivable today: customers ₱{Number(arOutstanding.tradeOutstanding || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })} · due from affiliates ₱{Number(arOutstanding.affiliateOutstanding).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+              </p>
+            )}
           </div>
           <div className="flex gap-2">
             <button onClick={reconcileInventory} title="Set book Inventory = actual on-hand value (fixes negative/opening inventory)" className="bg-amber-500 text-white border border-amber-500 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-amber-500/60 transition min-h-[44px] flex items-center gap-1.5"><Package size={13}/> Reconcile Inventory</button>

@@ -1,6 +1,7 @@
 ﻿// users routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { newSecret, verifyCode, otpauthUrl, newBackupCodes, hashBackupCode } from '../lib/totp.js';
 import { captureError } from '../lib/errorLog.js';
 import { signApproval } from '../lib/approval.js';
 import { hasPermission } from '../lib/authz.js';
@@ -343,6 +344,12 @@ app.post('/api/users/switch', pinLimiter, verifyToken, requireStaff, async (req,
       return res.status(403).json({ success: false, error: 'That PIN was not recognised.' });
     }
 
+    // A PIN is a few digits typed at a shared till. An account that asked for
+    // two-step sign-in is not opened by one - or the second step would be worth
+    // nothing to anyone who has seen the PIN typed.
+    if (matched.totpEnabled) {
+      return res.status(403).json({ success: false, error: `${matched.name} uses two-step sign-in. Sign in with the password instead.` });
+    }
     matched.pinFailedCount = 0;
     matched.pinLockedUntil = null;
     await matched.save();
@@ -407,13 +414,47 @@ app.post('/api/users/login', loginLimiter, validate(loginSchema), async (req, re
   try {
     const { name, password } = req.body;
     if (!name || !password) return res.status(400).json({ success: false, message: 'Name and password are required.' });
-    const user = await User.findOne({ name });
-    if (!user) return res.status(401).json({ success: false, message: 'Invalid name or password' });
+    // Every sign-in, and every failed one, goes to the audit trail: who, when,
+    // from where. It is how an owner sees an account being tried at 3 a.m., or
+    // a sign-in from a device nobody recognises. Never the password, typed or
+    // real. A failure to write it never blocks the sign-in itself.
+    const noteSignIn = (ok, who) => AuditLog.create({
+      userId: String(who || name || '').slice(0, 80) || '(blank)',
+      action: ok ? 'SIGN_IN' : 'SIGN_IN_FAILED',
+      targetReference: String(req.ip || '').slice(0, 60) || 'unknown',
+      details: { device: String(req.headers['user-agent'] || '').slice(0, 200) },
+    }).catch(() => {});
+    const user = await User.findOne({ name }).select('+totpSecret +totpBackupCodes');
+    if (!user) { await noteSignIn(false); return res.status(401).json({ success: false, message: 'Invalid name or password' }); }
     const isMatch = await bcrypt.compare(password, user.password);
+    if (isMatch && user.totpEnabled && user.totpSecret) {
+      // Two-step sign-in: the password was right, and that is only half of it.
+      // No session exists until the code is right too. `needsCode` is only
+      // ever said AFTER a correct password, so it gives nothing away to
+      // someone guessing names.
+      const code = String(req.body.code || '').trim();
+      // Answered 200, not 401: asking for the second step is not a failed
+      // attempt, and the sign-in limiter counts every 4xx against the whole
+      // shop's shared address. A WRONG code below is still a 401, and counted.
+      if (!code) return res.json({ success: false, needsCode: true, message: 'Enter the 6-digit code from your authenticator app.' });
+      let ok = verifyCode(user.totpSecret, code);
+      if (!ok) {
+        // A backup code, for a lost phone: good once, then gone.
+        const hash = hashBackupCode(code);
+        if ((user.totpBackupCodes || []).includes(hash)) {
+          const used = await User.updateOne({ _id: user._id, totpBackupCodes: hash }, { $pull: { totpBackupCodes: hash } });
+          ok = used.modifiedCount === 1;
+          if (ok) await logAudit(req, { action: 'two-step-backup-code-used', entity: 'User', entityId: user._id, after: { left: user.totpBackupCodes.length - 1 } }).catch(() => {});
+        }
+      }
+      if (!ok) { await noteSignIn(false, user.name); return res.status(401).json({ success: false, needsCode: true, message: 'That code is not right. Check the app and try the newest code.' }); }
+    }
     if (isMatch) {
       const token = await issueSession(res, user, { userAgent: req.headers['user-agent'] });
+      await noteSignIn(true, user.name);
       res.json({ success: true, token, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user) } });
     } else {
+      await noteSignIn(false, user.name);
       res.status(401).json({ success: false, message: 'Invalid name or password' });
     }
   } catch (err) {
@@ -624,6 +665,83 @@ app.delete('/api/users/:id', verifyToken, requireUserAdmin, async (req, res) => 
 
 // Staff self-service password change (any authenticated user, no superadmin required)
 // Requires current password for verification - prevents session hijacking.
+// ── TWO-STEP SIGN-IN ─────────────────────────────────────────────────────────
+// A person turns it on for their own account: scan a QR code into an
+// authenticator app, type the code it shows to prove it worked, and keep the
+// backup codes. From then on signing in takes the password AND the app's code.
+//
+// Getting back in without the phone: a backup code (each works once), or the
+// owner switching it off for them (reset, below). The owner's own way back is
+// their backup codes - which is why turning it on shows them and says to keep
+// them somewhere other than the phone.
+const twoStepIssuer = () => process.env.BUSINESS_NAME || process.env.VITE_BUSINESS_NAME || 'Semivra';
+
+app.get('/api/users/me/two-step', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const me = await User.findById(req.user._id).select('+totpBackupCodes').lean();
+    if (!me) return res.status(404).json({ success: false, error: 'User not found.' });
+    res.json({ success: true, enabled: !!me.totpEnabled, backupCodesLeft: me.totpEnabled ? (me.totpBackupCodes || []).length : 0 });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// Step 1: a new secret, shown as a QR code. Nothing changes about signing in
+// until step 2 proves the app really has it.
+app.post('/api/users/me/two-step/setup', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const me = await User.findById(req.user._id);
+    if (!me) return res.status(404).json({ success: false, error: 'User not found.' });
+    if (me.totpEnabled) return res.status(409).json({ success: false, error: 'Two-step sign-in is already on. Turn it off first to set it up again.' });
+    const secret = newSecret();
+    await User.updateOne({ _id: me._id }, { $set: { totpPending: secret } });
+    res.json({ success: true, secret, otpauthUrl: otpauthUrl({ secret, account: me.name, issuer: twoStepIssuer() }) });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// Step 2: the code the app shows. Right, and it is on; the backup codes are
+// returned here, once, and only their hashes are kept.
+app.post('/api/users/me/two-step/enable', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const me = await User.findById(req.user._id).select('+totpPending');
+    if (!me) return res.status(404).json({ success: false, error: 'User not found.' });
+    if (me.totpEnabled) return res.status(409).json({ success: false, error: 'Two-step sign-in is already on.' });
+    if (!me.totpPending) return res.status(400).json({ success: false, error: 'Start the setup again.' });
+    if (!verifyCode(me.totpPending, req.body?.code)) return res.status(400).json({ success: false, error: 'That code is not right. Check the app shows this account and try the newest code.' });
+    const codes = newBackupCodes();
+    await User.updateOne({ _id: me._id }, { $set: { totpEnabled: true, totpSecret: me.totpPending, totpPending: '', totpBackupCodes: codes.map(hashBackupCode) } });
+    await logAudit(req, { action: 'two-step-enabled', entity: 'User', entityId: me._id, after: { name: me.name } });
+    res.json({ success: true, backupCodes: codes });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// Turning it off takes the password again: a till left signed in must not be
+// enough to remove the second step from someone's account.
+app.post('/api/users/me/two-step/disable', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const me = await User.findById(req.user._id);
+    if (!me) return res.status(404).json({ success: false, error: 'User not found.' });
+    if (!req.body?.password || !(await bcrypt.compare(String(req.body.password), me.password))) return res.status(401).json({ success: false, error: 'Your password is incorrect.' });
+    await User.updateOne({ _id: me._id }, { $set: { totpEnabled: false, totpSecret: '', totpPending: '', totpBackupCodes: [] } });
+    await logAudit(req, { action: 'two-step-disabled', entity: 'User', entityId: me._id, after: { name: me.name, by: 'self' } });
+    res.json({ success: true });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// The way back for someone who lost their phone and their backup codes: the
+// owner switches it off for them, proving who they are with their own
+// password. Owner only - it removes a lock from somebody else's account.
+app.post('/api/users/:id/two-step/reset', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(String(req.params.id))) return res.status(404).json({ success: false, error: 'User not found.' });
+    const me = await User.findById(req.user._id);
+    if (!me || !req.body?.confirmPassword || !(await bcrypt.compare(String(req.body.confirmPassword), me.password))) return res.status(401).json({ success: false, error: 'Your password is incorrect.' });
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+    await User.updateOne({ _id: target._id }, { $set: { totpEnabled: false, totpSecret: '', totpPending: '', totpBackupCodes: [] } });
+    await logAudit(req, { action: 'two-step-disabled', entity: 'User', entityId: target._id, after: { name: target.name, by: me.name } });
+    res.json({ success: true, name: target.name });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 app.patch('/api/users/me/password', verifyToken, requireStaff, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;

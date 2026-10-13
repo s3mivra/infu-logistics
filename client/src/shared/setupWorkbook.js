@@ -113,9 +113,13 @@ export async function readSetupWorkbook(XLSX, wb, available, apiFetch) {
     const header = grid[0].map((h) => String(h ?? '').trim());
     // The example row, as the template wrote it, so an untouched one is skipped.
     let example = null;
+    let fields = [], columns = [];
     try {
       const d = await (await apiFetch(`/api/export/${t.key}?template=1`)).json();
-      if (d.success) example = (d.example || []).map((v) => String(v ?? '').trim());
+      if (d.success) {
+        example = (d.example || []).map((v) => String(v ?? '').trim());
+        fields = d.fields || []; columns = d.columns || [];
+      }
     } catch { /* compare nothing */ }
     const kept = [];
     let skippedExample = 0;
@@ -131,9 +135,74 @@ export async function readSetupWorkbook(XLSX, wb, available, apiFetch) {
     const lines = t.linesSheet && wb.Sheets[t.linesSheet]
       ? XLSX.utils.sheet_to_json(wb.Sheets[t.linesSheet], { defval: '' }).map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v instanceof Date ? localDate(v) : v])))
       : null;
-    steps.push({ ...t, header, grid: [grid[0], ...kept.map((k) => k.row)], sheetRows: kept.map((k) => k.sheetRow), count: kept.length, skippedExample, ...(lines ? { lines } : {}) });
+    steps.push({ ...t, header, fields, columns, grid: [grid[0], ...kept.map((k) => k.row)], sheetRows: kept.map((k) => k.sheetRow), count: kept.length, skippedExample, ...(lines ? { lines } : {}) });
   }
   return steps;
+}
+
+// ── A look before anything is imported ──────────────────────────────────────
+// What a sheet holds, checked against its own template: the first rows as they
+// will go in, and the mistakes that can be seen without the server - a
+// required cell left empty, a column the import does not know, a date or an
+// amount that is not one. It changes nothing and asks the server nothing more.
+// The importer still has the last word (it knows what already exists, which
+// names match a supplier, which periods are closed); this catches the plain
+// slips first, on screen, row by row, before the first sheet posts.
+const DATE_COLUMN = /date|asof|^due$/i;
+const AMOUNT_COLUMN = /amount|balance|cost|price|qty|quantity|limit|total|salvage|^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)$/i;
+const looksLikeDate = (v) => {
+  if (v instanceof Date) return !Number.isNaN(v.getTime());
+  if (typeof v === 'number') return v >= 32874 && v <= 73415;            // an Excel date number, 1990-2100
+  const s = String(v).trim();
+  return /^\d{4}-\d{1,2}-\d{1,2}(T.*)?$/.test(s) || /^\d{1,2}[/.-]\d{1,2}[/.-](\d{2}|\d{4})$/.test(s) || /^\d{4}[/.]\d{1,2}[/.]\d{1,2}$/.test(s)
+    || /^[A-Za-z]{3,9}\.?\s+\d{1,2}(st|nd|rd|th)?,?\s+\d{4}$/.test(s) || /^\d{1,2}(st|nd|rd|th)?[\s-]+[A-Za-z]{3,9}\.?,?[\s-]+(\d{2}|\d{4})$/.test(s) || /^\d{5}(\.\d+)?$/.test(s);
+};
+const looksLikeAmount = (v) => {
+  if (typeof v === 'number') return Number.isFinite(v);
+  let s = String(v).trim();
+  if (/^[-–—]+$/.test(s)) return true;                                   // a dash for nothing
+  if (/^\(.*\)$/.test(s)) s = s.slice(1, -1);
+  s = s.replace(/[₱$,\s%]/g, '').replace(/^PHP/i, '').replace(/^-/, '');
+  return /^\d*\.?\d+$/.test(s);
+};
+
+export function previewStep(step, { sampleRows = 3, maxProblems = 8 } = {}) {
+  const header = step.header || [];
+  const rows = (step.grid || []).slice(1);
+  const known = new Set([...(step.columns || []), ...(step.fields || []).map((f) => f.name)].map((c) => String(c).trim().toLowerCase()));
+  const has = (name) => header.some((h) => h.toLowerCase() === String(name).toLowerCase());
+  const required = (step.fields || []).filter((f) => f.required).map((f) => f.name);
+
+  const problems = [];
+  let problemRows = 0;
+  const missingColumns = required.filter((name) => !has(name));
+  // Only when the template is known: with nothing to compare against, every column would look unknown.
+  const unknownColumns = known.size ? header.filter((h) => h && !known.has(h.toLowerCase())) : [];
+  for (const name of missingColumns) problems.push(`The "${name}" column is missing - every row needs it.`);
+
+  rows.forEach((row, i) => {
+    const sheetRow = step.sheetRows?.[i] ?? i + 2;
+    const found = [];
+    header.forEach((h, c) => {
+      const v = row[c];
+      const blank = isBlank(v) || String(v).trim() === '';
+      if (blank) { if (required.some((r) => r.toLowerCase() === h.toLowerCase())) found.push(`${h} is empty`); return; }
+      if (String(v).trim().startsWith('#####')) { found.push(`${h} shows "${String(v).trim().slice(0, 8)}" - the column was too narrow when it was copied; retype the value`); return; }
+      if (DATE_COLUMN.test(h) && !looksLikeDate(v)) found.push(`${h} "${cellText(v)}" is not a date (write it as YYYY-MM-DD)`);
+      else if (AMOUNT_COLUMN.test(h) && !DATE_COLUMN.test(h) && !looksLikeAmount(v)) found.push(`${h} "${cellText(v)}" is not a number`);
+    });
+    if (found.length) {
+      problemRows++;
+      if (problems.length < maxProblems) problems.push(`Row ${sheetRow}: ${found.join('; ')}.`);
+    }
+  });
+
+  return {
+    key: step.key, sheet: step.sheet, count: rows.length,
+    header, sample: rows.slice(0, sampleRows).map((r) => header.map((_, c) => cellText(r[c]))),
+    problems, problemRows, moreProblems: Math.max(0, problemRows + missingColumns.length - problems.length),
+    unknownColumns, ready: problems.length === 0,
+  };
 }
 
 // Runs the steps in order, each through the same importer its own screen uses.

@@ -105,7 +105,7 @@ export default function makeReportExports(deps) {
   };
 
   const exportMenuEngineeringPDF = async () => {
-    if (!menuEngineering) return ui.alert('Refresh Menu Engineering first.');
+    if (!menuEngineering) return ui.alert(`Refresh ${BUSINESS_TYPE === 'log' ? 'Product Mix' : 'Menu Engineering'} first.`);
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });

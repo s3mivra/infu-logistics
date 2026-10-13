@@ -80,6 +80,10 @@ import registerAttachments from './features/attachments.js';
 import registerBudgets from './features/budgets.js';
 import registerExceptions from './features/exceptions.js';
 import registerClosing from './features/closing.js';
+import registerInsights from './features/insights.js';
+import registerCafeExtras from './features/cafe-extras.js';
+import registerOpsExtras from './features/ops-extras.js';
+import registerNotify from './features/notify.js';
 import registerTimeOff from './features/timeoff.js';
 import defineClientModels from './models/defineClientModels.js';
 import defineWorkflowModels from './models/defineWorkflowModels.js';
@@ -526,7 +530,8 @@ const zRecipe = z.array(z.object({
 })).optional();
 
 // Schemas for the previously raw `Model.create(req.body)` routes (mass-assignment fixes)
-const loginSchema    = z.object({ name: zName, password: z.string().min(1).max(200) });
+// `code`: the six digits (or a backup code) of two-step sign-in, sent on the second step.
+const loginSchema    = z.object({ name: zName, password: z.string().min(1).max(200), code: z.string().max(20).optional() });
 // password min 4 to match the client's staff-PIN policy (SuperAdminPanel validateForm).
 // permissions passes through so the create route can honour an explicit override.
 const userCreateSchema = z.object({ name: zName, password: z.string().min(4).max(200), role: zRole.optional(), permissions: z.array(z.string()).optional() });
@@ -1337,21 +1342,44 @@ mongoose.connect(process.env.MONGO_URI, {
   // valid signature AND aud:'client' AND role:'client' (see evaluateClientAccess). A
   // staff token, or a client token missing the aud claim, is rejected - clients
   // re-authenticate after deploy. Staff routes use verifyToken + requireStaff instead.
-  const verifyClientToken = (req, res, next) => {
+  // Is the account behind a client session still allowed in? A client token
+  // lasts 8 hours and used to be believed for all of them: a client switched
+  // off (a bad debt, say) went on placing orders on credit until it ran out,
+  // and so did anyone holding a session from before a password reset. Staff
+  // sessions are already checked this way (tokenVersion); this is the same
+  // for clients.
+  const clientSessionLive = async (decoded) => {
+    const id = decoded?.clientId || decoded?._id;
+    if (!id || !mongoose.Types.ObjectId.isValid(String(id))) return false;
+    const c = await mongoose.model('ClientAccount').findById(id, { isActive: 1, sessionsValidFrom: 1 }).lean();
+    if (!c || c.isActive === false) return false;
+    // iat is whole seconds; a session from the same second as the reset is the new one.
+    if (c.sessionsValidFrom && (Number(decoded.iat) || 0) * 1000 < new Date(c.sessionsValidFrom).getTime() - 1000) return false;
+    return true;
+  };
+
+  const verifyClientToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, error: 'Unauthorized: No token provided' });
     }
+    let decoded;
     try {
-      const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
-      if (!evaluateClientAccess(decoded).ok) {
-        return res.status(403).json({ success: false, error: 'Client session required.' });
-      }
-      req.user = decoded;
-      return next();
+      decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
     } catch (error) {
       return res.status(401).json({ success: false, error: 'Unauthorized: Invalid or expired token' });
     }
+    if (!evaluateClientAccess(decoded).ok) {
+      return res.status(403).json({ success: false, error: 'Client session required.' });
+    }
+    try {
+      if (!(await clientSessionLive(decoded))) return res.status(401).json({ success: false, error: 'This account can no longer sign in here. Please sign in again or contact the shop.' });
+    } catch (err) {
+      log.error({ err }, 'client session lookup failed');
+      return res.status(503).json({ success: false, error: 'Could not verify your session. Try again in a moment.' });
+    }
+    req.user = decoded;
+    return next();
   };
 
   // Hard-gate: role === 'superadmin' ONLY - never trust name strings.
@@ -1390,6 +1418,12 @@ mongoose.connect(process.env.MONGO_URI, {
       // 15 minutes.
       if (decoded.aud === 'client' || String(decoded.role || '').toLowerCase() === 'client') {
         if (!evaluateClientAccess(decoded).ok) return res.status(403).json({ success: false, error: 'Client session required.' });
+        try {
+          if (!(await clientSessionLive(decoded))) return res.status(401).json({ success: false, error: 'This account can no longer sign in here. Please sign in again or contact the shop.' });
+        } catch (err) {
+          log.error({ err }, 'client session lookup failed');
+          return res.status(503).json({ success: false, error: 'Could not verify your session. Try again in a moment.' });
+        }
         req.user = decoded;
         return next();
       }
@@ -1654,6 +1688,10 @@ const CrossTransferSchema = new mongoose.Schema({
   // own stock. Until then the receiver keeps asking (hub.js releasePending) -
   // a failed call used to be dropped, leaving the goods counted at both ends.
   releaseConfirmedAt: { type: Date, default: null },
+  // Something the partner still has to be told, because the call that would
+  // have told them failed: 'notify' (an outbound shipment to announce) or
+  // 'reject' (an inbound one we turned down). Retried until it gets through.
+  partnerTodo:  { type: String, enum: ['', 'notify', 'reject'], default: '' },
   // Groups all line-items sent in the same "send" action.
   shipmentRef:  { type: String, index: true },
   // Which expiry batch was picked when sending (internal use only, not shown to customers).
@@ -1724,6 +1762,9 @@ const TransferRequestSchema = new mongoose.Schema({
   respondedBy:   { type: String, default: '' },   // staff name who last acted on the other side
   // Set once Approved - the CrossTransfer shipmentRef the negotiation turned into.
   linkedShipmentRef: { type: String, default: '' },
+  // The partner's copy is behind ours: 'notify' (they have never seen this
+  // request) or 'sync' (they have not seen its latest state). Retried.
+  partnerSync:   { type: String, enum: ['', 'notify', 'sync'], default: '' },
 }, { timestamps: true });
 TransferRequestSchema.index({ businessType: 1, requestRef: 1, side: 1 }, { unique: true });
 const TransferRequest = mongoose.model('TransferRequest', TransferRequestSchema);
@@ -2323,6 +2364,13 @@ const UserSchema = new mongoose.Schema({
   // carries the wrong name. The PIN identifies; what a person may DO still comes
   // from their role. Stored hashed, like any other secret.
   pinHash:         { type: String, default: '' },
+  // Two-step sign-in (lib/totp.js). Off until the person turns it on for
+  // themselves. The secret and the backup-code hashes are never selected
+  // unless a query asks for them by name, so no list of users can carry them.
+  totpEnabled:     { type: Boolean, default: false },
+  totpSecret:      { type: String, default: '', select: false },
+  totpPending:     { type: String, default: '', select: false },     // set up but not yet confirmed with a code
+  totpBackupCodes: { type: [String], default: [], select: false },   // sha256 of each unused code
   // Failed attempts on this PIN, so a short code cannot simply be guessed.
   pinFailedCount:  { type: Number, default: 0 },
   pinLockedUntil:  { type: Date, default: null },
@@ -2523,7 +2571,12 @@ function scheduleMidnightArchive() {
     // Superadmin-controlled toggle: when autoCloseEnabled is explicitly false,
     // skip the automatic cancel/archive/lock and leave the day open for a manual
     // close. The timer still reschedules for the next midnight.
-    const acSetting = await Settings.findOne({ key: 'autoCloseEnabled' }).lean();
+    // Read on its own: a database hiccup at midnight must not be an unhandled
+    // error, which this server answers by restarting. Unreadable = carry on
+    // and close the day, as it would with the setting never touched.
+    let acSetting = null;
+    try { acSetting = await Settings.findOne({ key: 'autoCloseEnabled' }).lean(); }
+    catch (err) { log.error({ err }, 'Could not read the auto-close setting at midnight'); }
     if (acSetting && acSetting.value === false) {
       log.info('  Midnight reached (PH Time): auto-close is DISABLED - leaving the day open for manual close.');
       scheduleMidnightArchive();
@@ -3406,6 +3459,10 @@ registerAttachments(ctx);
 registerBudgets(ctx);
 registerExceptions(ctx);
 registerClosing(ctx);
+registerInsights(ctx);
+registerCafeExtras(ctx);
+registerOpsExtras(ctx);
+registerNotify(ctx);
 registerTimeOff(ctx);
 registerReports(ctx);
 registerShifts(ctx);
@@ -3445,6 +3502,12 @@ app.use((req, res) => {
 // In production it never leaks stack traces, query strings, or internal messages.
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
+  // The answer has already gone out (the error came after it): there is
+  // nothing left to send, and trying to would throw a second error.
+  if (res.headersSent) { log.error({ err, url: req.url, method: req.method }, 'Error after the response was sent'); return; }
+  // An id in the address that is not an id (a mistyped or cut-off link) is
+  // "not found", not a server fault - and should not page anyone as one.
+  if (err?.name === 'CastError') return res.status(404).json({ success: false, error: 'Not found.' });
   const status = err.status || (/^CORS blocked/.test(err.message || '') ? 403 : 500);
   log.error({ err, url: req.url, method: req.method }, 'Unhandled request error');
   if (SENTRY_ON && status >= 500) Sentry.captureException(err);

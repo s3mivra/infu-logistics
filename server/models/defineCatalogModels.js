@@ -199,6 +199,12 @@ export default function defineCatalogModels({ BUSINESS_TYPE }) {
     startsAt:    { type: Date, required: true },
     endsAt:      { type: Date, required: true },
     isActive:    { type: Boolean, default: true },
+    // Hours inside the dates (lib/salePricing.js saleRunsNow): which weekdays
+    // (0 = Sunday; none = every day) and between which times of day, HH:MM on
+    // the business's clock (both blank = all day).
+    daysOfWeek:  { type: [Number], default: [] },
+    dailyFrom:   { type: String, default: '' },
+    dailyTo:     { type: String, default: '' },
     rules: [{
       ruleType:          { type: String, enum: ['fixed_price', 'percent_off', 'threshold'], required: true },
       productId:         String,

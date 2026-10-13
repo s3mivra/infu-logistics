@@ -17,6 +17,7 @@ import {
   Receipt, Settings, TrendingUp, RefreshCw, Banknote, HandCoins, Download,
   CalendarCheck, AlertTriangle, Target, CalendarDays,
 } from 'lucide-react';
+import { REPORT_NAMES, IS_LOG } from '../../shared/businessType.js';
 
 // `mode` is the sidebar's own highlight state (libellus = Operations,
 // negotium = Management). It MUST match the group the entry is rendered in, or
@@ -129,6 +130,10 @@ export const LEDGER_TAB_GROUPS = [
   ]],
 ];
 
+// Report pages that only one kind of business has. The other kind's build
+// leaves them out of the menu below (and its server refuses them).
+export const TYPE_ONLY_REPORT_PAGES = { log: ['deliverysheet'], fb: ['preplist', 'feedback'] };
+
 export const REPORT_TAB_GROUPS = [
   ['Sales', [
     // One Sales page; what used to be the separate Daily Sales Report is two
@@ -136,9 +141,11 @@ export const REPORT_TAB_GROUPS = [
     ['salessummary', 'Sales', BarChart3],
     ['saleschannel', 'Sales by Channel', BarChart2],
     ['salescustomer', 'Sales by Customer', Users],
+    ['salestargets', 'Sales Targets', Target],
     ['payments', 'By Payment', Banknote],
     ['profitcat', 'By Category', BarChart2],
-    ['menueng', 'Menu Engineering', TrendingUp],
+    // A cafe engineers its menu; a logistics business has a product mix.
+    ['menueng', REPORT_NAMES.menueng, TrendingUp],
   ]],
   ['Receivable', [
     ['arreport', 'A/R Report', Truck],
@@ -147,6 +154,8 @@ export const REPORT_TAB_GROUPS = [
   ['Payable', [
     ['apreport', 'A/P Report', Receipt],
     ['supplierpay', 'Supplier Payments', Banknote],
+    ['supplierprices', 'Supplier Prices', DollarSign],
+    ['supplierstatement', 'Supplier Statement', FileText],
     ['checkvouchers', 'Check Vouchers', Receipt],
     ['advances', 'Advances', HandCoins],
   ]],
@@ -154,6 +163,8 @@ export const REPORT_TAB_GROUPS = [
     ['pnlmonthly', 'Monthly P&L', BarChart3],
     ['bsmonthly', 'Monthly Balance Sheet', BarChart3],
     ['cashflow', 'Cash Flow', Banknote],
+    // The weeks ahead, from what is already owed either way.
+    ['cashforecast', 'Cash Forecast', TrendingUp],
     ['budget', 'Budget vs Actual', Target],
     ['percentagetax', 'Percentage Tax', FileText],
     // Only one of these two ever applies: a VAT-registered business files VAT,
@@ -166,6 +177,15 @@ export const REPORT_TAB_GROUPS = [
     ['variance', 'Cashier Variance', Users],
     ['commissions', 'Commissions', Users],
     ['exceptions', 'Exceptions', AlertTriangle],
+    // What was thrown away and why; and when the business is busy.
+    ['waste', 'Waste Log', Package],
+    ['saleshours', 'Sales by Hour', Clock],
+    ['cashierperf', 'Cashier Performance', Users],
+    // One or the other: a logistics business sends deliveries out, a cafe prepares ahead and hears from its tables.
+    ...(IS_LOG ? [['deliverysheet', 'Delivery Sheet', Truck]] : [
+      ['preplist', 'Prep List', ChefHat],
+      ['feedback', 'Customer Feedback', Users],
+    ]),
   ]],
 ];
 

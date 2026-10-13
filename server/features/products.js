@@ -9,7 +9,7 @@ import { parseMenuSheet, toImportRows } from '../lib/menuSheet.js';
 import { splitUpdate } from '../lib/changeApproval.js';
 import { hasPermission } from '../lib/authz.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
-import { buildSalePriceMap, saleUnitPrice, activeSalesQuery } from '../lib/salePricing.js';
+import { buildSalePriceMap, saleUnitPrice, activeSalesQuery, cleanSaleHours } from '../lib/salePricing.js';
 // Action permissions. Each route below changes data, and was guarded only by
 // "is staff" - so a plain staff account could, through the API, do what the
 // permission catalogue reserves for a role that holds the matching
@@ -1700,7 +1700,10 @@ app.post('/api/sales', verifyToken, requireStaff, requirePermission('products.ma
     if (!name?.trim()) return res.status(400).json({ success: false, error: 'Sale name is required.' });
     if (!startsAt || !endsAt) return res.status(400).json({ success: false, error: 'Start and end dates are required.' });
     if (new Date(startsAt) >= new Date(endsAt)) return res.status(400).json({ success: false, error: 'End date must be after start date.' });
-    const sale = await Sale.create({ name: name.trim(), description, startsAt: new Date(startsAt), endsAt: new Date(endsAt), rules: rules || [] });
+    // Optional hours inside those dates: some weekdays, some times of day.
+    const hours = cleanSaleHours(req.body);
+    if (hours.error) return res.status(400).json({ success: false, error: hours.error });
+    const sale = await Sale.create({ name: name.trim(), description, startsAt: new Date(startsAt), endsAt: new Date(endsAt), rules: rules || [], ...hours });
     emitToAll('menuUpdated');
     res.json({ success: true, sale });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
@@ -1711,8 +1714,12 @@ app.put('/api/sales/:id', verifyToken, requireStaff, requirePermission('products
     const { name, description, startsAt, endsAt, isActive, rules } = req.body;
     if (startsAt && endsAt && new Date(startsAt) >= new Date(endsAt))
       return res.status(400).json({ success: false, error: 'End date must be after start date.' });
+    // The hours change only when the form sends them; a switch on/off alone leaves them be.
+    const sentHours = ['daysOfWeek', 'dailyFrom', 'dailyTo'].some(k => req.body[k] !== undefined);
+    const hours = sentHours ? cleanSaleHours(req.body) : {};
+    if (hours.error) return res.status(400).json({ success: false, error: hours.error });
     const sale = await Sale.findByIdAndUpdate(req.params.id,
-      { name, description, startsAt: startsAt ? new Date(startsAt) : undefined, endsAt: endsAt ? new Date(endsAt) : undefined, isActive, rules },
+      { name, description, startsAt: startsAt ? new Date(startsAt) : undefined, endsAt: endsAt ? new Date(endsAt) : undefined, isActive, rules, ...hours },
       { returnDocument: 'after', runValidators: true }
     );
     if (!sale) return res.status(404).json({ success: false, error: 'Sale not found.' });

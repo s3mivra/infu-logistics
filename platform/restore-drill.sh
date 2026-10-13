@@ -57,4 +57,13 @@ if [[ "$RESTORED" == "{}" ]]; then
 fi
 
 date -u +"%FT%TZ PASSED $(basename "$ARCHIVE")" > "$DIR/LAST_RESTORE_DRILL"
+
+# Tell each business a backup was proven to restore, so the owner sees it on
+# Owner Overview beside "Last backup". Never fatal: the drill above passed.
+docker compose -f "$ROOT/docker-compose.yml" exec -T mongo mongosh --quiet --eval '
+  const at = new Date().toISOString();
+  db.getMongo().getDBNames().filter((n) => n.startsWith("semivra_")).forEach((n) => {
+    db.getSiblingDB(n).settings.updateOne({ key: "lastRestoreDrillAt" }, { $set: { key: "lastRestoreDrillAt", value: at } }, { upsert: true });
+  });
+' >/dev/null 2>&1 || echo "note: could not stamp the businesses (the drill itself passed)"
 echo "DRILL PASSED."

@@ -6,14 +6,28 @@ import RecipeMatrix from './RecipeMatrix';
 import LinkAddOns from './LinkAddOns';
 import { columnsOf, readiness, marginOf, rowKeyOf } from '../../shared/recipeMatrix';
 
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { BUSINESS_TYPE, DEFAULT_DEPARTMENT } from '../../shared/businessType.js';
 // Category routing default per business type - log routes to Logistics, fb to Kitchen.
-const DEFAULT_DEPARTMENT = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
 
 const RULE_TYPE_LABELS = { fixed_price: 'Fixed Sale Price', percent_off: 'Percent Off', threshold: 'Order Threshold' };
 const fmt = (n) => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
 const toInputDate = (d) => d ? new Date(d).toISOString().slice(0, 16) : '';
+
+// "Mon-Fri 2:00 PM-5:00 PM", or '' for a sale that runs all day, every day.
+const SALE_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const saleClock = (hhmm) => {
+  const [h, m] = String(hhmm || '').split(':').map(Number);
+  if (!Number.isFinite(h)) return '';
+  return `${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+};
+const saleHoursText = (sale) => {
+  const days = [...(sale.daysOfWeek || [])].sort();
+  const run = days.length > 1 && days.every((d, i) => i === 0 || d === days[i - 1] + 1);
+  const dayText = !days.length ? '' : run ? `${SALE_DAYS[days[0]]}-${SALE_DAYS[days[days.length - 1]]}` : days.map(d => SALE_DAYS[d]).join(', ');
+  const timeText = sale.dailyFrom && sale.dailyTo ? `${saleClock(sale.dailyFrom)}-${saleClock(sale.dailyTo)}` : '';
+  return [dayText, timeText].filter(Boolean).join(' ');
+};
 
 function SaleStatusBadge({ sale }) {
   const now = new Date();
@@ -46,7 +60,7 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(null);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: '', description: '', startsAt: '', endsAt: '', rules: [] });
+  const [form, setForm] = useState({ name: '', description: '', startsAt: '', endsAt: '', rules: [], daysOfWeek: [], dailyFrom: '', dailyTo: '' });
   const [ruleForm, setRuleForm] = useState({ ruleType: 'fixed_price', productId: '', salePrice: '', discountPercent: '', thresholdAmount: '' });
   const [saving, setSaving] = useState(false);
 
@@ -60,7 +74,7 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const resetForm = () => { setForm({ name: '', description: '', startsAt: '', endsAt: '', rules: [] }); setEditing(null); };
+  const resetForm = () => { setForm({ name: '', description: '', startsAt: '', endsAt: '', rules: [], daysOfWeek: [], dailyFrom: '', dailyTo: '' }); setEditing(null); };
   const resetRuleForm = () => setRuleForm({ ruleType: 'fixed_price', productId: '', salePrice: '', discountPercent: '', thresholdAmount: '' });
 
   const addRule = () => {
@@ -75,12 +89,14 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
 
   const saveSale = async () => {
     if (!form.name.trim() || !form.startsAt || !form.endsAt) return;
+    if (!!form.dailyFrom !== !!form.dailyTo) return;
     setSaving(true);
     try {
       const method = editing ? 'PUT' : 'POST';
       const url = editing ? `/api/sales/${editing}` : '/api/sales';
       const r = await apiFetch(url, { method, body: JSON.stringify(form) });
       if (r.success) { load(); resetForm(); }
+      else if (r.error) ui.alert(r.error);
     } finally { setSaving(false); }
   };
 
@@ -97,7 +113,7 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
 
   const startEdit = (sale) => {
     setEditing(sale._id);
-    setForm({ name: sale.name, description: sale.description || '', startsAt: toInputDate(sale.startsAt), endsAt: toInputDate(sale.endsAt), rules: sale.rules || [] });
+    setForm({ name: sale.name, description: sale.description || '', startsAt: toInputDate(sale.startsAt), endsAt: toInputDate(sale.endsAt), rules: sale.rules || [], daysOfWeek: sale.daysOfWeek || [], dailyFrom: sale.dailyFrom || '', dailyTo: sale.dailyTo || '' });
     setExpanded(sale._id);
   };
 
@@ -125,6 +141,7 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
                     <p className="font-bold text-fg text-sm truncate" title={String((sale.name) ?? '')}>{sale.name}</p>
                     <p className="text-[10px] text-fg/70 flex items-center gap-1 mt-0.5">
                       <Calendar size={9} />{fmtDate(sale.startsAt)} - {fmtDate(sale.endsAt)}
+                      {saleHoursText(sale) && <><span className="mx-1">·</span>{saleHoursText(sale)}</>}
                       <span className="mx-1">·</span>{sale.rules?.length || 0} rule{sale.rules?.length !== 1 ? 's' : ''}
                     </p>
                   </div>
@@ -168,6 +185,33 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
                 <input type="datetime-local" className={`w-full ${inputCls} text-xs`} value={form.endsAt} onChange={e => setForm(f => ({ ...f, endsAt: e.target.value }))} />
               </div>
             </div>
+
+            {/* Hours inside those dates - a happy hour, a weekday special. Left
+                empty, the sale runs all day, every day of its dates. */}
+            <div>
+              <p className="text-[10px] text-fg/70 uppercase font-bold mb-1">Only on these days <span className="normal-case font-normal">(none ticked = every day)</span></p>
+              <div className="flex flex-wrap gap-1">
+                {SALE_DAYS.map((d, i) => {
+                  const on = (form.daysOfWeek || []).includes(i);
+                  return (
+                    <button key={d} type="button" aria-pressed={on}
+                      onClick={() => setForm(f => ({ ...f, daysOfWeek: on ? f.daysOfWeek.filter(x => x !== i) : [...(f.daysOfWeek || []), i].sort() }))}
+                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition ${on ? 'bg-brand text-on-brand border-brand' : 'border-white/15 text-fg/80 hover:bg-white/5'}`}>{d}</button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <p className="text-[10px] text-fg/70 uppercase font-bold mb-1">From (time of day)</p>
+                <input type="time" aria-label="Sale starts each day at" className={`w-full ${inputCls} text-xs`} value={form.dailyFrom || ''} onChange={e => setForm(f => ({ ...f, dailyFrom: e.target.value }))} />
+              </div>
+              <div>
+                <p className="text-[10px] text-fg/70 uppercase font-bold mb-1">Until</p>
+                <input type="time" aria-label="Sale ends each day at" className={`w-full ${inputCls} text-xs`} value={form.dailyTo || ''} onChange={e => setForm(f => ({ ...f, dailyTo: e.target.value }))} />
+              </div>
+            </div>
+            {(!!form.dailyFrom !== !!form.dailyTo) && <p className="text-[11px] text-danger font-bold">Give both times, or leave both empty for all day.</p>}
 
             {/* Rules builder */}
             <div className="space-y-1.5">
@@ -1183,7 +1227,7 @@ export default function ProductsTab({ ctx }) {
                   onChange={e => setCatForm({ ...catForm, department: e.target.value })}
                   className="w-32 bg-white/5 border border-white/10 rounded-lg p-3 text-fg outline-none focus:border-brand font-bold"
                 >
-                  {import.meta.env.VITE_BUSINESS_TYPE === "log" ? (
+                  {BUSINESS_TYPE === 'log' ? (
                     <>
                       <option value="Logistics">Logistics</option>
                       <option value="Warehouse">Warehouse</option>

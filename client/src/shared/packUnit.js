@@ -9,6 +9,6 @@
 // fiftieth of a cup when it had deducted exactly one.
 //
 // Only the word changes. What is counted, and every stored number, stays.
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { BUSINESS_TYPE } from './businessType.js';
 
 export const PACK_UNIT = BUSINESS_TYPE === 'log' ? 'pcs' : 'packs';

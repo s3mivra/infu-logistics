@@ -1,4 +1,5 @@
-﻿import SplitPayEditor, { newSplit, splitReady, splitPayload } from '../ledger/SplitPayEditor';
+﻿import { LoyaltyDialog } from '../cafe/CafeExtras';
+import SplitPayEditor, { newSplit, splitReady, splitPayload } from '../ledger/SplitPayEditor';
 import React from 'react';
 import QtyInput from '../../shared/ui/QtyInput';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Footprints, Utensils, ShoppingBag, Bike, Car, UserX, UserCheck, Flame } from 'lucide-react';
@@ -37,9 +38,9 @@ function IconSelect({ value, onChange, options, className = '' }) {
   );
 }
 
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { BUSINESS_TYPE, DEFAULT_DEPARTMENT, DEPARTMENTS, DELIVERY_METHODS } from '../../shared/businessType.js';
 // Logistics dispatches to the storage/logistics team; food & bev sends to the kitchen.
-const SEND_TARGET = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
+const SEND_TARGET = DEFAULT_DEPARTMENT;
 
 // ── OrdersTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
@@ -57,6 +58,7 @@ const ORDER_STATUS_TONE = {
 };
 
 export default function OrdersTab({ ctx }) {
+  const [loyaltyOpen, setLoyaltyOpen] = React.useState(false);
   // Destructure everything from ctx
   // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
@@ -162,7 +164,7 @@ export default function OrdersTab({ ctx }) {
     if (!(price >= 0) || openItem.price === '') return ui.alert('Type its price.');
     setPosCart([...posCart, {
       name, price, listPrice: price, quantity: qty, selectedAddOns: [], discountPercent: 0, isOpenItem: true,
-      department: openItem.department || departments[0] || (BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen'),
+      department: openItem.department || departments[0] || DEFAULT_DEPARTMENT,
     }]);
     setOpenItem(null);
   };
@@ -697,6 +699,11 @@ export default function OrdersTab({ ctx }) {
                     {/* Dine-in / Take-out switched on in Menu Setup: every order says
                         which it is. A Dine-In table is dine-in and anything
                         leaving the shop is take-out; a walk-in is asked. */}
+                    {/* A regular's stamp card, looked up by phone while they are at the till. */}
+                    {BUSINESS_TYPE === 'fb' && (
+                      <button type="button" onClick={() => setLoyaltyOpen(true)} className="self-start text-[11px] font-bold uppercase tracking-wider text-brand-text hover:underline">Loyalty card</button>
+                    )}
+                    {loyaltyOpen && <LoyaltyDialog apiFetch={apiFetch} onClose={() => setLoyaltyOpen(false)} />}
                     {BUSINESS_TYPE === 'fb' && systemSettings.serviceModeEnabled === true && (
                       posTable === 'Walk In' ? (
                         <div role="radiogroup" aria-label="Dine in or take out" className="grid grid-cols-2 gap-2">
@@ -1012,7 +1019,7 @@ export default function OrdersTab({ ctx }) {
                     )}
                   </div>
                   <div className="flex gap-1 overflow-x-auto bg-page-bg border border-white/10 rounded-xl p-1">
-                    {(BUSINESS_TYPE === 'log' ? ['All', 'Logistics', 'Warehouse'] : ['All', 'Kitchen', 'Bar']).map(dept => (
+                    {['All', ...DEPARTMENTS].map(dept => (
                       <button
                         key={dept}
                         onClick={() => setDepartmentFilter(dept)}
@@ -1270,7 +1277,7 @@ export default function OrdersTab({ ctx }) {
                         {!collapsedOrders[order._id] && (
                           <div className="px-4 pb-4 flex flex-col gap-3 border-t border-white/5 pt-3">
                             <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar pr-1">
-                              {(BUSINESS_TYPE === 'log' ? ['Logistics', 'Warehouse'] : ['Kitchen', 'Bar']).map(dept => {
+                              {DEPARTMENTS.map(dept => {
                                 const deptItems = order.items
                                   .map((item, idx) => ({ ...item, originalIdx: idx }))
                                   .filter(i => (i.department || SEND_TARGET) === dept);
@@ -1795,7 +1802,7 @@ export default function OrdersTab({ ctx }) {
                                 </div>
                               )}
                               {order.status === 'Pending' && departmentFilter === 'All' && (() => {
-                                const isDelivery = ['Grab Delivery', 'Foodpanda', 'Manual Delivery', 'Lalamove'].includes(order.table);
+                                const isDelivery = DELIVERY_METHODS.includes(order.table);
                                 // Payment is always changeable. Default to the order's natural
                                 // method (delivery channel for delivery orders, else its set method).
                                 const displayPayment = paymentSelections[order._id] || (isDelivery ? order.table : (order.paymentMethod || 'Cash'));

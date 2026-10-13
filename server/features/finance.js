@@ -823,6 +823,14 @@ app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, 
     // here so the A/R table can offer "apply credit" against a specific invoice
     // without a lookup per row - see POST /api/client-accounts/:id/credit/apply.
     const clientIds = [...new Set(rows.map(r => r.clientId).filter(Boolean).map(String))];
+    // Which of these are owed by a related business (a satellite or affiliate),
+    // so the screen can total them apart from what outside customers owe. By
+    // either link an order carries: its portal client or its billed account.
+    const linkedIds = [...new Set(rows.flatMap(r => [r.clientId, r.clientAccountId]).filter(Boolean).map(String))]
+      .filter(id => mongoose.Types.ObjectId.isValid(id));
+    const affiliateIds = new Set(linkedIds.length
+      ? (await ClientAccount.find({ _id: { $in: linkedIds }, isAffiliate: true }, { _id: 1 }).lean()).map(c => String(c._id))
+      : []);
     const creditByClient = new Map();
     if (clientIds.length) {
       const withCredit = await ClientAccount.find(
@@ -848,10 +856,16 @@ app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, 
         paid: Math.round(((Number(r.arPaidAmount) || 0)) * 100) / 100,
         paymentCount: (r.arPayments || []).length, arPayments: undefined,
         clientCredit: creditByClient.get(String(r.clientId)) || 0,
+        affiliate: affiliateIds.has(String(r.clientAccountId || '')) || affiliateIds.has(String(r.clientId || '')),
       };
     });
     const totalOutstanding = orders.reduce((s, r) => s + (r.balance || 0), 0);
-    res.json({ success: true, orders, totalOutstanding, overdueTotal, overdueCount });
+    const affiliateOutstanding = Math.round(orders.filter(r => r.affiliate).reduce((s, r) => s + (r.balance || 0), 0) * 100) / 100;
+    res.json({
+      success: true, orders, totalOutstanding, overdueTotal, overdueCount,
+      // The same total, split: related businesses, and everyone else.
+      affiliateOutstanding, tradeOutstanding: Math.round((totalOutstanding - affiliateOutstanding) * 100) / 100,
+    });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

@@ -713,6 +713,35 @@ export default function ClientOrderPage() {
     ui.toast(`${product.name} added to cart`, { tone: 'success', duration: 1600 });
   }, []);
 
+  // Order again: put a past order's items back in the cart, at today's prices
+  // (the server prices every line from the records when it is placed). What is
+  // no longer sold or is out of stock is left out, and the client is told.
+  const orderAgain = useCallback((order) => {
+    const found = [], missing = [];
+    for (const item of order.items || []) {
+      const prod = products.find(p => (item.productCode && p.productCode === item.productCode) || (item.productId && String(p._id) === String(item.productId)));
+      if (!prod || prod.isAvailable === false || prod.stockAvailable === false) { missing.push(item.name); continue; }
+      found.push({ prod, quantity: Math.max(1, Math.round(Number(item.quantity) || 1)) });
+    }
+    if (!found.length) { ui.alert('None of the items on that order can be ordered right now.'); return; }
+    setCart(prev => {
+      const next = [...prev];
+      for (const { prod, quantity } of found) {
+        const idx = next.findIndex(i => i.productId === String(prod._id));
+        if (idx >= 0) next[idx] = { ...next[idx], quantity: next[idx].quantity + quantity };
+        else next.push({
+          productId: String(prod._id), name: prod.name, productCode: prod.productCode,
+          price: prod.activeSalePrice ?? prod.basePrice,
+          discountPercent: (prod.effectiveDiscountPercent ?? prod.discountPercent) || 0,
+          quantity, selectedAddOns: [],
+        });
+      }
+      return next;
+    });
+    ui.toast(`${found.length} item(s) added to your cart${missing.length ? ` - ${missing.length} not available now` : ''}.`, { tone: 'success', duration: 2600 });
+    if (missing.length) ui.alert(`Not added, because they are not available right now: ${missing.join(', ')}.`);
+  }, [products]);
+
   const changeQty = useCallback((productId, delta) => {
     setCart(prev => prev
       .map(i => i.productId === productId ? { ...i, quantity: i.quantity + delta } : i)
@@ -1223,7 +1252,13 @@ export default function ClientOrderPage() {
             </div>
           </div>
 
-          <div className="p-3 sm:p-4 border-t border-white/10 flex-shrink-0">
+          <div className="p-3 sm:p-4 border-t border-white/10 flex-shrink-0 space-y-2">
+            {(slipOrder.items || []).length > 0 && (
+              <button onClick={() => { orderAgain(slipOrder); setSlipOrder(null); }}
+                className="w-full border border-white/15 text-fg hover:bg-white/5 font-black py-3 rounded-xl transition uppercase tracking-widest text-xs">
+                Order these again
+              </button>
+            )}
             <button onClick={() => downloadOrderSlip(slipOrder)} disabled={slipDownloading}
               className="w-full flex items-center justify-center gap-2 bg-brand hover:bg-brand-dark disabled:opacity-60 text-on-brand font-black py-3 rounded-xl transition uppercase tracking-widest text-xs">
               {slipDownloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}

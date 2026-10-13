@@ -1,4 +1,5 @@
 ﻿import React, { useState, useEffect } from 'react';
+import ScanBox, { findByCode } from '../../shared/ScanBox';
 import { dateStr } from '../../shared/businessDay.js';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, MoreVertical } from 'lucide-react';
 import * as auth from '../auth/auth';
@@ -9,7 +10,7 @@ import ReservationsPanel from './ReservationsPanel';
 import GoogleSheetModal, { SheetChangedBanner, useInventorySheet, usePull } from './GoogleSheetLink';
 
 import { PACK_UNIT } from '../../shared/packUnit.js';
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
 // Zero-padded MM/DD/YYYY - `.toLocaleDateString()` on its own drops the
 // leading zero ("1/26/2027", "9/1/2026"), which reads ambiguously next to
@@ -26,6 +27,7 @@ const fmtMDY = (d) => {
 // ── InventoryTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function InventoryTab({ ctx }) {
+  const countScanRef = React.useRef(null);
   // Destructure everything from ctx
   // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
@@ -886,6 +888,21 @@ export default function InventoryTab({ ctx }) {
                     )}
                   </div>
 
+                  {/* Counting with a scanner: scan an item and the list narrows to it
+                      with the cursor in its count box; type the count, press Enter,
+                      and it is ready for the next scan. */}
+                  {!isLocked && (
+                    <div className="flex items-center gap-3 flex-wrap mb-3">
+                      <ScanBox inputRef={countScanRef} onScan={(code) => {
+                        const item = findByCode(inventory || [], code);
+                        if (!item) return { ok: false, text: `No item with the code "${code}".` };
+                        setInvSearch(item.itemCode || item.itemName);
+                        setTimeout(() => { const el = document.getElementById(`count-${item._id}`); el?.focus(); el?.select?.(); }, 80);
+                        return { ok: true, text: `${item.itemName} - type the count, then Enter.` };
+                      }} />
+                      {invSearch && <button type="button" onClick={() => { setInvSearch(''); countScanRef.current?.focus(); }} className="text-[11px] font-bold uppercase tracking-wider text-white hover:underline">Show every item</button>}
+                    </div>
+                  )}
                   <table className="w-full text-left text-sm mb-4">
                     <thead>
                       <tr className="text-white border-b border-white text-xs uppercase tracking-wider">
@@ -992,6 +1009,14 @@ export default function InventoryTab({ ctx }) {
                             <td className="py-4 text-center align-top pt-5 w-[20%]">
                               <div className="inline-flex items-center gap-1.5">
                                 <input
+                                  id={`count-${item._id}`}
+                                  onKeyDown={(e) => {
+                                    // Enter after a scanned item: back to every item, cursor in the scan box.
+                                    if (e.key !== 'Enter') return;
+                                    e.preventDefault();
+                                    setInvSearch('');
+                                    countScanRef.current?.focus();
+                                  }}
                                   type="number"
                                   step="0.001"
                                   placeholder={isLocked ? "LOCKED" : "Count…"}

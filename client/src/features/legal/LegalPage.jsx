@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom';
 
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 const BIZ_NAME = import.meta.env.VITE_BUSINESS_NAME || 'this business';
-const IS_LOG = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase() === 'log';
+import { IS_LOG } from '../../shared/businessType.js';
 
 function usePrivacyContact() {
   const [contact, setContact] = useState(null);

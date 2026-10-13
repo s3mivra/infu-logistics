@@ -2,7 +2,7 @@
 import { useDashboard } from '../../dashboard/DashboardContext';
 import { PACK_UNIT } from '../../../shared/packUnit.js';
 
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { BUSINESS_TYPE } from '../../../shared/businessType.js';
 
 // Extracted from AdminDashboard; reads shared state via useDashboard().
 export default function StockHistoryModal() {
