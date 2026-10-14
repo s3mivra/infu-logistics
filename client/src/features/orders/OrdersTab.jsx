@@ -300,6 +300,20 @@ export default function OrdersTab({ ctx }) {
     } catch { ui.alert('Network error.'); }
   };
   const [takeOut, setTakeOut] = React.useState(null);   // { orderId, qty: { [index]: n }, busy }
+  // Nothing in the bar's cups to take from stock (already in take-out cups, or
+  // no take-out cup set up for the drink): the customer leaving with it is just
+  // recorded on the order.
+  const markTakenOut = async (order) => {
+    if (!(await ui.confirm({ title: 'Mark as taken out?', message: order.useBarCups
+      ? 'These drinks have no take-out cup set up in Menu Setup, so nothing will be taken from stock. Set one up there if it should be.'
+      : 'They were served in take-out cups already, so nothing more is taken from stock.', confirmLabel: 'Taken out' }))) return;
+    try {
+      const d = await (await apiFetch(`/api/orders/${order._id}/take-out`, { method: 'POST', body: JSON.stringify({}) })).json();
+      if (!d.success) return ui.alert(d.error || 'Could not mark it.');
+      ui.toast(d.note || 'Marked as taken out.', { tone: 'success' });
+      fetchOrders();
+    } catch { ui.alert('Network error - nothing was changed.'); }
+  };
   const submitTakeOut = async (order) => {
     const lines = barCupLines(order)
       .map(l => ({ index: l.index, qty: Math.min(l.left, Math.max(0, Number(takeOut?.qty?.[l.index] ?? l.left))) }))
@@ -1782,6 +1796,21 @@ export default function OrdersTab({ ctx }) {
                                     title="Served in the bar's cups, but they are taking it out: take the take-out cups from stock now."
                                     className="w-full border border-brand/40 bg-brand/10 text-brand-text py-2 rounded-lg hover:bg-brand/20 font-bold text-xs uppercase tracking-widest transition flex items-center justify-center gap-2">
                                     <ShoppingBag size={13} /> Make take-out ({barCupLines(order).reduce((n, l) => n + l.left, 0)} in bar cups)
+                                  </button>
+                                )
+                              )}
+                              {/* A dine-in order with nothing in the bar's cups can still leave with
+                                  the customer - a drink they did not finish. */}
+                              {BUSINESS_TYPE === 'fb' && departmentFilter === 'All' && order.status === 'Completed' && isDineInOrder(order) && order.serviceMode !== 'take-out' && barCupLines(order).length === 0 && (
+                                order.takenOutAt ? (
+                                  <p className="w-full text-center text-[10px] font-black uppercase tracking-widest text-fg/70 flex items-center justify-center gap-1.5">
+                                    <ShoppingBag size={12} /> Taken out{order.takenOutBy ? ` · ${order.takenOutBy}` : ''}
+                                  </p>
+                                ) : (
+                                  <button onClick={() => markTakenOut(order)}
+                                    title="The customer did not finish and is taking it out"
+                                    className="w-full border border-brand/40 bg-brand/10 text-brand-text py-2 rounded-lg hover:bg-brand/20 font-bold text-xs uppercase tracking-widest transition flex items-center justify-center gap-2">
+                                    <ShoppingBag size={13} /> Make take-out
                                   </button>
                                 )
                               )}

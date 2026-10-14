@@ -2697,9 +2697,35 @@ app.post('/api/orders/:id/take-out', verifyToken, requireStaff, permitAny('pos.u
       item.barCupQty = left - n;
       made.push({ index: lineIndex, name: item.name, qty: n });
     }
-    if (!made.length) return stop(400, 'Nothing on this order is still in bar cups.');
+    // Nothing on the shelf to take: the drinks were already in take-out cups
+    // (bar cups off), or the products have no take-out packaging set up. The
+    // customer is still leaving with them - that is recorded, and nothing in
+    // stock or the books moves, because nothing more was used.
+    if (!made.length) {
+      const stillInBarCups = order.items.some(it => (Number(it.barCupQty) || 0) > 0);
+      if (stillInBarCups) return stop(400, 'Tick the drinks that are being taken out.');
+      // Only a dine-in order can be taken out afterwards; a take-out or delivery
+      // order already left with its cups.
+      const NOT_DINE_IN = ['Takeout', 'Grab Delivery', 'Foodpanda', 'Manual Delivery', 'Pickup', 'Lalamove'];
+      if (order.serviceMode === 'take-out' || NOT_DINE_IN.includes(order.table)) return stop(400, 'This was already a take-out order.');
+      if (order.takenOutAt) return stop(409, 'This order was already marked as taken out.');
+      order.takenOutAt = new Date();
+      order.takenOutBy = req.user?.name || '';
+      await order.save({ session });
+      await session.commitTransaction();
+      session.endSession();
+      try { await logAudit(req, { action: 'take-out', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, recordOnly: true } }); } catch (err) { captureError(req, err); }
+      emitToOps('orderUpdated', order);
+      return res.json({
+        success: true, order, made: [], cost: 0, recordOnly: true,
+        note: order.useBarCups
+          ? 'Marked as taken out. These drinks have no take-out cup set up in Menu Setup, so nothing was taken from stock.'
+          : 'Marked as taken out. They were already in take-out cups, so nothing more was taken from stock.',
+      });
+    }
 
     if (cards.length) await StockCard.insertMany(cards, { session });
+    if (!order.takenOutAt) { order.takenOutAt = new Date(); order.takenOutBy = req.user?.name || ''; }
     order.stockMoves = [...(order.stockMoves || []).map(m => (m.toObject ? m.toObject() : m)), ...stockMovesFrom(cards)];
     order.markModified('items');
     await order.save({ session });

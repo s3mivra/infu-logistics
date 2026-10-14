@@ -100,8 +100,9 @@ describe('not finished - made take-out after', () => {
     expect((await auth('post', `/api/orders/${o._id}/take-out`).send({})).status).toBe(200);
     expect(await stock(cup)).toBe(98);
     const again = await auth('post', `/api/orders/${o._id}/take-out`).send({});
-    expect(again.status).toBe(400);
+    expect(again.status).toBe(409);              // already taken out
     expect(await stock(cup)).toBe(98);
+    expect((await M('Order').findById(o._id).lean()).takenOutAt).toBeTruthy();
   });
 
   it('refuses when there are not enough cups, and changes nothing', async () => {
@@ -117,6 +118,37 @@ describe('not finished - made take-out after', () => {
   it('is not for an order that is still open', async () => {
     const o = await place(1, { useBarCups: true });
     expect((await auth('post', `/api/orders/${o._id}/take-out`).send({})).status).toBe(400);
+  });
+});
+
+describe('taken out when nothing was in the bar cups', () => {
+  it('a dine-in drink already in a take-out cup is marked taken out, and nothing more leaves the shelf', async () => {
+    const o = await place(2);                    // bar cups off: the take-out cup was used at completion
+    await complete(o);
+    const cupsBefore = await stock(cup);
+    const entries = await M('JournalEntry').countDocuments({});
+    const r = await auth('post', `/api/orders/${o._id}/take-out`).send({});
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ recordOnly: true, cost: 0 });
+    expect(r.body.note).toMatch(/already in take-out cups/);
+    expect(await stock(cup)).toBe(cupsBefore);
+    expect(await M('JournalEntry').countDocuments({})).toBe(entries);
+    const saved = await M('Order').findById(o._id).lean();
+    expect(saved.takenOutAt).toBeTruthy();
+    expect(saved.takenOutBy.toLowerCase()).toBe('cupsuper');
+    // Marking it twice is refused, and still changes nothing.
+    expect((await auth('post', `/api/orders/${o._id}/take-out`).send({})).status).toBe(409);
+    expect(await stock(cup)).toBe(cupsBefore);
+  });
+
+  it('a drink in bar cups with no take-out cup set up is marked taken out, and says why nothing was taken', async () => {
+    await M('Product').updateOne({ _id: latte._id }, { $set: { baseRecipe: [{ invId: String(beans._id), name: 'ESPRESSO BEANS', qty: 20, cost: 1.2, unit: 'g', packBase: 1 }] } });
+    const o = await place(1, { useBarCups: true });
+    await complete(o);
+    const r = await auth('post', `/api/orders/${o._id}/take-out`).send({});
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.note).toMatch(/no take-out cup set up/);
+    expect(await stock(cup)).toBe(100);
   });
 });
 

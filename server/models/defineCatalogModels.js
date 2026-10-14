@@ -388,6 +388,11 @@ export default function defineCatalogModels({ BUSINESS_TYPE }) {
     // Dine-in, served in the bar's cups rather than take-out ones (cafe). The
     // take-out packaging in each recipe is left on the shelf at completion.
     useBarCups: { type: Boolean, default: false },
+    // A dine-in order the customer left with after it was completed (a drink
+    // they did not finish). Recorded whether or not any take-out cup came off
+    // the shelf for it - see POST /api/orders/:id/take-out.
+    takenOutAt: { type: Date, default: null },
+    takenOutBy: { type: String, default: '' },
     // Cost of goods sold booked for this sale from a cost figure alone (an
     // imported order with no product lines) - see account 139000. Recorded so
     // the same cost is never booked twice.
