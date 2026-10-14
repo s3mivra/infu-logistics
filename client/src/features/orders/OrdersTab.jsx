@@ -567,7 +567,11 @@ export default function OrdersTab({ ctx }) {
                 </div>
 
                 {/* RIGHT COLUMN: Cart Dock */}
-                <div className="w-full lg:w-[380px] flex flex-col shrink-0 lg:h-full bg-surface border border-white/10 rounded-2xl overflow-hidden shadow-xl lg:min-h-0">
+                {/* The order panel scrolls as a whole when its parts (customer, guests,
+                    loyalty, cart, totals, payment) are taller than the screen. It used to
+                    clip instead, so on a short screen the payment and Pay button were
+                    simply cut off below the total. */}
+                <div className="w-full lg:w-[380px] flex flex-col shrink-0 lg:h-full bg-surface border border-white/10 rounded-2xl overflow-y-auto custom-scrollbar shadow-xl lg:min-h-0">
 
                   {/* Customer info - capped on a tall form so the cart and the
                       Place Order button always keep their room; it scrolls instead. */}
