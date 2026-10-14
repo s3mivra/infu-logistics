@@ -212,9 +212,9 @@ export default function ReservationsPanel({ apiFetch, inventory = [], clientAcco
       </div>
 
       {cancelling && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !busy && setCancelling(null)}>
+        <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !busy && setCancelling(null)}>
           <div role="dialog" aria-modal="true" aria-labelledby="rsv-cancel-title"
-            className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
+            className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-5 my-auto" onClick={e => e.stopPropagation()}>
             <h4 id="rsv-cancel-title" className="font-black text-fg">Cancel {cancelling.row.reservationNumber}</h4>
             <p className="text-xs text-fg/70 mt-1 mb-3">
               The stock goes straight back on sale. {cancelling.row.clientName} is not told automatically.

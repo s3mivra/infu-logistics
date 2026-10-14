@@ -1277,11 +1277,11 @@ export default function ClientOrderPage() {
       {/* QR Payment modal */}
       {showQr && portal.paymentQrImage && (
         <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-4"
+          className="fixed inset-0 z-[200] flex justify-center overflow-y-auto bg-black/80 p-4"
           onClick={closeQr}
         >
           <div
-            className="bg-sidebar-bg border border-white/10 rounded-2xl p-5 flex flex-col items-center gap-4 max-w-xs w-full"
+            className="bg-sidebar-bg border border-white/10 rounded-2xl p-5 flex flex-col items-center gap-4 max-w-xs w-full my-auto"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center justify-between w-full">
@@ -1384,7 +1384,7 @@ export default function ClientOrderPage() {
       {menuOpen && (
         <div className="fixed inset-0 z-50 sm:hidden flex justify-end" role="dialog" aria-modal="true" aria-label="Menu">
           <div className="flex-1 bg-black/60 backdrop-blur-sm" onClick={() => setMenuOpen(false)} />
-          <nav className="w-64 max-w-[80vw] h-full bg-sidebar-bg border-l border-white/10 flex flex-col">
+          <nav className="w-64 max-w-[80vw] h-full bg-sidebar-bg border-l border-white/10 flex flex-col overflow-y-auto">
             <div className="flex items-center justify-between px-4 h-14 border-b border-white/5">
               <div className="min-w-0">
                 <p className="text-fg font-black text-xs uppercase tracking-widest truncate" title={String((clientInfo?.name || clientInfo?.username || 'Client') ?? '')}>{clientInfo?.name || clientInfo?.username || 'Client'}</p>

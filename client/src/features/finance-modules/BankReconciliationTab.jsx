@@ -163,8 +163,8 @@ function StartModal({ accounts, apiFetch, onClose, onDone }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={onClose}>
+      <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-lg p-6 my-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-black text-fg text-lg">New bank statement</h2>
           <button onClick={onClose} className="text-fg/70 hover:text-fg transition"><X size={18} /></button>

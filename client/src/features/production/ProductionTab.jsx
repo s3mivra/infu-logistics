@@ -806,8 +806,8 @@ export default function ProductionTab({ ctx }) {
 
       {/* Reject reason modal */}
       {rejecting && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setRejecting(null)}>
-          <div className="bg-surface border border-white/10 rounded-xl p-5 w-full max-w-sm" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto" onClick={() => setRejecting(null)}>
+          <div className="bg-surface border border-white/10 rounded-xl p-5 w-full max-w-sm my-auto" onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-fg mb-2">Reject production order</h3>
             <p className="text-fg/75 text-xs mb-3">{rejecting.outputName} × {rejecting.outputQty}{rejecting.outputUnit}</p>
             <textarea autoFocus value={rejectReason} onChange={e => setRejectReason(e.target.value)} rows={3}
@@ -828,8 +828,8 @@ export default function ProductionTab({ ctx }) {
         const label = chosen?.label || '';
         const plannedPieces = inUnit(reconciling.outputQty, chosen);
         return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setReconciling(null)}>
-          <div className="bg-surface border border-white/10 rounded-xl p-5 w-full max-w-sm" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto" onClick={() => setReconciling(null)}>
+          <div className="bg-surface border border-white/10 rounded-xl p-5 w-full max-w-sm my-auto" onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-fg mb-1 flex items-center gap-1.5"><ClipboardCheck size={16} className="text-brand-text" /> Confirm actual output</h3>
             <p className="text-fg/75 text-xs mb-3">{reconciling.outputName} - planned {plannedPieces} {label}</p>
             <label className="text-[9px] text-fg/70 uppercase tracking-wider block mb-1">Actual quantity produced</label>

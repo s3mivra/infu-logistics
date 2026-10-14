@@ -62,8 +62,8 @@ export default function SpoilageModal() {
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-4">
+    <div className="fixed inset-0 z-[9999] flex justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in overflow-y-auto">
+      <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-4 my-auto">
         <div className="flex justify-between items-center">
           <div>
             <h2 className="text-lg font-black text-fg uppercase tracking-wider">Log Waste / Spoilage</h2>

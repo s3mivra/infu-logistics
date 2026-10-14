@@ -8,8 +8,8 @@ export default function ShiftEndModal() {
   if (!(shiftEndModal)) return null;
 
   return (
-      <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
-        <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-8 flex flex-col gap-5">
+      <div className="fixed inset-0 z-[9999] flex justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in overflow-y-auto">
+        <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-8 flex flex-col gap-5 my-auto">
 
           {shiftReconcile.result ? (
             /* ── RESULTS SCREEN ── */

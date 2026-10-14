@@ -33,9 +33,9 @@ export function useManagerApproval(apiFetch) {
   };
 
   const approvalDialog = ask ? (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => finish(null)}>
+    <div className="fixed inset-0 z-[60] flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => finish(null)}>
       <form role="dialog" aria-label={ask.title} onSubmit={submit} onClick={e => e.stopPropagation()}
-        className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6">
+        className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 my-auto">
         <h2 className="font-black text-fg mb-1">{ask.title}</h2>
         {ask.detail && <p className="text-fg/75 text-sm mb-3 whitespace-pre-line">{ask.detail}</p>}
         <label htmlFor="mgr-pin" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Approver PIN</label>

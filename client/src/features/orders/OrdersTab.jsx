@@ -382,9 +382,9 @@ export default function OrdersTab({ ctx }) {
   return (
           <div className="w-full">
       {pinAsk && (
-        <div className="fixed inset-0 z-[10000] bg-black/70 flex items-center justify-center p-4" onClick={() => !pinAsk.busy && setPinAsk(null)}>
+        <div className="fixed inset-0 z-[10000] bg-black/70 flex justify-center p-4 overflow-y-auto" onClick={() => !pinAsk.busy && setPinAsk(null)}>
           <form role="dialog" aria-modal="true" aria-labelledby="pin-ask-title" onSubmit={submitPin} onClick={e => e.stopPropagation()}
-            className="w-full max-w-xs bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl p-5 space-y-3">
+            className="w-full max-w-xs bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl p-5 space-y-3 my-auto">
             <h2 id="pin-ask-title" className="text-fg font-black text-base">Manager approval</h2>
             <p className="text-fg/75 text-xs leading-snug">
               Deleting paid order <b className="text-fg">{pinAsk.order.orderNumber}</b> ({peso(pinAsk.order.total || 0)}). A manager enters their PIN - you stay signed in.

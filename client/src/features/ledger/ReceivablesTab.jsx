@@ -219,8 +219,8 @@ export default function ReceivablesTab({
                 collection does, so it collects the same reference and
                 remarks rather than firing on a bare confirm. */}
             {clientCreditModal && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setClientCreditModal(null)}>
-                <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+              <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => setClientCreditModal(null)}>
+                <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 my-auto" onClick={e => e.stopPropagation()}>
                   <h2 className="font-black text-fg text-lg mb-1">Apply client credit</h2>
                   <p className="text-xs text-fg/75 mb-4">
                     {clientCreditModal.order.orderNumber} · {clientCreditModal.order.customerName}

@@ -24,9 +24,9 @@ export default function BounceCheckModal() {
   const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   return (
-    <div className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in"
+    <div className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-sm flex justify-center p-0 sm:p-4 animate-fade-in overflow-y-auto"
       onClick={e => { if (e.target === e.currentTarget) setBounceTarget(null); }} role="dialog" aria-modal="true" aria-label="Mark check bounced">
-      <div className="bg-surface border border-red-500/25 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col animate-scale-in">
+      <div className="bg-surface border border-red-500/25 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col animate-scale-in mt-auto sm:my-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-red-500/15 text-danger flex items-center justify-center shrink-0"><AlertTriangle size={17}/></div>

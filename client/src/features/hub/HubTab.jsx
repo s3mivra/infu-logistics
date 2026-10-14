@@ -1507,10 +1507,10 @@ export default function HubTab({ ctx }) {
 
       {/* ── Accept modal ── */}
       {acceptTarget && (
-        <div className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+        <div className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-sm flex justify-center p-4 overflow-y-auto"
           onClick={e => { if (e.target === e.currentTarget) setAcceptTarget(null); }}
           role="dialog" aria-modal="true" aria-label="Accept transfer">
-          <div className="bg-surface border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-elev-3">
+          <div className="bg-surface border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-elev-3 my-auto">
             <h3 className="text-fg font-black text-base mb-1">Accept Transfer</h3>
             <p className="text-fg/75 text-sm mb-4">
               Receiving <span className="text-fg font-bold">{acceptTarget.qtyBase} {acceptTarget.unit}</span> of{' '}
@@ -1551,10 +1551,10 @@ export default function HubTab({ ctx }) {
           "what we can actually give", not a chance to substitute something
           else. Adding a new item isn't offered here on purpose. */}
       {counterTarget && (
-        <div className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+        <div className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-sm flex justify-center p-4 overflow-y-auto"
           onClick={e => { if (e.target === e.currentTarget) setCounterTarget(null); }}
           role="dialog" aria-modal="true" aria-label="Counter-offer">
-          <div className="bg-surface border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-elev-3">
+          <div className="bg-surface border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-elev-3 my-auto">
             <h3 className="text-fg font-black text-base mb-1">Counter-Offer</h3>
             <p className="text-fg/75 text-sm mb-4">
               Adjust what you can actually give <span className="text-brand-text font-bold">{counterTarget.fromSlug === info?.tenant ? counterTarget.toName : counterTarget.fromName}</span>.
@@ -1596,10 +1596,10 @@ export default function HubTab({ ctx }) {
 
       {/* ── Decline modal ── */}
       {declineTarget && (
-        <div className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+        <div className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-sm flex justify-center p-4 overflow-y-auto"
           onClick={e => { if (e.target === e.currentTarget) setDeclineTarget(null); }}
           role="dialog" aria-modal="true" aria-label="Decline transfer request">
-          <div className="bg-surface border border-red-500/25 rounded-2xl p-6 w-full max-w-md shadow-elev-3">
+          <div className="bg-surface border border-red-500/25 rounded-2xl p-6 w-full max-w-md shadow-elev-3 my-auto">
             <h3 className="text-fg font-black text-base mb-1">Decline Request</h3>
             <p className="text-fg/75 text-sm mb-4">
               This closes the negotiation with <span className="text-brand-text font-bold">{declineTarget.fromSlug === info?.tenant ? declineTarget.toName : declineTarget.fromName}</span>.

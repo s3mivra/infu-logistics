@@ -10,8 +10,8 @@ export default function ImportModal() {
   if (!(importModal)) return null;
 
   return (
-      <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in" onClick={e => { if (e.target === e.currentTarget) setImportModal(false); }} role="dialog" aria-modal="true" aria-label="Inventory import preview">
-        <div className="bg-surface border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-4xl shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden animate-scale-in">
+      <div className="fixed inset-0 z-[9998] bg-black/85 flex justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in overflow-y-auto" onClick={e => { if (e.target === e.currentTarget) setImportModal(false); }} role="dialog" aria-modal="true" aria-label="Inventory import preview">
+        <div className="bg-surface border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-4xl shadow-elev-3 flex flex-col max-h-[92vh] overflow-hidden animate-scale-in mt-auto sm:my-auto">
           <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
             <div>
               <h2 className="text-fg font-black text-lg">Stock count</h2>

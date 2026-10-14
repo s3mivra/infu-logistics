@@ -156,8 +156,8 @@ export default function CheckVouchersTab({
         )}
 
         {cvDocs && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setCvDocs(null)}>
-            <div role="dialog" aria-label="Voucher documents" className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+          <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => setCvDocs(null)}>
+            <div role="dialog" aria-label="Voucher documents" className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6 my-auto" onClick={e => e.stopPropagation()}>
               <h2 className="font-black text-fg mb-1">Voucher {cvDocs.voucherNumber}</h2>
               <p className="text-fg/75 text-sm">{cvDocs.payeeName} · {peso(cvDocs.amount)} · {cvDocs.purpose}</p>
               <p className="text-[11px] text-fg/65">Journal {cvDocs.journalEntryRef || '-'} · {cvDocs.status}</p>
@@ -174,8 +174,8 @@ export default function CheckVouchersTab({
             plain confirm. Lives inside this sub-tab because that is the
             only place a void can be started from. */}
         {cvVoidModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setCvVoidModal(null)}>
-            <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+          <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => setCvVoidModal(null)}>
+            <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 my-auto" onClick={e => e.stopPropagation()}>
               <h2 className="font-black text-fg mb-1">Void voucher {cvVoidModal.voucher.voucherNumber}</h2>
               <p className="text-xs text-fg/75 mb-3">
                 {peso(cvVoidModal.voucher.amount)} to {cvVoidModal.voucher.payeeName}

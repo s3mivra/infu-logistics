@@ -177,8 +177,8 @@ export function LoyaltyDialog({ apiFetch, onClose }) {
     setCard(d.card);
   });
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div role="dialog" aria-label="Loyalty card" className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-5 space-y-3">
+    <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div role="dialog" aria-label="Loyalty card" className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-5 space-y-3 my-auto">
         <div className="flex items-center justify-between">
           <h2 className="font-black text-fg text-lg">Loyalty card</h2>
           <button type="button" onClick={onClose} aria-label="Close" className="text-fg/65 hover:text-fg"><X size={18} /></button>

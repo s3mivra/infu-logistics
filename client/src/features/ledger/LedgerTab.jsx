@@ -2638,8 +2638,8 @@ It posts only what is not already accrued for that month.`)) return;
 
               {/* Pay modal */}
               {billInvoiceModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setBillInvoiceModal(null)}>
-                  <div role="dialog" aria-label="Supplier invoice" className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+                <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => setBillInvoiceModal(null)}>
+                  <div role="dialog" aria-label="Supplier invoice" className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 my-auto" onClick={e => e.stopPropagation()}>
                     <h2 className="font-black text-fg mb-1">Supplier invoice - {billInvoiceModal.billNumber}</h2>
                     <p className="text-fg/75 text-sm mb-3">{billInvoiceModal.supplierName} · received {peso(billInvoiceModal.amount)}{billInvoiceModal.poNumber ? ` on ${billInvoiceModal.poNumber}` : ''}</p>
                     <p className="text-[11px] text-fg/70 mb-3">{billInvoiceModal.source === 'PO' ? 'Compared with the PO price of what arrived and with what receiving booked. It must match (within ₱1) before this bill can be approved.' : 'Compared with this bill\'s amount.'}</p>
@@ -2667,8 +2667,8 @@ It posts only what is not already accrued for that month.`)) return;
                 const supplier = (suppliers || []).find(s => String(s._id) === String(billPayModal.supplierId));
                 const availableCredit = supplier?.creditBalance || 0;
                 return (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setBillPayModal(null)}>
-                  <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+                <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => setBillPayModal(null)}>
+                  <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 my-auto" onClick={e => e.stopPropagation()}>
                     <h2 className="font-black text-fg mb-1">Pay bill {billPayModal.billNumber}</h2>
                     <p className="text-fg/75 text-sm mb-1">{billPayModal.supplierName} · {peso(billPayModal.amount)} total</p>
                     {billPayModal.paidAmount > 0 && <p className="text-warning text-xs mb-2">{peso(billPayModal.paidAmount)} already paid · {peso(outstanding)} remaining</p>}
@@ -3233,8 +3233,8 @@ It posts only what is not already accrued for that month.`)) return;
 
           {/* ── BACKDATE QUEUE - COMPLETE ── supply the missing payment method, then post */}
           {bdQueueResolve && !bdSheetPicker && !bdImportPreview && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !bdQueueSaving && setBdQueueResolve(null)}>
-              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !bdQueueSaving && setBdQueueResolve(null)}>
+              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl my-auto" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
                   <div>
                     <h2 className="font-black text-fg text-base">Complete Queued Sale</h2>
@@ -3296,8 +3296,8 @@ It posts only what is not already accrued for that month.`)) return;
 
           {/* ── BACKDATE IMPORT - OPTIONS (sheet selection + the same settings the manual entry form asks for) ── */}
           {bdSheetPicker && !bdImportPreview && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !bdImporting && setBdSheetPicker(null)}>
-              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !bdImporting && setBdSheetPicker(null)}>
+              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl my-auto" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
                   <div>
                     <h2 className="font-black text-fg text-base">Import Options</h2>
@@ -3525,8 +3525,8 @@ It posts only what is not already accrued for that month.`)) return;
 
           {/* ── REQUISITION SLIP - REJECT REASON ── */}
           {reqSlipRejecting && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !reqSlipBusy && setReqSlipRejecting(null)}>
-              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !reqSlipBusy && setReqSlipRejecting(null)}>
+              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl my-auto" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
                   <h2 className="font-black text-fg text-base">Reject {reqSlipRejecting.slipNumber}</h2>
                   <button onClick={() => !reqSlipBusy && setReqSlipRejecting(null)} className="text-fg/70 hover:text-fg transition"><X size={18} /></button>

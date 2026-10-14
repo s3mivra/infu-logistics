@@ -7401,9 +7401,9 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           friction that makes people share a session, and a shared session is
           what puts the wrong name on a sale. */}
       {switchOpen && (
-        <div className="fixed inset-0 z-[99998] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        <div className="fixed inset-0 z-[99998] flex justify-center p-4 bg-black/70 backdrop-blur-sm overflow-y-auto"
           onClick={() => { if (!switchBusy && !switchLocked) setSwitchOpen(false); }}>
-          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 my-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-3 mb-4">
               <div>
                 <h2 className="font-black text-fg text-lg leading-none">
@@ -7809,8 +7809,8 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
       {/* Payment QR - full-screen for the customer to scan; dismissed once paid. */}
       {payQrOpen && systemSettings.paymentQrImage && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-6" onClick={() => setPayQrOpen(false)}>
-          <div className="bg-white rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[9999] flex justify-center bg-black/90 backdrop-blur-sm p-6 overflow-y-auto" onClick={() => setPayQrOpen(false)}>
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl my-auto" onClick={e => e.stopPropagation()}>
             <p className="text-black font-black text-lg uppercase tracking-wider mb-1">Scan to Pay</p>
             <p className="text-fg/70 text-xs mb-4">Open your e-wallet or bank app and scan</p>
             <img src={systemSettings.paymentQrImage} alt="Payment QR" className="w-full max-w-[300px] mx-auto rounded-xl" />

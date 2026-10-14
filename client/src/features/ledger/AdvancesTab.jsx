@@ -439,8 +439,8 @@ export default function AdvancesTab({
 
         {/* ── Cancel modal ── */}
         {advCancelModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setAdvCancelModal(null)}>
-            <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+          <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => setAdvCancelModal(null)}>
+            <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 my-auto" onClick={e => e.stopPropagation()}>
               <h2 className="font-black text-fg mb-1">Cancel {advCancelModal.advance.advanceNumber}</h2>
               <p className="text-xs text-fg/75 mb-3">
                 {peso(advCancelModal.advance.amount)} · {advCancelModal.advance.payeeName}

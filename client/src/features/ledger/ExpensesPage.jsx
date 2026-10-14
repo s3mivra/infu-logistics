@@ -223,8 +223,8 @@ export default function ExpensesPage() {
 
       {/* Import preview - nothing hits the server until this is confirmed. */}
       {expenseImportPreview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setExpenseImportPreview(null)}>
-          <div className="bg-surface border border-white/10 rounded-2xl w-full max-w-4xl max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto" onClick={() => setExpenseImportPreview(null)}>
+          <div className="bg-surface border border-white/10 rounded-2xl w-full max-w-4xl max-h-[88vh] flex flex-col my-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
               <div>
                 <h2 className="font-black text-fg text-lg flex items-center gap-2"><Upload size={16} className="text-brand-text" /> Import Preview</h2>

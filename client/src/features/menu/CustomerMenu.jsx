@@ -825,8 +825,8 @@ export default function CustomerMenu() {
 
       {/* SUCCESS FLASH */}
       {successMessage && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-sidebar-bg border border-brand/30 p-10 rounded-3xl text-center max-w-xs w-full mx-4">
+        <div className="fixed inset-0 z-[60] flex justify-center bg-black/80 backdrop-blur-sm animate-fade-in overflow-y-auto">
+          <div className="bg-sidebar-bg border border-brand/30 p-10 rounded-3xl text-center max-w-xs w-full mx-4 my-auto">
             <div className="w-16 h-16 rounded-full bg-brand/20 flex items-center justify-center mx-auto mb-5">
               <CheckCircle size={32} className="text-brand-text" />
             </div>
