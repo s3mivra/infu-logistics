@@ -356,16 +356,17 @@ export default function ProcurementTab({ ctx }) {
   const suggestionToLine = (l) => {
     const inv = inventory.find(i => l.invId && String(i._id) === String(l.invId)) || inventory.find(i => i.itemName === l.itemName);
     const displayQty = Number(l.suggestedOrder) || 0;
-    // The report's suggestedOrder/estCost are in DISPLAY units (₱/kg-style).
-    // LOG orders by the PACK, so convert to a pack count + price-per-pack
-    // whenever the item's real pack size is known - same convention as
-    // pickInventory() / the Edit Inventory modal. Falls back to the raw
-    // display-unit figures when packSize isn't tracked for this item.
+    // The report's suggestedOrder is in display units for a cafe (kg, L) and in
+    // whole packs for logistics; estCost is the line total either way. LOG
+    // prices the line per pack - same convention as pickInventory() / the Edit
+    // Inventory modal.
     const packSize = inv?.packSize && inv.packSize > 0 ? inv.packSize : null;
     let orderedQty = displayQty;
     let unitCost = displayQty > 0 ? +((Number(l.estCost) || 0) / displayQty).toFixed(4) : (inv?.unitCost ?? l.unitCost ?? '');
+    // For logistics the report already counts in whole packs ("pcs": one
+    // bottle, one box) - dividing by the pack size again ordered half a bottle.
     if (BUSINESS_TYPE === 'log' && packSize && packInfo && inv) {
-      orderedQty = +(displayQty / packSize).toFixed(2);
+      orderedQty = Math.ceil(displayQty);
       unitCost = +(packInfo(inv).cost).toFixed(4);
     }
     return {

@@ -69,12 +69,18 @@ describe('suggested purchase order', () => {
     // Fast Syrup: 20 on hand, 300 on order, 20 a day. 14 days + 10 to arrive = 480 needed.
     const r = await auth('get', '/api/reports/purchase-order?days=14');
     expect(r.status, JSON.stringify(r.body)).toBe(200);
-    expect(r.body.lines.find(l => l.itemName === 'Fast Syrup')).toBeUndefined();   // 320 covered: not selling out yet
+    // 320 covers the 24 days asked for, but not Stock movement's 30 + 7 + 3:
+    // the draft asks for what Analytics says to buy, less what is on order.
+    const mv = async () => (await auth('get', '/api/analytics/stock-movement')).body.rows.find(x => x.itemName === 'FAST SYRUP' || x.itemName === 'Fast Syrup');
+    const covered = r.body.lines.find(l => l.itemName === 'Fast Syrup');
+    expect(covered.suggestedOrder).toBe(Math.ceil((await mv()).recommend));
     await mongoose.model('PurchaseOrder').updateOne({ poNumber: 'PO-FC-1' }, { $set: { status: 'Cancelled' } });
     const again = await auth('get', '/api/reports/purchase-order?days=14');
     const line = again.body.lines.find(l => l.itemName === 'Fast Syrup');
     expect(line, JSON.stringify(again.body.lines)).toBeTruthy();
-    expect(line.suggestedOrder).toBe(460);
+    // Nothing on order now: at least the 460 the 24-day rule needs, and 300 more than before.
+    expect(line.suggestedOrder).toBeGreaterThanOrEqual(460);
+    expect(line.suggestedOrder - covered.suggestedOrder).toBe(300);
     expect(again.body.lines.find(l => l.itemName === 'Idle Syrup')).toBeUndefined();
   });
 });

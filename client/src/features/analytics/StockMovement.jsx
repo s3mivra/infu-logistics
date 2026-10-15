@@ -16,6 +16,12 @@ const CLASSES = {
   unavailable: { label: 'Out of stock', tone: 'text-fg/80', chip: 'bg-white/5 text-fg/80 border-white/15', hint: 'No sales, but it was out of stock for most of the period - so that says nothing about demand.' },
   new: { label: 'Too new to tell', tone: 'text-fg/70', chip: 'bg-white/5 text-fg/70 border-white/15', hint: 'No sales yet, and not enough history (item or business) to call it dead.' },
 };
+// How soon an item that sells runs out (server: runOut in stock-movement.js).
+const RUN_OUT = {
+  out: { label: 'Out', tone: 'text-danger', hint: 'Nothing free on the shelf, and it sells.' },
+  urgent: { label: 'Order now', tone: 'text-danger', hint: 'Runs out before a delivery ordered today would arrive.' },
+  low: { label: 'Low', tone: 'text-warning', hint: 'Runs out inside the spare days kept as safety stock.' },
+};
 const PERIODS = [[7, 'Last 7 days'], [30, 'Last 30 days'], [60, 'Last 60 days'], [90, 'Last 90 days']];
 const SETTING_FIELDS = [
   ['fastPercentile', 'Fast-moving = at or above the', 'th percentile of sellers (75 = top 25%)'],
@@ -23,7 +29,8 @@ const SETTING_FIELDS = [
   ['deadDays', 'Dead stock = no sale for', 'days'],
   ['coverDays', 'Buy enough for', 'days of sales'],
   ['leadTimeDays', 'Delivery takes', 'days'],
-  ['safetyDays', 'Plus spare', 'days'],
+  ['safetyDays', 'Plus spare', 'days (safety stock)'],
+  ['categoryMinSellers', 'Judge fast within a category of', '+ sellers'],
 ];
 const input = 'bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg';
 const th = 'px-3 py-2 text-[10px] font-black uppercase tracking-wider text-fg/65 whitespace-nowrap';
@@ -35,7 +42,7 @@ export default function StockMovement({ apiFetch, can }) {
   const [custom, setCustom] = useState(null);           // { start, end } when a range is typed
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState('all');           // a class, 'soon', or 'all'
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState(null);          // settings being changed
   const canSet = !!can?.('inventory.setup');
@@ -50,10 +57,12 @@ export default function StockMovement({ apiFetch, can }) {
   }, [apiFetch, range.start, range.end]);
   useEffect(() => { load(); }, [load]);
 
+  // Dates as the business's own calendar, whatever the viewer's device says.
+  const dateStr = (d) => new Date(d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: data?.timezone || undefined });
   const qty = (n) => (Number(n) || 0).toLocaleString('en-PH', { maximumFractionDigits: data?.wholeUnits ? 2 : 3 });
   const rows = useMemo(() => {
     const term = q.trim().toLowerCase();
-    return (data?.rows || []).filter(r => (filter === 'all' || r.class === filter)
+    return (data?.rows || []).filter(r => (filter === 'all' || r.class === filter || (filter === 'soon' && r.runOut))
       && (!term || r.itemName.toLowerCase().includes(term) || r.itemCode.toLowerCase().includes(term)));
   }, [data, filter, q]);
 
@@ -71,8 +80,10 @@ export default function StockMovement({ apiFetch, can }) {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
       [`Stock movement ${data.start} to ${data.end}`], [],
-      ['Item', 'Code', 'Class', 'In stock', 'Unit', 'On order', 'Sold', 'Orders', 'Days sold', 'Per day', 'Days of stock', 'Last sold', 'Days out of stock', 'Buy'],
-      ...rows.map(r => [r.itemName, r.itemCode, CLASSES[r.class].label, r.stock, r.unit, r.onOrder, r.soldQty, r.transactions, r.soldDays, r.adu, r.daysOfStock ?? '', r.lastSold ? dayStr(r.lastSold) : 'never', r.outDays, r.recommend || '']),
+      ['Item', 'Code', 'Category', 'In stock', 'Free', 'Unit', 'On order', 'Sold', 'Orders', 'Days sold', 'Per day', 'Days left', 'Runs out', 'Last sold', 'Days since last sale', 'Days out of stock', 'Class', 'Buy'],
+      ...rows.map(r => [r.itemName, r.itemCode, r.category, r.stock, r.available, r.unit, r.onOrder, r.soldQty, r.transactions, r.soldDays, r.adu,
+        r.daysOfStock ?? 'N/A', r.runOut ? RUN_OUT[r.runOut].label : '', r.lastSold ? dateStr(r.lastSold) : 'never', r.daysSinceSale ?? 'N/A', r.outDays, CLASSES[r.class].label, r.recommend || 0]),
+      [], [`Per day: ${data.basis?.perDay || ''}`], [`Buy: ${data.basis?.buy || ''}`], [data.basis?.reserved || ''],
     ]), 'Stock movement');
     XLSX.writeFile(wb, `stock-movement-${data.start}-to-${data.end}.xlsx`);
   };
@@ -125,8 +136,9 @@ export default function StockMovement({ apiFetch, can }) {
       {!data ? <p className="text-fg/65 text-sm text-center p-6 font-bold">{loading ? 'Loading…' : 'Refresh to load.'}</p> : (
         <>
           <div className="flex flex-wrap gap-2 items-center">
-            {[['all', `All (${data.rows.length})`], ...Object.entries(CLASSES).map(([k, c]) => [k, `${c.label} (${data.counts[k] || 0})`])].map(([k, label]) => (
-              <button key={k} type="button" onClick={() => setFilter(k)} aria-pressed={filter === k} title={CLASSES[k]?.hint}
+            {[['all', `All (${data.rows.length})`], ...Object.entries(CLASSES).map(([k, c]) => [k, `${c.label} (${data.counts[k] || 0})`]),
+              ['soon', `Runs out soon (${data.rows.filter(r => r.runOut).length})`]].map(([k, label]) => (
+              <button key={k} type="button" onClick={() => setFilter(k)} aria-pressed={filter === k} title={CLASSES[k]?.hint || (k === 'soon' ? 'Out, or running out before or just after a delivery could arrive.' : undefined)}
                 className={`px-3 py-1.5 rounded-lg border text-[11px] font-bold ${filter === k ? 'bg-brand text-on-brand border-brand' : (CLASSES[k]?.chip || 'bg-white/5 text-fg/80 border-white/15')}`}>{label}</button>
             ))}
             <span className="relative ml-auto">
@@ -137,32 +149,40 @@ export default function StockMovement({ apiFetch, can }) {
           <p className="text-[11px] text-fg/70">
             {data.start} to {data.end} · {Math.round(data.effectiveDays)} day(s) of sales to go by
             {data.counts.fast + data.counts.slow > 0 && ` · fast-moving means ${qty(data.fastThreshold)} ${data.wholeUnits ? 'unit(s)' : ''} a day or more, on ${data.settings.fastMinSoldDays}+ days`}
-            {' · '}buying covers {data.settings.coverDays} days + {data.settings.leadTimeDays} delivery + {data.settings.safetyDays} spare, less what is in stock and on order.
+            {' · '}Per day = sold ÷ the days in the period it had stock (a stock-out is not read as low demand)
+            {' · '}Buy = per day × ({data.settings.coverDays} cover + {data.settings.leadTimeDays} delivery days) + {data.settings.safetyDays} days of safety stock, less free stock (on hand minus what is held for client orders) and open purchase orders{data.wholeUnits ? ', rounded up to whole units' : '; pcs items rounded up to whole pieces'}.
             {data.historyDays < data.settings.deadDays && ' Sales history is still shorter than the dead-stock period, so nothing is called dead yet.'}
           </p>
           <div className="overflow-x-auto border border-white/5 rounded-lg">
             <table className="w-full text-left min-w-[980px]">
               <thead><tr>
-                <th className={th}>Item</th><th className={th}>Class</th><th className={`${th} text-right`}>In stock</th><th className={`${th} text-right`}>Sold</th>
-                <th className={`${th} text-right`}>Orders</th><th className={`${th} text-right`}>Per day</th><th className={`${th} text-right`}>Lasts</th>
-                <th className={th}>Last sold</th><th className={`${th} text-right`}>Buy</th>
+                <th className={th}>Item</th><th className={`${th} text-right`}>In stock</th><th className={`${th} text-right`}>Sold</th>
+                <th className={`${th} text-right`}>Orders</th><th className={`${th} text-right`}>Per day</th>
+                <th className={`${th} text-right`} title="Free stock ÷ per day. N/A when it has not sold.">Days left</th>
+                <th className={th}>Last sold</th><th className={`${th} text-right`} title="Whole days, by the business's calendar">Since sale</th>
+                <th className={th}>Class</th><th className={`${th} text-right`}>Buy</th>
               </tr></thead>
               <tbody>
                 {rows.slice(0, 400).map(r => (
                   <tr key={r._id} className="border-t border-white/5">
                     <td className={`${td} text-fg font-bold whitespace-normal`}>{r.itemName}{r.itemCode && <span className="block text-[10px] text-fg/65 font-normal font-mono">{r.itemCode}</span>}</td>
-                    <td className={td} title={CLASSES[r.class].hint}><span className={`px-2 py-0.5 rounded border text-[10px] font-black uppercase tracking-wider ${CLASSES[r.class].chip}`}>{CLASSES[r.class].label}</span>
-                      {r.outDays >= 1 && r.class !== 'unavailable' && <span className="block text-[10px] text-fg/65 mt-0.5">out of stock {Math.round(r.outDays)} day(s)</span>}</td>
-                    <td className={`${td} text-right tabular-nums text-fg/80`}>{qty(r.stock)} {r.unit}{r.onOrder > 0 && <span className="block text-[10px] text-fg/65">+{qty(r.onOrder)} on order</span>}</td>
+                    <td className={`${td} text-right tabular-nums text-fg/80`}>{qty(r.stock)} {r.unit}
+                      {r.reserved > 0 && <span className="block text-[10px] text-fg/65">{qty(r.reserved)} held</span>}
+                      {r.onOrder > 0 && <span className="block text-[10px] text-fg/65">+{qty(r.onOrder)} on order</span>}</td>
                     <td className={`${td} text-right tabular-nums text-fg`}>{qty(r.soldQty)}</td>
                     <td className={`${td} text-right tabular-nums text-fg/80`}>{r.transactions}<span className="block text-[10px] text-fg/65">{r.soldDays} day(s)</span></td>
-                    <td className={`${td} text-right tabular-nums text-fg/80`}>{r.adu > 0 ? qty(r.adu) : '-'}</td>
-                    <td className={`${td} text-right tabular-nums text-fg/80`}>{r.daysOfStock != null ? `${Math.floor(r.daysOfStock)} d` : '-'}</td>
-                    <td className={`${td} text-fg/80`}>{r.lastSold ? new Date(r.lastSold).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : 'never'}</td>
-                    <td className={`${td} text-right tabular-nums font-black ${r.recommend > 0 ? 'text-brand-text' : 'text-fg/65'}`}>{r.recommend > 0 ? `${qty(r.recommend)} ${r.unit}` : '-'}</td>
+                    <td className={`${td} text-right tabular-nums text-fg/80`}>{r.adu > 0 ? qty(r.adu) : 'N/A'}</td>
+                    <td className={`${td} text-right tabular-nums ${r.runOut ? RUN_OUT[r.runOut].tone : 'text-fg/80'}`} title={r.runOut ? RUN_OUT[r.runOut].hint : undefined}>
+                      {r.daysOfStock != null ? `${Math.floor(r.daysOfStock)} d` : 'N/A'}
+                      {r.runOut && <span className="block text-[10px] font-black uppercase tracking-wider">{RUN_OUT[r.runOut].label}</span>}</td>
+                    <td className={`${td} text-fg/80`}>{r.lastSold ? dateStr(r.lastSold) : 'never'}</td>
+                    <td className={`${td} text-right tabular-nums text-fg/80`}>{r.daysSinceSale != null ? `${r.daysSinceSale} d` : 'N/A'}</td>
+                    <td className={td} title={CLASSES[r.class].hint}><span className={`px-2 py-0.5 rounded border text-[10px] font-black uppercase tracking-wider ${CLASSES[r.class].chip}`}>{CLASSES[r.class].label}</span>
+                      {r.outDays >= 1 && r.class !== 'unavailable' && <span className="block text-[10px] text-fg/65 mt-0.5">out of stock {Math.round(r.outDays)} day(s)</span>}</td>
+                    <td className={`${td} text-right tabular-nums font-black ${r.recommend > 0 ? (r.runOut === 'out' || r.runOut === 'urgent' ? 'text-danger' : 'text-brand-text') : 'text-fg/65'}`}>{r.recommend > 0 ? `${qty(r.recommend)} ${r.unit}` : '-'}</td>
                   </tr>
                 ))}
-                {rows.length === 0 && <tr><td colSpan={9} className="p-6 text-center text-fg/65 text-sm font-bold">No items here.</td></tr>}
+                {rows.length === 0 && <tr><td colSpan={10} className="p-6 text-center text-fg/65 text-sm font-bold">No items here.</td></tr>}
               </tbody>
             </table>
           </div>

@@ -8,7 +8,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
-import { percentile, daysWithoutStock, classify, cleanMovementSettings, MOVEMENT_DEFAULTS } from '../features/stock-movement.js';
+import { percentile, daysWithoutStock, classify, cleanMovementSettings, calendarDaysBetween, recommendBuy, runOut, MOVEMENT_DEFAULTS } from '../features/stock-movement.js';
 
 const DAY = 86400000;
 const ago = (d) => new Date(Date.now() - d * DAY);
@@ -45,8 +45,44 @@ describe('the arithmetic', () => {
     expect(classify({ ...base, soldQty: 0, adu: 0, soldDays: 0, effectiveDays: 7, daysSinceSale: 10 })).toBe('slow');
   });
 
+  it('days since the last sale are whole calendar days in the business time zone', () => {
+    expect(calendarDaysBetween('2026-09-30T04:00:00Z', new Date('2026-10-15T04:00:00Z'))).toBe(15);
+    // 23:30 on Sep 30 in Manila and 00:30 on Oct 1 in Manila are different days...
+    expect(calendarDaysBetween('2026-09-30T15:30:00Z', new Date('2026-09-30T16:30:00Z'))).toBe(1);
+    // ...while 00:30 and 23:30 on the same Manila day are not.
+    expect(calendarDaysBetween('2026-09-30T16:30:00Z', new Date('2026-10-01T15:30:00Z'))).toBe(0);
+    expect(calendarDaysBetween(null)).toBeNull();
+    expect(calendarDaysBetween('not a date')).toBeNull();
+  });
+
+  it('buy = per day x (cover + delivery) + safety stock, less free stock and what is on order', () => {
+    const settings = { coverDays: 30, leadTimeDays: 7, safetyDays: 3 };
+    // 2 a day: target 2 x 37 + 2 x 3 = 80; 10 free and 20 coming leaves 50.
+    expect(recommendBuy({ adu: 2, available: 10, onOrder: 20, settings, whole: true })).toBe(50);
+    // A fraction of a piece is rounded UP to the next whole one, never down.
+    expect(recommendBuy({ adu: 0.1, available: 3, onOrder: 0, settings, whole: true })).toBe(1);   // 4 - 3 = 1
+    expect(recommendBuy({ adu: 0.11, available: 3, onOrder: 0, settings, whole: true })).toBe(2);  // 4.4 - 3 = 1.4
+    // An ingredient may be bought in part.
+    expect(recommendBuy({ adu: 0.11, available: 3, onOrder: 0, settings, whole: false })).toBeCloseTo(1.4, 3);
+    // Enough already, no rate, or bad numbers: nothing.
+    expect(recommendBuy({ adu: 1, available: 100, onOrder: 0, settings, whole: true })).toBe(0);
+    expect(recommendBuy({ adu: 0, available: 0, onOrder: 0, settings, whole: true })).toBe(0);
+    expect(recommendBuy({ adu: NaN, available: 0, onOrder: 0, settings, whole: true })).toBe(0);
+    // Negative stock is not counted as a debt to buy back on top.
+    expect(recommendBuy({ adu: 1, available: -5, onOrder: 0, settings, whole: true })).toBe(40);
+  });
+
+  it('flags what runs out before a delivery could arrive', () => {
+    const settings = { leadTimeDays: 7, safetyDays: 3 };
+    expect(runOut({ daysLeft: 0, available: 0, adu: 1, settings })).toBe('out');
+    expect(runOut({ daysLeft: 5, available: 5, adu: 1, settings })).toBe('urgent');
+    expect(runOut({ daysLeft: 8, available: 8, adu: 1, settings })).toBe('low');
+    expect(runOut({ daysLeft: 20, available: 20, adu: 1, settings })).toBeNull();
+    expect(runOut({ daysLeft: null, available: 0, adu: 0, settings })).toBeNull();     // no sales: no forecast
+  });
+
   it('settings stay inside sensible bounds', () => {
-    expect(cleanMovementSettings({ fastPercentile: 999, deadDays: 'x', coverDays: 14 })).toMatchObject({ fastPercentile: 75, deadDays: 30, coverDays: 14 });
+    expect(cleanMovementSettings({ fastPercentile: 999, deadDays: 'x', coverDays: 14 })).toMatchObject({ fastPercentile: 75, deadDays: 90, coverDays: 14 });
   });
 });
 
@@ -124,6 +160,18 @@ describe('logistics: whole units', () => {
     await M('StockCard').create({ inventoryId: String(gone._id), itemName: 'SOLD OUT ITEM', type: 'Sale', qtyChange: -4, balanceAfter: 0, date: ago(60) });
     const rows = (await as('get', '/api/analytics/stock-movement')).body.rows;
     expect(rows.find(r => r.itemCode === 'GONE')).toMatchObject({ class: 'unavailable', soldQty: 0 });
+  });
+
+  it('the Suggested PO drafts what Stock movement says to buy, in whole units', async () => {
+    const mv = (await as('get', '/api/analytics/stock-movement')).body.rows.find(r => r.itemCode === 'SYR-2L');
+    expect(mv.recommend).toBeGreaterThan(0);
+    const po = await as('get', '/api/reports/purchase-order?days=14');
+    expect(po.status).toBe(200);
+    const line = po.body.lines.find(l => l.itemCode === 'SYR-2L');
+    expect(line, JSON.stringify(po.body.lines)).toBeTruthy();
+    expect(Number.isInteger(line.suggestedOrder)).toBe(true);
+    expect(line.suggestedOrder).toBeGreaterThanOrEqual(mv.recommend);
+    expect(po.body.lines.find(l => l.itemCode === 'OLD')).toBeUndefined();   // dead stock is not bought
   });
 
   it('the thresholds can be changed and are used', async () => {

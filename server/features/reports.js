@@ -1273,7 +1273,41 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
         estCost: +((needBase) * (i.unitCost || 0)).toFixed(2), lowStock: lowFlag, sellingOut,
         supplierId: best?.supplierId || null, supplierName: best?.supplierName || null,
       };
-    }).filter(Boolean).sort((a, b) => (b.suggestedOrder - a.suggestedOrder));
+    }).filter(Boolean);
+    // What Analytics -> Stock movement says to buy (fast and slow sellers, over
+    // the last 30 days, at its cover / delivery / spare days) is suggested here
+    // too - it counts sales the recipe matching above can miss. Where both have
+    // a figure for an item, the larger one is kept.
+    try {
+      const mv = ctx.computeStockMovement ? await ctx.computeStockMovement(req, {}) : null;
+      const byInv = new Map(lines.map(l => [String(l.invId), l]));
+      for (const r of (mv?.rows || [])) {
+        if (!(r.recommend > 0)) continue;
+        const i = invByIdStr.get(String(r._id));
+        if (!i) continue;
+        const needBase = r.recommend * (r.baseUnits || 1);
+        const { displayUnit: effUnit, mult: effMult } = effectiveDisplay(i);
+        const isLogBiz = (BUSINESS_TYPE || '').toLowerCase() === 'log';
+        const divisor = isLogBiz ? (i.packSize > 0 ? i.packSize * effMult : effMult) : effMult;
+        const suggestedOrder = Math.ceil(needBase / divisor - 1e-9);
+        const cur = byInv.get(String(i._id));
+        if (cur) {
+          if (suggestedOrder > cur.suggestedOrder) { cur.suggestedOrder = suggestedOrder; cur.estCost = +(needBase * (i.unitCost || 0)).toFixed(2); }
+          cur.movement = r.class;
+          continue;
+        }
+        const best = bestSupplierByInv[i._id.toString()] || null;
+        const line = {
+          invId: i._id, itemCode: i.itemCode || '', unit: i.unit || '', unitCost: i.unitCost || 0,
+          itemName: i.itemName, currentStock: Math.round(i.stockQty / divisor), displayUnit: isLogBiz ? 'pcs' : effUnit,
+          avgDailyUse: +((r.adu * (r.baseUnits || 1)) / divisor).toFixed(3), suggestedOrder,
+          estCost: +(needBase * (i.unitCost || 0)).toFixed(2), lowStock: false, sellingOut: false, movement: r.class,
+          supplierId: best?.supplierId || null, supplierName: best?.supplierName || null,
+        };
+        lines.push(line); byInv.set(String(i._id), line);
+      }
+    } catch (err) { captureError(req, err); }
+    lines.sort((a, b) => (b.suggestedOrder - a.suggestedOrder));
     const totalEstCost = lines.reduce((s, l) => s + l.estCost, 0);
     res.json({ success: true, coverDays: days, lines, totalEstCost });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
