@@ -126,6 +126,18 @@ describe('a month of business, through the app', () => {
     expect(tb.debits).toBeCloseTo(tb.credits, 2);
   });
 
+  it('the Analytics sales panel shows today by default, and any period asked for', async () => {
+    const day = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(ago(d));
+    const todayOnly = ok(await auth('get', '/api/analytics/dashboard'), 'dashboard');
+    expect(todayOnly.period).toMatchObject({ isToday: true });
+    expect(todayOnly.today.count).toBe(0);                                  // every sale was moved into the past
+    const month = ok(await auth('get', `/api/analytics/dashboard?start=${day(30)}&end=${day(0)}`), 'dashboard month');
+    expect(month.period).toMatchObject({ start: day(30), end: day(0), isToday: false });
+    expect(month.today.count).toBe(saleIds.length);                         // the voided and cancelled ones are not sales
+    const week = ok(await auth('get', `/api/analytics/dashboard?start=${day(7)}&end=${day(0)}`), 'dashboard week');
+    expect(week.today.count).toBe(saleIds.filter(([, d]) => d <= 7).length);
+  });
+
   let mv, row;
   it('Stock movement counts what sold, in whole units, over the period', async () => {
     mv = ok(await auth('get', '/api/analytics/stock-movement'), 'stock movement');

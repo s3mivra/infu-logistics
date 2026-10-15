@@ -720,11 +720,16 @@ export default function AdminDashboard() {
   // --- SERVER-SIDE ANALYTICS ---
   const [analyticsData, setAnalyticsData]     = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
-  const fetchAnalytics = async () => {
+  // `range` ({ start, end }) picks the sales panel's period; anything else
+  // (a click event, nothing) keeps the last one chosen.
+  const analyticsRange = useRef(null);
+  const fetchAnalytics = async (range) => {
+    if (range && range.start) analyticsRange.current = range;
     if (analyticsLoading) return;
     setAnalyticsLoading(true);
     try {
-      const res  = await apiFetch('/api/analytics/dashboard');
+      const r = analyticsRange.current;
+      const res  = await apiFetch(`/api/analytics/dashboard${r ? `?start=${r.start}&end=${r.end}` : ''}`);
       const data = await res.json();
       if (data.success) setAnalyticsData(data);
     } catch (err) { console.error('fetchAnalytics', err); }

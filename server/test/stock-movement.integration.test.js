@@ -174,6 +174,15 @@ describe('logistics: whole units', () => {
     expect(po.body.lines.find(l => l.itemCode === 'OLD')).toBeUndefined();   // dead stock is not bought
   });
 
+  it('a threshold out of its range is refused and named, not quietly reset', async () => {
+    const before = (await as('get', '/api/analytics/movement-settings')).body.settings;
+    const bad = await as('put', '/api/analytics/movement-settings').send({ fastPercentile: 30, coverDays: 20 });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toMatch(/fastPercentile must be 50-95/);
+    expect((await as('get', '/api/analytics/movement-settings')).body.settings).toEqual(before);   // nothing half-saved
+    expect((await as('get', '/api/analytics/stock-movement')).body.limits.fastPercentile).toEqual([50, 95]);
+  });
+
   it('the thresholds can be changed and are used', async () => {
     const saved = await as('put', '/api/analytics/movement-settings').send({ coverDays: 10, leadTimeDays: 0, safetyDays: 0 });
     expect(saved.body.settings).toMatchObject({ coverDays: 10, leadTimeDays: 0, safetyDays: 0 });

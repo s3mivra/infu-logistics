@@ -46,7 +46,7 @@ export const MOVEMENT_DEFAULTS = {
   safetyDays: 3,        // ...plus a few spare days (the safety stock)
   categoryMinSellers: 5, // fast-moving is judged within the item's category once it has this many sellers
 };
-const LIMITS = { fastPercentile: [50, 95], fastMinSoldDays: [1, 30], deadDays: [7, 365], coverDays: [1, 180], leadTimeDays: [0, 90], safetyDays: [0, 60], categoryMinSellers: [2, 100] };
+export const MOVEMENT_LIMITS = { fastPercentile: [50, 95], fastMinSoldDays: [1, 30], deadDays: [7, 365], coverDays: [1, 180], leadTimeDays: [0, 90], safetyDays: [0, 60], categoryMinSellers: [2, 100] };
 const DAY = 86400000;
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const r3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
@@ -55,7 +55,7 @@ export function cleanMovementSettings(v = {}) {
   const out = {};
   for (const [k, def] of Object.entries(MOVEMENT_DEFAULTS)) {
     const n = Math.round(Number(v?.[k]));
-    const [lo, hi] = LIMITS[k];
+    const [lo, hi] = MOVEMENT_LIMITS[k];
     out[k] = Number.isFinite(n) && n >= lo && n <= hi ? n : def;
   }
   return out;
@@ -146,6 +146,15 @@ export default function registerStockMovement(ctx) {
   app.put('/api/analytics/movement-settings', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
     try {
       const before = await readSettings();
+      // A number outside its range is refused and named - quietly putting the
+      // default back made a change look as if it had not been allowed at all.
+      const wrong = Object.entries(req.body || {}).filter(([k]) => k in MOVEMENT_LIMITS).filter(([k, v]) => {
+        const n = Number(v), [lo, hi] = MOVEMENT_LIMITS[k];
+        return !(Number.isFinite(n) && Math.round(n) >= lo && Math.round(n) <= hi);
+      });
+      if (wrong.length) {
+        return res.status(400).json({ success: false, error: `Out of range: ${wrong.map(([k]) => `${k} must be ${MOVEMENT_LIMITS[k][0]}-${MOVEMENT_LIMITS[k][1]}`).join('; ')}.`, limits: MOVEMENT_LIMITS });
+      }
       const next = cleanMovementSettings({ ...before, ...(req.body || {}) });
       await Settings.findOneAndUpdate({ key: SETTINGS_KEY }, { key: SETTINGS_KEY, value: next }, { upsert: true });
       try { await logAudit?.(req, { action: 'update', entity: 'MovementSettings', entityId: 'movement', before, after: next }); } catch { /* non-fatal */ }
@@ -318,7 +327,7 @@ export default function registerStockMovement(ctx) {
       return {
         start: startKey, end: endKey, businessType: BUSINESS_TYPE, timezone: businessTimeZone(),
         windowDays: r2(windowDays), effectiveDays: r2(effectiveDays), historyDays: r2(historyDays),
-        settings, fastThreshold: IS_LOG ? r2(fastThreshold) : r3(fastThreshold), counts,
+        settings, limits: MOVEMENT_LIMITS, fastThreshold: IS_LOG ? r2(fastThreshold) : r3(fastThreshold), counts,
         wholeUnits: IS_LOG, rows,
         // How the figures were worked out, for the screen to say so.
         basis: {

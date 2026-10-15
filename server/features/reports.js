@@ -558,7 +558,14 @@ app.get('/api/reports/balance-sheet-monthly', verifyToken, ...canViewReports, re
 app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req, res) => {
   try {
     const now        = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    // The sales panel's period: today by default, or ?start=&end= (YYYY-MM-DD).
+    // Days are the business's own (Manila), not the server clock's - a server
+    // on UTC started "today" at 8 in the morning.
+    const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+    const periodStartKey = isDay(req.query.start) ? String(req.query.start) : businessDateStr();
+    const periodEndKey = isDay(req.query.end) && String(req.query.end) >= periodStartKey ? String(req.query.end) : (isDay(req.query.start) ? periodStartKey : businessDateStr());
+    const todayStart = dayStart(periodStartKey);
+    const periodEnd  = dayEnd(periodEndKey);
     const day30ago   = new Date(now.getTime() - 30 * 86400000);
     const day60ago   = new Date(now.getTime() - 60 * 86400000);
     // Every query below MUST be scoped - this dashboard previously had zero
@@ -572,7 +579,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
 
       // 1. Today's KPIs
       Order.aggregate([
-        { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: todayStart } } },
+        { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: todayStart, $lte: periodEnd } } },
         { $group: {
           _id: null,
           gross:      { $sum: '$subtotal' },
@@ -887,7 +894,9 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
       success: true,
       reorderForecast,
       forecastSettings: { leadTimeDays: LEAD_TIME_DAYS, safetyDays: SAFETY_DAYS, historyDays: daysElapsed30 },
+      // `today` is the chosen period (today unless start/end were given).
       today: { gross: todayGross, revenue: todayRevenue, count: todayCount, avg: todayAvg, discounts: todayDiscounts, comp: todayComp },
+      period: { start: periodStartKey, end: periodEndKey, isToday: periodStartKey === businessDateStr() && periodEndKey === periodStartKey },
       allTime: { revenue: totalAllTimeRevenue, comp: totalAllTimeComplimentary, orders: totalAllTimeOrders },
       dailyRevenue,
       bestDay,

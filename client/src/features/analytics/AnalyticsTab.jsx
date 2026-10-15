@@ -4,6 +4,7 @@ import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
 import ReorderForecast from './ReorderForecast';
 import StockMovement from './StockMovement';
+import { RANGE_PRESETS, presetRange, todayStr } from '../../shared/businessDay.js';
 
 // ── AnalyticsTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
@@ -93,6 +94,14 @@ export default function AnalyticsTab({ ctx }) {
 
   // Layout switch: A = KPI Grid (current), B = Ledger-style (Stage 2).
   const [analyticsLayout, setAnalyticsLayout] = useState('a');
+  // The sales panel's period (Today by default). A preset, or 'custom' dates.
+  const [periodKey, setPeriodKey] = useState('today');
+  const [customPeriod, setCustomPeriod] = useState(() => ({ start: todayStr(), end: todayStr() }));
+  const pickPeriod = (key, custom = customPeriod) => {
+    setPeriodKey(key);
+    const r = key === 'custom' ? custom : presetRange(key);
+    if (r?.start && r?.end && r.start <= r.end) fetchAnalytics?.(r);
+  };
 
   // Compare Branches - only meaningful once a device has been set to a branch
   // (see the "Branch" picker in the POS cart) and has rung up sales tagged
@@ -148,6 +157,10 @@ export default function AnalyticsTab({ ctx }) {
   }
 
   const { today, allTime, dailyRevenue, bestDay, topProducts: tp } = ad;
+  // What the "today" figures cover - the period the server says it used.
+  const p = ad.period;
+  const periodLabel = !p || p.isToday ? 'Today'
+    : (RANGE_PRESETS.find(x => x.key === periodKey && periodKey !== 'custom')?.label || (p.start === p.end ? p.start : `${p.start} to ${p.end}`));
 
   return (
         <div className="flex flex-col gap-6 w-full max-w-7xl mx-auto animate-fade-in">
@@ -161,6 +174,21 @@ export default function AnalyticsTab({ ctx }) {
                   {label}
                 </button>
               ))}
+            </div>
+            <div className="flex items-center gap-2 flex-wrap ml-auto">
+              <select value={periodKey} onChange={e => pickPeriod(e.target.value)} aria-label="Sales period"
+                className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs font-bold text-fg">
+                {RANGE_PRESETS.map(x => <option key={x.key} value={x.key}>{x.label}</option>)}
+                <option value="custom">Choose dates…</option>
+              </select>
+              {periodKey === 'custom' && <>
+                <input type="date" value={customPeriod.start} max={customPeriod.end} aria-label="From"
+                  onChange={e => { const c = { ...customPeriod, start: e.target.value }; setCustomPeriod(c); pickPeriod('custom', c); }}
+                  className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-fg" />
+                <input type="date" value={customPeriod.end} min={customPeriod.start} max={todayStr()} aria-label="To"
+                  onChange={e => { const c = { ...customPeriod, end: e.target.value }; setCustomPeriod(c); pickPeriod('custom', c); }}
+                  className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-fg" />
+              </>}
             </div>
             <button onClick={fetchAnalytics} disabled={analyticsLoading}
               className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/75 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition disabled:opacity-40">
@@ -223,13 +251,13 @@ export default function AnalyticsTab({ ctx }) {
                 </thead>
                 <tbody className="text-fg/85">
                   {[
-                    { section: 'Today' },
-                    { label: 'Gross Sales Today',      value: today.gross },
-                    { label: 'Net Revenue Today',      value: today.revenue },
-                    { label: 'Discounts Today',        value: -Math.abs(today.discounts || 0), neg: true },
-                    { label: 'Complimentary Today',    value: today.comp },
-                    { label: 'Orders Today',            value: today.count, notMoney: true },
-                    { label: 'Avg Order Value Today',  value: today.avg },
+                    { section: periodLabel },
+                    { label: 'Gross Sales',      value: today.gross },
+                    { label: 'Net Revenue',      value: today.revenue },
+                    { label: 'Discounts',        value: -Math.abs(today.discounts || 0), neg: true },
+                    { label: 'Complimentary',    value: today.comp },
+                    { label: 'Orders',           value: today.count, notMoney: true },
+                    { label: 'Avg Order Value',  value: today.avg },
                     { section: 'All-Time' },
                     { label: 'All-Time Revenue',        value: allTime.revenue, bold: true },
                     { label: 'All-Time Complimentary',  value: allTime.comp },

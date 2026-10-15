@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Download, SlidersHorizontal, Search } from 'lucide-react';
+import { RefreshCw, Download, SlidersHorizontal, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { todayStr } from '../../shared/businessDay.js';
 import { IS_LOG } from '../../shared/businessType.js';
@@ -22,6 +22,7 @@ const RUN_OUT = {
   urgent: { label: 'Order now', tone: 'text-danger', hint: 'Runs out before a delivery ordered today would arrive.' },
   low: { label: 'Low', tone: 'text-warning', hint: 'Runs out inside the spare days kept as safety stock.' },
 };
+const PAGE_SIZES = [25, 50, 100];
 const PERIODS = [[7, 'Last 7 days'], [30, 'Last 30 days'], [60, 'Last 60 days'], [90, 'Last 90 days']];
 const SETTING_FIELDS = [
   ['fastPercentile', 'Fast-moving = at or above the', 'th percentile of sellers (75 = top 25%)'],
@@ -45,6 +46,8 @@ export default function StockMovement({ apiFetch, can }) {
   const [filter, setFilter] = useState('all');           // a class, 'soon', or 'all'
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState(null);          // settings being changed
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(() => { try { return Number(localStorage.getItem('stockMovement.pageSize')) || 25; } catch { return 25; } });
   const canSet = !!can?.('inventory.setup');
 
   const range = useMemo(() => custom || { start: dayStr(new Date(Date.now() - (days - 1) * 86400000)), end: todayStr() }, [custom, days]);
@@ -65,9 +68,19 @@ export default function StockMovement({ apiFetch, can }) {
     return (data?.rows || []).filter(r => (filter === 'all' || r.class === filter || (filter === 'soon' && r.runOut))
       && (!term || r.itemName.toLowerCase().includes(term) || r.itemCode.toLowerCase().includes(term)));
   }, [data, filter, q]);
+  // A new filter, search or period starts again at the first page.
+  useEffect(() => { setPage(0); }, [data, filter, q, pageSize]);
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const shown = rows.slice(page * pageSize, page * pageSize + pageSize);
+  const changePageSize = (n) => { setPageSize(n); try { localStorage.setItem('stockMovement.pageSize', String(n)); } catch { /* not kept */ } };
 
   const saveSettings = async (e) => {
     e.preventDefault();
+    const wrong = SETTING_FIELDS.filter(([k]) => {
+      const [lo, hi] = data.limits?.[k] || [-Infinity, Infinity], n = Number(editing[k]);
+      return !(editing[k] !== '' && Number.isFinite(n) && n >= lo && n <= hi);
+    });
+    if (wrong.length) return ui.alert(`Check: ${wrong.map(([k, label]) => `${label.replace(/^and /, '')} (${data.limits[k][0]}-${data.limits[k][1]})`).join(', ')}.`);
     try {
       const d = await (await apiFetch('/api/analytics/movement-settings', { method: 'PUT', body: JSON.stringify(Object.fromEntries(Object.entries(editing).map(([k, v]) => [k, Number(v)]))) })).json();
       if (!d.success) return ui.alert(d.error || 'Could not save.');
@@ -119,12 +132,19 @@ export default function StockMovement({ apiFetch, can }) {
         <form onSubmit={saveSettings} className="bg-white/5 border border-white/10 rounded-lg p-4 space-y-3">
           <p className="text-xs text-fg/70">How items are judged. Fast-moving is relative to this business’s own sellers, so it adjusts as sales grow. {!canSet && 'Only someone who sets up stock can change these.'}</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {SETTING_FIELDS.map(([k, label, unit]) => (
-              <label key={k} className="text-xs text-fg/80 font-bold flex items-center gap-2 flex-wrap">{label}
-                <input type="number" value={editing[k]} disabled={!canSet} onChange={e => setEditing(s => ({ ...s, [k]: e.target.value }))} className={`${input} w-20`} />
-                <span className="font-normal text-fg/70">{unit}</span>
-              </label>
-            ))}
+            {SETTING_FIELDS.map(([k, label, unit]) => {
+              const [lo, hi] = data.limits?.[k] || [];
+              const n = Number(editing[k]);
+              const bad = lo != null && !(editing[k] !== '' && Number.isFinite(n) && n >= lo && n <= hi);
+              return (
+                <label key={k} className="text-xs text-fg/80 font-bold flex items-center gap-2 flex-wrap">{label}
+                  <input type="number" min={lo} max={hi} step={1} value={editing[k]} disabled={!canSet} aria-invalid={bad}
+                    onChange={e => setEditing(s => ({ ...s, [k]: e.target.value }))} className={`${input} w-20 ${bad ? 'border-red-500/60' : ''}`} />
+                  <span className="font-normal text-fg/70">{unit}</span>
+                  {lo != null && <span className={`w-full font-normal text-[10px] ${bad ? 'text-danger' : 'text-fg/65'}`}>{lo}-{hi}</span>}
+                </label>
+              );
+            })}
           </div>
           <div className="flex gap-2">
             {canSet && <button type="submit" className="px-4 py-2 rounded-lg bg-brand text-on-brand font-bold text-xs">Save</button>}
@@ -163,7 +183,7 @@ export default function StockMovement({ apiFetch, can }) {
                 <th className={th}>Class</th><th className={`${th} text-right`}>Buy</th>
               </tr></thead>
               <tbody>
-                {rows.slice(0, 400).map(r => (
+                {shown.map(r => (
                   <tr key={r._id} className="border-t border-white/5">
                     <td className={`${td} text-fg font-bold whitespace-normal`}>{r.itemName}{r.itemCode && <span className="block text-[10px] text-fg/65 font-normal font-mono">{r.itemCode}</span>}</td>
                     <td className={`${td} text-right tabular-nums text-fg/80`}>{qty(r.stock)} {r.unit}
@@ -186,7 +206,19 @@ export default function StockMovement({ apiFetch, can }) {
               </tbody>
             </table>
           </div>
-          {rows.length > 400 && <p className="text-[10px] text-fg/65">First 400 of {rows.length}. Search, filter, or take the Excel file for all of them.</p>}
+          {rows.length > 0 && (
+            <div className="flex items-center justify-between gap-3 flex-wrap text-[11px] text-fg/70">
+              <span>{page * pageSize + 1}-{Math.min(rows.length, (page + 1) * pageSize)} of {rows.length}</span>
+              <div className="flex items-center gap-2">
+                <select value={pageSize} onChange={e => changePageSize(Number(e.target.value))} aria-label="Rows per page" className={`${input} py-1`}>
+                  {PAGE_SIZES.map(n => <option key={n} value={n}>{n} per page</option>)}
+                </select>
+                <button type="button" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} aria-label="Previous page" className="p-1.5 rounded-lg bg-white/5 disabled:opacity-40"><ChevronLeft size={14} /></button>
+                <span className="tabular-nums">Page {page + 1} of {pages}</span>
+                <button type="button" onClick={() => setPage(p => Math.min(pages - 1, p + 1))} disabled={page >= pages - 1} aria-label="Next page" className="p-1.5 rounded-lg bg-white/5 disabled:opacity-40"><ChevronRight size={14} /></button>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
