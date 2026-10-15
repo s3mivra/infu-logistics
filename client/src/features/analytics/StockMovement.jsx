@@ -18,7 +18,7 @@ const CLASSES = {
 };
 const PERIODS = [[7, 'Last 7 days'], [30, 'Last 30 days'], [60, 'Last 60 days'], [90, 'Last 90 days']];
 const SETTING_FIELDS = [
-  ['fastPercentile', 'Fast-moving = top', '% of sellers, by daily rate'],
+  ['fastPercentile', 'Fast-moving = at or above the', 'th percentile of sellers (75 = top 25%)'],
   ['fastMinSoldDays', 'and sold on at least', 'days in the period'],
   ['deadDays', 'Dead stock = no sale for', 'days'],
   ['coverDays', 'Buy enough for', 'days of sales'],
