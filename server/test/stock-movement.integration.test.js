@@ -8,7 +8,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
-import { percentile, daysWithoutStock, classify, cleanMovementSettings, calendarDaysBetween, recommendBuy, runOut, MOVEMENT_DEFAULTS } from '../features/stock-movement.js';
+import { percentile, daysWithoutStock, classify, cleanMovementSettings, calendarDaysBetween, recommendBuy, runOut, spikeCapped, MOVEMENT_DEFAULTS } from '../features/stock-movement.js';
 
 const DAY = 86400000;
 const ago = (d) => new Date(Date.now() - d * DAY);
@@ -77,6 +77,20 @@ describe('the arithmetic', () => {
     expect(recommendBuy({ adu: 1, available: -5, onOrder: 0, settings, whole: true })).toBe(40);
   });
 
+  it('one huge day cannot blow up the buying rate', () => {
+    // Steady 10 a day, then one bulk order of 500: counted as 30 (3 x the typical 10).
+    expect(spikeCapped([10, 10, 10, 10, 500], 3)).toEqual({ qty: 70, capped: true });
+    expect(spikeCapped([10, 12, 9, 11], 3)).toEqual({ qty: 42, capped: false });
+    expect(spikeCapped([500, 2], 3)).toEqual({ qty: 502, capped: false });         // too few days to know what is typical
+    expect(spikeCapped([], 3)).toEqual({ qty: 0, capped: false });
+  });
+
+  it('days left never divides by zero', () => {
+    const settings = { leadTimeDays: 7, safetyDays: 3 };
+    expect(runOut({ daysLeft: 0, available: 0, adu: 5, settings })).toBe('out');   // no stock, still selling
+    expect(runOut({ daysLeft: null, available: 0, adu: 0, settings })).toBeNull();  // no stock, no sales: N/A
+  });
+
   it('flags what runs out before a delivery could arrive', () => {
     const settings = { leadTimeDays: 7, safetyDays: 3 };
     expect(runOut({ daysLeft: 0, available: 0, adu: 1, settings })).toBe('out');
@@ -87,7 +101,8 @@ describe('the arithmetic', () => {
   });
 
   it('settings stay inside sensible bounds', () => {
-    expect(cleanMovementSettings({ fastPercentile: 999, deadDays: 'x', coverDays: 14 })).toMatchObject({ fastPercentile: 75, deadDays: 90, coverDays: 14 });
+    expect(cleanMovementSettings({ fastPercentile: 999, deadDays: 'x', coverDays: 21 })).toMatchObject({ fastPercentile: 75, deadDays: 90, coverDays: 21, spikeFactor: 3 });
+    expect(MOVEMENT_DEFAULTS.coverDays + MOVEMENT_DEFAULTS.leadTimeDays + MOVEMENT_DEFAULTS.safetyDays).toBe(24);   // 14 + 7 + 3
   });
 });
 
@@ -156,7 +171,8 @@ describe('logistics: whole units', () => {
     const syr = res.body.rows.find(r => r.itemCode === 'SYR-2L');
     // 30 bottles over the days it was on sale; enough for 30 + 7 + 3 days, less the 3 on the shelf, rounded UP to a whole bottle.
     expect(syr.adu).toBeCloseTo(30 / syr.inStockDays, 2);
-    expect(syr.recommend).toBe(Math.ceil((30 / syr.inStockDays) * 40 - 3));
+    const st = res.body.settings, horizon = st.coverDays + st.leadTimeDays + st.safetyDays;   // 14 + 7 + 3 by default
+    expect(syr.recommend).toBe(Math.ceil((30 / syr.inStockDays) * horizon - 3));
     expect(res.body.rows.find(r => r.itemCode === 'OLD').recommend).toBe(0);           // nothing to buy for dead stock
   });
 
@@ -201,6 +217,20 @@ describe('logistics: whole units', () => {
     expect(r.adu).toBeCloseTo(60 / r.inStockDays, 2);
     expect(r.inStockDays).toBeGreaterThan(25);                                   // the whole window, not a sliver of it
     expect(r.adu).toBeLessThan(2.5);                                             // ~2 a day, not 60 / a few days
+  });
+
+  it('a bulk order on one day is held down to a typical day when working out what to buy', async () => {
+    const bulk = await item({ itemCode: 'BULK', itemName: 'BULK BUY ITEM', stockQty: 5, createdAt: ago(200) });
+    for (let d = 2; d <= 11; d++) await order('log', { createdAt: ago(d), items: [{ productCode: 'BULK', name: 'Bulk', quantity: 2 }] });
+    await order('log', { createdAt: ago(1), items: [{ productCode: 'BULK', name: 'Bulk', quantity: 300 }] });
+    const res = (await as('get', '/api/analytics/stock-movement')).body;
+    const r = res.rows.find(x => x.itemCode === 'BULK'), s = res.settings;
+    expect(r.soldQty).toBe(320);                                                   // Sold still shows everything
+    expect(r.spikeCapped).toBe(true);
+    const horizon = s.coverDays + s.leadTimeDays + s.safetyDays;
+    // Buy from 20 + 6 (the 300 counted as 3 x 2) = 26, not 320.
+    expect(r.recommend).toBe(Math.max(0, Math.ceil((26 / r.inStockDays) * horizon - 5 - 1e-9)));
+    expect(r.recommend).toBeLessThan(Math.ceil((320 / r.inStockDays) * horizon - 5));
   });
 
   it('the thresholds can be changed and are used', async () => {

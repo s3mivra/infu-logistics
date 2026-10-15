@@ -76,6 +76,8 @@ describe('a month in the cafe, through the app', () => {
   let mv;
   const row = (code) => mv.rows.find(r => r.itemCode === code);
   it('Stock movement counts the ingredients used, not drinks', async () => {
+    // A month of cover, so every ingredient here needs buying and both rounding rules show.
+    ok(await auth('put', '/api/analytics/movement-settings').send({ coverDays: 30 }), 'settings');
     mv = ok(await auth('get', '/api/analytics/stock-movement'), 'stock movement');
     expect(mv.wholeUnits).toBe(false);
     expect(row('RM-BEAN')).toMatchObject({ unit: 'g', soldQty: 18 * LATTES, transactions: SALES.length, soldDays: SALES.length });

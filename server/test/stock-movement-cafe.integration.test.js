@@ -54,6 +54,7 @@ describe('cafe: what the recipes took', () => {
   });
 
   it('may recommend part of a unit', async () => {
+    await as('put', '/api/analytics/movement-settings').send({ coverDays: 30 });   // enough cover that milk needs buying
     const milkRow = (await as('get', '/api/analytics/stock-movement')).body.rows.find(r => r.itemCode === 'MILK');
     expect(milkRow.recommend).toBeGreaterThan(0);
     expect(Number.isInteger(milkRow.recommend * 1000)).toBe(true);                     // kept to 3 decimals, not rounded to a whole litre

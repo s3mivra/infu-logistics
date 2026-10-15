@@ -41,12 +41,13 @@ export const MOVEMENT_DEFAULTS = {
   fastPercentile: 75,   // a seller at or above this share of sellers' daily rates is fast-moving...
   fastMinSoldDays: 3,   // ...and must have sold on at least this many days (consistency, not one big order)
   deadDays: 90,         // no sale in this many days, with that much history, is dead stock
-  coverDays: 30,        // a purchase recommendation covers this many days of sales...
+  coverDays: 14,        // a purchase recommendation covers this many days of sales...  (14 + 7 + 3 = 24 days of stock)
   leadTimeDays: 7,      // ...plus the wait for delivery...
   safetyDays: 3,        // ...plus a few spare days (the safety stock)
   categoryMinSellers: 5, // fast-moving is judged within the item's category once it has this many sellers
+  spikeFactor: 3,       // for the buying rate, no one day counts for more than this many typical selling days
 };
-export const MOVEMENT_LIMITS = { fastPercentile: [50, 95], fastMinSoldDays: [1, 30], deadDays: [7, 365], coverDays: [1, 180], leadTimeDays: [0, 90], safetyDays: [0, 60], categoryMinSellers: [2, 100] };
+export const MOVEMENT_LIMITS = { fastPercentile: [50, 95], fastMinSoldDays: [1, 30], deadDays: [7, 365], coverDays: [1, 180], leadTimeDays: [0, 90], safetyDays: [0, 60], categoryMinSellers: [2, 100], spikeFactor: [2, 20] };
 const DAY = 86400000;
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const r3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
@@ -133,6 +134,23 @@ export function runOut({ daysLeft, available, adu, settings }) {
   return null;
 }
 
+// The quantity a buying rate is worked from, with one-day spikes held down:
+// no single day counts for more than `factor` x the median selling day. A
+// one-off bulk order then cannot make a month's purchase look three times as
+// big. Needs a few selling days to know what "typical" is; with fewer, the
+// sales are taken as they are.
+export function spikeCapped(dayQtys, factor) {
+  const q = (dayQtys || []).filter(v => Number.isFinite(v) && v > 0);
+  const total = q.reduce((a, b) => a + b, 0);
+  if (q.length < 3) return { qty: total, capped: false };
+  const sorted = [...q].sort((a, b) => a - b);
+  const mid = sorted.length / 2;
+  const median = sorted.length % 2 ? sorted[Math.floor(mid)] : (sorted[mid - 1] + sorted[mid]) / 2;
+  const cap = median * factor;
+  const qty = q.reduce((a, v) => a + Math.min(v, cap), 0);
+  return { qty, capped: qty < total - 1e-9 };
+}
+
 export function classify({ soldQty, adu, soldDays, fastThreshold, settings, historyDays, ageDays, outDays, effectiveDays, daysSinceSale = Infinity }) {
   if (soldQty > 0) return adu >= fastThreshold && soldDays >= settings.fastMinSoldDays ? 'fast' : 'slow';
   // No sale in the window. Dead stock needs time to judge: the business and
@@ -215,10 +233,12 @@ export default function registerStockMovement(ctx) {
       const freeOf = (i) => Math.max(0, num(i.stockQty) - Math.max(0, num(i.reservedQty))) / perUnit(i);
 
       // ── What sold in the window ──
-      const sold = new Map();   // invId -> { qty, orders:Set, days:Set }
+      const sold = new Map();   // invId -> { qty, orders:Set, days:Set, byDay: Map(date -> qty) }
       const bump = (invId, qty, order) => {
-        const s = sold.get(invId) || { qty: 0, orders: new Set(), days: new Set() };
-        s.qty += qty; s.orders.add(String(order._id)); s.days.add(businessDateStr(new Date(order.createdAt)));
+        const s = sold.get(invId) || { qty: 0, orders: new Set(), days: new Set(), byDay: new Map() };
+        const day = businessDateStr(new Date(order.createdAt));
+        s.qty += qty; s.orders.add(String(order._id)); s.days.add(day);
+        s.byDay.set(day, (s.byDay.get(day) || 0) + qty);
         sold.set(invId, s);
       };
       const matchLine = (it) => (it.productCode && byCode.get(String(it.productCode).trim().toLowerCase()))
@@ -304,7 +324,11 @@ export default function registerStockMovement(ctx) {
           unit, whole: IS_LOG || /^(pcs?|pieces?|units?|packs?)$/i.test(unit),
           stock: r3(stockOf(i)), available: r3(freeOf(i)), reserved: r3(Math.max(0, num(i.reservedQty)) / perUnit(i)), onOrder: r3(onOrder.get(k) || 0),
           soldQty: r3(soldQty), transactions: s ? s.orders.size : 0, soldDays: s ? s.days.size : 0,
+          // The rate is over the days it was in stock - never only the days it
+          // happened to sell (1,678 sold on 13 of 30 days is ~56 a day, not 129).
           adu: soldQty / inStockDays, inStockDays: r2(inStockDays), outDays: r2(outDays),
+          buyAdu: (s ? spikeCapped([...s.byDay.values()], settings.spikeFactor).qty : 0) / inStockDays,
+          spikeCapped: s ? spikeCapped([...s.byDay.values()], settings.spikeFactor).capped : false,
           lastSold: lastSold.get(k) || null, ageDays, unitCost: Number(i.unitCost) || 0, perUnit: perUnit(i), baseUnits: perUnit(i),
           liveDays,
         };
@@ -330,12 +354,12 @@ export default function registerStockMovement(ctx) {
         // Only an item with a rate to go by gets a figure: dead stock, an item
         // that could not sell, and one too new to judge get none.
         r.recommend = (r.class === 'fast' || r.class === 'slow')
-          ? recommendBuy({ adu: r.adu, available: r.available, onOrder: r.onOrder, settings, whole: r.whole }) : 0;
+          ? recommendBuy({ adu: r.buyAdu, available: r.available, onOrder: r.onOrder, settings, whole: r.whole }) : 0;
         r.daysOfStock = r.adu > 0 ? r2(r.available / r.adu) : null;
         r.runOut = runOut({ daysLeft: r.daysOfStock, available: r.available, adu: r.adu, settings });
         r.adu = r.whole ? r2(r.adu) : r3(r.adu);
         r.tiedUp = r2(Math.max(0, r.stock) * r.perUnit * r.unitCost);
-        delete r.ageDays; delete r.unitCost; delete r.perUnit; delete r.liveDays; delete r.whole;
+        delete r.ageDays; delete r.unitCost; delete r.perUnit; delete r.liveDays; delete r.whole; delete r.buyAdu;
       }
       const ORDER = { fast: 0, slow: 1, dead: 2, unavailable: 3, new: 4 };
       rows.sort((a, b) => ORDER[a.class] - ORDER[b.class] || b.adu - a.adu || b.tiedUp - a.tiedUp || a.itemName.localeCompare(b.itemName));
@@ -349,7 +373,7 @@ export default function registerStockMovement(ctx) {
         // How the figures were worked out, for the screen to say so.
         basis: {
           perDay: 'Sold in the period / days in the period the item existed and had stock',
-          buy: `Per day x (${settings.coverDays} cover + ${settings.leadTimeDays} delivery) + ${settings.safetyDays} days safety stock, less free stock and open purchase orders`,
+          buy: `Per day x (${settings.coverDays} cover + ${settings.leadTimeDays} delivery) + ${settings.safetyDays} days safety stock, less free stock and open purchase orders; no single day counts for more than ${settings.spikeFactor}x a typical selling day`,
           reserved: 'Stock held for client orders is not counted as free',
         },
       };

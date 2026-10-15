@@ -32,6 +32,7 @@ const SETTING_FIELDS = [
   ['leadTimeDays', 'Delivery takes', 'days'],
   ['safetyDays', 'Plus spare', 'days (safety stock)'],
   ['categoryMinSellers', 'Judge fast within a category of', '+ sellers'],
+  ['spikeFactor', 'For buying, cap one day at', 'x a typical selling day'],
 ];
 const input = 'bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg';
 const th = 'px-3 py-2 text-[10px] font-black uppercase tracking-wider text-fg/65 whitespace-nowrap';
@@ -180,6 +181,7 @@ export default function StockMovement({ apiFetch, can }) {
               <li><b>Per day</b> = sold ÷ the days in the period it had stock - a stock-out is not read as low demand.</li>
               <li><b>Days left</b> = free stock (on hand minus what is held for client orders) ÷ per day.</li>
               <li><b>Buy</b> = per day × ({data.settings.coverDays} cover + {data.settings.leadTimeDays} delivery days) + {data.settings.safetyDays} days of safety stock, less free stock and open purchase orders{data.wholeUnits ? ', rounded up to whole units' : '; pcs items rounded up to whole pieces'}.</li>
+              <li><b>Spikes:</b> for Buy, no single day counts for more than {data.settings.spikeFactor}× the item's typical selling day, so one big order does not inflate the purchase. Items where this applied are marked “spike-adjusted”.</li>
               {data.historyDays < data.settings.deadDays && <li>Sales history is still shorter than the dead-stock period, so nothing is called dead yet.</li>}
             </ul>
           </details>
@@ -209,7 +211,8 @@ export default function StockMovement({ apiFetch, can }) {
                     <td className={`${td} text-right tabular-nums text-fg/80`}>{r.daysSinceSale != null ? `${r.daysSinceSale} d` : 'N/A'}</td>
                     <td className={td} title={CLASSES[r.class].hint}><span className={`px-2 py-0.5 rounded border text-[10px] font-black uppercase tracking-wider ${CLASSES[r.class].chip}`}>{CLASSES[r.class].label}</span>
                       {r.outDays >= 1 && r.class !== 'unavailable' && <span className="block text-[10px] text-fg/65 mt-0.5">out of stock {Math.round(r.outDays)} day(s)</span>}</td>
-                    <td className={`${td} text-right tabular-nums font-black ${r.recommend > 0 ? (r.runOut === 'out' || r.runOut === 'urgent' ? 'text-danger' : 'text-brand-text') : 'text-fg/65'}`}>{r.recommend > 0 ? withUnit(r.recommend, r.unit) : '-'}</td>
+                    <td className={`${td} text-right tabular-nums font-black ${r.recommend > 0 ? (r.runOut === 'out' || r.runOut === 'urgent' ? 'text-danger' : 'text-brand-text') : 'text-fg/65'}`}>{r.recommend > 0 ? withUnit(r.recommend, r.unit) : '-'}
+                      {r.spikeCapped && r.recommend > 0 && <span className="block text-[10px] font-normal text-fg/65" title="One or more unusually large days were held down to a typical day when working this out.">spike-adjusted</span>}</td>
                   </tr>
                 ))}
                 {rows.length === 0 && <tr><td colSpan={10} className="p-6 text-center text-fg/65 text-sm font-bold">No items here.</td></tr>}
