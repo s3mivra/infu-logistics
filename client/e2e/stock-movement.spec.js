@@ -37,6 +37,7 @@ test('stock movement thresholds can be edited and saved', async ({ page, request
   await expect(pct).toHaveAttribute('aria-invalid', 'false');
 
   await section.getByRole('button', { name: 'Save' }).click();
+  await section.getByText('How these are worked out').click();
   await expect(section.getByText(/21 cover/)).toBeVisible({ timeout: 10000 });
   await expect(page.getByText(/Page 1 of [2-9]/)).toBeVisible();
   await page.getByRole('button', { name: 'Next page' }).click();

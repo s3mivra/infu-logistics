@@ -102,11 +102,11 @@ export default function StockMovement({ apiFetch, can }) {
   };
 
   return (
-    <div className="bg-surface border border-white/10 rounded-xl p-5 space-y-4">
+    <div className="bg-surface border border-white/10 rounded-xl p-4 space-y-3">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0">
           <h3 className="text-brand-text text-sm font-bold uppercase tracking-wider">Stock movement</h3>
-          <p className="text-xs text-fg/70 mt-1 max-w-2xl">
+          <p className="text-[11px] text-fg/70 mt-0.5 max-w-3xl">
             Fast-moving, slow-moving and dead stock from what actually sold - completed sales only, voided and cancelled ones left out.
             {IS_LOG
               ? ' Counted in whole units (one bottle, one box), and bought in whole units: a 2-litre bottle is ordered as 1, 2 or 3 bottles, never half of one.'
@@ -166,13 +166,21 @@ export default function StockMovement({ apiFetch, can }) {
               <input type="search" value={q} onChange={e => setQ(e.target.value)} placeholder="Item or code" aria-label="Search items" className={`${input} pl-8 w-48`} />
             </span>
           </div>
-          <p className="text-[11px] text-fg/70">
-            {data.start} to {data.end} · {Math.round(data.effectiveDays)} day(s) of sales to go by
-            {data.counts.fast + data.counts.slow > 0 && ` · fast-moving means ${qty(data.fastThreshold)} ${data.wholeUnits ? 'unit(s)' : ''} a day or more, on ${data.settings.fastMinSoldDays}+ days`}
-            {' · '}Per day = sold ÷ the days in the period it had stock (a stock-out is not read as low demand)
-            {' · '}Buy = per day × ({data.settings.coverDays} cover + {data.settings.leadTimeDays} delivery days) + {data.settings.safetyDays} days of safety stock, less free stock (on hand minus what is held for client orders) and open purchase orders{data.wholeUnits ? ', rounded up to whole units' : '; pcs items rounded up to whole pieces'}.
-            {data.historyDays < data.settings.deadDays && ' Sales history is still shorter than the dead-stock period, so nothing is called dead yet.'}
-          </p>
+          <details className="text-[11px] text-fg/70 group">
+            <summary className="cursor-pointer select-none list-none flex flex-wrap gap-x-3 gap-y-1 items-center">
+              <span className="font-bold text-fg/80">{data.start} to {data.end}</span>
+              <span>{Math.round(data.effectiveDays)} day(s) of sales</span>
+              {data.counts.fast + data.counts.slow > 0 && <span>fast = {qty(data.fastThreshold)}{data.wholeUnits ? ' unit(s)' : ''}/day on {data.settings.fastMinSoldDays}+ days</span>}
+              <span>dead = no sale in {data.settings.deadDays} days</span>
+              <span className="text-brand-text font-bold group-open:hidden">How these are worked out ›</span>
+            </summary>
+            <ul className="mt-2 space-y-1 list-disc pl-4">
+              <li><b>Per day</b> = sold ÷ the days in the period it had stock - a stock-out is not read as low demand.</li>
+              <li><b>Days left</b> = free stock (on hand minus what is held for client orders) ÷ per day.</li>
+              <li><b>Buy</b> = per day × ({data.settings.coverDays} cover + {data.settings.leadTimeDays} delivery days) + {data.settings.safetyDays} days of safety stock, less free stock and open purchase orders{data.wholeUnits ? ', rounded up to whole units' : '; pcs items rounded up to whole pieces'}.</li>
+              {data.historyDays < data.settings.deadDays && <li>Sales history is still shorter than the dead-stock period, so nothing is called dead yet.</li>}
+            </ul>
+          </details>
           <div className="overflow-x-auto border border-white/5 rounded-lg">
             <table className="w-full text-left min-w-[980px]">
               <thead><tr>

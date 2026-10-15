@@ -279,69 +279,40 @@ export default function AnalyticsTab({ ctx }) {
             </div>
           ) : (<>
 
-          {/* TOP ROW: High-Level Metrics */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-brand border border-brand rounded-xl p-6 shadow-lg shadow-brand/5 flex flex-col justify-center">
-              <p className="text-on-brand text-xs font-bold uppercase tracking-wider mb-1">Net Revenue (All-Time)</p>
-              <p className="text-2xl sm:text-3xl md:text-4xl font-black text-on-brand mb-1 break-words">₱{allTime.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-              <p className="text-sm text-on-brand font-medium">{allTime.orders} completed orders</p>
-              {allTime.comp > 0 && <p className="text-xs text-on-brand/75 font-semibold mt-1">+₱{allTime.comp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} complimentary (excluded)</p>}
+          {/* KEY FIGURES: one compact row */}
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+            <div className="bg-brand border border-brand rounded-xl p-4 flex flex-col justify-center min-w-0 col-span-2 md:col-span-1 xl:col-span-2">
+              <p className="text-on-brand text-[10px] font-bold uppercase tracking-wider mb-1">Net Revenue (All-Time)</p>
+              <p className="text-2xl lg:text-3xl font-black text-on-brand break-words">₱{allTime.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <p className="text-xs text-on-brand font-medium">{allTime.orders} completed orders{allTime.comp > 0 && ` · +₱${allTime.comp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} complimentary (excluded)`}</p>
             </div>
-
-            <div className="bg-surface border border-white/10 rounded-xl p-6 flex flex-col justify-center">
-              <p className="text-fg/70 text-xs font-bold uppercase tracking-wider mb-1">Best Sales Day</p>
-              <p className="text-3xl font-black text-fg mb-2">{bestDay.date}</p>
-              <p className="text-sm text-success font-bold uppercase tracking-widest">₱{bestDay.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Earned</p>
+            <div className="bg-surface border border-white/10 rounded-xl p-4 flex flex-col justify-center min-w-0">
+              <p className="text-fg/70 text-[10px] font-bold uppercase tracking-wider mb-1">Best Sales Day</p>
+              <p className="text-lg font-black text-fg truncate">{bestDay.date}</p>
+              <p className="text-xs text-success font-bold">₱{bestDay.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
             </div>
-
-            <div className="bg-surface border border-white/10 rounded-xl p-6 overflow-hidden relative">
-              <h3 className="text-fg text-xs font-bold uppercase tracking-wider mb-4">Top 5 Best Sellers</h3>
-              <div className="space-y-3 relative z-10">
-                {tp.length === 0 ? (
-                  <p className="text-fg/65 text-sm italic">No sales data yet.</p>
-                ) : tp.map((p, i) => (
-                  <div key={i} className="flex justify-between items-center text-sm">
-                    <span className="font-bold text-fg/65 truncate pr-4">#{i+1} {p.name}</span>
-                    <span className="text-brand-text font-black bg-accent/10 px-2 py-0.5 rounded">{p.qty}x</span>
-                  </div>
-                ))}
-              </div>
+            <div className="bg-surface border border-white/10 rounded-xl p-4 flex flex-col justify-center min-w-0">
+              <p className="text-fg/70 text-[10px] font-bold uppercase tracking-wider mb-1">Inventory Value</p>
+              <p className="text-lg font-black text-fg truncate">₱{totalInvValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <p className="text-xs text-fg/65">₱{totalSkus > 0 ? (totalInvValue / totalSkus).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'} avg / SKU</p>
             </div>
-          </div>
-
-          {/* INVENTORY VALUE CARD */}
-          <div className="bg-surface border border-white/10 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-10">
-            <div className="flex-1">
-              <p className="text-fg/70 text-xs font-bold uppercase tracking-wider mb-1">Total Inventory Value</p>
-              <p className="text-3xl font-black text-fg">₱{totalInvValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-              <p className="text-fg/65 text-xs font-medium mt-1">Cost of all stock on hand</p>
+            <div className="bg-surface border border-white/10 rounded-xl p-4 flex flex-col justify-center min-w-0">
+              <p className="text-fg/70 text-[10px] font-bold uppercase tracking-wider mb-1">SKUs · Out of Stock</p>
+              <p className="text-lg font-black text-fg">{totalSkus} <span className={`text-sm ${zeroStock > 0 ? 'text-danger' : 'text-success'}`}>· {zeroStock} out</span></p>
+              <p className="text-xs text-fg/65">items tracked</p>
             </div>
-            <div className="flex gap-6 sm:gap-10 shrink-0">
-              <div className="flex flex-col items-center">
-                <p className="text-2xl font-black text-fg">{totalSkus}</p>
-                <p className="text-fg/70 text-[10px] font-bold uppercase tracking-wider mt-0.5">SKUs Tracked</p>
-              </div>
-              <div className="flex flex-col items-center">
-                <p className={`text-2xl font-black ${zeroStock > 0 ? 'text-danger' : 'text-success'}`}>{zeroStock}</p>
-                <p className="text-fg/70 text-[10px] font-bold uppercase tracking-wider mt-0.5">Out of Stock</p>
-              </div>
-              <div className="flex flex-col items-center">
-                <p className="text-2xl font-black text-fg">₱{totalSkus > 0 ? (totalInvValue / totalSkus).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}</p>
-                <p className="text-fg/70 text-[10px] font-bold uppercase tracking-wider mt-0.5">Avg / SKU</p>
-              </div>
-              <div className="flex flex-col items-center" title="COGS this month ÷ average inventory value - estimated, not an exact historical figure (see tooltip on the label below)">
-                <p className="text-2xl font-black text-fg">{turnoverData?.turnoverRatio != null ? `${turnoverData.turnoverRatio}x` : '-'}</p>
-                <p className="text-fg/70 text-[10px] font-bold uppercase tracking-wider mt-0.5">Turnover (est.)</p>
-              </div>
+            <div className="bg-surface border border-white/10 rounded-xl p-4 flex flex-col justify-center min-w-0" title="COGS this month ÷ average inventory value - an estimate, not an exact historical figure">
+              <p className="text-fg/70 text-[10px] font-bold uppercase tracking-wider mb-1">Turnover (est.)</p>
+              <p className="text-lg font-black text-fg">{turnoverData?.turnoverRatio != null ? `${turnoverData.turnoverRatio}x` : '-'}</p>
+              <p className="text-xs text-fg/65">this month</p>
             </div>
           </div>
 
-          {/* BOTTOM ROW: Daily Trend & Stock Movement */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-            <div className="bg-surface border border-white/10 rounded-xl p-6 flex flex-col max-h-96">
-              <div className="flex justify-between items-center mb-4 border-b border-white/10 pb-2 flex-wrap gap-2">
-                <h3 className="text-fg font-bold">Daily Revenue Trend</h3>
+          {/* SALES: the trend beside the best sellers */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="lg:col-span-2 bg-surface border border-white/10 rounded-xl p-4 flex flex-col max-h-80">
+              <div className="flex justify-between items-center mb-3 border-b border-white/10 pb-2 flex-wrap gap-2">
+                <h3 className="text-fg font-bold text-sm">Daily Revenue Trend</h3>
                 <button onClick={exportAnalyticsToPDF} className="text-[10px] bg-brand/10 border border-brand/30 text-brand-text px-3 py-1.5 rounded hover:bg-brand hover:text-on-brand transition font-bold uppercase tracking-wider">
                   Export Analytics PDF
                 </button>
@@ -377,7 +348,7 @@ export default function AnalyticsTab({ ctx }) {
                         ? <>{pickedDay.date} · <span className="text-brand-text">₱{Number(pickedDay.revenue).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>{pickedDay.count != null && <span className="text-fg/65 font-normal"> · {pickedDay.count} order(s)</span>}</>
                         : <span className="text-fg/65 font-normal">Click a day to see its total.</span>}
                     </div>
-                    <div ref={chartRef} className="flex items-end gap-[3px] flex-1 min-h-[160px] overflow-x-auto pb-2">
+                    <div ref={chartRef} className="flex items-end gap-[3px] flex-1 min-h-[140px] overflow-x-auto pb-2">
                       {dailyRevenue.map((day, i) => {
                         const pct = bestDay.revenue > 0 ? (day.revenue / bestDay.revenue) * 100 : 0;
                         const isBest = day.revenue === bestDay.revenue && day.revenue > 0;
@@ -406,21 +377,31 @@ export default function AnalyticsTab({ ctx }) {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-4">
-              {/* Fast, slow and dead stock from actual sales, with what to buy. */}
-              <StockMovement apiFetch={apiFetch} can={ctx.can} />
-              <ReorderForecast rows={ad?.reorderForecast || []} settings={ad?.forecastSettings || {}} analyticsDisplay={analyticsDisplay}
-                onMakeOrders={ctx.can?.('procurement.manage') ? () => {
-                  // Procurement drafts the orders itself (one per supplier) when it opens.
-                  try { sessionStorage.setItem('proc.suggest', '1'); } catch { /* it opens anyway */ }
-                  setActiveTab('procurement');
-                } : undefined} />
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="bg-surface border border-red-900/30 rounded-xl p-5 flex flex-col">
-                  <h3 className="text-danger text-sm font-bold uppercase tracking-wider mb-4 border-b border-red-900/30 pb-2 flex items-center gap-2">
+            <div className="bg-surface border border-white/10 rounded-xl p-4 min-w-0">
+              <h3 className="text-fg text-xs font-bold uppercase tracking-wider mb-3 border-b border-white/10 pb-2">Top 5 Best Sellers</h3>
+              <div className="space-y-2.5">
+                {tp.length === 0 ? (
+                  <p className="text-fg/65 text-sm italic">No sales data yet.</p>
+                ) : tp.map((p, i) => (
+                  <div key={i} className="flex justify-between items-center gap-3 text-sm">
+                    <span className="font-bold text-fg/80 truncate" title={p.name}><span className="text-fg/65">#{i + 1}</span> {p.name}</span>
+                    <span className="text-brand-text font-black bg-accent/10 px-2 py-0.5 rounded shrink-0 tabular-nums">{p.qty}x</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* STOCK: movement in full, the four watch lists, then the forecast */}
+          {/* Fast, slow and dead stock from actual sales, with what to buy. */}
+          <StockMovement apiFetch={apiFetch} can={ctx.can} />
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                <div className="bg-surface border border-red-900/30 rounded-xl p-4 flex flex-col">
+                  <h3 className="text-danger text-xs font-bold uppercase tracking-wider mb-3 border-b border-red-900/30 pb-2 flex items-center gap-2">
                     <AlertTriangle size={13} className="text-danger" /> Low Stock (Risk)
                   </h3>
-                  <div className="space-y-3">
+                  <div className="space-y-2.5">
                     {ls.length === 0 ? <p className="text-fg/80 text-xs">All items have adequate supply.</p>
                     : lsPage.pageItems.map(item => (
                       <div key={item._id} className="flex justify-between items-center text-sm">
@@ -436,12 +417,11 @@ export default function AnalyticsTab({ ctx }) {
                     <Pager {...lsPage} label="items" />
                   </div>
                 </div>
-
-                <div className="bg-surface border white/10 rounded-xl p-5 flex flex-col">
-                  <h3 className="text-fg/70 text-sm font-bold uppercase tracking-wider mb-4 border-b border-white/10 pb-2 flex items-center gap-2">
+                <div className="bg-surface border border-white/10 rounded-xl p-4 flex flex-col">
+                  <h3 className="text-fg/70 text-xs font-bold uppercase tracking-wider mb-3 border-b border-white/10 pb-2 flex items-center gap-2">
                     <BarChart2 size={13}/> Overstock Watch
                   </h3>
-                  <div className="space-y-3">
+                  <div className="space-y-2.5">
                     {hs.length === 0 ? <p className="text-fg/80 text-xs">No items exceed 30 days of supply.</p>
                     : hsPage.pageItems.map(item => (
                       <div key={item._id} className="flex justify-between items-center text-sm">
@@ -458,15 +438,11 @@ export default function AnalyticsTab({ ctx }) {
                     <Pager {...hsPage} label="items" />
                   </div>
                 </div>
-              </div>
-
-              {/* Slow movers + Dead stock */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="bg-surface border border-yellow-900/30 rounded-xl p-5 flex flex-col">
-                  <h3 className="text-warning text-sm font-bold uppercase tracking-wider mb-4 border-b border-yellow-900/30 pb-2 flex items-center gap-2">
+                <div className="bg-surface border border-yellow-900/30 rounded-xl p-4 flex flex-col">
+                  <h3 className="text-warning text-xs font-bold uppercase tracking-wider mb-3 border-b border-yellow-900/30 pb-2 flex items-center gap-2">
                     <TrendingDown size={13} className="text-warning" /> Slow Movers
                   </h3>
-                  <div className="space-y-3">
+                  <div className="space-y-2.5">
                     {sm.length === 0 ? <p className="text-fg/80 text-xs">Nothing selling unusually slowly.</p>
                     : smPage.pageItems.map(item => (
                       <div key={item._id} className="flex justify-between items-center text-sm">
@@ -483,12 +459,11 @@ export default function AnalyticsTab({ ctx }) {
                     <Pager {...smPage} label="items" />
                   </div>
                 </div>
-
-                <div className="bg-surface border border-red-900/30 rounded-xl p-5 flex flex-col">
-                  <h3 className="text-danger text-sm font-bold uppercase tracking-wider mb-4 border-b border-red-900/30 pb-2 flex items-center gap-2">
-                    <XCircle size={13} className="text-danger" /> Dead Stock
+                <div className="bg-surface border border-red-900/30 rounded-xl p-4 flex flex-col">
+                  <h3 className="text-danger text-xs font-bold uppercase tracking-wider mb-3 border-b border-red-900/30 pb-2 flex items-center gap-2">
+                    <XCircle size={13} className="text-danger" /> No Sales in 30 Days
                   </h3>
-                  <div className="space-y-3">
+                  <div className="space-y-2.5">
                     {dead.length === 0 ? <p className="text-fg/80 text-xs">No idle stock. Everything moved in the last 30 days.</p>
                     : deadPage.pageItems.map(item => (
                       <div key={item._id} className="flex justify-between items-center text-sm">
@@ -502,9 +477,14 @@ export default function AnalyticsTab({ ctx }) {
                     <Pager {...deadPage} label="items" />
                   </div>
                 </div>
-              </div>
-            </div>
           </div>
+
+          <ReorderForecast rows={ad?.reorderForecast || []} settings={ad?.forecastSettings || {}} analyticsDisplay={analyticsDisplay}
+                onMakeOrders={ctx.can?.('procurement.manage') ? () => {
+                  // Procurement drafts the orders itself (one per supplier) when it opens.
+                  try { sessionStorage.setItem('proc.suggest', '1'); } catch { /* it opens anyway */ }
+                  setActiveTab('procurement');
+                } : undefined} />
           </>)}
         </div>
   );
