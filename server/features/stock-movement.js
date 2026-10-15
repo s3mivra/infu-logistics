@@ -72,15 +72,31 @@ export function percentile(values, p) {
 // Days in [from, to) that the item had nothing on the shelf, from its stock
 // card trail: `start` is the balance going into the window (null = unknown,
 // treated as in stock), `cards` the balances after each movement inside it.
-export function daysWithoutStock({ start, cards = [], from, to }) {
-  let balance = start, at = from.getTime(), out = 0;
+//
+// Only a balance of exactly zero is "out". A NEGATIVE balance means sales were
+// recorded with no stock on the books (backdated or imported orders, selling
+// ahead of a delivery) - the records are off, not the shelf empty - so it is
+// read as unknown. And a day the item sold on was a day it was there to sell:
+// `soldDays` (business-day ranges, [start, end] ms) are never counted as out.
+// Counting either as a stock-out shrank the days a rate was averaged over and
+// blew it up - 1,678 sold in 30 days read as 281 a day instead of ~56.
+export function daysWithoutStock({ start, cards = [], from, to, soldDays = [] }) {
+  const isOut = (b) => b !== null && Number.isFinite(b) && Math.abs(b) < 1e-9;
+  const spans = [];
+  let balance = start, at = from.getTime();
   for (const c of cards) {
     const t = Math.min(Math.max(new Date(c.date).getTime(), from.getTime()), to.getTime());
-    if (balance !== null && balance <= 0) out += t - at;
+    if (isOut(balance) && t > at) spans.push([at, t]);
     balance = Number(c.balanceAfter);
     at = t;
   }
-  if (balance !== null && balance <= 0) out += to.getTime() - at;
+  if (isOut(balance) && to.getTime() > at) spans.push([at, to.getTime()]);
+  let out = 0;
+  for (const [a, b] of spans) {
+    let len = b - a;
+    for (const [s, e] of soldDays) len -= Math.max(0, Math.min(b, e) - Math.max(a, s));
+    out += Math.max(0, len);
+  }
   return out / DAY;
 }
 
@@ -279,7 +295,8 @@ export default function registerStockMovement(ctx) {
         const itemFrom = i.createdAt && new Date(i.createdAt) > from ? new Date(i.createdAt) : from;
         const liveDays = Math.max(0, (to - itemFrom) / DAY);
         const hasTrail = startBal.has(k) || cardsOf.has(k);
-        const outDays = hasTrail ? Math.min(liveDays, daysWithoutStock({ start: startBal.has(k) ? startBal.get(k) : null, cards: cardsOf.get(k) || [], from: itemFrom, to })) : 0;
+        const soldDaySpans = s ? [...s.days].map(d => [dayStart(d).getTime(), dayEnd(d).getTime()]) : [];
+        const outDays = hasTrail ? Math.min(liveDays, daysWithoutStock({ start: startBal.has(k) ? startBal.get(k) : null, cards: cardsOf.get(k) || [], from: itemFrom, to, soldDays: soldDaySpans })) : 0;
         const inStockDays = Math.max(1, Math.min(effectiveDays, liveDays) - outDays);
         const unit = IS_LOG ? 'pcs' : (i.unit || '');
         return {

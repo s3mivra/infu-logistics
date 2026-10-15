@@ -27,6 +27,11 @@ describe('the arithmetic', () => {
     expect(daysWithoutStock({ start: 5, cards, from, to })).toBe(4);
     expect(daysWithoutStock({ start: 0, cards: [], from, to })).toBe(10);
     expect(daysWithoutStock({ start: null, cards: [], from, to })).toBe(0);     // nothing known: treated as in stock
+    // A negative balance is records gone wrong, not an empty shelf.
+    expect(daysWithoutStock({ start: -40, cards: [], from, to })).toBe(0);
+    // A day it sold on was a day it was there to sell.
+    const day3 = [Date.parse('2026-10-03T00:00:00Z'), Date.parse('2026-10-04T00:00:00Z')];
+    expect(daysWithoutStock({ start: 0, cards: [], from, to, soldDays: [day3] })).toBe(9);
   });
 
   it('classifies by rate and consistency, and never calls an untested item dead', () => {
@@ -181,6 +186,21 @@ describe('logistics: whole units', () => {
     expect(bad.body.error).toMatch(/fastPercentile must be 50-95/);
     expect((await as('get', '/api/analytics/movement-settings')).body.settings).toEqual(before);   // nothing half-saved
     expect((await as('get', '/api/analytics/stock-movement')).body.limits.fastPercentile).toEqual([50, 95]);
+  });
+
+  it('sales against a negative stock balance are not read as a stock-out that inflates the rate', async () => {
+    // 60 sold over 20 days while the books showed the shelf below zero.
+    const neg = await item({ itemCode: 'NEG', itemName: 'OVERSOLD ITEM', stockQty: 50, createdAt: ago(200) });
+    await M('StockCard').create({ inventoryId: String(neg._id), itemName: 'OVERSOLD ITEM', type: 'Sale', qtyChange: -10, balanceAfter: -10, date: ago(40) });
+    for (let d = 1; d <= 20; d++) {
+      await order('log', { createdAt: ago(d), items: [{ productCode: 'NEG', name: 'Oversold', quantity: 3 }] });
+      await M('StockCard').create({ inventoryId: String(neg._id), itemName: 'OVERSOLD ITEM', type: 'Sale', qtyChange: -3, balanceAfter: -10 - 3 * (21 - d), date: ago(d) });
+    }
+    const r = (await as('get', '/api/analytics/stock-movement')).body.rows.find(x => x.itemCode === 'NEG');
+    expect(r.outDays).toBe(0);
+    expect(r.adu).toBeCloseTo(60 / r.inStockDays, 2);
+    expect(r.inStockDays).toBeGreaterThan(25);                                   // the whole window, not a sliver of it
+    expect(r.adu).toBeLessThan(2.5);                                             // ~2 a day, not 60 / a few days
   });
 
   it('the thresholds can be changed and are used', async () => {

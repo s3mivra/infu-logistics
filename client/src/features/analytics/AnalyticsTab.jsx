@@ -157,6 +157,13 @@ export default function AnalyticsTab({ ctx }) {
   }
 
   const { today, allTime, dailyRevenue, bestDay, topProducts: tp } = ad;
+  // "1 pc", "2.50 kg", "12 pcs" - a piece count shown without decimals.
+  const qtyUnit = (item) => {
+    const d = analyticsDisplay(item), v = Number(item.stockQty) / d.mult;
+    if (d.unit !== 'pcs') return `${v.toFixed(2)} ${d.unit}`;
+    const r = +v.toFixed(2);
+    return `${r.toLocaleString('en-PH', { maximumFractionDigits: 2 })} ${Math.abs(r) === 1 ? 'pc' : 'pcs'}`;
+  };
   // What the "today" figures cover - the period the server says it used.
   const p = ad.period;
   const periodLabel = !p || p.isToday ? 'Today'
@@ -407,7 +414,7 @@ export default function AnalyticsTab({ ctx }) {
                       <div key={item._id} className="flex justify-between items-center text-sm">
                         <div className="flex flex-col min-w-0 pr-2">
                           <span className="text-fg/80 truncate font-semibold" title={String((item.itemName) ?? '')}>{item.itemName}</span>
-                          <span className="text-fg/70 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit} left</span>
+                          <span className="text-fg/70 text-[10px]">{qtyUnit(item)} left</span>
                         </div>
                         <span className={`font-black text-xs whitespace-nowrap px-2 py-1 rounded min-w-[74px] text-center shrink-0 ${item.daysOfSupply <= 3 ? 'bg-danger/15 text-danger animate-pulse' : item.daysOfSupply <= 7 ? 'bg-warning/15 text-warning' : 'bg-warning/10 text-warning'}`}>
                           {item.daysOfSupply <= 0 ? 'OUT' : `~${Math.floor(item.daysOfSupply)}d left`}
@@ -427,7 +434,7 @@ export default function AnalyticsTab({ ctx }) {
                       <div key={item._id} className="flex justify-between items-center text-sm">
                         <div className="flex flex-col min-w-0 pr-2">
                           <span className="text-fg/80 truncate font-semibold" title={String((item.itemName) ?? '')}>{item.itemName}</span>
-                          <span className="text-fg/70 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit}</span>
+                          <span className="text-fg/70 text-[10px]">{qtyUnit(item)}</span>
                         </div>
                         <div className="flex flex-col items-end gap-0.5">
                           <span className="text-fg/70 font-bold text-xs">{isFinite(item.daysOfSupply) ? `~${Math.floor(item.daysOfSupply)}d supply` : '∞ supply'}</span>
@@ -448,7 +455,7 @@ export default function AnalyticsTab({ ctx }) {
                       <div key={item._id} className="flex justify-between items-center text-sm">
                         <div className="flex flex-col min-w-0 pr-2">
                           <span className="text-fg/80 truncate font-semibold" title={String((item.itemName) ?? '')}>{item.itemName}</span>
-                          <span className="text-fg/65 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit} on hand</span>
+                          <span className="text-fg/65 text-[10px]">{qtyUnit(item)} on hand</span>
                         </div>
                         <div className="flex flex-col items-end gap-0.5">
                           <span className="text-warning font-bold text-xs whitespace-nowrap">{isFinite(item.daysOfSupply) ? `~${Math.floor(item.daysOfSupply)}d supply` : '∞'}</span>
@@ -469,7 +476,7 @@ export default function AnalyticsTab({ ctx }) {
                       <div key={item._id} className="flex justify-between items-center text-sm">
                         <div className="flex flex-col min-w-0 pr-2">
                           <span className="text-fg/80 truncate font-semibold" title={String((item.itemName) ?? '')}>{item.itemName}</span>
-                          <span className="text-fg/65 text-[10px]">{(Number(item.stockQty)/analyticsDisplay(item).mult).toFixed(2)} {analyticsDisplay(item).unit} · no sales 30d</span>
+                          <span className="text-fg/65 text-[10px]">{qtyUnit(item)} · no sales 30d</span>
                         </div>
                         {item.tiedUpCapital > 0 && <span className="text-danger text-[11px] font-mono font-bold whitespace-nowrap">₱{Number(item.tiedUpCapital).toFixed(0)} tied</span>}
                       </div>

@@ -62,6 +62,8 @@ export default function StockMovement({ apiFetch, can }) {
 
   // Dates as the business's own calendar, whatever the viewer's device says.
   const dateStr = (d) => new Date(d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: data?.timezone || undefined });
+  // 1 pc, 2 pcs.
+  const withUnit = (n, unit) => `${qty(n)} ${unit === 'pcs' && Math.abs(Number(n)) === 1 ? 'pc' : unit}`;
   const qty = (n) => (Number(n) || 0).toLocaleString('en-PH', { maximumFractionDigits: data?.wholeUnits ? 2 : 3 });
   const rows = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -194,7 +196,7 @@ export default function StockMovement({ apiFetch, can }) {
                 {shown.map(r => (
                   <tr key={r._id} className="border-t border-white/5">
                     <td className={`${td} text-fg font-bold whitespace-normal`}>{r.itemName}{r.itemCode && <span className="block text-[10px] text-fg/65 font-normal font-mono">{r.itemCode}</span>}</td>
-                    <td className={`${td} text-right tabular-nums text-fg/80`}>{qty(r.stock)} {r.unit}
+                    <td className={`${td} text-right tabular-nums text-fg/80`}>{withUnit(r.stock, r.unit)}
                       {r.reserved > 0 && <span className="block text-[10px] text-fg/65">{qty(r.reserved)} held</span>}
                       {r.onOrder > 0 && <span className="block text-[10px] text-fg/65">+{qty(r.onOrder)} on order</span>}</td>
                     <td className={`${td} text-right tabular-nums text-fg`}>{qty(r.soldQty)}</td>
@@ -207,7 +209,7 @@ export default function StockMovement({ apiFetch, can }) {
                     <td className={`${td} text-right tabular-nums text-fg/80`}>{r.daysSinceSale != null ? `${r.daysSinceSale} d` : 'N/A'}</td>
                     <td className={td} title={CLASSES[r.class].hint}><span className={`px-2 py-0.5 rounded border text-[10px] font-black uppercase tracking-wider ${CLASSES[r.class].chip}`}>{CLASSES[r.class].label}</span>
                       {r.outDays >= 1 && r.class !== 'unavailable' && <span className="block text-[10px] text-fg/65 mt-0.5">out of stock {Math.round(r.outDays)} day(s)</span>}</td>
-                    <td className={`${td} text-right tabular-nums font-black ${r.recommend > 0 ? (r.runOut === 'out' || r.runOut === 'urgent' ? 'text-danger' : 'text-brand-text') : 'text-fg/65'}`}>{r.recommend > 0 ? `${qty(r.recommend)} ${r.unit}` : '-'}</td>
+                    <td className={`${td} text-right tabular-nums font-black ${r.recommend > 0 ? (r.runOut === 'out' || r.runOut === 'urgent' ? 'text-danger' : 'text-brand-text') : 'text-fg/65'}`}>{r.recommend > 0 ? withUnit(r.recommend, r.unit) : '-'}</td>
                   </tr>
                 ))}
                 {rows.length === 0 && <tr><td colSpan={10} className="p-6 text-center text-fg/65 text-sm font-bold">No items here.</td></tr>}

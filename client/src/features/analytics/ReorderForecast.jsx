@@ -30,24 +30,27 @@ export default function ReorderForecast({ rows = [], settings = {}, analyticsDis
 
   // Quantities arrive in the stock's base unit; show them the way the rest of
   // the app shows that item (packs, kilos...).
-  const q = (item, n) => { const d = analyticsDisplay(item); return `${(Number(n || 0) / d.mult).toLocaleString('en-PH', { maximumFractionDigits: 2 })} ${d.unit}`; };
+  // 1 pc, 2 pcs.
+  const u = (n, unit) => (unit === 'pcs' && Math.abs(Number(n)) === 1 ? 'pc' : unit);
+  const q = (item, n) => { const d = analyticsDisplay(item); const v = +(Number(n || 0) / d.mult).toFixed(2); return `${v.toLocaleString('en-PH', { maximumFractionDigits: 2 })} ${u(v, d.unit)}`; };
   // What to buy is a whole number of units - nobody orders 4.92 pieces. (Used
   // per day stays a fraction: an item that sells one every three days uses 0.33.)
-  const buy = (item, n) => { const d = analyticsDisplay(item); const whole = Math.ceil(Number(n || 0) / d.mult - 1e-9); return whole > 0 ? `${whole.toLocaleString('en-PH')} ${d.unit}` : '-'; };
+  const buy = (item, n) => { const d = analyticsDisplay(item); const whole = Math.ceil(Number(n || 0) / d.mult - 1e-9); return whole > 0 ? `${whole.toLocaleString('en-PH')} ${u(whole, d.unit)}` : '-'; };
   // A piece-seller's pace as a whole number: 7 a day, or - for something that
   // moves less than one a day - one every so many days.
   const pace = (item) => {
     if (!IS_LOG) return q(item, item.dailyUse);
     const d = analyticsDisplay(item);
     const perDay = Number(item.dailyUse || 0) / d.mult;
-    if (perDay >= 1) return `${Math.round(perDay).toLocaleString('en-PH')} ${d.unit}`;
+    if (perDay >= 1) return `${Math.round(perDay).toLocaleString('en-PH')} ${u(Math.round(perDay), d.unit)}`;
     const every = Math.max(2, Math.round(1 / perDay));
-    return `1 ${d.unit} every ${every} days`;
+    return `1 ${u(1, d.unit)} every ${every} days`;
   };
   const onHand = (item) => {
     if (!IS_LOG) return q(item, item.stockQty);
     const d = analyticsDisplay(item);
-    return `${Math.floor(Number(item.stockQty || 0) / d.mult + 1e-9).toLocaleString('en-PH')} ${d.unit}`;
+    const n = Math.floor(Number(item.stockQty || 0) / d.mult + 1e-9);
+    return `${n.toLocaleString('en-PH')} ${u(n, d.unit)}`;
   };
   const lasts = (r) => (r.daysLeft == null ? '-' : r.daysLeft <= 0 ? 'Out' : `${r.daysLeft} day${r.daysLeft === 1 ? '' : 's'}`);
 
