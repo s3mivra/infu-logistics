@@ -3,6 +3,7 @@ import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, Trending
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
 import ReorderForecast from './ReorderForecast';
+import StockMovement from './StockMovement';
 
 // ── AnalyticsTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
@@ -378,6 +379,8 @@ export default function AnalyticsTab({ ctx }) {
             </div>
 
             <div className="grid grid-cols-1 gap-4">
+              {/* Fast, slow and dead stock from actual sales, with what to buy. */}
+              <StockMovement apiFetch={apiFetch} can={ctx.can} />
               <ReorderForecast rows={ad?.reorderForecast || []} settings={ad?.forecastSettings || {}} analyticsDisplay={analyticsDisplay}
                 onMakeOrders={ctx.can?.('procurement.manage') ? () => {
                   // Procurement drafts the orders itself (one per supplier) when it opens.
