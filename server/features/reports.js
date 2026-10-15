@@ -1226,6 +1226,23 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
         }
       }
     }
+    // No supplier price list for an item? Then whoever it was last bought from:
+    // the newest purchase order with a line for it. Without this every item
+    // missing from a catalog fell into one "unassigned" draft, though they
+    // come from different suppliers.
+    try {
+      const pastPos = await mongoose.model('PurchaseOrder')
+        .find({ ...tenantScope(req), status: { $ne: 'Cancelled' }, 'lines.invId': { $ne: null } }, { supplier: 1, supplierId: 1, lines: 1, createdAt: 1 })
+        .sort({ createdAt: -1 }).limit(500).lean();
+      for (const po of pastPos) {
+        if (!po.supplierId && !String(po.supplier || '').trim()) continue;
+        for (const l of po.lines || []) {
+          const key = l.invId ? String(l.invId) : null;
+          if (!key || bestSupplierByInv[key]) continue;
+          bestSupplierByInv[key] = { supplierId: po.supplierId ? String(po.supplierId) : null, supplierName: po.supplier || '', unitCost: l.unitCost, fromLastPo: true };
+        }
+      }
+    } catch (err) { captureError(req, err); }
     // LOG 1:1: resolve the inventory doc that backs a recipe-less product (by code/name).
     const invByCode = {}, invByName = {};
     inv.forEach(i => { if (i.itemCode) invByCode[i.itemCode] = i; if (i.itemName) invByName[i.itemName] = i; });

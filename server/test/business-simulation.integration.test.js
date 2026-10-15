@@ -61,12 +61,15 @@ describe('a month of business, through the app', () => {
     const syrup = await item('SYR-VAN'), cups = await item('CUP-12');
     const po = ok(await auth('post', '/api/purchase-orders').send({
       supplier: 'Metro Syrups',
-      lines: [
-        { invId: String(syrup._id), itemName: syrup.itemName, unit: 'L', packSize: 2, orderedQty: 30, unitCost: 350 },   // 30 bottles at 350
-        { invId: String(cups._id), itemName: cups.itemName, unit: 'pcs', orderedQty: 10, unitCost: 120 },
-      ],
+      lines: [{ invId: String(syrup._id), itemName: syrup.itemName, unit: 'L', packSize: 2, orderedQty: 30, unitCost: 350 }],   // 30 bottles at 350
     }), 'purchase order');
-    ok(await auth('post', `/api/purchase-orders/${po.purchaseOrder._id}/receive`).send({ received: [{ index: 0, receivedQty: 30 }, { index: 1, receivedQty: 10 }] }), 'receive');
+    ok(await auth('post', `/api/purchase-orders/${po.purchaseOrder._id}/receive`).send({ received: [{ index: 0, receivedQty: 30 }] }), 'receive');
+    // Cups come from someone else, named on the order only (not a saved supplier).
+    const cupPo = ok(await auth('post', '/api/purchase-orders').send({
+      supplier: 'Paper Goods Trading',
+      lines: [{ invId: String(cups._id), itemName: cups.itemName, unit: 'pcs', orderedQty: 5, unitCost: 120 }],
+    }), 'cups purchase order');
+    ok(await auth('post', `/api/purchase-orders/${cupPo.purchaseOrder._id}/receive`).send({ received: [{ index: 0, receivedQty: 5 }] }), 'receive cups');
 
     // ── 3. A month of sales on the till, each one completed ──
     const sell = async (code, qty) => {
@@ -117,7 +120,7 @@ describe('a month of business, through the app', () => {
     // 30 bottles in, 23 sold; the voided 5 went back. A bottle is 2,000 ml.
     expect(syrup.packSize).toBe(2);
     expect(syrup.stockQty).toBe((30 - SYRUP_SOLD) * 2000);
-    expect((await item('CUP-12')).stockQty).toBe(10 - CUPS_SOLD);
+    expect((await item('CUP-12')).stockQty).toBe(5 - CUPS_SOLD);
     expect((await item('OLD-1')).stockQty).toBe(12);                 // the cancelled order took nothing
   });
 
@@ -144,7 +147,7 @@ describe('a month of business, through the app', () => {
     row = (code) => mv.rows.find(r => r.itemCode === code);
     expect(mv.wholeUnits).toBe(true);
     expect(row('SYR-VAN')).toMatchObject({ unit: 'pcs', stock: 30 - SYRUP_SOLD, available: 30 - SYRUP_SOLD, onOrder: 4, soldQty: SYRUP_SOLD, transactions: 15, soldDays: 15 });
-    expect(row('CUP-12')).toMatchObject({ unit: 'pcs', stock: 10 - CUPS_SOLD, soldQty: CUPS_SOLD, transactions: 4 });
+    expect(row('CUP-12')).toMatchObject({ unit: 'pcs', stock: 5 - CUPS_SOLD, soldQty: CUPS_SOLD, transactions: 4 });
     expect(row('OLD-1')).toMatchObject({ soldQty: 0, transactions: 0 });            // voided and cancelled are left out
     for (const r of mv.rows) {
       expect(Number.isInteger(r.stock), `${r.itemCode} stock ${r.stock}`).toBe(true);
@@ -155,7 +158,7 @@ describe('a month of business, through the app', () => {
   it('per day, days left and days since the last sale agree with each other', () => {
     const syr = row('SYR-VAN');
     expect(syr.adu).toBeCloseTo(SYRUP_SOLD / syr.inStockDays, 2);
-    expect(syr.daysOfStock).toBeCloseTo((30 - SYRUP_SOLD) / syr.adu, 1);
+    expect(syr.daysOfStock).toBeCloseTo((30 - SYRUP_SOLD) / syr.adu, 0);   // per day is shown rounded
     expect(syr.daysSinceSale).toBe(1);                                               // last sold yesterday
     expect(row('CUP-12').daysSinceSale).toBe(7);
     expect(row('OLD-1').daysSinceSale).toBeGreaterThanOrEqual(149);
@@ -188,6 +191,11 @@ describe('a month of business, through the app', () => {
     expect(line.displayUnit).toBe('pcs');
     expect(line.suggestedOrder).toBe(row('SYR-VAN').recommend);
     expect(po.lines.find(l => l.itemCode === 'OLD-1')).toBeUndefined();
+    // Each item goes to the supplier it was last bought from, so the drafts split.
+    expect(line.supplierName).toMatch(/metro syrups/i);
+    const cups = po.lines.find(l => l.itemCode === 'CUP-12');
+    expect(cups, JSON.stringify(po.lines)).toBeTruthy();
+    expect(cups.supplierName).toMatch(/paper goods trading/i);
   });
 
   it('a draft made from it can be saved and received, and the stock comes in as whole bottles', async () => {

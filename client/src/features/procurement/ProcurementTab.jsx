@@ -350,6 +350,11 @@ export default function ProcurementTab({ ctx }) {
   // suggestedQueue holds the remaining drafts; saveDraft() advances through it so
   // the reviewer still confirms every PO before anything is created.
   const [suggesting, setSuggesting] = useState(false);
+  // Lines whose extra fields (dates, storage, payment, alerts) are open. Kept
+  // folded by default so a re-order reads as item, qty, unit, cost.
+  const [lineDetails, setLineDetails] = useState(() => new Set());
+  const toggleLineDetails = (idx) => setLineDetails(prev => { const n = new Set(prev); if (n.has(idx)) n.delete(idx); else n.add(idx); return n; });
+  const lineHasDetails = (l) => !!(l.expiryDate || l.productionDate || l.stockLocation || l.stockCategory || l.creditAccount || l.expiryWarnDays || l.lowStockThreshold);
   const [suggestedQueue, setSuggestedQueue] = useState([]);
   const [suggestedQueueTotal, setSuggestedQueueTotal] = useState(0);
 
@@ -402,7 +407,8 @@ export default function ProcurementTab({ ctx }) {
 
       const groups = new Map();
       for (const l of suggested) {
-        const key = l.supplierId || 'unassigned';
+        // By supplier: the saved one, else the name the last order was placed under.
+        const key = l.supplierId || (l.supplierName ? `name:${String(l.supplierName).trim().toUpperCase()}` : 'unassigned');
         if (!groups.has(key)) groups.set(key, { supplierId: l.supplierId || '', supplier: l.supplierName || '', lines: [] });
         groups.get(key).lines.push(suggestionToLine(l));
       }
@@ -1608,10 +1614,10 @@ export default function ProcurementTab({ ctx }) {
                           and a date input never shows one at all. Same label
                           pattern as the storage block below. */}
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        <div className="col-span-2 sm:col-span-3">
+                        {!l.invId && <div className="col-span-2 sm:col-span-3">
                           <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Item Name</p>
                           <input value={l.itemName} onChange={e => updateLine(idx, { itemName: e.target.value, invId: null })} placeholder="e.g. Alaska Barista Milk" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60" />
-                        </div>
+                        </div>}
                         <div>
                           <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Qty (packs)</p>
                           <input type="number" min="0" step="any" value={l.orderedQty} onChange={e => updateLine(idx, { orderedQty: e.target.value })} placeholder="10" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60" />
@@ -1630,6 +1636,9 @@ export default function ProcurementTab({ ctx }) {
                           <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Size per Pack</p>
                           <input type="number" min="0" step="any" value={l.packSize} onChange={e => updateLine(idx, { packSize: e.target.value })} title="Weight / volume per pack, in the selected unit" placeholder="1000" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60" />
                         </div>
+                      </div>
+                      {(lineDetails.has(idx) || lineHasDetails(l)) ? (<>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2 border-t border-white/8">
                         <div>
                           <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Expiry Date</p>
                           <input type="date" value={l.expiryDate} onChange={e => updateLine(idx, { expiryDate: e.target.value })} title="Expiry date (optional)" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg/70 focus:outline-none focus:border-brand/60" />
@@ -1641,7 +1650,7 @@ export default function ProcurementTab({ ctx }) {
                           </div>
                         )}
                       </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 border-t border-white/8 mt-1">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                         <div>
                           <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Storage Location</p>
                           <select value={l.stockLocation || ''} onChange={e => updateLine(idx, { stockLocation: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-brand/60">
@@ -1672,6 +1681,7 @@ export default function ProcurementTab({ ctx }) {
                           <input type="number" min="0" value={l.lowStockThreshold || ''} onChange={e => updateLine(idx, { lowStockThreshold: e.target.value })} placeholder="e.g. 10" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60" />
                         </div>
                       </div>
+                      </>) : null}
                       <div className="flex items-center justify-between gap-2">
                         {(l.purchaseType || 'inventory') === 'inventory' && (l.invId || l.itemName.trim()) ? (
                           <button type="button" onClick={() => addBatch(idx)}
@@ -1680,6 +1690,12 @@ export default function ProcurementTab({ ctx }) {
                             <Plus size={13} /> Another batch
                           </button>
                         ) : <span />}
+                        {!lineHasDetails(l) && (
+                          <button type="button" onClick={() => toggleLineDetails(idx)} aria-expanded={lineDetails.has(idx)}
+                            className="text-fg/70 hover:text-fg text-xs font-bold">
+                            {lineDetails.has(idx) ? 'Fewer details' : 'More details (expiry, storage, payment, alerts)'}
+                          </button>
+                        )}
                         <p className="text-right text-fg/70 text-xs font-bold">Line: {money((Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0))}</p>
                       </div>
                     </div>
