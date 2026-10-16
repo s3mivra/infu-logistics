@@ -435,7 +435,7 @@ export default function ProcurementTab({ ctx }) {
   };
 
   // ── Supplier CRUD form ──────────────────────────────────────────────────────
-  const blankSupplier = { name: '', contactPerson: '', phone: '', email: '', address: '', notes: '', tin: '', registeredName: '', isVatRegistered: false };
+  const blankSupplier = { name: '', contactPerson: '', phone: '', email: '', address: '', notes: '', tin: '', registeredName: '', isVatRegistered: false, paymentTerms: '', leadTimeDays: '' };
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [supplierEditId, setSupplierEditId] = useState(null);
   const [supplierForm, setSupplierForm] = useState(blankSupplier);
@@ -511,6 +511,7 @@ export default function ProcurementTab({ ctx }) {
       name: s.name || '', contactPerson: s.contactPerson || '', phone: s.phone || '',
       email: s.email || '', address: s.address || '', notes: s.notes || '',
       tin: s.tin || '', registeredName: s.registeredName || '', isVatRegistered: s.isVatRegistered === true,
+      paymentTerms: s.paymentTerms || '', leadTimeDays: s.leadTimeDays ?? '',
     } : blankSupplier);
     setShowSupplierForm(true);
   };
@@ -1121,6 +1122,8 @@ export default function ProcurementTab({ ctx }) {
                     {s.phone && <span className="inline-flex items-center gap-1"><Phone size={11} />{s.phone}</span>}
                     {s.email && <span className="inline-flex items-center gap-1"><Mail size={11} />{s.email}</span>}
                     {s.address && <span className="inline-flex items-center gap-1"><MapPin size={11} />{s.address}</span>}
+                    {s.paymentTerms && <span>Terms: {s.paymentTerms}</span>}
+                    {s.leadTimeDays != null && <span>Delivers in {s.leadTimeDays} day{s.leadTimeDays === 1 ? '' : 's'}</span>}
                   </div>
                   {s.notes && <p className="text-fg/75 text-xs mt-1">{s.notes}</p>}
                   {/* Money this supplier is holding of ours, from overpaying a
@@ -1819,6 +1822,18 @@ export default function ProcurementTab({ ctx }) {
               <div>
                 <label className="text-[11px] font-black uppercase tracking-wider text-fg mb-1 block">Address</label>
                 <input value={supplierForm.address} onChange={e => setSupplierForm(f => ({ ...f, address: e.target.value }))} placeholder="Address" className={inputCls} />
+              </div>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="sup-terms" className="text-[11px] font-black uppercase tracking-wider text-fg mb-1 block">Payment Terms</label>
+                  <input id="sup-terms" value={supplierForm.paymentTerms} onChange={e => setSupplierForm(f => ({ ...f, paymentTerms: e.target.value }))} placeholder="e.g. 30 days, COD" className={inputCls} />
+                </div>
+                <div>
+                  <label htmlFor="sup-lead" className="text-[11px] font-black uppercase tracking-wider text-fg mb-1 block">Lead Time (days)</label>
+                  <input id="sup-lead" type="number" min="0" max="90" step="1" value={supplierForm.leadTimeDays}
+                    onChange={e => setSupplierForm(f => ({ ...f, leadTimeDays: e.target.value }))} placeholder="Blank = 7 (default)" className={inputCls} />
+                  <p className="text-[10px] text-fg/65 mt-1 leading-snug">Days from ordering to delivery. Used to work out how much to buy of what they supply.</p>
+                </div>
               </div>
               {/* What a 2307 is made out to, and what substantiates input VAT on
                   their invoice. Without the TIN the certificate cannot be filed. */}

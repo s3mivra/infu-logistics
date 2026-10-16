@@ -3,6 +3,7 @@
 /* eslint-disable no-unused-vars */
 import { billIsInBooks, carriedBillsFilter } from '../lib/billPoLink.js';
 import { title, partyName, lower, freeText, squish } from '../lib/normalize.js';
+import { cleanLeadTime } from '../lib/itemSuppliers.js';
 import { INPUT_VAT } from '../lib/vatPosting.js';
 import { loadVatConfig } from '../lib/vatSettings.js';
 
@@ -1015,7 +1016,9 @@ export default function registerPurchaseOrders(ctx) {
 
   app.post('/api/suppliers', verifyToken, ...canManageProc, async (req, res) => {
     try {
-      const { name, contactPerson = '', phone = '', email = '', address = '', notes = '', tin = '', registeredName = '', isVatRegistered } = req.body || {};
+      const { name, contactPerson = '', phone = '', email = '', address = '', notes = '', tin = '', registeredName = '', isVatRegistered, paymentTerms = '', leadTimeDays } = req.body || {};
+      const lead = cleanLeadTime(leadTimeDays);
+      if (!lead.ok) return res.status(400).json({ success: false, error: lead.error });
       // Canonicalize before the duplicate check, so "abc trading", "ABC Trading"
       // and "  ABC   Trading " can't all become separate supplier records.
       const cleanName = partyName(name);
@@ -1033,6 +1036,8 @@ export default function registerPurchaseOrders(ctx) {
         tin: squish(tin).slice(0, 30),
         registeredName: freeText(registeredName).slice(0, 200),
         isVatRegistered: isVatRegistered === true,
+        paymentTerms: freeText(paymentTerms).slice(0, 100),
+        leadTimeDays: lead.value,
         ...tenantScope(req),
       });
       logAudit?.(req, { action: 'create', entity: 'supplier', entityId: supplierCode });
@@ -1074,6 +1079,8 @@ export default function registerPurchaseOrders(ctx) {
           if (!cleanName) throw new Error('Supplier name is required.');
           if (seen.has(cleanName.toLowerCase())) throw new Error(`"${cleanName}" already exists.`);
           seen.add(cleanName.toLowerCase());
+          const lead = cleanLeadTime(r.leadTimeDays ?? r['Lead Time'] ?? r['Lead time (days)']);
+          if (!lead.ok) throw new Error(lead.error);
 
           const supplierCode = await mkSeqRef('SUP');
           await Supplier.create({
@@ -1084,6 +1091,7 @@ export default function registerPurchaseOrders(ctx) {
             address: freeText(r.address ?? r.Address ?? '').slice(0, 300),
             paymentTerms: freeText(r.paymentTerms ?? r.Terms ?? '').slice(0, 100),
             notes: freeText(r.notes ?? r.Notes ?? '').slice(0, 1000),
+            leadTimeDays: lead.value,
             ...tenantScope(req),
           });
           created.push({ row: i + 1, supplierCode, name: cleanName });
@@ -1100,8 +1108,14 @@ export default function registerPurchaseOrders(ctx) {
   app.patch('/api/suppliers/:id', verifyToken, ...canManageProc, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
-      const { name, contactPerson, phone, email, address, notes, isActive, tin, registeredName, isVatRegistered } = req.body || {};
+      const { name, contactPerson, phone, email, address, notes, isActive, tin, registeredName, isVatRegistered, paymentTerms, leadTimeDays } = req.body || {};
       const update = {};
+      if (leadTimeDays !== undefined) {
+        const lead = cleanLeadTime(leadTimeDays);
+        if (!lead.ok) return res.status(400).json({ success: false, error: lead.error });
+        update.leadTimeDays = lead.value;
+      }
+      if (paymentTerms !== undefined) update.paymentTerms = freeText(paymentTerms).slice(0, 100);
       if (name !== undefined) {
         const cleanName = partyName(name);
         if (!cleanName) return res.status(400).json({ success: false, error: 'Supplier name is required.' });

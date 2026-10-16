@@ -1,4 +1,4 @@
-﻿// reports routes - moved verbatim from server.js (feature-driven restructure).
+// reports routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { atomic } from '../lib/atomicRoute.js';
@@ -12,6 +12,7 @@ import { captureError } from '../lib/errorLog.js';
 import { sectionAncestor } from '../lib/chartOfAccounts.js';
 import { buildBalanceSheet } from '../lib/consolidate.js';
 import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
+import { itemSuppliers } from '../lib/itemSuppliers.js';
 
 export default function registerReports(ctx) {
   const {
@@ -1191,11 +1192,10 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
     const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
     const days = Math.max(1, parseInt(req.query.days) || 7); // cover N days of supply
     const since = new Date(Date.now() - 30 * 86400000);
-    const [inv, orders, products, suppliers] = await Promise.all([
+    const [inv, orders, products] = await Promise.all([
       Inventory.find(bizScope, { itemCode: 1, itemName: 1, stockQty: 1, unit: 1, unitCost: 1, lowStockThreshold: 1, displayUnit: 1, unitMultiplier: 1, packSize: 1 }).lean(),
       Order.find({ ...bizScope, status: 'Completed', createdAt: { $gte: since } }, { items: 1 }).lean(),
       Product.find(bizScope, { _id: 1, name: 1, productCode: 1, baseRecipe: 1, sizes: 1 }).lean(),
-      Supplier.find({ ...tenantScope(req), isActive: true, 'catalog.invId': { $ne: null } }, { name: 1, catalog: 1 }).lean(),
     ]);
     const prodMap = Object.fromEntries(products.map(p => [p._id.toString(), p]));
     // The days there have actually been sales to average over (a month at most).
@@ -1212,36 +1212,15 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
       onOrder[String(item._id)] = (onOrder[String(item._id)] || 0) + left * basePerPack({ unitMultiplier: item.unitMultiplier, packSize: Number(l.packSize) > 0 ? Number(l.packSize) : item.packSize });
     }
     // Days allowed for a delivery to arrive, plus spare - as the Reorder Forecast.
-    const WAIT_DAYS = 10;
-    // Cheapest supplier quote per inventory item, so a reorder suggestion can be
-    // grouped into per-supplier draft POs instead of one manually-assigned PO.
+    const WAIT_DAYS = 10;   // 7 days delivery + 3 spare, unless the item's supplier has its own lead time
+    const waitFor = (invId) => { const lt = bestSupplierByInv[String(invId)]?.leadTimeDays; return lt != null ? lt + 3 : WAIT_DAYS; };
+    // Who each item comes from (cheapest catalog quote, else whoever it was last
+    // bought from) and that supplier's delivery time - the same answer Stock
+    // movement uses (lib/itemSuppliers.js), so drafts split by supplier.
     const bestSupplierByInv = {};
-    for (const s of suppliers) {
-      for (const c of (s.catalog || [])) {
-        if (!c.invId) continue;
-        const key = c.invId.toString();
-        const cur = bestSupplierByInv[key];
-        if (!cur || (c.unitCost || 0) < cur.unitCost) {
-          bestSupplierByInv[key] = { supplierId: s._id.toString(), supplierName: s.name, unitCost: c.unitCost, packSize: c.packSize };
-        }
-      }
-    }
-    // No supplier price list for an item? Then whoever it was last bought from:
-    // the newest purchase order with a line for it. Without this every item
-    // missing from a catalog fell into one "unassigned" draft, though they
-    // come from different suppliers.
     try {
-      const pastPos = await mongoose.model('PurchaseOrder')
-        .find({ ...tenantScope(req), status: { $ne: 'Cancelled' }, 'lines.invId': { $ne: null } }, { supplier: 1, supplierId: 1, lines: 1, createdAt: 1 })
-        .sort({ createdAt: -1 }).limit(500).lean();
-      for (const po of pastPos) {
-        if (!po.supplierId && !String(po.supplier || '').trim()) continue;
-        for (const l of po.lines || []) {
-          const key = l.invId ? String(l.invId) : null;
-          if (!key || bestSupplierByInv[key]) continue;
-          bestSupplierByInv[key] = { supplierId: po.supplierId ? String(po.supplierId) : null, supplierName: po.supplier || '', unitCost: l.unitCost, fromLastPo: true };
-        }
-      }
+      const found = await itemSuppliers({ Supplier, PurchaseOrder: mongoose.model('PurchaseOrder'), tenant: tenantScope(req) });
+      for (const [k, v] of found) bestSupplierByInv[k] = v;
     } catch (err) { captureError(req, err); }
     // LOG 1:1: resolve the inventory doc that backs a recipe-less product (by code/name).
     const invByCode = {}, invByName = {};
@@ -1273,7 +1252,7 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
       // for a delivery. This is what catches an item with no low-stock
       // threshold set - before, only items with one were ever suggested.
       const coming = onOrder[i._id.toString()] || 0;
-      const sellingOut = adu > 0 && (Math.max(0, i.stockQty) + coming) <= adu * WAIT_DAYS;
+      const sellingOut = adu > 0 && (Math.max(0, i.stockQty) + coming) <= adu * waitFor(i._id);
       if (!lowFlag && !sellingOut) return null;
 
       // For LOG mode display in pcs (pack units); otherwise promote g→kg, ml→L.
@@ -1285,7 +1264,7 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
 
       // Best qty = whichever is larger: velocity-based cover OR refill to 2× threshold.
       // This ensures items with low/no velocity still get a sensible restock target.
-      const velocityTarget = adu * (days + WAIT_DAYS); // base units: N days of cover, plus the wait for delivery
+      const velocityTarget = adu * (days + waitFor(i._id)); // base units: N days of cover, plus the wait for delivery
       const refillTarget   = lowFlag ? threshold * 2 : 0; // bring back to 2× the alert floor
       const bestTarget     = Math.max(velocityTarget, refillTarget);
       const needBase       = Math.max(0, bestTarget - Math.max(0, i.stockQty) - coming);
@@ -1297,7 +1276,7 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
         itemName: i.itemName, currentStock: Math.round(i.stockQty / divisor), displayUnit,
         avgDailyUse: +(adu / divisor).toFixed(3), suggestedOrder: Math.ceil(needBase / divisor),
         estCost: +((needBase) * (i.unitCost || 0)).toFixed(2), lowStock: lowFlag, sellingOut,
-        supplierId: best?.supplierId || null, supplierName: best?.supplierName || null,
+        supplierId: best?.supplierId || null, supplierName: best?.supplierName || null, leadTimeDays: best?.leadTimeDays ?? null,
       };
     }).filter(Boolean);
     // What Analytics -> Stock movement says to buy (fast and slow sellers, over
@@ -1328,7 +1307,7 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
           itemName: i.itemName, currentStock: Math.round(i.stockQty / divisor), displayUnit: isLogBiz ? 'pcs' : effUnit,
           avgDailyUse: +((r.adu * (r.baseUnits || 1)) / divisor).toFixed(3), suggestedOrder,
           estCost: +(needBase * (i.unitCost || 0)).toFixed(2), lowStock: false, sellingOut: false, movement: r.class,
-          supplierId: best?.supplierId || null, supplierName: best?.supplierName || null,
+          supplierId: best?.supplierId || null, supplierName: best?.supplierName || null, leadTimeDays: best?.leadTimeDays ?? null,
         };
         lines.push(line); byInv.set(String(i._id), line);
       }

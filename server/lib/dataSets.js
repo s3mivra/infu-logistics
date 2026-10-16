@@ -409,13 +409,14 @@ export const DATASETS = {
         { name: 'email', example: 'joy@metrobeans.ph' },
         { name: 'address', example: '12 Bonifacio St, Quezon City' },
         { name: 'paymentTerms', note: 'What their invoices say, in their words.', example: '30 days' },
+        { name: 'leadTimeDays', note: 'Days from ordering to delivery, 0-90. Used to work out how much to buy of what they supply. Blank = the business default (7).', example: '5' },
         { name: 'notes', note: 'Anything worth remembering.', example: 'Delivers Tuesdays only' },
       ],
     },
-    columns: ['Name', 'Contact', 'Phone', 'Email', 'Address', 'Terms', 'Credit Balance', 'Active'],
+    columns: ['Name', 'Contact', 'Phone', 'Email', 'Address', 'Terms', 'Lead Time (days)', 'Credit Balance', 'Active'],
     toRow: (s) => [
       s.name || '', s.contactPerson || '', s.phone || '', s.email || '',
-      s.address || '', s.paymentTerms || '', money(s.creditBalance), yes(s.isActive !== false),
+      s.address || '', s.paymentTerms || '', s.leadTimeDays ?? '', money(s.creditBalance), yes(s.isActive !== false),
     ],
   },
 

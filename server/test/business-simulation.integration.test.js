@@ -198,6 +198,42 @@ describe('a month of business, through the app', () => {
     expect(cups.supplierName).toMatch(/paper goods trading/i);
   });
 
+  it("each supplier's own lead time decides how much to buy of what it supplies", async () => {
+    const metro = await M('Supplier').findOne({ name: /metro syrups/i }).lean();
+    // Refused: not a whole number of days, or out of range.
+    for (const bad of [-1, 91, 2.5, 'soon']) {
+      expect((await auth('patch', `/api/suppliers/${metro._id}`).send({ leadTimeDays: bad })).status, String(bad)).toBe(400);
+    }
+    ok(await auth('patch', `/api/suppliers/${metro._id}`).send({ leadTimeDays: 2, paymentTerms: '15 days' }), 'set lead time');
+    const saved = await M('Supplier').findById(metro._id).lean();
+    expect(saved).toMatchObject({ leadTimeDays: 2, paymentTerms: '15 days' });   // contact details save at once, no approval
+
+    const res = ok(await auth('get', '/api/analytics/stock-movement'), 'stock movement');
+    const syr = res.rows.find(r => r.itemCode === 'SYR-VAN'), cups = res.rows.find(r => r.itemCode === 'CUP-12'), st = res.settings;
+    expect(syr).toMatchObject({ leadTimeDays: 2, leadFromSupplier: true });
+    expect(syr.supplierName).toMatch(/metro syrups/i);
+    // Paper Goods was typed on the order, never saved with a lead time: the default.
+    expect(cups).toMatchObject({ leadTimeDays: st.leadTimeDays, leadFromSupplier: false });
+    expect(syr.recommend).toBe(Math.max(0, Math.ceil((SYRUP_SOLD / syr.inStockDays) * (st.coverDays + 2 + st.safetyDays) - (30 - SYRUP_SOLD) - 4 - 1e-9)));
+    // A 2-day supplier needs less than the 7-day default would have asked for.
+    expect(syr.recommend).toBeLessThan(row('SYR-VAN').recommend);
+    // The Suggested PO drafts the same amount, and carries the lead time.
+    const po = ok(await auth('get', '/api/reports/purchase-order?days=14'), 'suggested PO');
+    expect(po.lines.find(l => l.itemCode === 'SYR-VAN')).toMatchObject({ suggestedOrder: syr.recommend, leadTimeDays: 2 });
+    row = (code) => res.rows.find(r => r.itemCode === code);                   // later steps read the new figures
+  });
+
+  it('the setup workbook reads a lead time for each supplier', async () => {
+    const r = ok(await auth('post', '/api/suppliers/import').send({ rows: [
+      { name: 'Quick Cups Co', leadTimeDays: '3' }, { name: 'Slow Freight Co', leadTimeDays: '120' }, { name: 'No Lead Co', leadTimeDays: '' },
+    ] }), 'supplier import');
+    expect(r.skipped.map(x => x.row)).toEqual([2]);                              // 120 days is out of range
+    expect((await M('Supplier').findOne({ name: /quick cups/i }).lean()).leadTimeDays).toBe(3);
+    expect((await M('Supplier').findOne({ name: /no lead/i }).lean()).leadTimeDays).toBeNull();
+    const tpl = ok(await auth('get', '/api/export/suppliers?template=1'), 'template');
+    expect(tpl.columns).toContain('leadTimeDays');
+  });
+
   it('a draft made from it can be saved and received, and the stock comes in as whole bottles', async () => {
     const want = row('SYR-VAN').recommend;
     const syrup = await item('SYR-VAN');

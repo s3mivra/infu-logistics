@@ -66,6 +66,7 @@ One row per supplier. A name that already exists is left alone, so re-importing 
 | contactPerson | Who you deal with | Joy Cruz |
 | phone / email / address | Contact details | 0917 555 0100 |
 | paymentTerms | As their invoices say it | 30 days |
+| leadTimeDays | Days from ordering to delivery, 0-90. Decides how much to buy of what they supply. Blank = default 7 | 5 |
 | notes | Anything worth remembering | Delivers Tuesdays only |
 
 ## 3. Clients *(logistics only)*

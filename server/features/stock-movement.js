@@ -35,6 +35,7 @@ import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { basePerPack } from '../lib/units.js';
+import { itemSuppliers } from '../lib/itemSuppliers.js';
 
 const SETTINGS_KEY = 'movementSettings';
 export const MOVEMENT_DEFAULTS = {
@@ -344,7 +345,19 @@ export default function registerStockMovement(ctx) {
       const byCategory = new Map();
       for (const r of sellers) { if (!r.category) continue; if (!byCategory.has(r.category)) byCategory.set(r.category, []); byCategory.get(r.category).push(r.adu); }
       const catThreshold = new Map([...byCategory].filter(([, v]) => v.length >= settings.categoryMinSellers).map(([c, v]) => [c, percentile(v, settings.fastPercentile)]));
+      // Each item's supplier, and that supplier's own delivery time: an item
+      // from a supplier who delivers in 2 days needs far less on the shelf than
+      // one who takes 3 weeks. No lead time recorded = the business default.
+      let supplierOf = new Map();
+      try { supplierOf = await itemSuppliers({ Supplier: mongoose.model('Supplier'), PurchaseOrder: mongoose.model('PurchaseOrder'), tenant: tenantScope(req) }); }
+      catch (err) { captureError(req, err); }
       for (const r of rows) {
+        const sup = supplierOf.get(r._id) || null;
+        const ownLead = sup?.leadTimeDays ?? null;
+        const itemSettings = ownLead != null ? { ...settings, leadTimeDays: ownLead } : settings;
+        r.supplierName = sup?.supplierName || '';
+        r.leadTimeDays = itemSettings.leadTimeDays;
+        r.leadFromSupplier = ownLead != null;
         r.daysSinceSale = calendarDaysBetween(r.lastSold);
         r.class = classify({
           soldQty: r.soldQty, adu: r.adu, soldDays: r.soldDays, fastThreshold: catThreshold.get(r.category) ?? fastThreshold, settings, historyDays, ageDays: r.ageDays, outDays: r.outDays,
@@ -354,9 +367,9 @@ export default function registerStockMovement(ctx) {
         // Only an item with a rate to go by gets a figure: dead stock, an item
         // that could not sell, and one too new to judge get none.
         r.recommend = (r.class === 'fast' || r.class === 'slow')
-          ? recommendBuy({ adu: r.buyAdu, available: r.available, onOrder: r.onOrder, settings, whole: r.whole }) : 0;
+          ? recommendBuy({ adu: r.buyAdu, available: r.available, onOrder: r.onOrder, settings: itemSettings, whole: r.whole }) : 0;
         r.daysOfStock = r.adu > 0 ? r2(r.available / r.adu) : null;
-        r.runOut = runOut({ daysLeft: r.daysOfStock, available: r.available, adu: r.adu, settings });
+        r.runOut = runOut({ daysLeft: r.daysOfStock, available: r.available, adu: r.adu, settings: itemSettings });
         r.adu = r.whole ? r2(r.adu) : r3(r.adu);
         r.tiedUp = r2(Math.max(0, r.stock) * r.perUnit * r.unitCost);
         delete r.ageDays; delete r.unitCost; delete r.perUnit; delete r.liveDays; delete r.whole; delete r.buyAdu;
@@ -373,7 +386,7 @@ export default function registerStockMovement(ctx) {
         // How the figures were worked out, for the screen to say so.
         basis: {
           perDay: 'Sold in the period / days in the period the item existed and had stock',
-          buy: `Per day x (${settings.coverDays} cover + ${settings.leadTimeDays} delivery) + ${settings.safetyDays} days safety stock, less free stock and open purchase orders; no single day counts for more than ${settings.spikeFactor}x a typical selling day`,
+          buy: `Per day x (${settings.coverDays} cover + delivery days - the item's supplier's own lead time, else ${settings.leadTimeDays}) + ${settings.safetyDays} days safety stock, less free stock and open purchase orders; no single day counts for more than ${settings.spikeFactor}x a typical selling day`,
           reserved: 'Stock held for client orders is not counted as free',
         },
       };

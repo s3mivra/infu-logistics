@@ -53,6 +53,7 @@ Buy          = max(0, Target stock − (free stock + on order))
 ```
 - Free stock = on hand minus what is held for client orders, so held stock isn't counted twice.
 - On order = what open purchase orders still have to deliver.
+- **Delivery days are per supplier.** Each item uses its supplier's own lead time (Procurement → Suppliers → Lead time), else the default under Thresholds (7). The supplier is the cheapest on its price lists, else whoever the item was last bought from. The Buy column shows which: "2-day lead", or "7-day lead (default)".
 - **Spike guard:** for Buy, no single day counts for more than 3× the item's typical (median) selling day, so one bulk order doesn't inflate the purchase. Sold still shows everything. Items where this applied are marked *spike-adjusted*.
 - **Why not Sold ÷ days it sold?** That assumes the item sells every day. 1,678 sold on 13 of 30 days is about 56 a day, not 129.
 - Logistics, and any café item counted in pcs, is rounded **up** to whole units. Café ingredients can be fractions.
@@ -68,7 +69,7 @@ Buy is only suggested for fast and slow items. Dead stock, out-of-stock and too-
 | …and sold on at least __ days | 3 |
 | Dead stock = no sale for __ days | 90 |
 | Buy enough for __ days | 14 |
-| Delivery takes __ days | 7 |
+| Delivery takes __ days (when the supplier has no lead time) | 7 |
 | Plus spare __ days (safety stock) | 3 |
 | Judge fast within a category of __+ sellers | 5 |
 | For buying, cap one day at __× a typical selling day | 3 |

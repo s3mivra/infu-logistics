@@ -1,0 +1,330 @@
+<title>Setup Workbook Guide</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;800&family=Public+Sans:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: a field manual - sticky contents rail on wide screens, numbered tab cards in a single reading column. */
+:root {
+  --bg: #f6f8f6; --surface: #ffffff; --fg: #17201b; --muted: #55625a; --line: #dbe3dd;
+  --brand: #17803f; --brand-soft: #e3f3e8; --warn: #9a5b00; --warn-soft: #fbf0dc; --stop: #b42318; --stop-soft: #fdecea;
+  --display: "Archivo", "Arial Narrow", system-ui, sans-serif;
+  --body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1411; --surface: #171e1a; --fg: #e6ece8; --muted: #9db0a4; --line: #2a352f;
+  --brand: #3cc472; --brand-soft: #173523; --warn: #f0b44c; --warn-soft: #33270f; --stop: #ff7b6e; --stop-soft: #3a1a17; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1411; --surface: #171e1a; --fg: #e6ece8; --muted: #9db0a4; --line: #2a352f;
+  --brand: #3cc472; --brand-soft: #173523; --warn: #f0b44c; --warn-soft: #33270f; --stop: #ff7b6e; --stop-soft: #3a1a17; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font: 15px/1.6 var(--body); padding-inline: 16px; padding-block: 0 64px }
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 40px }
+@media (max-width: 860px) { .wrap { grid-template-columns: minmax(0, 1fr) } nav.toc { display: none } }
+
+header.top { max-width: 1120px; margin: 0 auto; padding-block: 40px 28px; border-bottom: 1px solid var(--line); margin-bottom: 32px }
+.eyebrow { font: 600 11px/1 var(--body); letter-spacing: .14em; text-transform: uppercase; color: var(--brand) }
+h1 { font: 800 clamp(30px, 5vw, 44px)/1.05 var(--display); margin: 10px 0 12px; text-wrap: balance; letter-spacing: -.01em }
+.lede { color: var(--muted); max-width: 64ch; margin: 0 }
+h2 { font: 800 22px/1.2 var(--display); margin: 0 0 14px; text-wrap: balance }
+h3 { font: 700 17px/1.3 var(--body); margin: 0 }
+p { margin: 0 0 12px; max-width: 70ch }
+code, .mono { font-family: var(--mono); font-size: .88em; background: var(--brand-soft); padding: 1px 6px; border-radius: 4px }
+
+nav.toc { position: sticky; top: env(safe-area-inset-top, 0px); align-self: start; padding-top: 4px; font-size: 13px }
+nav.toc p { font: 600 11px/1 var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px }
+nav.toc a { display: block; color: var(--fg); text-decoration: none; padding: 4px 0 4px 10px; border-left: 2px solid var(--line) }
+nav.toc a:hover, nav.toc a:focus-visible { border-left-color: var(--brand); color: var(--brand); outline: none }
+nav.toc .sub a { padding-left: 20px; color: var(--muted); font-size: 12.5px }
+
+main { display: flex; flex-direction: column; gap: 44px; min-width: 0 }
+section { scroll-margin-top: 16px }
+
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px }
+.rule { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px }
+.rule > b { display: block; margin-bottom: 4px }
+.rule span { color: var(--muted); font-size: 14px }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface) }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top }
+th { font: 600 11px/1.3 var(--body); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: var(--bg) }
+tr:last-child td { border-bottom: 0 }
+td.col { font-family: var(--mono); font-size: 13px; white-space: nowrap }
+.req { color: var(--stop); font-weight: 700 }
+
+.steps { counter-reset: s; display: flex; flex-direction: column; gap: 10px; padding: 0; margin: 0; list-style: none }
+.steps li { counter-increment: s; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; align-items: start }
+.steps li::before { content: counter(s); font: 800 15px/34px var(--display); text-align: center; border-radius: 50%; background: var(--brand); color: var(--surface); width: 34px; height: 34px }
+
+.tab { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; display: flex; flex-direction: column; gap: 12px }
+.tab-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap }
+.num { font: 800 13px/1 var(--mono); color: var(--brand) }
+.when { font-size: 13px; color: var(--muted) }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto }
+.chip { font: 600 11px/1 var(--body); padding: 5px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap }
+.chip.posts { background: var(--stop-soft); color: var(--stop); border-color: transparent }
+.chip.start { background: var(--brand-soft); color: var(--brand); border-color: transparent }
+.note { border-radius: 8px; padding: 10px 14px; font-size: 14px; background: var(--brand-soft) }
+.note.warn { background: var(--warn-soft); color: var(--fg) }
+.note.warn b { color: var(--warn) }
+.note.stop { background: var(--stop-soft) }
+.note.stop b { color: var(--stop) }
+
+.pick { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px }
+@media (max-width: 560px) { .pick { grid-template-columns: minmax(0, 1fr) } }
+.pick div { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px }
+.pick b { display: block; margin-bottom: 6px }
+.pick span { color: var(--muted); font-size: 14px }
+
+.check { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px }
+.check li { display: flex; gap: 10px; align-items: flex-start }
+.check input { margin-top: 5px; width: 16px; height: 16px; accent-color: var(--brand) }
+.check label { cursor: pointer }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth } }
+</style>
+
+<header class="top">
+  <div class="eyebrow">Infusion Logistics · Quick guide</div>
+  <h1>Setup Workbook Guide</h1>
+  <p class="lede">How to fill in the setup workbook (the Excel file from <b>Ledger → Export All → Start from templates → Download all templates</b>) and bring it back into the app. Fill what you need, leave the rest empty, import.</p>
+</header>
+
+<div class="wrap">
+  <nav class="toc" aria-label="Contents">
+    <p>Contents</p>
+    <a href="#rules">Rules for every tab</a>
+    <a href="#pick">Which tabs you need</a>
+    <a href="#tabs">The tabs</a>
+    <div class="sub">
+      <a href="#t-suppliers">Suppliers</a><a href="#t-clients">Clients</a><a href="#t-inventory">Inventory</a><a href="#t-tiers">Price Tiers</a>
+      <a href="#t-coa">Chart of Accounts</a><a href="#t-pnl">P&amp;L History</a><a href="#t-opening">Opening Balances</a><a href="#t-ar">Open Receivables</a>
+      <a href="#t-po">Purchase Orders</a><a href="#t-ap">Open Payables</a><a href="#t-dep">Open Deposits</a><a href="#t-bills">Bills</a>
+      <a href="#t-exp">Expenses</a><a href="#t-fa">Fixed Assets</a>
+    </div>
+    <a href="#import">Importing</a>
+    <a href="#checklist">Checklist</a>
+  </nav>
+
+  <main>
+    <section id="rules">
+      <h2>Rules for every tab</h2>
+      <div class="rules">
+        <div class="rule"><b>Don't touch row 1</b><span>Row 1 holds the column names. Don't rename, delete or move them (Price Tiers is the one exception).</span></div>
+        <div class="rule"><b>Row 2 is an example</b><span>Type over it with real data, or leave it exactly as it is and it is skipped.</span></div>
+        <div class="rule"><b>One row per thing</b><span>One supplier, one item, one invoice per row.</span></div>
+        <div class="rule"><b>Dates: <span class="mono">2026-10-16</span></b><span>Year-month-day. Money as plain numbers: <span class="mono">12500</span>, no ₱, no commas.</span></div>
+        <div class="rule"><b>Empty tab = skipped</b><span>Leave any tab you don't need blank. Nothing happens to it.</span></div>
+        <div class="rule"><b>You see only your tabs</b><span>The workbook holds only the tabs your role can import. Clients appears for logistics businesses only.</span></div>
+        <div class="rule"><b>Help tabs at the end</b><span><b>How to fill</b> explains every column, <b>Valid Values</b> lists accepted words, <b>Accounts</b> lists account codes.</span></div>
+      </div>
+    </section>
+
+    <section id="pick">
+      <h2>Which tabs you need</h2>
+      <div class="pick">
+        <div><b>Just starting with the app</b><span>Suppliers, Clients, Inventory. Add Price Tiers if customers pay different prices. This is enough to start selling and buying.</span></div>
+        <div><b>Moving over from existing books</b><span>Also: Chart of Accounts (only if your books have their own codes), P&amp;L History, Opening Balances, Open Receivables, Open Payables, Open Deposits &amp; Advances.</span></div>
+        <div><b>Orders already placed with suppliers</b><span>Purchase Orders.</span></div>
+        <div><b>New bills, expenses or equipment</b><span>Bills, Expenses, Fixed Assets. Expenses and Fixed Assets post to the books straight away.</span></div>
+      </div>
+    </section>
+
+    <section id="tabs">
+      <h2>The tabs</h2>
+      <p>The app imports the tabs in the workbook's own order, because later tabs refer to earlier ones (a bill names a supplier). Fill them in any order, but a name used on one tab must already be on the tab it comes from.</p>
+      <div style="display:flex;flex-direction:column;gap:16px">
+
+      <article class="tab" id="t-suppliers">
+        <div class="tab-head"><span class="num">TAB 2</span><h3>Suppliers</h3><span class="when">The companies you buy from</span><div class="chips"><span class="chip start">Start here</span><span class="chip">Posts nothing</span></div></div>
+        <p>One row per supplier. Only the name is required. Fill this <b>before</b> Purchase Orders, Open Payables and Bills: those must name a supplier listed here. A name already in the app is left alone, so importing again is safe.</p>
+        <div class="table-wrap"><table><tr><th>Column</th><th>What to put</th><th>Example</th></tr>
+          <tr><td class="col">name <span class="req">*</span></td><td>Supplier name, unique</td><td>Metro Beans</td></tr>
+          <tr><td class="col">contactPerson · phone · email · address</td><td>Contact details, if you have them</td><td>Joy Cruz · 0917 555 0100</td></tr>
+          <tr><td class="col">paymentTerms</td><td>As their invoices say it</td><td>30 days</td></tr>
+          <tr><td class="col">leadTimeDays</td><td>Days from ordering to delivery, 0 to 90. Decides how much to buy of what they supply. Blank = the default 7</td><td>5</td></tr>
+          <tr><td class="col">notes</td><td>Anything worth remembering</td><td>Delivers Tuesdays only</td></tr>
+        </table></div>
+      </article>
+
+      <article class="tab" id="t-clients">
+        <div class="tab-head"><span class="num">TAB 3</span><h3>Clients</h3><span class="when">Customers you sell to on account (logistics only)</span><div class="chips"><span class="chip start">Start here</span><span class="chip">Posts nothing</span></div></div>
+        <p>One row per customer. There is no password column on purpose: each client gets a link to set up their own login.</p>
+        <div class="table-wrap"><table><tr><th>Column</th><th>What to put</th><th>Example</th></tr>
+          <tr><td class="col">name <span class="req">*</span></td><td>Customer name, unique</td><td>Kasa Lokal</td></tr>
+          <tr><td class="col">phone · email</td><td>An invalid email rejects the row</td><td>ar@kasalokal.ph</td></tr>
+          <tr><td class="col">paymentMethod</td><td>How they usually pay (Cash if blank)</td><td>Account</td></tr>
+          <tr><td class="col">creditLimit</td><td>Most they may owe at once. Blank = no limit, <b>0 = no credit</b></td><td>50000</td></tr>
+          <tr><td class="col">creditTermsDays</td><td>Days they have to pay</td><td>30</td></tr>
+          <tr><td class="col">segments</td><td>Groups, separated by commas</td><td>wholesale, cafe</td></tr>
+          <tr><td class="col">contactNotes</td><td>Anything about dealing with them</td><td>Invoice to accounts@</td></tr>
+        </table></div>
+      </article>
+
+      <article class="tab" id="t-inventory">
+        <div class="tab-head"><span class="num">TAB 4</span><h3>Inventory</h3><span class="when">Your stock count and costs</span><div class="chips"><span class="chip start">Start here</span><span class="chip">You preview it first</span></div></div>
+        <p>One row per stock item, and <b>everything is per pack</b>: Pack and Unit say what one pack is, Qty counts packs, Cost is the price of one pack. In logistics each item also becomes a product you can sell.</p>
+        <div class="table-wrap"><table><tr><th>Column</th><th>What to put</th><th>2 L syrup bottle</th></tr>
+          <tr><td class="col">Code</td><td>Your item code. Blank = one is assigned</td><td>SYR-VAN</td></tr>
+          <tr><td class="col">Product <span class="req">*</span></td><td>Name only, no size</td><td>Vanilla Syrup</td></tr>
+          <tr><td class="col">Pack</td><td>What one pack holds</td><td>2</td></tr>
+          <tr><td class="col">Unit <span class="req">*</span></td><td>kg, g, L, ml or pcs</td><td>L</td></tr>
+          <tr><td class="col">Qty <span class="req">*</span></td><td>How many packs you counted. Blank = not counted, 0 = none on hand</td><td>30</td></tr>
+          <tr><td class="col">Cost / pack <span class="req">*</span></td><td>What one pack costs you</td><td>350</td></tr>
+          <tr><td class="col">SRP / unit</td><td>Selling price per kg, L or pc. To price per bottle, rename the column <span class="mono">SRP / pack</span></td><td>225</td></tr>
+          <tr><td class="col">Expiry date · Production date</td><td>Production date only for goods with no real expiry</td><td>2026-12-31</td></tr>
+          <tr><td class="col">Low Stock At · Location</td><td>Warn below this; where it is kept</td><td>5 · Main bar</td></tr>
+        </table></div>
+        <div class="note warn"><b>Don't leave Cost at 0.</b> A zero cost makes every sale of that item look like 100% profit.</div>
+        <div class="note">A 2 L bottle is sold and re-ordered as <b>1 pc</b>, never half a bottle.</div>
+      </article>
+
+      <article class="tab" id="t-tiers">
+        <div class="tab-head"><span class="num">TAB 5</span><h3>Price Tiers</h3><span class="when">Different prices for different customers</span><div class="chips"><span class="chip">Optional</span></div></div>
+        <p>One row per product. After Code, Product and List Price, <b>rename the "Dealer Price" column</b> to your tier's name and add one column per tier (Wholesale, Reseller…). A blank cell means no special price for that tier. New tier names are created for you.</p>
+        <div class="table-wrap"><table><tr><th>Code <span class="req">*</span></th><th>Product</th><th>List Price</th><th>Wholesale</th><th>Reseller</th></tr>
+          <tr><td>SYR-VAN</td><td>Vanilla Syrup</td><td>450</td><td>400</td><td>420</td></tr>
+        </table></div>
+      </article>
+
+      <article class="tab" id="t-coa">
+        <div class="tab-head"><span class="num">TAB 1</span><h3>Chart of Accounts</h3><span class="when">Only if your old books use their own account codes</span><div class="chips"><span class="chip">Moving books</span></div></div>
+        <p>Each row is one of your accounts and the system account it belongs under, so the other tabs can use your codes. Skip it if you don't have your own codes.</p>
+        <div class="table-wrap"><table><tr><th>Column</th><th>What to put</th><th>Example</th></tr>
+          <tr><td class="col">code <span class="req">*</span> · name <span class="req">*</span></td><td>Your code and name, as your books write them</td><td>X-1000 · BDO Savings</td></tr>
+          <tr><td class="col">goesUnder <span class="req">*</span></td><td>The system account it belongs under (from the Accounts tab)</td><td>112000</td></tr>
+          <tr><td class="col">keepSeparate</td><td><b>Yes</b>: its own sub-account. <b>No</b>: your code is that system account. Use No for Sales, Cost of Sales and Discounts</td><td>Yes</td></tr>
+        </table></div>
+      </article>
+
+      <article class="tab" id="t-pnl">
+        <div class="tab-head"><span class="num">TAB 6</span><h3>P&amp;L History</h3><span class="when">This year's income statement, month by month</span><div class="chips"><span class="chip">Moving books</span><span class="chip posts">Posts one entry per month</span></div></div>
+        <p>One row per account, one column per month (<span class="mono">jan</span> … <span class="mono">dec</span>). <b>Every amount positive</b>, the way the statement shows it. Leave out subtotal lines (Gross profit, Total expenses, Net income). Blank for months not closed yet.</p>
+        <div class="table-wrap"><table><tr><th>code <span class="req">*</span></th><th>name</th><th>year <span class="req">*</span></th><th>jan</th><th>feb</th><th>mar</th></tr>
+          <tr><td>X-4000</td><td>Sales</td><td>2026</td><td>100000</td><td>110000</td><td>120000</td></tr>
+        </table></div>
+      </article>
+
+      <article class="tab" id="t-opening">
+        <div class="tab-head"><span class="num">TAB 7</span><h3>Opening Balances</h3><span class="when">Your balance sheet on the switch-over day</span><div class="chips"><span class="chip">Moving books</span><span class="chip posts">Sets your starting balances</span></div></div>
+        <p>One row per account and <b>every</b> account: cash, bank, receivables, inventory, equipment, payables, capital, retained earnings. Accumulated depreciation goes in as a negative. This is the only tab that sets balances; the open-invoice and deposit tabs below are the detail behind it.</p>
+        <div class="table-wrap"><table><tr><th>Column</th><th>What to put</th><th>Example</th></tr>
+          <tr><td class="col">code <span class="req">*</span></td><td>Balance-sheet accounts only</td><td>X-1000</td></tr>
+          <tr><td class="col">name</td><td>For your own reading only</td><td>BDO Savings</td></tr>
+          <tr><td class="col">balance <span class="req">*</span></td><td>As the balance sheet shows it. Minus sign for contra balances</td><td>50000</td></tr>
+          <tr><td class="col">asOf <span class="req">*</span></td><td><b>The same date on every row</b></td><td>2026-08-31</td></tr>
+        </table></div>
+      </article>
+
+      <article class="tab" id="t-ar">
+        <div class="tab-head"><span class="num">TAB 8</span><h3>Open Receivables</h3><span class="when">Customer invoices still unpaid on switch-over day</span><div class="chips"><span class="chip">Moving books</span><span class="chip">Posts nothing</span></div></div>
+        <p>They show in <b>Ledger → AR &amp; AP</b>, aged and ready to collect.</p>
+        <div class="table-wrap"><table><tr><th>Column</th><th>What to put</th><th>Example</th></tr>
+          <tr><td class="col">customer <span class="req">*</span></td><td>A name matching a client links the debt to them</td><td>Reyes Hardware</td></tr>
+          <tr><td class="col">invoiceNo <span class="req">*</span> · invoiceDate <span class="req">*</span></td><td>Your invoice number and date</td><td>SI-004512 · 2026-08-12</td></tr>
+          <tr><td class="col">dueDate</td><td>When it falls overdue</td><td>2026-09-11</td></tr>
+          <tr><td class="col">amountOwed <span class="req">*</span></td><td>What is <b>still</b> owed, after any part payment</td><td>38500</td></tr>
+        </table></div>
+        <div class="note"><b>The total must equal Accounts Receivable</b> on Opening Balances.</div>
+      </article>
+
+      <article class="tab" id="t-po">
+        <div class="tab-head"><span class="num">TAB 9</span><h3>Purchase Orders</h3><span class="when">Orders already placed, not yet complete</span><div class="chips"><span class="chip">Posts nothing</span></div></div>
+        <p><b>One row per item.</b> Repeat the same <span class="mono">poNumber</span> on every line of one order. They arrive as open orders in Procurement.</p>
+        <div class="table-wrap"><table><tr><th>Column</th><th>What to put</th><th>Example</th></tr>
+          <tr><td class="col">poNumber <span class="req">*</span></td><td>Your PO number</td><td>PO-2026-0412</td></tr>
+          <tr><td class="col">supplier <span class="req">*</span></td><td>Must be on the Suppliers tab</td><td>Metro Packaging</td></tr>
+          <tr><td class="col">orderDate · expectedDate</td><td>When ordered; when it should arrive</td><td>2026-08-01</td></tr>
+          <tr><td class="col">itemCode · itemName <span class="req">*</span></td><td>The code from Inventory links the line to that item</td><td>PKG-001 · Cartons 12x12</td></tr>
+          <tr><td class="col">qty <span class="req">*</span> · unitCost <span class="req">*</span></td><td>How many, price each</td><td>500 · 250</td></tr>
+        </table></div>
+      </article>
+
+      <article class="tab" id="t-ap">
+        <div class="tab-head"><span class="num">TAB 10</span><h3>Open Payables</h3><span class="when">Supplier invoices still unpaid on switch-over day</span><div class="chips"><span class="chip">Moving books</span><span class="chip">Posts nothing</span></div></div>
+        <p>They arrive approved in Bills, ready to pay. Put the same <span class="mono">poNumber</span> as on Purchase Orders and the two are linked automatically.</p>
+        <div class="table-wrap"><table><tr><th>Column</th><th>What to put</th><th>Example</th></tr>
+          <tr><td class="col">supplier <span class="req">*</span></td><td>Must be on the Suppliers tab</td><td>Metro Packaging</td></tr>
+          <tr><td class="col">invoiceNo <span class="req">*</span></td><td>The supplier's invoice number</td><td>INV-88120</td></tr>
+          <tr><td class="col">amountOwed <span class="req">*</span></td><td>What is <b>still</b> owed</td><td>125000</td></tr>
+          <tr><td class="col">invoiceDate · dueDate · description · poNumber</td><td>Optional details</td><td>2026-08-05</td></tr>
+        </table></div>
+        <div class="note"><b>The total must equal Accounts Payable</b> on Opening Balances.</div>
+      </article>
+
+      <article class="tab" id="t-dep">
+        <div class="tab-head"><span class="num">TAB 11</span><h3>Open Deposits &amp; Advances</h3><span class="when">Money paid ahead, not yet used up</span><div class="chips"><span class="chip">Moving books</span><span class="chip">Posts nothing</span></div></div>
+        <div class="table-wrap"><table><tr><th>Column</th><th>What to put</th><th>Example</th></tr>
+          <tr><td class="col">kind <span class="req">*</span></td><td>Customer deposit · Customer credit · Supplier advance · Supplier credit · Employee advance</td><td>Customer deposit</td></tr>
+          <tr><td class="col">name <span class="req">*</span></td><td>The client, supplier or employee. Credits and supplier kinds must match an existing name</td><td>Reyes Hardware</td></tr>
+          <tr><td class="col">reference <span class="req">*</span></td><td>Your receipt or OR number. Stops the same row coming in twice</td><td>OR-10233</td></tr>
+          <tr><td class="col">date</td><td>When the money was paid (default: the day you import)</td><td>2026-09-15</td></tr>
+          <tr><td class="col">amountRemaining <span class="req">*</span></td><td>What is <b>still</b> unused</td><td>5000</td></tr>
+          <tr><td class="col">note</td><td>What it is for</td><td>Deposit on October order</td></tr>
+        </table></div>
+      </article>
+
+      <article class="tab" id="t-bills">
+        <div class="tab-head"><span class="num">TAB 12</span><h3>Bills</h3><span class="when">New supplier invoices to process</span><div class="chips"><span class="chip">Posts when you approve</span></div></div>
+        <p>Each bill arrives as <b>Pending</b> and posts nothing until you approve it in the app.</p>
+        <div class="table-wrap"><table><tr><th>Column</th><th>What to put</th><th>Example</th></tr>
+          <tr><td class="col">supplier <span class="req">*</span> · description <span class="req">*</span> · amount <span class="req">*</span></td><td>Who, what for, invoice total</td><td>Metro Beans · March beans · 12000</td></tr>
+          <tr><td class="col">expenseAccountCode <span class="req">*</span></td><td>Account to charge, from the Accounts tab. Without it the bill can't be approved</td><td>510000</td></tr>
+          <tr><td class="col">dueDate · supplierInvoiceNo · poNumber</td><td>Optional. The same invoice number can't be entered twice</td><td>INV-88120</td></tr>
+        </table></div>
+      </article>
+
+      <article class="tab" id="t-exp">
+        <div class="tab-head"><span class="num">TAB 13</span><h3>Expenses</h3><span class="when">Expenses to record now</span><div class="chips"><span class="chip posts">Posts immediately</span></div></div>
+        <div class="note stop"><b>No approval step.</b> Every row posts to your books the moment you import. Check the tab before importing. A date in a closed month is refused.</div>
+        <div class="table-wrap"><table><tr><th>Column</th><th>What to put</th><th>Example</th></tr>
+          <tr><td class="col">amount <span class="req">*</span></td><td>Full amount, before any tax withheld</td><td>3500</td></tr>
+          <tr><td class="col">categoryCode <span class="req">*</span></td><td>Expense account, from the Accounts tab</td><td>640000</td></tr>
+          <tr><td class="col">description <span class="req">*</span></td><td>What it was</td><td>March electricity</td></tr>
+          <tr><td class="col">paymentMethod <span class="req">*</span></td><td>Paid from, from the Valid Values tab</td><td>Cash on Hand</td></tr>
+          <tr><td class="col">date · vendor · refNo · withholdingRate</td><td>Optional. Withholding in percent (rent 5, professional fees 10)</td><td>2026-03-31 · Meralco</td></tr>
+        </table></div>
+      </article>
+
+      <article class="tab" id="t-fa">
+        <div class="tab-head"><span class="num">TAB 14</span><h3>Fixed Assets</h3><span class="when">Equipment and other things the business owns</span><div class="chips"><span class="chip posts">Posts immediately</span></div></div>
+        <div class="note stop"><b>Posts on import</b>, as bought for cash. For used equipment, fill accumulated depreciation or it comes in as brand new.</div>
+        <div class="table-wrap"><table><tr><th>Column</th><th>What to put</th><th>Example</th></tr>
+          <tr><td class="col">name <span class="req">*</span></td><td>What it is</td><td>Espresso machine</td></tr>
+          <tr><td class="col">class <span class="req">*</span></td><td>From the Valid Values tab</td><td>Machinery &amp; Equipment</td></tr>
+          <tr><td class="col">acquisitionCost <span class="req">*</span></td><td>What was paid</td><td>60000</td></tr>
+          <tr><td class="col">usefulLifeMonths <span class="req">*</span></td><td>60 = 5 years</td><td>60</td></tr>
+          <tr><td class="col">accumulatedDepreciation</td><td>Already worn off, if bought used or years ago</td><td>2700</td></tr>
+          <tr><td class="col">salvageValue</td><td>What it will still be worth at the end. Depreciation stops there</td><td>6000</td></tr>
+          <tr><td class="col">acquisitionDate</td><td>Default: today. A closed month is refused</td><td>2026-01-15</td></tr>
+          <tr><td class="col">serialNumber · location · supplierName · referenceNumber</td><td>For your records: serial, where it is, who sold it, their invoice number</td><td>LM-77120 · Main bar</td></tr>
+        </table></div>
+      </article>
+      </div>
+    </section>
+
+    <section id="import">
+      <h2>Importing</h2>
+      <ol class="steps">
+        <li><div><b>Save as .xlsx.</b> Keep every tab, even the empty ones.</div></li>
+        <li><div><b>In the app:</b> Ledger → Export All → Start from templates → <b>Import all</b>, then pick the file.</div></li>
+        <li><div><b>Read the preview</b> ("This workbook will import"). It shows the rows found on each tab and any problem, by row number. Nothing is saved yet.</div></li>
+        <li><div><b>Fix and re-import</b> if anything is flagged. Importing again is safe: existing suppliers and clients aren't duplicated.</div></li>
+        <li><div><b>Press Import.</b> The tabs go in, in order, and the result lists what was added on each.</div></li>
+      </ol>
+      <p style="margin-top:14px">Prefer Google Sheets? Keep the workbook there and link it under <b>Settings → Setup workbook from Google Sheets</b>.</p>
+    </section>
+
+    <section id="checklist">
+      <h2>Before you press Import</h2>
+      <ul class="check">
+        <li><input type="checkbox" id="c1"><label for="c1">Row-2 examples overwritten, or left exactly as they were</label></li>
+        <li><input type="checkbox" id="c2"><label for="c2">Suppliers and Clients filled before anything that names them</label></li>
+        <li><input type="checkbox" id="c3"><label for="c3">Inventory costs filled in, none left at 0</label></li>
+        <li><input type="checkbox" id="c4"><label for="c4">Open Receivables total = Accounts Receivable; Open Payables total = Accounts Payable (moving books)</label></li>
+        <li><input type="checkbox" id="c5"><label for="c5">Opening Balances: one date, every balance-sheet account (moving books)</label></li>
+        <li><input type="checkbox" id="c6"><label for="c6">Expenses and Fixed Assets double-checked: they post immediately</label></li>
+      </ul>
+      <div class="note" style="margin-top:16px"><b>Quickest start:</b> fill only Suppliers, Clients and Inventory, import, and add the rest later. Each tab can be imported on its own at any time.</div>
+    </section>
+  </main>
+</div>

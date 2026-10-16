@@ -50,6 +50,10 @@ export default function defineWorkflowModels({ BUSINESS_TYPE, currentBranchCode,
     // schema never declared the field, so Mongoose silently dropped whatever
     // was written to it and the column came back empty every time.
     paymentTerms:  { type: String, default: '' },
+    // Days from ordering to delivery with this supplier. Stock movement and the
+    // Suggested PO use it for the items this supplier provides (buy enough to
+    // last until the next delivery); null = use the business-wide default.
+    leadTimeDays:  { type: Number, default: null, min: 0, max: 90 },
     // Running credit balance from overpaying this supplier - an ASSET (they
     // owe it back to us), separate from whatever they're currently owed on
     // open bills. Grows when a bill payment exceeds what was actually due;

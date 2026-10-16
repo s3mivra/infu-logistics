@@ -29,7 +29,7 @@ const SETTING_FIELDS = [
   ['fastMinSoldDays', 'and sold on at least', 'days in the period'],
   ['deadDays', 'Dead stock = no sale for', 'days'],
   ['coverDays', 'Buy enough for', 'days of sales'],
-  ['leadTimeDays', 'Delivery takes', 'days'],
+  ['leadTimeDays', 'Delivery takes', 'days (when the supplier has no lead time of its own)'],
   ['safetyDays', 'Plus spare', 'days (safety stock)'],
   ['categoryMinSellers', 'Judge fast within a category of', '+ sellers'],
   ['spikeFactor', 'For buying, cap one day at', 'x a typical selling day'],
@@ -96,8 +96,8 @@ export default function StockMovement({ apiFetch, can }) {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
       [`Stock movement ${data.start} to ${data.end}`], [],
-      ['Item', 'Code', 'Category', 'In stock', 'Free', 'Unit', 'On order', 'Sold', 'Orders', 'Days sold', 'Per day', 'Days left', 'Runs out', 'Last sold', 'Days since last sale', 'Days out of stock', 'Class', 'Buy'],
-      ...rows.map(r => [r.itemName, r.itemCode, r.category, r.stock, r.available, r.unit, r.onOrder, r.soldQty, r.transactions, r.soldDays, r.adu,
+      ['Item', 'Code', 'Category', 'Supplier', 'Lead time (days)', 'In stock', 'Free', 'Unit', 'On order', 'Sold', 'Orders', 'Days sold', 'Per day', 'Days left', 'Runs out', 'Last sold', 'Days since last sale', 'Days out of stock', 'Class', 'Buy'],
+      ...rows.map(r => [r.itemName, r.itemCode, r.category, r.supplierName || '', `${r.leadTimeDays}${r.leadFromSupplier ? '' : ' (default)'}`, r.stock, r.available, r.unit, r.onOrder, r.soldQty, r.transactions, r.soldDays, r.adu,
         r.daysOfStock ?? 'N/A', r.runOut ? RUN_OUT[r.runOut].label : '', r.lastSold ? dateStr(r.lastSold) : 'never', r.daysSinceSale ?? 'N/A', r.outDays, CLASSES[r.class].label, r.recommend || 0]),
       [], [`Per day: ${data.basis?.perDay || ''}`], [`Buy: ${data.basis?.buy || ''}`], [data.basis?.reserved || ''],
     ]), 'Stock movement');
@@ -180,7 +180,8 @@ export default function StockMovement({ apiFetch, can }) {
             <ul className="mt-2 space-y-1 list-disc pl-4">
               <li><b>Per day</b> = sold ÷ the days in the period it had stock - a stock-out is not read as low demand.</li>
               <li><b>Days left</b> = free stock (on hand minus what is held for client orders) ÷ per day.</li>
-              <li><b>Buy</b> = per day × ({data.settings.coverDays} cover + {data.settings.leadTimeDays} delivery days) + {data.settings.safetyDays} days of safety stock, less free stock and open purchase orders{data.wholeUnits ? ', rounded up to whole units' : '; pcs items rounded up to whole pieces'}.</li>
+              <li><b>Delivery days</b> are the item's supplier's own lead time (Procurement → Suppliers), else {data.settings.leadTimeDays}. The supplier is the cheapest one on its price lists, else whoever it was last bought from.</li>
+              <li><b>Buy</b> = per day × ({data.settings.coverDays} cover + delivery days) + {data.settings.safetyDays} days of safety stock, less free stock and open purchase orders{data.wholeUnits ? ', rounded up to whole units' : '; pcs items rounded up to whole pieces'}.</li>
               <li><b>Spikes:</b> for Buy, no single day counts for more than {data.settings.spikeFactor}× the item's typical selling day, so one big order does not inflate the purchase. Items where this applied are marked “spike-adjusted”.</li>
               {data.historyDays < data.settings.deadDays && <li>Sales history is still shorter than the dead-stock period, so nothing is called dead yet.</li>}
             </ul>
@@ -212,6 +213,8 @@ export default function StockMovement({ apiFetch, can }) {
                     <td className={td} title={CLASSES[r.class].hint}><span className={`px-2 py-0.5 rounded border text-[10px] font-black uppercase tracking-wider ${CLASSES[r.class].chip}`}>{CLASSES[r.class].label}</span>
                       {r.outDays >= 1 && r.class !== 'unavailable' && <span className="block text-[10px] text-fg/65 mt-0.5">out of stock {Math.round(r.outDays)} day(s)</span>}</td>
                     <td className={`${td} text-right tabular-nums font-black ${r.recommend > 0 ? (r.runOut === 'out' || r.runOut === 'urgent' ? 'text-danger' : 'text-brand-text') : 'text-fg/65'}`}>{r.recommend > 0 ? withUnit(r.recommend, r.unit) : '-'}
+                      {r.recommend > 0 && <span className="block text-[10px] font-normal text-fg/65" title={r.supplierName ? `Buying from ${r.supplierName}` : 'No supplier on record yet'}>
+                        {r.leadTimeDays}-day lead{r.leadFromSupplier ? '' : ' (default)'}</span>}
                       {r.spikeCapped && r.recommend > 0 && <span className="block text-[10px] font-normal text-fg/65" title="One or more unusually large days were held down to a typical day when working this out.">spike-adjusted</span>}</td>
                   </tr>
                 ))}
