@@ -270,6 +270,60 @@ describe('POST /api/production-orders/:id/reconcile - the manual "actual output 
   });
 });
 
+describe('the output is entered only after approval', () => {
+  // Roasting and drying lose moisture, so what comes out is only known once the
+  // batch is made. Filing without an expected output must work, and only the
+  // actual output, recorded after approval, goes into stock.
+  it('a batch filed with no expected output: materials out on approval, actual output in on reconcile', async () => {
+    const beans = await makeMaterial({ name: 'PROD Green Beans Moist', stockQty: 5000, unitCost: 0.5 });
+    const filed = await auth('post', '/api/production-orders', staffTok).send({
+      materials: [{ invId: beans._id, qty: 1000 }], outputType: 'new', outputName: 'Roasted Moist', outputUnit: 'g',
+    });
+    expect(filed.status, JSON.stringify(filed.body)).toBe(200);
+    expect(filed.body.order.outputQty).toBeNull();
+
+    const approved = await auth('post', `/api/production-orders/${filed.body.order._id}/approve`, mgrTok).send({});
+    expect(approved.status, JSON.stringify(approved.body)).toBe(200);
+    expect((await mongoose.model('Inventory').findById(beans._id).lean()).stockQty).toBe(4000);   // 1,000 g of green beans used
+    expect(await mongoose.model('Inventory').findOne({ itemName: /ROASTED MOIST/i }).lean()).toBeNull();   // nothing produced yet
+
+    // 1,000 g in, 850 g out: 15% lost, measured against the beans that went in.
+    const rec = await auth('post', `/api/production-orders/${filed.body.order._id}/reconcile`, mgrTok).send({ actualOutputQty: 850 });
+    expect(rec.status, JSON.stringify(rec.body)).toBe(200);
+    const order = await mongoose.model('ProductionOrder').findById(filed.body.order._id).lean();
+    expect(order).toMatchObject({ fulfillmentStatus: 'Complete', actualOutputQty: 850, moistureLoss: 150, moistureLossPercent: 15, moistureBasis: 'input' });
+    const roasted = await mongoose.model('Inventory').findOne({ itemName: /ROASTED MOIST/i }).lean();
+    expect(roasted.stockQty).toBe(850);
+    expect(roasted.unitCost).toBeCloseTo(500 / 850, 5);                      // the beans' cost spread over what really came out
+  });
+
+  it('an expected output, when given, is still what the loss is measured against', async () => {
+    const beans = await makeMaterial({ name: 'PROD Green Beans Expect', stockQty: 5000, unitCost: 0.5 });
+    const { orderId } = await fileAndApprove({ materials: [{ invId: beans._id, qty: 1000 }], outputType: 'new', outputName: 'Roasted Expect', outputQty: 900 });
+    await auth('post', `/api/production-orders/${orderId}/reconcile`, mgrTok).send({ actualOutputQty: 855 });
+    const order = await mongoose.model('ProductionOrder').findById(orderId).lean();
+    expect(order).toMatchObject({ fulfillmentStatus: 'Partial', moistureLoss: 45, moistureLossPercent: 5, moistureBasis: 'expected' });
+  });
+
+  it('an expected output that is not a positive number is refused; blank is fine', async () => {
+    const beans = await makeMaterial({ name: 'PROD Green Beans Bad' });
+    for (const bad of [-5, 0, 'lots']) {
+      const r = await auth('post', '/api/production-orders', staffTok).send({ materials: [{ invId: beans._id, qty: 10 }], outputType: 'new', outputName: `Bad ${bad}`, outputQty: bad, outputUnit: 'g' });
+      expect(r.status, String(bad)).toBe(400);
+    }
+    const ok = await auth('post', '/api/production-orders', staffTok).send({ materials: [{ invId: beans._id, qty: 10 }], outputType: 'new', outputName: 'Blank Expect', outputQty: '', outputUnit: 'g' });
+    expect(ok.status).toBe(200);
+  });
+
+  it('when the materials are in another unit, no loss is guessed', async () => {
+    const lemons = await makeMaterial({ name: 'PROD Lemons', unit: 'pcs', stockQty: 50, unitCost: 8 });
+    const { orderId } = await fileAndApprove({ materials: [{ invId: lemons._id, qty: 20 }], outputType: 'new', outputName: 'Lemon Juice', outputUnit: 'ml' });
+    await auth('post', `/api/production-orders/${orderId}/reconcile`, mgrTok).send({ actualOutputQty: 900 });
+    const order = await mongoose.model('ProductionOrder').findById(orderId).lean();
+    expect(order).toMatchObject({ fulfillmentStatus: 'Complete', actualOutputQty: 900, moistureLoss: null, moistureLossPercent: null });
+  });
+});
+
 describe('POST /api/production-orders/:id/reject', () => {
   it('leaves stock untouched and requires a reason', async () => {
     const mat = await makeMaterial({ name: 'PROD Green Beans H' });

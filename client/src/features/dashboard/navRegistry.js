@@ -15,7 +15,7 @@ import {
   ShoppingCart, Package, Network, Factory, Truck, Users, FileText, ChefHat,
   BarChart3, BarChart2, DollarSign, Clock, ShieldCheck, Building2, Landmark,
   Receipt, Settings, TrendingUp, RefreshCw, Banknote, HandCoins, Download,
-  CalendarCheck, AlertTriangle, Target, CalendarDays,
+  CalendarCheck, AlertTriangle, Target, CalendarDays, Calculator,
 } from 'lucide-react';
 import { REPORT_NAMES, IS_LOG } from '../../shared/businessType.js';
 
@@ -59,6 +59,10 @@ export const NAV_GROUPS = [
       // so it is gated on products.manage like Menu Setup - a hardcoded
       // superadmin check here previously left managers unable to find promos.
       { id: 'pricing', label: 'Pricing Control', icon: DollarSign, perm: 'products.manage', hint: 'Prices, margins, discounts' },
+      // What a unit costs to make or buy, and the SRP that gives the margin
+      // wanted - for any product, either business. Applying a price goes
+      // through the normal price-change route and its approval.
+      { id: 'costing', label: 'Costing', icon: Calculator, perm: 'products.view', hint: 'Cost a product, set its SRP' },
       { id: 'history', label: 'Shifts & Cash', icon: Clock, perm: 'shifts.view', hint: 'Shift history, X-reading' },
       // Requisition slips waiting for a decision. Its own entry, not a Ledger
       // page: visible to any staff - the server scopes what comes back (without

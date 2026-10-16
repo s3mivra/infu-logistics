@@ -271,11 +271,11 @@ export default function makeReportExports(deps) {
       doc.setFontSize(9); doc.text(`${rows.length} batch(es) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
       autoTable(doc, {
         startY: 34,
-        head: [['Batch', 'Product', 'Planned', 'Actual', 'Moisture / Variance', 'Status', 'Reconciled']],
+        head: [['Batch', 'Product', 'Expected', 'Actual', 'Moisture / Variance', 'Status', 'Reconciled']],
         body: rows.map(r => [
           r.batchNumber, r.outputName,
-          `${r.outputQty}${r.outputUnit}`, `${r.actualOutputQty}${r.outputUnit}`,
-          r.moistureLossPercent > 0 ? `-${r.moistureLossPercent}% loss` : r.moistureLossPercent < 0 ? `+${Math.abs(r.moistureLossPercent)}% over` : '0%',
+          r.outputQty != null ? `${r.outputQty}${r.outputUnit}` : '-', `${r.actualOutputQty}${r.outputUnit}`,
+          r.moistureLossPercent == null ? '-' : r.moistureLossPercent > 0 ? `-${r.moistureLossPercent}% loss${r.moistureBasis === 'input' ? ' (vs materials)' : ''}` : r.moistureLossPercent < 0 ? `+${Math.abs(r.moistureLossPercent)}% over` : '0%',
           r.fulfillmentStatus, r.reconciledAt ? new Date(r.reconciledAt).toLocaleDateString() : '-',
         ]),
         styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },

@@ -328,12 +328,15 @@ export default function ProductionTab({ ctx }) {
     if (materials.length === 0) return ui.alert('Add at least one material.');
     if (outputType === 'existing' && !outputInvId) return ui.alert('Choose the item this production adds to.');
     if (outputType === 'new' && !outputName.trim()) return ui.alert('Name the new product.');
+    // The expected output is optional: the real figure is entered after
+    // approval, once the batch is made (roasting and drying lose moisture).
+    const blank = String(outputQty).trim() === '';
     const qtyEntered = parseFloat(outputQty);
-    if (!qtyEntered || qtyEntered <= 0) return ui.alert('Enter a positive output quantity.');
+    if (!blank && !(qtyEntered > 0)) return ui.alert('The expected output must be a positive number, or left blank.');
     // 'existing' output is counted in whichever of that item's units was
     // chosen; 'new' output has no item yet to derive units from, so it is
     // entered directly in the unit typed beside its name.
-    const outputBaseQty = outputType === 'existing'
+    const outputBaseQty = blank ? null : outputType === 'existing'
       ? +(qtyEntered * (outputUnitChoice?.factor || 1)).toFixed(6)
       : qtyEntered;
 
@@ -631,9 +634,11 @@ export default function ProductionTab({ ctx }) {
               {/* Counted in whichever unit the output is naturally measured
                   in - litres of cold brew, kilos of ground coffee, pieces of a
                   packed item. */}
+              <div>
+              <label htmlFor="prod-expected" className="text-[9px] text-fg/70 uppercase tracking-wider block mb-1">Expected output (optional)</label>
               <div className="flex gap-2">
-                <input type="number" min="0" step="any" aria-label="Output quantity"
-                  placeholder="Output quantity"
+                <input id="prod-expected" type="number" min="0" step="any"
+                  placeholder="Leave blank if unsure"
                   value={outputQty} onChange={e => setOutputQty(e.target.value)}
                   className="flex-1 min-w-0 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
                 {outputType === 'existing' ? (
@@ -646,6 +651,11 @@ export default function ProductionTab({ ctx }) {
                   <span className="w-24 flex items-center justify-center text-xs text-fg/65 border border-white/10 rounded-lg">{outputUnit || 'units'}</span>
                 )}
               </div>
+              </div>
+              <p className="sm:col-span-3 -mt-1 text-[10px] text-fg/65 leading-snug order-last">
+                Leave the output blank if you don't know it yet. After approval, enter what actually came out under
+                <b> Record actual output</b>. Only that amount is added to stock, so moisture lost in roasting or drying is accounted for.
+              </p>
               <div>
                 <label className="text-[9px] text-fg/70 uppercase tracking-wider block mb-1">Production date</label>
                 <input type="date" value={productionDate} onChange={e => setProductionDate(e.target.value)}
@@ -709,7 +719,12 @@ export default function ProductionTab({ ctx }) {
                 <div>
                   <p className="font-bold text-fg text-sm">
                     {o.outputName} <span className="text-fg/70 font-normal">
-                      × {(() => { const u = plannedUnitChoice(o); return `${inUnit(o.outputQty, u)} ${u.label}`; })()}
+                      {(() => {
+                        const u = plannedUnitChoice(o);
+                        if (o.actualOutputQty != null) return `× ${inUnit(o.actualOutputQty, u)} ${u.label}`;
+                        if (o.outputQty != null) return `× expected ${inUnit(o.outputQty, u)} ${u.label}`;
+                        return '· output entered after approval';
+                      })()}
                     </span>
                   </p>
                   <p className="text-[10px] text-fg/70 mt-0.5">
@@ -742,7 +757,9 @@ export default function ProductionTab({ ctx }) {
                 return (
                 <p className="text-xs mb-1 flex items-center gap-2 flex-wrap">
                   <span>
-                    <span className="text-fg/70">Planned {inUnit(o.outputQty, choice)} {choice.label} → Actual</span>{' '}
+                    {o.outputQty != null
+                      ? <span className="text-fg/70">Expected {inUnit(o.outputQty, choice)} {choice.label} → Actual</span>
+                      : <span className="text-fg/70">Actual output</span>}{' '}
                     <span className={o.fulfillmentStatus === 'Partial' ? 'text-warning font-bold' : 'text-success font-bold'}>
                       {inUnit(o.actualOutputQty, choice)} {choice.label}
                     </span>
@@ -754,8 +771,8 @@ export default function ProductionTab({ ctx }) {
                   {o.moistureLossPercent != null && o.moistureLossPercent !== 0 && (
                     <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${o.moistureLossPercent > 0 ? 'bg-orange-500/15 text-warning' : 'bg-blue-500/15 text-info'}`}>
                       {o.moistureLossPercent > 0
-                        ? `Moisture loss ${o.moistureLossPercent}%`
-                        : `Over plan +${Math.abs(o.moistureLossPercent)}%`}
+                        ? `Moisture loss ${o.moistureLossPercent}%${o.moistureBasis === 'input' ? ' of materials' : ''}`
+                        : `Over ${o.moistureBasis === 'input' ? 'materials' : 'expected'} +${Math.abs(o.moistureLossPercent)}%`}
                     </span>
                   )}
                 </p>
@@ -793,10 +810,11 @@ export default function ProductionTab({ ctx }) {
 
               {o.status === 'Approved' && o.fulfillmentStatus === 'Processing' && canApprove && (
                 <div className="flex items-center mt-3 pt-3 border-t border-white/5">
-                  <button onClick={() => { setReconciling(o); const u = plannedUnitChoice(o); setReconcileUnit(u.label); setActualQty(String(inUnit(o.outputQty, u))); }} disabled={busy}
+                  <button onClick={() => { setReconciling(o); const u = plannedUnitChoice(o); setReconcileUnit(u.label); setActualQty(o.outputQty != null ? String(inUnit(o.outputQty, u)) : ''); }} disabled={busy}
                     className="flex items-center gap-1.5 bg-accent hover:bg-accent/90 disabled:opacity-50 text-on-brand font-bold text-xs px-3 py-1.5 rounded-lg transition">
-                    <ClipboardCheck size={13} /> Reconcile - confirm actual output
+                    <ClipboardCheck size={13} /> Record actual output
                   </button>
+                  <span className="ml-3 text-[10px] text-fg/65">Materials are out of stock. Weigh or count what came out, then record it.</span>
                 </div>
               )}
             </li>
@@ -809,7 +827,7 @@ export default function ProductionTab({ ctx }) {
         <div className="fixed inset-0 z-50 flex justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto" onClick={() => setRejecting(null)}>
           <div className="bg-surface border border-white/10 rounded-xl p-5 w-full max-w-sm my-auto" onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-fg mb-2">Reject production order</h3>
-            <p className="text-fg/75 text-xs mb-3">{rejecting.outputName} × {rejecting.outputQty}{rejecting.outputUnit}</p>
+            <p className="text-fg/75 text-xs mb-3">{rejecting.outputName}{rejecting.outputQty != null ? ` × ${rejecting.outputQty}${rejecting.outputUnit}` : ''}</p>
             <textarea autoFocus value={rejectReason} onChange={e => setRejectReason(e.target.value)} rows={3}
               placeholder="Reason for rejecting…"
               className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent resize-none mb-3" />
@@ -826,12 +844,12 @@ export default function ProductionTab({ ctx }) {
         const opts = reconcileUnitOptions(reconciling);
         const chosen = opts.find(o => o.label === reconcileUnit) || opts[0];
         const label = chosen?.label || '';
-        const plannedPieces = inUnit(reconciling.outputQty, chosen);
+        const plannedPieces = reconciling.outputQty != null ? inUnit(reconciling.outputQty, chosen) : null;
         return (
         <div className="fixed inset-0 z-50 flex justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto" onClick={() => setReconciling(null)}>
           <div className="bg-surface border border-white/10 rounded-xl p-5 w-full max-w-sm my-auto" onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-fg mb-1 flex items-center gap-1.5"><ClipboardCheck size={16} className="text-brand-text" /> Confirm actual output</h3>
-            <p className="text-fg/75 text-xs mb-3">{reconciling.outputName} - planned {plannedPieces} {label}</p>
+            <p className="text-fg/75 text-xs mb-3">{reconciling.outputName}{plannedPieces != null ? ` - expected ${plannedPieces} ${label}` : ' - no expected output was given'}</p>
             <label className="text-[9px] text-fg/70 uppercase tracking-wider block mb-1">Actual quantity produced</label>
             <div className="flex gap-2 mb-1">
               <input type="number" min="0" step="0.01" autoFocus value={actualQty} onChange={e => setActualQty(e.target.value)}
@@ -848,8 +866,10 @@ export default function ProductionTab({ ctx }) {
               </select>
             </div>
             <p className="text-[10px] text-fg/65 mb-3">
-              Meets or beats {plannedPieces} {label} → marked <span className="text-success font-bold">Complete</span>.
-              Falls short → marked <span className="text-warning font-bold">Partial</span>. This is what actually gets added to stock.
+              {plannedPieces != null
+                ? <>Meets or beats {plannedPieces} {label} → marked <span className="text-success font-bold">Complete</span>. Falls short → marked <span className="text-warning font-bold">Partial</span>. </>
+                : <>Any moisture lost is measured against the materials that went in, where they're in the same unit. </>}
+              This is what actually gets added to stock, and it sets the cost per unit.
             </p>
             <div className="flex gap-2">
               <button onClick={() => { setReconciling(null); setActualQty(''); }} className="flex-1 border border-white/10 text-fg/65 hover:text-fg py-2 rounded-lg text-xs font-bold uppercase transition">Cancel</button>

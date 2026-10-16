@@ -85,6 +85,7 @@ import registerCafeExtras from './features/cafe-extras.js';
 import registerOpsExtras from './features/ops-extras.js';
 import registerNotify from './features/notify.js';
 import registerStockMovement from './features/stock-movement.js';
+import registerCosting from './features/costing.js';
 import registerTimeOff from './features/timeoff.js';
 import defineClientModels from './models/defineClientModels.js';
 import defineWorkflowModels from './models/defineWorkflowModels.js';
@@ -3111,7 +3112,10 @@ const ProductionOrderSchema = new mongoose.Schema({
   outputType: { type: String, enum: ['new', 'existing'], required: true },
   outputInvId: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
   outputName: { type: String, default: '' },
-  outputQty: { type: Number, default: 0 },                  // base units produced
+  // The EXPECTED output, base units - optional. The real figure is only known
+  // after the batch is made (roasting and drying lose moisture), so it is
+  // entered at reconcile as actualOutputQty. null = no expectation given.
+  outputQty: { type: Number, default: null },
   outputUnit: { type: String, default: '' },
   // The unit the person actually TYPED the quantity in - "ml", "L", "pcs".
   // outputQty is always base units, but reconciling asks for the same figure
@@ -3158,6 +3162,10 @@ const ProductionOrderSchema = new mongoose.Schema({
   // actualOutputQty above.
   moistureLoss: { type: Number, default: null },            // base units: outputQty - actualOutputQty
   moistureLossPercent: { type: Number, default: null },     // moistureLoss / outputQty * 100
+  // What the loss was measured against: 'expected' (the expected output) or
+  // 'input' (the materials in the output's own unit, when no expectation was
+  // given). null when neither was available.
+  moistureBasis: { type: String, default: null },
 }, { timestamps: true });
 ProductionOrderSchema.index({ businessType: 1, status: 1, createdAt: -1 });
 const ProductionOrder = mongoose.model('ProductionOrder', ProductionOrderSchema);
@@ -3465,6 +3473,7 @@ registerCafeExtras(ctx);
 registerOpsExtras(ctx);
 registerNotify(ctx);
 registerStockMovement(ctx);
+registerCosting(ctx);
 registerTimeOff(ctx);
 registerReports(ctx);
 registerShifts(ctx);

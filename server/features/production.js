@@ -153,8 +153,12 @@ export default function registerProduction(ctx) {
       // counted in pieces, not raw grams/ml.
       const cleanOutputPackSize = outputType === 'new' && Number(outputPackSize) > 0 ? Number(outputPackSize) : null;
 
-      const outQty = Number(outputQty);
-      if (!Number.isFinite(outQty) || outQty <= 0) return res.status(400).json({ success: false, error: 'Output quantity must be a positive number.' });
+      // Optional: what the batch is EXPECTED to give. The real output is only
+      // known once it is made - roasting and drying lose moisture - so it is
+      // entered after approval, at reconcile. Blank = no expectation.
+      const plannedBlank = outputQty === undefined || outputQty === null || String(outputQty).trim() === '';
+      const outQty = plannedBlank ? null : Number(outputQty);
+      if (!plannedBlank && (!Number.isFinite(outQty) || outQty <= 0)) return res.status(400).json({ success: false, error: 'Expected output must be a positive number, or left blank.' });
 
       // Remember how it was made. On an existing item the recipe is saved now,
       // at the batch size just filed as its yield; a new item does not exist
@@ -340,7 +344,7 @@ export default function registerProduction(ctx) {
         await StockCard.create([{
           inventoryId: outputItem._id, itemName: outputItem.itemName, type: 'Production Output',
           reference: batchNumber, qtyChange: actualQty, balanceAfter: outputItem.stockQty,
-          unitCost: outputUnitCost, remarks: `Produced in batch ${batchNumber} (planned ${order.outputQty}${order.outputUnit})`,
+          unitCost: outputUnitCost, remarks: `Produced in batch ${batchNumber}${order.outputQty != null ? ` (expected ${order.outputQty}${order.outputUnit})` : ''}`,
         }], { session });
 
         // Wired into the Ledger: a real, balanced journal entry so the batch
@@ -358,18 +362,25 @@ export default function registerProduction(ctx) {
           assertBalanced(lines, batchNumber);
           await JournalEntry.create([{
             reference: batchNumber,
-            description: `Production batch ${batchNumber}: ${order.materials.map(m => m.itemName).join(', ')} → ${actualQty}${order.outputUnit} ${outputItem.itemName} (planned ${order.outputQty}${order.outputUnit})`,
+            description: `Production batch ${batchNumber}: ${order.materials.map(m => m.itemName).join(', ')} → ${actualQty}${order.outputUnit} ${outputItem.itemName}${order.outputQty != null ? ` (expected ${order.outputQty}${order.outputUnit})` : ''}`,
             lines, totalDebit: totalMaterialsCost, totalCredit: totalMaterialsCost,
           }], { session });
         }
 
-        order.fulfillmentStatus = actualQty >= order.outputQty ? 'Complete' : 'Partial';
         order.actualOutputQty = actualQty;
-        // Moisture/variance - planned vs actual. Positive = shrank (the
-        // common case - moisture loss during roasting/drying); negative =
-        // came in over plan, still worth recording rather than clamping to 0.
-        order.moistureLoss = +(order.outputQty - actualQty).toFixed(6);
-        order.moistureLossPercent = order.outputQty > 0 ? +((order.moistureLoss / order.outputQty) * 100).toFixed(2) : 0;
+        // Moisture/variance. Positive = shrank (the common case - moisture lost
+        // in roasting or drying); negative = came in over, still recorded.
+        // Measured against the expected output when one was given; otherwise
+        // against what went in, where the materials are in the output's own
+        // unit (1,000 g of green beans in, 850 g roasted out = 15% lost).
+        const inputSameUnit = (order.materials || [])
+          .filter(m => String(m.unit || '') === String(order.outputUnit || ''))
+          .reduce((n, m) => n + (Number(m.qty) || 0), 0);
+        const basis = order.outputQty != null && order.outputQty > 0 ? order.outputQty : (inputSameUnit > 0 ? inputSameUnit : null);
+        order.fulfillmentStatus = order.outputQty != null && actualQty < order.outputQty ? 'Partial' : 'Complete';
+        order.moistureBasis = basis == null ? null : (order.outputQty != null && order.outputQty > 0 ? 'expected' : 'input');
+        order.moistureLoss = basis == null ? null : +(basis - actualQty).toFixed(6);
+        order.moistureLossPercent = basis == null ? null : +((order.moistureLoss / basis) * 100).toFixed(2);
         order.outputInvId = outputItem._id;
         order.reconciledBy = req.user?.name || '';
         order.reconciledAt = new Date();

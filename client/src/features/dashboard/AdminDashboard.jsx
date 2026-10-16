@@ -63,6 +63,7 @@ const PricingTab    = lazy(() => import('../pricing/PricingTab'));
 const AuditTab      = lazy(() => import('../audit/AuditTab'));
 const ProductsTab   = lazy(() => import('../products/ProductsTab'));
 const ProcurementTab = lazy(() => import('../procurement/ProcurementTab'));
+const CostingTab = lazy(() => import('../costing/CostingTab'));
 const SettingsTab   = lazy(() => import('../settings/SettingsTab'));
 const ClientsTab    = lazy(() => import('../clients/ClientsTab'));
 const HubTab        = lazy(() => import('../hub/HubTab'));
@@ -7783,6 +7784,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
 {/* --- PROCUREMENT (PURCHASE ORDERS) --- */}
       {activeTab === 'procurement' && <Suspense fallback={<TabFallback />}><ProcurementTab ctx={ctx} /></Suspense>}
+      {activeTab === 'costing' && <Suspense fallback={<TabFallback />}><CostingTab ctx={ctx} /></Suspense>}
 
       {/* --- CLIENTS TAB --- */}
       {activeTab === 'clients' && <Suspense fallback={<TabFallback />}><ClientsTab /></Suspense>}
