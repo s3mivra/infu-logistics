@@ -11,6 +11,7 @@ import { loadVatConfig } from '../lib/vatSettings.js';
 import { isAnonymousCustomerName } from '../lib/customerName.js';
 
 import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
+import { readNegativeStockMode, saleStockFilter, blockedNote, flagBelowZero } from '../lib/negativeStock.js';
 export default function registerAdminTools(ctx) {
   const {
     app,
@@ -733,7 +734,9 @@ async function createBackdatedSale(payload, actorName) {
     // Optional stock deduction + COGS - only when explicitly asked.
     let totalCogs = 0;
     const stockCards = [];
+    const belowZeroItems = [];
     if (itemized && affectInventory) {
+      const belowZeroMode = await readNegativeStockMode(Settings, session);
       for (const [lineIndex, item] of orderItems.entries()) {
         const product = item.productId ? await Product.findById(item.productId).session(session) : null;
         if (!product) continue;
@@ -757,18 +760,19 @@ async function createBackdatedSale(payload, actorName) {
         for (const { invId, qty: deductQty } of plan) {
           if (!(deductQty > 0)) continue;
           const updated = await Inventory.findOneAndUpdate(
-            { _id: invId, stockQty: { $gte: deductQty } },
+            saleStockFilter(invId, deductQty, belowZeroMode, { respectReserved: false }),
             { $inc: { stockQty: -deductQty } },
             { session, returnDocument: 'after' }
           );
           if (!updated) {
             const inv = await Inventory.findById(invId, { itemName: 1 }).session(session).lean();
-            throw fail(400, `Not enough stock of "${inv?.itemName || 'an ingredient'}" to reduce for this backdated sale. Turn off "reduce inventory" or receive stock first.`);
+            throw fail(400, `Not enough stock of "${inv?.itemName || 'an ingredient'}" to reduce for this backdated sale. Turn off "reduce inventory" or receive stock first.${blockedNote(belowZeroMode)}`);
           }
           stockCards.push({ inventoryId: updated._id, itemName: updated.itemName, type: 'Sale', reference: mkRef('BACK', orderNumber), qtyChange: -deductQty, balanceAfter: updated.stockQty, unitCost: updated.unitCost || 0, lineIndex, remarks: `Backdated sale (${item.name})` });
           totalCogs += (updated.unitCost || 0) * deductQty;
         }
       }
+      for (const c of stockCards) flagBelowZero(c, belowZeroItems);
       if (stockCards.length) await StockCard.insertMany(stockCards, { session });
     }
     totalCogs = +totalCogs.toFixed(2);
@@ -798,6 +802,7 @@ async function createBackdatedSale(payload, actorName) {
       items: orderItems,
       // What it took, so a void or refund gives back exactly this.
       stockMoves: stockCards.map(c => ({ invId: String(c.inventoryId), qty: -c.qtyChange, unitCost: c.unitCost || 0, lineIndex: c.lineIndex })),
+      belowZeroItems,
       subtotal: gross,
       discount,
       discountPercent: pct,

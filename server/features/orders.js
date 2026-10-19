@@ -27,6 +27,7 @@ import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 
 import { atomic } from '../lib/atomicRoute.js';
 import { stockMovesFrom, movesToReturn, hasStockMoves, roundQty } from '../lib/stockMoves.js';
+import { readNegativeStockMode, saleStockFilter, blockedNote, flagBelowZero } from '../lib/negativeStock.js';
 export default function registerOrders(ctx) {
   const {
     app,
@@ -1753,6 +1754,17 @@ app.put('/api/orders/:id', verifyToken, requireStaff, permitAny('pos.use', 'orde
 // Returns the value given back (what the COGS reversal should be).
 // asBatch: record the returned goods as their own expiry batch even on an
 // item that tracks none - what a partial refund and an exchange always did.
+// A sale that left items below zero (warn mode, lib/negativeStock.js): tell
+// the managers' screens, and keep it in the audit log. After the commit, so a
+// sale that rolled back raises nothing.
+const alertBelowZero = (req, order, items = order?.belowZeroItems) => {
+  const list = (items || []).map(x => ({ invId: x.invId, itemName: x.itemName, balanceAfter: x.balanceAfter }));
+  if (!list.length) return;
+  emitToMgr('stockBelowZero', { orderId: String(order._id), orderNumber: order.orderNumber, items: list });
+  logAudit(req, { action: 'sold_below_zero', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, items: list } })
+    .catch((err) => captureError(req, err));
+};
+
 const restoreStockMoves = async (moves, { session, reference, remarks, asBatch = false }) => {
   let value = 0;
   const cards = [];
@@ -2115,6 +2127,8 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       let totalCogs = 0;
       const stockCardBatch = [];
       const depletedInvIds = new Set(); // track inventory items that hit 0 for auto-unavailable
+      // Below zero: warn (go through, flagged) or block (lib/negativeStock.js).
+      const belowZeroMode = await readNegativeStockMode(Settings, session);
 
       // BULK PRE-FETCH all products for this order in 2 queries (fix N+1)
       const itemProductIds = order.items.map(i => i.productId).filter(Boolean);
@@ -2170,14 +2184,13 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               if (linkInv) {
                 const deductQty = (comp.quantity || 1) * item.quantity * baseUnitsPerSale(compProduct, linkInv);
                 const updated = await Inventory.findOneAndUpdate(
-                  { _id: linkInv._id, // Only stock that is not held for another client can be sold.
-                  $expr: { $gte: [{ $subtract: ['$stockQty', { $ifNull: ['$reservedQty', 0] }] }, deductQty] } },
+                  saleStockFilter(linkInv._id, deductQty, belowZeroMode),
                   { $inc: { stockQty: -deductQty } },
                   { session, returnDocument: 'after' }
                 );
                 if (!updated) {
                   await session.abortTransaction(); session.endSession();
-                  return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for combo "${item.name}": [${linkInv.itemName}] would drop below zero.` });
+                  return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for combo "${item.name}": [${linkInv.itemName}] would drop below zero.${blockedNote(belowZeroMode)}` });
                 }
                 stockCardBatch.push({
                   inventoryId: updated._id, itemName: updated.itemName, type: 'Sale',
@@ -2196,14 +2209,13 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               if (staysForDineIn(invId, ing)) { keepOnShelf(lineIndex, invId, ing.name, ing.qty * (comp.quantity || 1)); continue; }
               const deductQty = (ing.qty * (comp.quantity || 1) * item.quantity);
               const invItem = await Inventory.findOneAndUpdate(
-                { _id: invId, // Only stock that is not held for another client can be sold.
-                  $expr: { $gte: [{ $subtract: ['$stockQty', { $ifNull: ['$reservedQty', 0] }] }, deductQty] } },
+                saleStockFilter(invId, deductQty, belowZeroMode),
                 { $inc: { stockQty: -deductQty } },
                 { session, returnDocument: 'after' }
               );
               if (!invItem) {
                 await session.abortTransaction(); session.endSession();
-                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for combo "${item.name}": [${ing.name || invId}] would drop below zero.` });
+                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for combo "${item.name}": [${ing.name || invId}] would drop below zero.${blockedNote(belowZeroMode)}` });
               }
               if (invItem.expiryBatches?.length > 0) {
                 const r = consumeBatches(invItem.expiryBatches, deductQty);
@@ -2248,15 +2260,14 @@ const completeOrderOnce = async (req, res, mayRetry) => {
           if (linkInv) {
             const deductQty = item.quantity * baseUnitsPerSale(product, linkInv);
             const updated = await Inventory.findOneAndUpdate(
-              { _id: linkInv._id, // Only stock that is not held for another client can be sold.
-                  $expr: { $gte: [{ $subtract: ['$stockQty', { $ifNull: ['$reservedQty', 0] }] }, deductQty] } },
+              saleStockFilter(linkInv._id, deductQty, belowZeroMode),
               { $inc: { stockQty: -deductQty } },
               { session, returnDocument: 'after' }
             );
             if (!updated) {
               await session.abortTransaction();
               session.endSession();
-              return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Cannot fulfill order. [${linkInv.itemName}] would drop below zero. Please receive stock in the Procurement tab first.` });
+              return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Cannot fulfill order. [${linkInv.itemName}] would drop below zero. Please receive stock in the Procurement tab first.${blockedNote(belowZeroMode)}` });
             }
             stockCardBatch.push({
               inventoryId: updated._id, itemName: updated.itemName, type: 'Sale',
@@ -2275,8 +2286,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
           if (staysForDineIn(invId, ing)) { keepOnShelf(lineIndex, invId, ing.name, ing.qty); continue; }
           const deductQty = (ing.qty * item.quantity);
           const invItem = await Inventory.findOneAndUpdate(
-            { _id: invId, // Only stock that is not held for another client can be sold.
-                  $expr: { $gte: [{ $subtract: ['$stockQty', { $ifNull: ['$reservedQty', 0] }] }, deductQty] } },
+            saleStockFilter(invId, deductQty, belowZeroMode),
             { $inc: { stockQty: -deductQty } },
             { session, returnDocument: 'after' }
           );
@@ -2291,7 +2301,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
             const missing = await Inventory.findById(invId).lean();
             await session.abortTransaction();
             session.endSession();
-            return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Cannot fulfill order. [${missing?.itemName || ing.name}] would drop below zero. Please receive stock in the Procurement tab first.` });
+            return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Cannot fulfill order. [${missing?.itemName || ing.name}] would drop below zero. Please receive stock in the Procurement tab first.${blockedNote(belowZeroMode)}` });
           }
           stockCardBatch.push({
             inventoryId: invItem._id,
@@ -2318,8 +2328,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               if (staysForDineIn(invId, ing)) { keepOnShelf(lineIndex, invId, ing.name, ing.qty); continue; }
               const deductQty = (ing.qty * item.quantity);
               const invItem = await Inventory.findOneAndUpdate(
-                { _id: invId, // Only stock that is not held for another client can be sold.
-                  $expr: { $gte: [{ $subtract: ['$stockQty', { $ifNull: ['$reservedQty', 0] }] }, deductQty] } },
+                saleStockFilter(invId, deductQty, belowZeroMode),
                 { $inc: { stockQty: -deductQty } },
                 { session, returnDocument: 'after' }
               );
@@ -2332,7 +2341,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               if (!invItem) {
                 await session.abortTransaction();
                 session.endSession();
-                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Add-on [${ing.name || invId}] drops below zero.` });
+                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Add-on [${ing.name || invId}] drops below zero.${blockedNote(belowZeroMode)}` });
               }
               stockCardBatch.push({
                 inventoryId: invItem._id, itemName: invItem.itemName, type: 'Sale',
@@ -2368,6 +2377,10 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       }
 
       // Batch-insert all stock card entries in one round-trip
+      // Lines that left an item below zero are flagged, and the order keeps the list.
+      const belowZeroItems = [];
+      for (const c of stockCardBatch) flagBelowZero(c, belowZeroItems);
+      order.belowZeroItems = belowZeroItems;
       if (stockCardBatch.length > 0) {
         await StockCard.insertMany(stockCardBatch, { session });
       }
@@ -2511,6 +2524,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
     }
 
     emitToOps('orderUpdated', order);
+    if (status === 'Completed' && wasNotCompleted) alertBelowZero(req, order);
     // Push menuUpdated so CustomerMenu instantly re-fetches products and recomputes
     // stockAvailable - catches the moment an ingredient hits zero during service.
     if (status === 'Completed') emitToAll('menuUpdated');
@@ -2664,6 +2678,7 @@ app.post('/api/orders/:id/take-out', verifyToken, requireStaff, permitAny('pos.u
       ? new Map(req.body.lines.map(l => [Number(l?.index), Math.floor(Number(l?.qty) || 0)]))
       : null;
     const reference = await mkSeqRef('TAKEOUT');
+    const belowZeroMode = await readNegativeStockMode(Settings, session);
     const cards = [];
     const made = [];
     let cogs = 0;
@@ -2677,11 +2692,11 @@ app.post('/api/orders/:id/take-out', verifyToken, requireStaff, permitAny('pos.u
         const deductQty = roundQty((Number(p.qty) || 0) * n);
         if (!(deductQty > 0) || !mongoose.Types.ObjectId.isValid(String(p.invId))) continue;
         const inv = await Inventory.findOneAndUpdate(
-          { _id: p.invId, $expr: { $gte: [{ $subtract: ['$stockQty', { $ifNull: ['$reservedQty', 0] }] }, deductQty] } },
+          saleStockFilter(p.invId, deductQty, belowZeroMode),
           { $inc: { stockQty: -deductQty } },
           { session, returnDocument: 'after' },
         );
-        if (!inv) return stop(400, `Not enough ${p.name || 'take-out packaging'} in stock to make this take-out.`);
+        if (!inv) return stop(400, `Not enough ${p.name || 'take-out packaging'} in stock to make this take-out.${blockedNote(belowZeroMode)}`);
         if (inv.expiryBatches?.length > 0) {
           const r = consumeBatches(inv.expiryBatches, deductQty);
           inv.expiryBatches = r.batches; inv.expiryDate = soonestExpiry(r.batches);
@@ -2724,10 +2739,13 @@ app.post('/api/orders/:id/take-out', verifyToken, requireStaff, permitAny('pos.u
       });
     }
 
+    const takeOutBelowZero = [];
+    for (const c of cards) flagBelowZero(c, takeOutBelowZero);
     if (cards.length) await StockCard.insertMany(cards, { session });
     if (!order.takenOutAt) { order.takenOutAt = new Date(); order.takenOutBy = req.user?.name || ''; }
     order.stockMoves = [...(order.stockMoves || []).map(m => (m.toObject ? m.toObject() : m)), ...stockMovesFrom(cards)];
     order.markModified('items');
+    if (takeOutBelowZero.length) order.belowZeroItems = [...(order.belowZeroItems || []).filter(x => !takeOutBelowZero.some(r => r.invId === x.invId)), ...takeOutBelowZero];
     await order.save({ session });
 
     cogs = +cogs.toFixed(2);
@@ -2747,6 +2765,7 @@ app.post('/api/orders/:id/take-out', verifyToken, requireStaff, permitAny('pos.u
     try { await logAudit(req, { action: 'take-out', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, made, cost: cogs } }); } catch (err) { captureError(req, err); }
     emitToOps('orderUpdated', order);
     if (cogs > 0) emitToMgr('erpUpdated');
+    alertBelowZero(req, order, takeOutBelowZero);
     res.json({ success: true, order, made, cost: cogs });
   } catch (err) {
     try { await session.abortTransaction(); } catch { /* already ended */ }
@@ -3510,13 +3529,14 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     // does: combos per component, a normal line by its recipe and add-ons, and
     // the logistics 1:1 link only for a product with no recipe.
     let totalCogs = 0; const stockCardBatch = [];
+    const belowZeroMode = await readNegativeStockMode(Settings, session);
     const deductInv = async (invId, qty, label, lineIndex) => {
       const upd = await Inventory.findOneAndUpdate(
-        { _id: invId, stockQty: { $gte: qty } },
+        saleStockFilter(invId, qty, belowZeroMode, { respectReserved: false }),
         { $inc: { stockQty: -qty } },
         { session, returnDocument: 'after' }
       );
-      if (!upd) { await session.abortTransaction(); session.endSession(); res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for ${label}.` }); return null; }
+      if (!upd) { await session.abortTransaction(); session.endSession(); res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for ${label}.${blockedNote(belowZeroMode)}` }); return null; }
       if ((upd.expiryBatches || []).length > 0) {
         const r = consumeBatches(upd.expiryBatches, qty);
         upd.expiryBatches = r.batches; upd.expiryDate = soonestExpiry(r.batches);
@@ -3588,6 +3608,9 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
         }
       }
     }
+    const roundBelowZero = [];
+    for (const c of stockCardBatch) flagBelowZero(c, roundBelowZero);
+    if (roundBelowZero.length) order.belowZeroItems = [...(order.belowZeroItems || []).filter(x => !roundBelowZero.some(r => r.invId === x.invId)), ...roundBelowZero];
     if (stockCardBatch.length) await StockCard.insertMany(stockCardBatch, { session });
     // Each round adds what it took to the order's record (Order.stockMoves).
     order.stockMoves = [...(order.stockMoves || []), ...stockMovesFrom(stockCardBatch)];
@@ -3677,6 +3700,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     await issueDeliveryReceipt(order, deltas.map(({ i, want }) => drLine(order.items[i], i, want)));
     emitToMgr('erpUpdated');
     emitToOps('orderUpdated', order);
+    alertBelowZero(req, order, roundBelowZero);
     res.json({ success: true, order });
     if (allFulfilled) maybePromoteWalkInClient(order);
   } catch (err) {
@@ -4313,13 +4337,15 @@ app.post('/api/orders/:id/exchange', verifyToken, requireStaff, requirePermissio
     // later return of a replacement gives back exactly this (Order.stockMoves).
     const replacementMoves = [];
     let replacementLine = order.items.length;
+    const belowZeroMode = await readNegativeStockMode(Settings, session);
+    const exchangeBelowZero = [];
     const deduct = async (invId, qtyUsed, label) => {
       const updated = await Inventory.findOneAndUpdate(
-        { _id: invId, stockQty: { $gte: qtyUsed } },
+        saleStockFilter(invId, qtyUsed, belowZeroMode, { respectReserved: false }),
         { $inc: { stockQty: -qtyUsed } },
         { session, returnDocument: 'after' }
       );
-      if (!updated) throw Object.assign(new Error(`Insufficient stock for "${label}".`), { httpStatus: 400 });
+      if (!updated) throw Object.assign(new Error(`Insufficient stock for "${label}".${blockedNote(belowZeroMode)}`), { httpStatus: 400 });
       if (updated.expiryBatches?.length > 0) {
         const r = consumeBatches(updated.expiryBatches, qtyUsed);
         updated.expiryBatches = r.batches; updated.expiryDate = soonestExpiry(r.batches);
@@ -4327,11 +4353,11 @@ app.post('/api/orders/:id/exchange', verifyToken, requireStaff, requirePermissio
       }
       newCogs += (updated.unitCost || 0) * qtyUsed;
       replacementMoves.push({ invId: String(updated._id), qty: +qtyUsed.toFixed(6), unitCost: updated.unitCost || 0, lineIndex: replacementLine });
-      await StockCard.create([{
+      await StockCard.create([flagBelowZero({
         inventoryId: updated._id, itemName: updated.itemName, type: 'Sale',
         reference, qtyChange: -qtyUsed, balanceAfter: updated.stockQty, unitCost: updated.unitCost || 0,
         remarks: `Exchange replacement: ${label}`,
-      }], { session });
+      }, exchangeBelowZero)], { session });
     };
     // Department resolution mirrors order-creation's category → department lookup.
     const defaultDept = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
@@ -4393,6 +4419,7 @@ app.post('/api/orders/:id/exchange', verifyToken, requireStaff, requirePermissio
       reference, at: new Date(), by: req.user?.name || '', reason: `EXCHANGE: ${reason}`,
       inventoryAction: invAction, items: returnedItemsLog, amount: returnValue,
     });
+    if (exchangeBelowZero.length) order.belowZeroItems = [...(order.belowZeroItems || []).filter(x => !exchangeBelowZero.some(r => r.invId === x.invId)), ...exchangeBelowZero];
     await order.save({ session });
     await AuditLog.create({
       userId: req.user?.name, action: 'ORDER_EXCHANGED', targetReference: order.orderNumber,
@@ -4400,6 +4427,7 @@ app.post('/api/orders/:id/exchange', verifyToken, requireStaff, requirePermissio
     });
     await session.commitTransaction(); session.endSession();
     emitToOps('orderUpdated', order); emitToMgr('erpUpdated');
+    alertBelowZero(req, order, exchangeBelowZero);
     res.json({ success: true, order, returnValue, newCharge, netDelta });
   } catch (err) {
     await session.abortTransaction(); session.endSession();

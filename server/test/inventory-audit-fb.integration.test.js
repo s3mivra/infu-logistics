@@ -96,6 +96,8 @@ describe('a recipe sale', () => {
   });
 
   it('when one ingredient is short, nothing is taken from the others', async () => {
+    // Selling below zero set to block (the default warns; test/stock-control.integration.test.js).
+    await mongoose.model('Settings').findOneAndUpdate({ key: 'negativeStockMode' }, { value: 'block' }, { upsert: true });
     await M('Inventory').updateOne({ _id: milk._id }, { $set: { stockQty: 100 } });   // not enough for one latte
     const o = await place(1);
     const done = await complete(o);
@@ -185,6 +187,8 @@ describe('exchanges', () => {
 
 describe('races and replays', () => {
   it('two tills selling the last cup: exactly one goes through', async () => {
+    // Selling below zero set to block (the default warns; test/stock-control.integration.test.js).
+    await mongoose.model('Settings').findOneAndUpdate({ key: 'negativeStockMode' }, { value: 'block' }, { upsert: true });
     await M('Inventory').updateOne({ _id: cup._id }, { $set: { stockQty: 1 } });
     const orders = [];
     for (let i = 0; i < 5; i++) orders.push(await place(1));

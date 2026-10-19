@@ -106,6 +106,8 @@ describe('not finished - made take-out after', () => {
   });
 
   it('refuses when there are not enough cups, and changes nothing', async () => {
+    // Selling below zero set to block (the default warns; test/stock-control.integration.test.js).
+    await mongoose.model('Settings').findOneAndUpdate({ key: 'negativeStockMode' }, { value: 'block' }, { upsert: true });
     const o = await place(2, { useBarCups: true });
     await complete(o);
     await M('Inventory').updateOne({ _id: cup._id }, { $set: { stockQty: 1 } });

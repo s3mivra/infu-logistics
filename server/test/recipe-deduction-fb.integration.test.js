@@ -80,6 +80,8 @@ describe('selling a drink', () => {
   });
 
   it('refuses the sale that would take more than is there, rather than going negative', async () => {
+    // Selling below zero set to block (the default warns; test/stock-control.integration.test.js).
+    await M('Settings').findOneAndUpdate({ key: 'negativeStockMode' }, { value: 'block' }, { upsert: true });
     await M('Inventory').findByIdAndUpdate(beans._id, { stockQty: 10 });   // 10 g left, a drink needs 20
     const placed = await as('post', '/api/orders').send({
       table: 'Counter', paymentMethod: 'Cash', customerName: 'Test',

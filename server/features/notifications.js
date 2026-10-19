@@ -94,8 +94,28 @@ export default function registerNotifications(ctx) {
           : [],
       ]);
 
+      // ── Below zero ─────────────────────────────────────────────────────────
+      // Sales recorded with no stock on the books (selling below zero = warn,
+      // lib/negativeStock.js). The balance is wrong, not the shelf empty, so
+      // it is its own alert - pointing at the count that fixes it - rather
+      // than "out of stock".
+      for (const i of inventory) {
+        const qty = Number(i.stockQty) || 0;
+        if (!(qty < -1e-9)) continue;
+        const d = display(i);
+        items.push({
+          id: `neg:${i._id}`,
+          kind: 'below_zero',
+          severity: CRIT,
+          title: `${i.itemName} is below zero`,
+          detail: `${fmt(d.qty)} ${d.unit} on the books - sold with no stock recorded. Count it to put it right.`,
+          tab: 'inventory', sub: 'control', focusId: String(i._id),
+        });
+      }
+
       // ── Low stock ──────────────────────────────────────────────────────────
       for (const i of inventory) {
+        if ((Number(i.stockQty) || 0) < -1e-9) continue;   // told above
         const threshold = Number(i.lowStockThreshold) || 0;
         if (threshold <= 0) continue;                  // 0 = alerting disabled
         const qty = Number(i.stockQty) || 0;

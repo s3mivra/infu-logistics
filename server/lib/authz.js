@@ -130,7 +130,7 @@ export const PERMISSIONS = [
 export const SCREENS = [
   { tab: 'inventory', label: 'Inventory', parent: 'inventory.view', pages: [
     ['live', 'Live stock'], ['transfers', 'Transfers'], ['reserved', 'Reserved stock'],
-    ['places', 'Categories & locations'], ['eod', 'End-of-day count'],
+    ['places', 'Categories & locations'], ['eod', 'End-of-day count'], ['control', 'Stock control'],
   ] },
   { tab: 'hub', label: 'Hub', parent: 'inventory.view', pages: [
     ['inventory', 'Network inventory'], ['compare', 'Compare branches'],

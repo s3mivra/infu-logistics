@@ -86,6 +86,7 @@ import registerOpsExtras from './features/ops-extras.js';
 import registerNotify from './features/notify.js';
 import registerStockMovement from './features/stock-movement.js';
 import registerCosting from './features/costing.js';
+import registerStockControl from './features/stock-control.js';
 import registerTimeOff from './features/timeoff.js';
 import defineClientModels from './models/defineClientModels.js';
 import defineWorkflowModels from './models/defineWorkflowModels.js';
@@ -1926,7 +1927,10 @@ const StockCardSchema = new mongoose.Schema({
   qtyChange: Number, // Positive for in, Negative for out
   balanceAfter: Number,
   unitCost: Number,
-  remarks: String
+  remarks: String,
+  // This movement left the item below zero (a sale in warn mode,
+  // lib/negativeStock.js). Inventory -> Below zero lists them.
+  belowZero: { type: Boolean, default: undefined },
 });
 StockCardSchema.index({ inventoryId: 1 });
 StockCardSchema.index({ reference: 1 });
@@ -3474,6 +3478,7 @@ registerOpsExtras(ctx);
 registerNotify(ctx);
 registerStockMovement(ctx);
 registerCosting(ctx);
+registerStockControl(ctx);
 registerTimeOff(ctx);
 registerReports(ctx);
 registerShifts(ctx);

@@ -22,6 +22,10 @@ beforeAll(async () => {
   app = ctx.app;
   await makeUser({ name: 'StressSuper', role: 'superadmin' });
   tok = await loginStaff(app, 'StressSuper');
+  // These prove the hard guarantee - stock never below zero - so selling
+  // below zero is set to block (the default, warn, lets a short sale through
+  // flagged; test/stock-control.integration.test.js).
+  await M('Settings').create({ key: 'negativeStockMode', value: 'block' });
 }, 180000);
 
 afterAll(async () => { await ctx.stop(); });

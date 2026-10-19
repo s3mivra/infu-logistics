@@ -408,6 +408,14 @@ export default function defineCatalogModels({ BUSINESS_TYPE }) {
       unitCost: Number,     // cost per base unit at the time
       lineIndex: Number,
     }],
+    // Items this sale left below zero (Settings -> selling below zero = warn;
+    // lib/negativeStock.js). Empty for a sale that had the stock.
+    belowZeroItems: [{
+      _id: false,
+      invId: String,
+      itemName: String,
+      balanceAfter: Number,   // base units, after this sale
+    }],
     voidReason: { type: String, default: '' },
     // Attribution - who actually voided / cancelled the order. Captured from the
     // verified JWT, never the request body. Distinct from `cashier` (which is the

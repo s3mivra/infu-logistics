@@ -7,6 +7,7 @@ import * as ui from '../../shared/ui';
 import StockTaxonomyPanel from './StockTaxonomyPanel';
 import StockTransferPanel from './StockTransferPanel';
 import ReservationsPanel from './ReservationsPanel';
+import StockControlPanel from './StockControlPanel';
 import GoogleSheetModal, { SheetChangedBanner, useInventorySheet, usePull } from './GoogleSheetLink';
 
 import { PACK_UNIT } from '../../shared/packUnit.js';
@@ -265,6 +266,14 @@ export default function InventoryTab({ ctx }) {
                   EOD Audit
                 </button>
                 )}
+                {can('screen.inventory.control') && (
+                <button
+                  onClick={() => setInvSubTab('control')}
+                  className={`shrink-0 whitespace-nowrap px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition ${invSubTab === 'control' ? 'bg-accent text-on-brand shadow-md' : 'text-fg/70 hover:text-brand-text'}`}
+                >
+                  Stock Control
+                </button>
+                )}
                 {can('screen.inventory.places') && (
                 <button
                   onClick={() => setInvSubTab('places')}
@@ -375,6 +384,16 @@ export default function InventoryTab({ ctx }) {
                 deleteStockCategory={deleteStockCategory}
                 backfillStockCategoryPrefixes={backfillStockCategoryPrefixes}
                 renumberStockCategory={renumberStockCategory}
+              />
+            )}
+
+            {invSubTab === 'control' && (
+              <StockControlPanel
+                apiFetch={apiFetch}
+                inventory={inventory}
+                itemDisplay={itemDisplay}
+                can={can}
+                onCounted={fetchERPData}
               />
             )}
 

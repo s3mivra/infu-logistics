@@ -27,7 +27,7 @@ export default function NotificationBell({ align = 'right', full = false }) {
   // The bell used to fetch its own copy every two minutes while the badge
   // recounted instantly in the browser, so the two could show different
   // numbers for the same stock. One feed, read in both places, cannot.
-  const { setActiveTab, setLedgerSubTab, notifData, notifLoading, loadNotifications } = useDashboard();
+  const { setActiveTab, setLedgerSubTab, setInvSubTab, notifData, notifLoading, loadNotifications } = useDashboard();
   const [open, setOpen] = useState(false);
   const data = notifData || { items: [], count: 0, criticalCount: 0 };
   const loading = !!notifLoading;
@@ -81,7 +81,10 @@ export default function NotificationBell({ align = 'right', full = false }) {
 
   const go = (item) => {
     setOpen(false);
-    if (item.sub && setLedgerSubTab) setLedgerSubTab(item.sub);
+    // A page inside the tab: the Inventory tab's own sub-nav (below zero ->
+    // Stock control), otherwise the Ledger's.
+    if (item.sub && item.tab === 'inventory') setInvSubTab?.(item.sub);
+    else if (item.sub && setLedgerSubTab) setLedgerSubTab(item.sub);
     if (item.tab) setActiveTab(item.tab);
     // Let the target tab mount before asking the browser to scroll to the row.
     if (item.focusId) {

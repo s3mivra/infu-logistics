@@ -2272,7 +2272,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (activeTab !== 'inventory' || !isAuthenticated) return;
     if (can(`screen.inventory.${invSubTab}`) && (invSubTab !== 'eod' || can('inventory.count'))) return;
-    const first = ['live', 'transfers', 'reserved', 'places', 'eod'].find(p => can(`screen.inventory.${p}`) && (p !== 'eod' || can('inventory.count')));
+    const first = ['live', 'transfers', 'reserved', 'places', 'eod', 'control'].find(p => can(`screen.inventory.${p}`) && (p !== 'eod' || can('inventory.count')));
     if (first) setInvSubTab(first);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, invSubTab, isAuthenticated, activeAdmin?._id]);

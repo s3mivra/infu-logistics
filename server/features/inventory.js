@@ -9,6 +9,7 @@ import { withOptionalTransaction } from '../lib/txn.js';
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { basePerPack } from '../lib/units.js';
+import { stockCountModel, varianceLine } from '../lib/stockCount.js';
 import { applyPendingTierPrices } from '../lib/tierPriceImport.js';
 // Action permissions. Each route below changes data, and was guarded only by
 // "is staff" - so a plain staff account could, through the API, do what the
@@ -197,6 +198,7 @@ export default function registerInventory(ctx) {
     verifyOrderAuth,
     requirePermission,
   } = ctx;
+  const StockCount = stockCountModel(mongoose);
 
 // --- 1. FETCH EOD STATUS & REAL MOVEMENTS ---
 app.get('/api/inventory/eod-data', verifyToken, requireStaff, async (req, res) => {
@@ -232,21 +234,37 @@ app.get('/api/inventory/eod-data', verifyToken, requireStaff, async (req, res) =
 });
 
 // --- 2. SUBMIT & LOCK EOD ---
+// Also the rolling count (Inventory -> Stock control): `rolling: true` counts
+// just the items sent, the same way, without closing the day - so it works
+// before or after the end-of-day count. Every item counted, either way, is
+// kept as a StockCount row (lib/stockCount.js) for the variance report.
 app.post('/api/inventory/count', verifyToken, requireStaff, permit('inventory.count'), async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const todayStr = businessDateStr();
+    const rolling = req.body?.rolling === true;
     
     // STRICT CHECK: Is it already locked?
-    const existingEOD = await EODRecord.findOne({ dateString: todayStr }).session(session);
+    const existingEOD = rolling ? null : await EODRecord.findOne({ dateString: todayStr }).session(session);
     if (existingEOD && existingEOD.status === 'LOCKED') {
       await session.abortTransaction(); session.endSession();
       return res.status(403).json({ success: false, error: 'ALREADY_CLOSED: You cannot submit another EOD for today.' });
     }
 
-    const { counts, reasons, adminName } = req.body;
+    const { reasons, adminName } = req.body;
+    const counts = req.body?.counts && typeof req.body.counts === 'object' ? req.body.counts : {};
+    if (rolling && !Object.values(counts).some(v => v !== '' && v !== null && v !== undefined)) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'Enter at least one count.' });
+    }
+    if (Object.values(counts).some(v => v !== '' && v !== null && v !== undefined && !(Number.isFinite(Number(v)) && Number(v) >= 0))) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'Counts must be numbers of zero or more.' });
+    }
+    const countedBy = req.user?.name || adminName || 'Admin';
+    const countRows = [];
     const items = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }).session(session);
     // Cost of goods sold already booked from imported totals (139000, a credit
     // balance) for goods whose items were never taken. The goods this count
@@ -262,17 +280,25 @@ app.post('/api/inventory/count', verifyToken, requireStaff, permit('inventory.co
       
       const actualCount = Number(counts[item._id]);
       const variance = actualCount - item.stockQty;
+      const specificReason = reasons && reasons[item._id] ? reasons[item._id] : 'Unaccounted Variance';
+      const line = varianceLine({ expectedQty: item.stockQty, countedQty: actualCount, unitCost: item.unitCost });
+      const countRow = {
+        businessType: BUSINESS_TYPE, dateString: todayStr, inventoryId: String(item._id), itemName: item.itemName,
+        itemCode: item.itemCode || '', unit: item.unit || '', ...line, countedBy,
+        reason: line.variance !== 0 ? specificReason : '', kind: rolling ? 'rolling' : 'eod', reference: '',
+      };
+      countRows.push(countRow);
 
       if (variance !== 0) {
-        const specificReason = reasons && reasons[item._id] ? reasons[item._id] : 'Unaccounted Variance';
-        
         const eodAdjRef = await mkSeqRef('EOD-ADJ');
+        countRow.reference = eodAdjRef;
 
         await StockCard.create([{
           inventoryId: item._id, itemName: item.itemName, type: 'Adjustment',
           reference: eodAdjRef, qtyChange: variance, balanceAfter: actualCount,
           unitCost: item.unitCost || 0,
-          remarks: `EOD Audit: ${specificReason}`
+          // The end-of-day history report reads "EOD Audit:" lines only.
+          remarks: `${rolling ? 'Rolling count' : 'EOD Audit'}: ${specificReason}`
         }], { session });
 
         const valueAbs = Math.abs(variance) * item.unitCost;
@@ -308,18 +334,22 @@ app.post('/api/inventory/count', verifyToken, requireStaff, permit('inventory.co
       await item.save({ session });
     }
 
-    // LOCK THE DAY
-    await EODRecord.findOneAndUpdate(
-      { dateString: todayStr },
-      { status: 'LOCKED', lockedAt: new Date(), lockedBy: adminName || 'Admin' },
-      { upsert: true, returnDocument: 'after', session }
-    );
+    if (countRows.length) await StockCount.insertMany(countRows, { session });
+
+    // LOCK THE DAY (the end-of-day count only)
+    if (!rolling) {
+      await EODRecord.findOneAndUpdate(
+        { dateString: todayStr },
+        { status: 'LOCKED', lockedAt: new Date(), lockedBy: adminName || 'Admin' },
+        { upsert: true, returnDocument: 'after', session }
+      );
+    }
 
     await session.commitTransaction();
     session.endSession();
 
     emitToMgr('erpUpdated');
-    res.json({ success: true, message: "End of day locked." });
+    res.json({ success: true, message: rolling ? `Counted ${countRows.length} item(s).` : "End of day locked.", counted: countRows.length });
 
   } catch (error) {
     await session.abortTransaction();

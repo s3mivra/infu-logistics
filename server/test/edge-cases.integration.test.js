@@ -75,6 +75,8 @@ describe('order completion variants', () => {
   });
 
   it('insufficient stock blocks completion (400)', async () => {
+    // Selling below zero set to block (the default warns; test/stock-control.integration.test.js).
+    await mongoose.model('Settings').findOneAndUpdate({ key: 'negativeStockMode' }, { value: 'block' }, { upsert: true });
     const o = await mkOrder({ items: [{ productId: ids.scarceProductId, name: 'EC Scarce Brew', price: 50, quantity: 1 }], table: 'Takeout', paymentMethod: 'Cash' });
     const done = await complete(o.body.order._id);
     expect(done.status).toBe(400);
