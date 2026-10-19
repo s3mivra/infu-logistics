@@ -2,9 +2,9 @@
 #
 #   caddy          — the only thing on :80/:443. Terminates TLS, routes by subdomain.
 #   mongo          — ONE mongod, one database per tenant. Never publishes a port.
-#   control-plane  — provisioning UI at CP_HOST, behind Caddy basic auth plus
-#                    its own login. Also on 127.0.0.1:9000 for SSH tunnels. It
-#                    holds the Docker socket (root on the box) — keep both gates.
+#   control-plane  — provisioning UI at CP_HOST, behind its own login. Also on
+#                    127.0.0.1:9000 for SSH tunnels. It holds the Docker socket
+#                    (root on the box), so CP_PASSWORD must be long and random.
 #
 # Tenant stacks live in their own compose projects and join semivra-net.
 # Start this first:  docker compose -f platform/docker-compose.yml up -d
@@ -22,8 +22,6 @@ services:
       ACME_EMAIL: ${ACME_EMAIL}
       CADDY_GLOBAL_EXTRA: ${CADDY_GLOBAL_EXTRA:-}
       CP_HOST: ${CP_HOST:?set CP_HOST in platform/.env}
-      CP_BASIC_USER: ${CP_BASIC_USER:?set CP_BASIC_USER in platform/.env}
-      CP_BASIC_HASH: ${CP_BASIC_HASH:?set CP_BASIC_HASH in platform/.env}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./tenants-caddy:/etc/caddy/tenants
