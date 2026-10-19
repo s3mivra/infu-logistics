@@ -42,15 +42,15 @@ export default function RevolvingFundReplenishModal() {
               <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Note</label>
               <input type="text" placeholder="e.g. Weekly replenishment from daily sales" value={rfReplForm.note}
                 onChange={e => setRfReplForm({...rfReplForm, note: e.target.value})}
-                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand/60 placeholder-white/20"/>
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand/60 placeholder-fg/70"/>
             </div>
-            <div className="bg-brand/10 border border-brand/20 rounded-xl p-3 text-xs text-brand/80">
+            <div className="bg-brand/10 border border-brand/20 rounded-xl p-3 text-xs text-brand-text">
               Journal entry that will be posted:<br/>
               <span className="font-bold">DR Petty Cash / Revolving Fund &nbsp;|&nbsp; CR {(cashAndBankAccounts || []).find(a => a.code === rfReplForm.sourceAccount)?.name || 'Cash on Hand'}</span>
             </div>
           </div>
           <div className="px-5 py-4 border-t border-white/10 shrink-0 flex gap-3">
-            <button onClick={() => setRfReplModal(false)} className="flex-1 bg-white/5 text-fg/60 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
+            <button onClick={() => setRfReplModal(false)} className="flex-1 bg-white/5 text-fg/65 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
             <button onClick={submitRfRepl} disabled={rfReplSubmitting}
               className="flex-1 bg-brand text-on-brand rounded-xl py-3 font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">
               {rfReplSubmitting ? 'Replenishing…' : 'Replenish Fund'}

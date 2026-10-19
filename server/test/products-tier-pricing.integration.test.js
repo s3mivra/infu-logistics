@@ -49,7 +49,7 @@ describe('GET /api/products resolves the SAME discount an order would charge', (
     expect(row.effectiveDiscountPercent).toBe(15); // tier beats the flat 5%
   });
 
-  it('a client tagged with a per_product tier sees the equivalent percent for a listed SKU', async () => {
+  it('a client tagged with a per_product tier sees the exact tier price for a listed SKU', async () => {
     const made = await auth('post', '/api/price-tiers', superTok).send({ name: 'PTP Wholesaler', pricingMode: 'per_product' });
     const prod = await mongoose.model('Product').create({ name: 'PTP PP Product', category: 'PTP-Cat', basePrice: 200 });
     await auth('put', `/api/price-tiers/${made.body.tier._id}/products`, superTok).send({ prices: [{ productId: String(prod._id), price: 150 }] });
@@ -57,7 +57,9 @@ describe('GET /api/products resolves the SAME discount an order would charge', (
 
     const res = await auth('get', '/api/products', tok);
     const row = res.body.products.find(p => p._id === String(prod._id));
-    expect(row.effectiveDiscountPercent).toBe(25); // 150/200 -> 25% off
+    // The set price itself, not 25% off 200 - no percent in between.
+    expect(row.buyerUnitPrice).toBe(150);
+    expect(row.effectiveDiscountPercent).toBe(0);
   });
 
   it('a per_product tier grants nothing on a SKU it has no row for', async () => {
@@ -70,7 +72,8 @@ describe('GET /api/products resolves the SAME discount an order would charge', (
     const res = await auth('get', '/api/products', tok);
     const listedRow = res.body.products.find(p => p._id === String(listed._id));
     const unlistedRow = res.body.products.find(p => p._id === String(unlisted._id));
-    expect(listedRow.effectiveDiscountPercent).toBe(40);
+    expect(listedRow.buyerUnitPrice).toBe(60);
+    expect(unlistedRow.buyerUnitPrice).toBeUndefined();
     expect(unlistedRow.effectiveDiscountPercent).toBe(0);
   });
 

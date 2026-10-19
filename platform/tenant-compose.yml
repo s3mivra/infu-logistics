@@ -37,6 +37,14 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       ADMIN_PASS: ${ADMIN_PASS}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Email (optional). Unset = the app sends none. See server/lib/mailer.js.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      # The name emails are signed with.
+      BUSINESS_NAME: ${VITE_BUSINESS_NAME:-}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:5002/health"]
       interval: 30s

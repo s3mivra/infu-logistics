@@ -12,6 +12,12 @@ With `MONGO_AUTH=on`:
 - Each tenant's API logs in as `app_<slug>`, which can read and write
   **only** `semivra_<slug>`.
 
+<<<<<<< HEAD
+=======
+While it is off, each tenant API logs a warning at start-up and the control
+panel's health card says so. Nothing stops running because of it.
+
+>>>>>>> origin/main
 **Status: built, not yet rehearsed.** No Docker was available where this was
 written. Do this on staging first. On an existing deployment, doing the steps
 out of order locks every tenant out at once.

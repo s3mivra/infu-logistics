@@ -9,7 +9,9 @@
 // them something is wrong.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
-import { withArBalance } from '../lib/credit.js';
+import { withArBalance, RECEIVABLE_STATUSES } from '../lib/credit.js';
+import { SHEET_KINDS } from './inventory-sheet.js';
+import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 
 export default function registerNotifications(ctx) {
   const {
@@ -19,6 +21,7 @@ export default function registerNotifications(ctx) {
     tenantScope,
     Inventory,
     Order,
+    Settings,
     PurchaseOrder,
     verifyToken,
     requireStaff,
@@ -79,9 +82,9 @@ export default function registerNotifications(ctx) {
           : [],
         may('accounting.view')
           ? Order.find({
-              ...scope, status: 'Completed', paymentMethod: { $ne: 'Cash' },
+              ...scope, status: { $in: RECEIVABLE_STATUSES }, paymentMethod: AR_PAYMENT_METHOD_FILTER,
               isComplimentary: { $ne: true }, arSettled: { $ne: true },
-            }, { orderNumber: 1, customerName: 1, total: 1, createdAt: 1, paymentMethod: 1, arPaidAmount: 1 }).sort({ createdAt: 1 }).limit(500).lean()
+            }, { orderNumber: 1, customerName: 1, total: 1, createdAt: 1, paymentMethod: 1, arPaidAmount: 1, refundedAmount: 1 }).sort({ createdAt: 1 }).limit(500).lean()
               // Alert on the unpaid remainder, not the original invoice value.
               .then(withArBalance)
           : [],
@@ -91,8 +94,28 @@ export default function registerNotifications(ctx) {
           : [],
       ]);
 
+      // ── Below zero ─────────────────────────────────────────────────────────
+      // Sales recorded with no stock on the books (selling below zero = warn,
+      // lib/negativeStock.js). The balance is wrong, not the shelf empty, so
+      // it is its own alert - pointing at the count that fixes it - rather
+      // than "out of stock".
+      for (const i of inventory) {
+        const qty = Number(i.stockQty) || 0;
+        if (!(qty < -1e-9)) continue;
+        const d = display(i);
+        items.push({
+          id: `neg:${i._id}`,
+          kind: 'below_zero',
+          severity: CRIT,
+          title: `${i.itemName} is below zero`,
+          detail: `${fmt(d.qty)} ${d.unit} on the books - sold with no stock recorded. Count it to put it right.`,
+          tab: 'inventory', sub: 'control', focusId: String(i._id),
+        });
+      }
+
       // ── Low stock ──────────────────────────────────────────────────────────
       for (const i of inventory) {
+        if ((Number(i.stockQty) || 0) < -1e-9) continue;   // told above
         const threshold = Number(i.lowStockThreshold) || 0;
         if (threshold <= 0) continue;                  // 0 = alerting disabled
         const qty = Number(i.stockQty) || 0;
@@ -179,6 +202,32 @@ export default function registerNotifications(ctx) {
           detail: po.supplier || '',
           tab: 'procurement', focusId: String(po._id),
         });
+      }
+
+      // ── Linked stock sheet ─────────────────────────────────────────────────
+      // Only the superadmin can import stock, so only they are told the sheet
+      // changed (see features/inventory-sheet.js - the check never applies it).
+      if (req.user?.role === 'superadmin') {
+        for (const s of SHEET_KINDS) {
+          const sheet = (await Settings.findOne({ key: s.key }).lean())?.value;
+          if (!sheet?.url) continue;
+          if (sheet.changedAt) {
+            items.push({
+              id: `sheet:changed:${s.kind}`, kind: 'sheet_changed', severity: WARN,
+              title: `Your ${s.label} changed`,
+              detail: 'Changed since your last pull. Pull it to review before anything is applied.',
+              tab: s.tab,
+            });
+          }
+          if (sheet.lastCheckError) {
+            items.push({
+              id: `sheet:error:${s.kind}`, kind: 'sheet_error', severity: WARN,
+              title: `Couldn't read your ${s.label}`,
+              detail: sheet.lastCheckError,
+              tab: s.tab,
+            });
+          }
+        }
       }
 
       const rank = { [CRIT]: 0, [WARN]: 1, info: 2 };

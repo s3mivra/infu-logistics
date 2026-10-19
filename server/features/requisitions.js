@@ -6,6 +6,7 @@
 import { captureError } from '../lib/errorLog.js';
 import { hasPermission } from '../lib/authz.js';
 
+import { atomic } from '../lib/atomicRoute.js';
 export default function registerRequisitions(ctx) {
   const {
     app,
@@ -26,6 +27,7 @@ export default function registerRequisitions(ctx) {
     acctMeta,
     JournalEntry,
     RevolvingFund,
+    issueCheckVoucher,
     RevolvingFundTx,
     PurchaseOrder,
     RequisitionSlip,
@@ -139,21 +141,30 @@ export default function registerRequisitions(ctx) {
           slipNumber, type: 'petty-cash', status: 'Pending',
           fundId: fund._id, fundName: fund.name, amount: amt,
           description: description.trim(), categoryCode: categoryCode || '760000',
+          payee: String(req.body.payee || '').trim().slice(0, 120),
+          refNo: String(req.body.refNo || '').trim().slice(0, 60),
           preparedBy,
         });
+        await attachBudgetCheck(req, slip);
         await logAudit(req, { action: 'create', entity: 'RequisitionSlip', entityId: slip._id, after: { slipNumber, type, amount: amt } });
         return res.json({ success: true, slip });
       }
 
       // type === 'procurement'
-      const { supplier, supplierId, expectedDate, lines, notes } = req.body;
+      const { supplier, supplierId, expectedDate, lines, notes, payOnDelivery = false, payOnDeliveryAccount = '' } = req.body;
       if (!Array.isArray(lines) || lines.length === 0) return res.status(400).json({ success: false, error: 'At least one line item is required.' });
       const cleanLines = [];
       for (const l of lines) {
         const qty = Number(l.orderedQty), cost = Number(l.unitCost);
         if (!l.itemName?.trim() || !Number.isFinite(qty) || qty <= 0) return res.status(400).json({ success: false, error: 'Each line needs an item name and a positive quantity.' });
+        const kind = ['inventory', 'fixedAsset', 'expense'].includes(l.purchaseType) ? l.purchaseType : 'inventory';
         cleanLines.push({
-          invId: l.invId || null, itemName: String(l.itemName).trim(), itemCode: l.itemCode || '',
+          purchaseType: kind,
+          assetAccountCode: kind === 'fixedAsset' ? String(l.assetAccountCode || '') : '',
+          expenseAccountCode: kind === 'expense' ? String(l.expenseAccountCode || '') : '',
+          usefulLifeMonths: kind === 'fixedAsset' && l.usefulLifeMonths ? Number(l.usefulLifeMonths) || null : null,
+          salvageValue: kind === 'fixedAsset' ? Number(l.salvageValue) || 0 : 0,
+          invId: (kind === 'inventory' && l.invId) || null, itemName: String(l.itemName).trim(), itemCode: l.itemCode || '',
           unit: l.unit || '', packSize: l.packSize || null, orderedQty: qty, unitCost: Number.isFinite(cost) ? cost : 0,
           expiryDate: l.expiryDate ? new Date(l.expiryDate) : null, productionDate: l.productionDate ? new Date(l.productionDate) : null,
           expiryWarnDays: l.expiryWarnDays != null && l.expiryWarnDays !== '' ? Number(l.expiryWarnDays) || null : null,
@@ -168,8 +179,11 @@ export default function registerRequisitions(ctx) {
         supplier: supplier || '', supplierId: mongoose.Types.ObjectId.isValid(supplierId || '') ? supplierId : null,
         expectedDate: expectedDate ? new Date(expectedDate) : null,
         lines: cleanLines, estTotal, notes: notes || '',
+        // Paid on delivery from a cash, bank or e-wallet account (11xxxx).
+        ...(payOnDelivery && /^11[123]/.test(String(payOnDeliveryAccount || '111000')) ? { payOnDelivery: true, payOnDeliveryAccount: String(payOnDeliveryAccount || '111000') } : {}),
         preparedBy,
       });
+      await attachBudgetCheck(req, slip);
       await logAudit(req, { action: 'create', entity: 'RequisitionSlip', entityId: slip._id, after: { slipNumber, type, estTotal } });
       res.json({ success: true, slip });
     } catch (err) {
@@ -182,12 +196,41 @@ export default function registerRequisitions(ctx) {
   // Executes the underlying movement, THEN marks the slip Approved with who
   // approved it - if the movement fails (e.g. fund balance moved since
   // filing), the slip stays Pending and nothing is half-done.
-  app.post('/api/requisition-slips/:id/approve', verifyToken, ...canApproveReq, async (req, res) => {
+  // Budget availability, checked when the slip is filed and shown to whoever
+  // approves it. A slip with no budget set for its account is not held up.
+  const attachBudgetCheck = async (req, slip) => {
+    try {
+      if (typeof ctx.checkSlipBudget !== 'function') return;
+      slip.budgetCheck = await ctx.checkSlipBudget(req, slip, { excludeId: slip._id });
+      if (slip.budgetCheck.length) await slip.save();
+    } catch (err) { log.error?.({ err }, 'budget check failed'); }
+  };
+
+  app.post('/api/requisition-slips/:id/approve', verifyToken, ...canApproveReq, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const slip = await RequisitionSlip.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
       if (!slip) return res.status(404).json({ success: false, error: 'Not found' });
       if (slip.status !== 'Pending') return res.status(409).json({ success: false, error: `Only a Pending slip can be approved (this one is ${slip.status}).` });
+
+      // Over budget: approved only when the approver says so, and why. Checked
+      // again now - the month may have moved on since the slip was filed.
+      if (slip.type === 'petty-cash' || slip.type === 'procurement') {
+        const check = typeof ctx.checkSlipBudget === 'function' ? await ctx.checkSlipBudget(req, slip, { excludeId: slip._id }) : [];
+        slip.budgetCheck = check;
+        const over = check.filter(c => c.over);
+        if (over.length) {
+          const reason = String(req.body?.overBudgetReason || '').trim();
+          if (req.body?.acceptOverBudget !== true || !reason) {
+            return res.status(409).json({
+              success: false, overBudget: true, budgetCheck: check,
+              error: `Over budget: ${over.map(c => `${c.accountName} has ₱${(c.available || 0).toFixed(2)} left this month, this asks for ₱${(c.requested || 0).toFixed(2)}`).join('; ')}. Approve anyway with a reason, or reject it.`,
+            });
+          }
+          slip.overBudgetAcceptedBy = req.user?.name || '';
+          slip.overBudgetReason = reason.slice(0, 500);
+        }
+      }
 
       if (slip.type === 'new-fund') {
         const dup = await RevolvingFund.findOne({ name: { $regex: `^${slip.fundName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, isActive: true });
@@ -214,6 +257,12 @@ export default function registerRequisitions(ctx) {
           ],
           totalDebit: amt, totalCredit: amt, reference,
         });
+        await issueCheckVoucher(req, {
+          payeeType: 'other', payeeName: `Petty cash: ${slip.fundName}`,
+          amount: amt, purpose: 'petty-cash', sourceAccount: srcCode,
+          referenceNumber: slip.slipNumber || '',
+          notes: 'Fund opened', journalEntryRef: reference,
+        });
         await RevolvingFundTx.create({
           fundId: fund._id, type: 'replenishment', amount: amt,
           description: `Fund opened: initial amount [${slip.slipNumber}]`,
@@ -235,6 +284,17 @@ export default function registerRequisitions(ctx) {
       if (slip.type === 'fund-replenish') {
         const fund = await RevolvingFund.findById(slip.fundId);
         if (!fund || !fund.isActive) return res.status(404).json({ success: false, error: 'Fund no longer exists or was closed.' });
+
+        // Validate -> approve -> pay: the fund is topped up only for spending
+        // whose receipts have been checked (Revolving Funds -> liquidation).
+        const unchecked = await RevolvingFundTx.find({ fundId: fund._id, 'validation.status': 'Unvalidated' }, { amount: 1 }).lean();
+        if (unchecked.length) {
+          const total = unchecked.reduce((s, t) => s + (t.amount || 0), 0);
+          return res.status(409).json({
+            success: false, needsValidation: true,
+            error: `${unchecked.length} spend(s) from ${fund.name} totalling ₱${total.toFixed(2)} have not been validated against their receipts yet. Validate or reject them first.`,
+          });
+        }
 
         const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
         const srcCode = (acctMeta(slip.categoryCode) && isCashLike(slip.categoryCode)) ? slip.categoryCode : '111000';
@@ -259,6 +319,13 @@ export default function registerRequisitions(ctx) {
             { accountCode: srcCode, accountName: srcName, debit: 0, credit: amt },
           ],
           totalDebit: amt, totalCredit: amt, reference,
+        });
+        await issueCheckVoucher(req, {
+          payeeType: 'other', payeeName: `Petty cash: ${fund.name}`,
+          amount: amt, purpose: 'petty-cash', sourceAccount: srcCode,
+          referenceNumber: slip.slipNumber || '',
+          notes: `Fund replenished${slip.description ? ` - ${slip.description}` : ''}`,
+          journalEntryRef: reference,
         });
         const tx = await RevolvingFundTx.create({
           fundId: fund._id, type: 'replenishment', amount: amt,
@@ -300,9 +367,16 @@ export default function registerRequisitions(ctx) {
           totalDebit: slip.amount, totalCredit: slip.amount,
           reference,
         });
+        await issueCheckVoucher(req, {
+          payeeType: 'other', payeeName: slip.payee || slip.description || `Petty cash: ${fund.name}`,
+          amount: slip.amount, purpose: 'petty-cash', sourceAccount: '114000',
+          referenceNumber: slip.slipNumber || '',
+          notes: `Paid out of ${fund.name}`,
+          journalEntryRef: reference,
+        });
         const tx = await RevolvingFundTx.create({
           fundId: fund._id, type: 'disbursement', amount: slip.amount,
-          description: slip.description, categoryCode: expCode,
+          description: slip.description, categoryCode: expCode, payee: slip.payee || '', refNo: slip.refNo || '',
           performedBy: slip.preparedBy, balanceAfter: fund.currentBalance,
           journalRef: je._id,
         });
@@ -326,8 +400,14 @@ export default function registerRequisitions(ctx) {
       const po = await PurchaseOrder.create({
         poNumber, supplier: slip.supplier, supplierId: slip.supplierId || null,
         status: 'Ordered', expectedDate: slip.expectedDate,
+        ...(slip.payOnDelivery ? { payOnDelivery: true, payOnDeliveryAccount: slip.payOnDeliveryAccount || '111000' } : {}),
         notes: `${slip.notes || ''}${slip.notes ? ' - ' : ''}Requisition ${slip.slipNumber}`.trim(),
         lines: slip.lines.map(l => ({
+          purchaseType: l.purchaseType || 'inventory',
+          assetAccountCode: l.assetAccountCode || '',
+          expenseAccountCode: l.expenseAccountCode || '',
+          usefulLifeMonths: l.usefulLifeMonths ?? null,
+          salvageValue: l.salvageValue || 0,
           invId: l.invId, itemName: l.itemName, itemCode: l.itemCode, unit: l.unit, packSize: l.packSize,
           orderedQty: l.orderedQty, unitCost: l.unitCost, expiryDate: l.expiryDate, productionDate: l.productionDate,
           expiryWarnDays: l.expiryWarnDays, lowStockThreshold: l.lowStockThreshold,
@@ -352,7 +432,7 @@ export default function registerRequisitions(ctx) {
       log.error?.({ err }, 'POST /api/requisition-slips/:id/approve failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 
   // ── REJECT ────────────────────────────────────────────────────────────────
   app.post('/api/requisition-slips/:id/reject', verifyToken, ...canApproveReq, async (req, res) => {

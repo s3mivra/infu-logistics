@@ -49,11 +49,24 @@ run_once() {
   date -u +%FT%TZ > "$DIR/LAST_SUCCESS"
   log "backup: OK ($(du -h "$out" | cut -f1))"
 
+  # Tell each business when its data was last safely copied. The app shows it
+  # on Owner Overview, so the owner sees it without the server console. Only
+  # after a VERIFIED run, and never fatal: the backup above is already good.
+  mongosh "$URI" --quiet --eval '
+    const at = new Date().toISOString();
+    db.getMongo().getDBNames().filter((n) => n.startsWith("semivra_")).forEach((n) => {
+      db.getSiblingDB(n).settings.updateOne({ key: "lastBackupAt" }, { $set: { key: "lastBackupAt", value: at } }, { upsert: true });
+    });
+  ' >/dev/null 2>&1 || log "backup: could not stamp the businesses (the backup itself is fine)"
+
   find "$DIR" -maxdepth 1 -name 'semivra-*.archive.gz' -mtime "+$RETENTION_DAYS" -print -delete
   find "$DIR" -maxdepth 1 -name '*.partial' -mmin +360 -delete
 }
 
-log "backup: every ${INTERVAL_HOURS}h, keeping ${RETENTION_DAYS} days, from $URI"
+# Never print the URI itself: with MONGO_AUTH=on it carries the root password,
+# and container logs are read by more people than the .env is.
+SAFE_URI="$(printf '%s' "$URI" | sed -E 's#(mongodb(\+srv)?://)[^@/]+@#\1***@#')"
+log "backup: every ${INTERVAL_HOURS}h, keeping ${RETENTION_DAYS} days, from $SAFE_URI"
 # First run shortly after start, so a fresh deployment is covered on day one.
 sleep 120
 while true; do

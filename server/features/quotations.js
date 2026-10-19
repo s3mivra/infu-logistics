@@ -138,11 +138,16 @@ export default function registerQuotations(ctx) {
       // The order carries the QUOTED prices, not the list prices. That is the
       // whole point of having quoted: the client accepted a specific number,
       // and charging anything else would be a different agreement.
+      // quotationId is what lets the order route charge the QUOTED price: it
+      // re-prices every other line from the records, and honours a lower
+      // agreed price only for a line tied to an accepted, unused quotation of
+      // this same client. The price sent back here is for display only.
       const items = q.lines.map(l => ({
         productId: l.productId ? String(l.productId) : undefined,
         name: l.name,
         price: money(l.quotedPrice),
         quantity: l.quantity || 1,
+        quotationId: String(q._id),
       }));
 
       q.status = 'Accepted';

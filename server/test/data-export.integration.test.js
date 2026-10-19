@@ -12,6 +12,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+// Fixture resets may clear journal entries, which are otherwise append-only.
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const get = (p) => request(app).get(p).set('Authorization', `Bearer ${tok}`);
@@ -28,7 +30,7 @@ afterAll(async () => { await ctx.stop(); });
 const M = (n) => mongoose.model(n);
 beforeEach(async () => {
   for (const n of ['Inventory', 'Supplier', 'JournalEntry', 'Advance', 'CheckVoucher']) {
-    await M(n).deleteMany({});
+    await withLedgerMaintenance(() => M(n).deleteMany({}));
   }
 });
 
@@ -52,7 +54,10 @@ describe('the catalogue of what can be exported', () => {
     // spreadsheet rewrite history.
     expect(byKey.journal.importable).toBe(false);
     expect(byKey.stockCards.importable).toBe(false);
-    expect(byKey.orders.importable).toBe(false);
+    // Orders can be brought BACK, but never rewritten: the import only adds a
+    // completed sale that is not in the app yet, through the backdated-sale
+    // path (see /api/orders/import) - an existing order is never touched.
+    expect(byKey.orders.importable).toBe(true);
   });
 });
 
@@ -68,10 +73,10 @@ describe('the template is the sheet to fill in, not an empty export', () => {
 
     // These are the two lists, and they are deliberately different. The export
     // carries Total Value, which is derived and cannot be typed in; the
-    // template asks for unitCost, which is what someone actually has to know.
+    // template asks what one pack costs, which is what someone actually knows.
     expect(withData.body.columns).toContain('Total Value');
     expect(template.body.columns).not.toContain('Total Value');
-    expect(template.body.columns).toContain('unitCost');
+    expect(template.body.columns).toContain('Cost / pack');
 
     // And it says which are required, so nothing is guessed at.
     expect(template.body.fields.some(f => f.required)).toBe(true);
@@ -82,7 +87,9 @@ describe('the template is the sheet to fill in, not an empty export', () => {
       itemCode: 'RM-9', itemName: 'Alaska Milk', unit: 'ml',
       stockQty: 2000, unitCost: 0.5, stockCategory: 'Dairy',
     });
-    const [row] = (await get('/api/export/inventory')).body.rows;
+    // Found by code rather than taken as the first row: the export now writes
+    // a category header row before each group, as the import sheet does.
+    const row = (await get('/api/export/inventory')).body.rows.find(r => r[0] === 'RM-9');
     expect(row).toContain('RM-9');
     expect(row).toContain('Alaska Milk');
     // Total value is derived, not stored - worth exporting, easy to get wrong.
@@ -150,7 +157,7 @@ describe('the valid value table', () => {
     await M('Supplier').create({ name: 'Metro Fuel' });
     const rows = (await get('/api/export/valid-values')).body.table;
     const sup = rows.find(t => t.column === 'Supplier');
-    expect(sup.values).toContain('Metro Fuel');
+    expect(sup.values.map(v => String(v).toUpperCase())).toContain('METRO FUEL');   // the startup capitals step may have renamed it
   });
 
   it('lists the real status enumerations', async () => {

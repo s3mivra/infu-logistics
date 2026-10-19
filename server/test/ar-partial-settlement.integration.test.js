@@ -20,11 +20,15 @@ const auth = (m, p, t) => request(app)[m](p).set('Authorization', `Bearer ${t}`)
 
 // One completed On Account sale of `price`, i.e. one receivable of that value.
 async function receivable(price) {
+  // The server prices every line from the product record, so the product
+  // must actually cost `price` - sending a price the record does not carry is
+  // no longer honoured (that was the client-trusted-price hole).
+  await mongoose.model('Product').updateOne({ _id: prod._id }, { $set: { basePrice: price } });
   const a = await auth('post', '/api/orders', staffTok).send({
     items: [{ productId: String(prod._id), name: 'Widget', price, quantity: 1 }],
     table: 'Takeout', paymentMethod: 'On Account', clientAccountId: client._id,
   });
-  expect(a.status).toBe(200);
+  expect(a.status, JSON.stringify(a.body)).toBe(200);
   await auth('put', `/api/orders/${a.body.order._id}`, staffTok).send({ status: 'Completed' });
   return a.body.order._id;
 }

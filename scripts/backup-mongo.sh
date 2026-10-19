@@ -38,6 +38,8 @@ mongodump --uri="$MONGO_URI" --out="$TARGET" --quiet
 echo "[$(date)] Compressing..."
 tar -czf "$TARGET.tar.gz" -C "$BACKUP_DIR" "$DATE"
 rm -rf "$TARGET"
+# Never keep (or upload) an archive that does not read back.
+tar -tzf "$TARGET.tar.gz" >/dev/null || { echo "ERROR: archive failed verification"; rm -f "$TARGET.tar.gz"; exit 1; }
 
 SIZE="$(du -h "$TARGET.tar.gz" | cut -f1)"
 echo "[$(date)] Backup complete: $TARGET.tar.gz ($SIZE)"
@@ -46,7 +48,10 @@ echo "[$(date)] Backup complete: $TARGET.tar.gz ($SIZE)"
 if [[ -n "${BACKUP_S3_BUCKET:-}" ]]; then
   if command -v aws >/dev/null 2>&1; then
     echo "[$(date)] Uploading to s3://$BACKUP_S3_BUCKET/semivra-backups/..."
-    aws s3 cp "$TARGET.tar.gz" "s3://$BACKUP_S3_BUCKET/semivra-backups/$DATE.tar.gz" --quiet
+    # BACKUP_S3_ENDPOINT points the AWS CLI at an S3-compatible store:
+    # Cloudflare R2 (https://<account>.r2.cloudflarestorage.com) or
+    # Backblaze B2 (https://s3.<region>.backblazeb2.com). Unset = AWS S3.
+    aws s3 cp "$TARGET.tar.gz" "s3://$BACKUP_S3_BUCKET/semivra-backups/$DATE.tar.gz" --quiet       ${BACKUP_S3_ENDPOINT:+--endpoint-url "$BACKUP_S3_ENDPOINT"}
     echo "[$(date)] S3 upload complete."
   else
     echo "[$(date)] WARNING: BACKUP_S3_BUCKET set but aws CLI not installed."

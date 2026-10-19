@@ -1,11 +1,18 @@
-﻿// reports routes - moved verbatim from server.js (feature-driven restructure).
+// reports routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { atomic } from '../lib/atomicRoute.js';
+import { roundMoney } from '../lib/money.js';
+import { buildCashFlow } from '../lib/cashFlow.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
-import { bucketFor, resolveClientKey } from '../lib/credit.js';
+import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
+import { basePerPack } from '../lib/units.js';
+import { bucketFor, resolveClientKey, RECEIVABLE_STATUSES, isReceivableStatus } from '../lib/credit.js';
 import { captureError } from '../lib/errorLog.js';
 import { sectionAncestor } from '../lib/chartOfAccounts.js';
 import { buildBalanceSheet } from '../lib/consolidate.js';
+import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
+import { itemSuppliers } from '../lib/itemSuppliers.js';
 
 export default function registerReports(ctx) {
   const {
@@ -177,6 +184,7 @@ export default function registerReports(ctx) {
     openBreak,
     BREAK_CAP_MIN,
     RevolvingFundSchema,
+    Advance,
     RevolvingFund,
     RevolvingFundTxSchema,
     RevolvingFundTx,
@@ -198,9 +206,8 @@ export default function registerReports(ctx) {
 app.get('/api/reports/pnl', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const { start, end } = req.query;
-    const startDate = start ? dayStart(start) : new Date(new Date().setHours(0,0,0,0));
-    const endDate = end ? dayEnd(end) : new Date();
-    endDate.setHours(23,59,59,999);
+    const startDate = start ? dayStart(start) : dayStart(businessDateStr());
+    const endDate = end ? dayEnd(end) : dayEnd(businessDateStr());
 
     const agg = await JournalEntry.aggregate([
       { $match: { date: { $gte: startDate, $lte: endDate } } },
@@ -374,12 +381,11 @@ app.get('/api/reports/inventory-turnover', verifyToken, ...canViewReports, async
 // ============================================================
 // MONTHLY P&L - per-account amounts bucketed by month (parent/child + ratios computed client-side)
 // ============================================================
-app.get('/api/reports/pnl-monthly', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/pnl-monthly', verifyToken, ...canViewReports, requirePermission('screen.reports.pnlmonthly'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const startDate = start ? dayStart(start) : new Date(new Date().getFullYear(), 0, 1);
-    const endDate = end ? dayEnd(end) : new Date();
-    if (!end) endDate.setHours(23, 59, 59, 999);
+    const endDate = end ? dayEnd(end) : dayEnd(businessDateStr());
 
     const agg = await JournalEntry.aggregate([
       { $match: { date: { $gte: startDate, $lte: endDate } } },
@@ -455,8 +461,7 @@ app.get('/api/reports/pnl-monthly', verifyToken, ...canViewReports, async (req, 
 // ============================================================
 app.get('/api/reports/balance-sheet', verifyToken, ...canViewReports, async (req, res) => {
   try {
-    const asOf = req.query.asOf ? dayEnd(req.query.asOf) : new Date();
-    if (!req.query.asOf) asOf.setHours(23, 59, 59, 999);
+    const asOf = req.query.asOf ? dayEnd(req.query.asOf) : dayEnd(businessDateStr());
 
     const agg = await JournalEntry.aggregate([
       { $match: { date: { $lte: asOf } } },
@@ -497,12 +502,11 @@ app.get('/api/reports/balance-sheet', verifyToken, ...canViewReports, async (req
 // ============================================================
 // MONTHLY BALANCE SHEET - cumulative balance as-of each month-end across a range
 // ============================================================
-app.get('/api/reports/balance-sheet-monthly', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/balance-sheet-monthly', verifyToken, ...canViewReports, requirePermission('screen.reports.bsmonthly'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const startDate = start ? dayStart(start) : new Date(new Date().getFullYear(), 0, 1);
-    const endDate = end ? dayEnd(end) : new Date();
-    if (!end) endDate.setHours(23, 59, 59, 999);
+    const endDate = end ? dayEnd(end) : dayEnd(businessDateStr());
 
     const agg = await JournalEntry.aggregate([
       { $match: { date: { $lte: endDate } } }, // everything up to range end (balances are cumulative)
@@ -555,7 +559,14 @@ app.get('/api/reports/balance-sheet-monthly', verifyToken, ...canViewReports, as
 app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req, res) => {
   try {
     const now        = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    // The sales panel's period: today by default, or ?start=&end= (YYYY-MM-DD).
+    // Days are the business's own (Manila), not the server clock's - a server
+    // on UTC started "today" at 8 in the morning.
+    const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+    const periodStartKey = isDay(req.query.start) ? String(req.query.start) : businessDateStr();
+    const periodEndKey = isDay(req.query.end) && String(req.query.end) >= periodStartKey ? String(req.query.end) : (isDay(req.query.start) ? periodStartKey : businessDateStr());
+    const todayStart = dayStart(periodStartKey);
+    const periodEnd  = dayEnd(periodEndKey);
     const day30ago   = new Date(now.getTime() - 30 * 86400000);
     const day60ago   = new Date(now.getTime() - 60 * 86400000);
     // Every query below MUST be scoped - this dashboard previously had zero
@@ -569,7 +580,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
 
       // 1. Today's KPIs
       Order.aggregate([
-        { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: todayStart } } },
+        { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: todayStart, $lte: periodEnd } } },
         { $group: {
           _id: null,
           gross:      { $sum: '$subtotal' },
@@ -601,8 +612,9 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
       Order.aggregate([
         { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: day60ago } } },
         { $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'Asia/Manila' } },
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: businessTimeZone() } },
           net:  { $sum: { $cond: ['$isComplimentary', 0, '$total'] } },
+          count: { $sum: 1 },
         }},
         { $sort: { _id: 1 } },
       ]),
@@ -646,10 +658,10 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
 
     // ── Daily revenue list ─────────────────────────────────────────────────────
     let bestDay = { date: 'N/A', revenue: 0 };
-    const dailyRevenue = dailyAgg.map(({ _id, net }) => {
+    const dailyRevenue = dailyAgg.map(({ _id, net, count }) => {
       const label = new Date(_id + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
       if (net > bestDay.revenue) bestDay = { date: label, revenue: net };
-      return { date: label, revenue: net };
+      return { date: label, revenue: net, count };
     });
 
     // ── Top products: merge size variants ("Latte (Large)" → "Latte") then take top 5 ──
@@ -738,8 +750,12 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
       return usage;
     };
 
-    const daysElapsed30 = Math.max(1, Math.min(30, orders30d.length > 0 ? 30 : 1));
-    const daysElapsed7  = Math.max(1, Math.min(7,  orders7d.length  > 0 ? 7  : 1));
+    // Average over the days the business has actually been selling: a shop ten
+    // days old that sold 100 uses 10 a day, not 100 / 30.
+    const firstSale = await Order.findOne({ ...bizScope, status: 'Completed' }, { createdAt: 1 }).sort({ createdAt: 1 }).lean();
+    const historyDays = firstSale ? Math.max(1, Math.ceil((now.getTime() - new Date(firstSale.createdAt).getTime()) / 86400000)) : 1;
+    const daysElapsed30 = Math.max(1, Math.min(30, historyDays));
+    const daysElapsed7  = Math.max(1, Math.min(7, historyDays));
 
     const u7  = computeUsage(orders7d);
     const u30 = computeUsage(orders30d);
@@ -766,7 +782,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
     const DEADSTOCK_MIN_AGE_DAYS = 30;
     const NEW_SKU_DAYS = 14;
     const nowMs = Date.now();
-    const ageDays = (item) => item?.createdAt ? Math.max(0, (nowMs - new Date(item.createdAt).getTime()) / 86400000) : Infinity;
+    const ageDays = (item) => item?.createdAt ? Math.max(historyDays, (nowMs - new Date(item.createdAt).getTime()) / 86400000) : Infinity;
     const aduByName = Object.fromEntries(rmEntries.map(e => [e.name.toLowerCase(), e]));
     const uOf = (item) => aduByName[(item.itemName || '').toLowerCase()];
 
@@ -782,6 +798,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
           unit:        invItem?.unit,
           displayUnit: invItem?.displayUnit,
           packSize:    invItem?.packSize,
+          unitMultiplier: invItem?.unitMultiplier,
           dailyAvg: burn,
           daysLeft: burn > 0 ? Math.floor(i.currentStock / burn) : Infinity,
           weeklyNeed: Math.ceil(burn * 7),
@@ -828,9 +845,59 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
       .sort((a, b) => b.tiedUpCapital - a.tiedUpCapital)
       .slice(0, 10);
 
+    // ── Reorder forecast: every stock item that sells, not a top five ──────────
+    // What is already on its way counts as covered: the outstanding quantity
+    // on open purchase orders, in the item's base unit.
+    const onOrderById = {};
+    try {
+      const openPos = await mongoose.model('PurchaseOrder').find(
+        { ...tenantScope(req), status: { $in: ['Ordered', 'Processing', 'Incomplete'] } }, { lines: 1 }).lean();
+      const invById = new Map(inventoryItems.map(i => [String(i._id), i]));
+      for (const po of openPos) for (const l of (po.lines || [])) {
+        const item = l.invId && invById.get(String(l.invId));
+        if (!item) continue;
+        const left = Math.max(0, (Number(l.orderedQty) || 0) - (Number(l.receivedQty) || 0));
+        const perPack = basePerPack({ unitMultiplier: item.unitMultiplier, packSize: Number(l.packSize) > 0 ? Number(l.packSize) : item.packSize });
+        onOrderById[String(item._id)] = (onOrderById[String(item._id)] || 0) + left * perPack;
+      }
+    } catch (err) { log.error({ err }, 'reorder forecast: open POs'); }
+    const STATUS_RANK = { out: 0, now: 1, soon: 2, ok: 3 };
+    const dayLabel = (n) => new Date(nowMs + n * 86400000).toLocaleDateString('en-CA', { timeZone: businessTimeZone() });
+    const reorderForecast = inventoryItems
+      .filter(item => !isRemovedProductStock(item))
+      .map(item => {
+        const u = uOf(item);
+        const use = u?.weightedAdu || 0;
+        if (!(use > 0)) return null;
+        const stock = Math.max(0, Number(item.stockQty) || 0);
+        const onOrder = onOrderById[String(item._id)] || 0;
+        const daysLeft = Math.floor(stock / use);
+        // Enough for the days asked for, plus the wait for delivery and the
+        // spare days - less what is on the shelf and what is already coming.
+        const buyFor = (days) => Math.max(0, Math.ceil(use * (days + LEAD_TIME_DAYS + SAFETY_DAYS) - stock - onOrder));
+        const covered = (stock + onOrder) / use;
+        const status = stock <= 0 ? 'out'
+          : covered <= LEAD_TIME_DAYS + SAFETY_DAYS ? 'now'
+          : covered <= LEAD_TIME_DAYS + SAFETY_DAYS + 7 ? 'soon' : 'ok';
+        return {
+          _id: item._id, itemName: item.itemName, itemCode: item.itemCode || '',
+          unit: item.unit, displayUnit: item.displayUnit, packSize: item.packSize, unitMultiplier: item.unitMultiplier,
+          stockQty: stock, dailyUse: use, daysLeft, runsOutOn: dayLabel(daysLeft), onOrder,
+          buy14: buyFor(14), buy30: buyFor(30), status,
+          trendPct: u.adu30 > 0 && ageDays(item) >= NEW_SKU_DAYS ? (u.adu7 / u.adu30 - 1) * 100 : null,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => (STATUS_RANK[a.status] - STATUS_RANK[b.status]) || (a.daysLeft - b.daysLeft))
+      .slice(0, 500);
+
     res.json({
       success: true,
+      reorderForecast,
+      forecastSettings: { leadTimeDays: LEAD_TIME_DAYS, safetyDays: SAFETY_DAYS, historyDays: daysElapsed30 },
+      // `today` is the chosen period (today unless start/end were given).
       today: { gross: todayGross, revenue: todayRevenue, count: todayCount, avg: todayAvg, discounts: todayDiscounts, comp: todayComp },
+      period: { start: periodStartKey, end: periodEndKey, isToday: periodStartKey === businessDateStr() && periodEndKey === periodStartKey },
       allTime: { revenue: totalAllTimeRevenue, comp: totalAllTimeComplimentary, orders: totalAllTimeOrders },
       dailyRevenue,
       bestDay,
@@ -902,7 +969,7 @@ app.get('/api/analytics/by-location', verifyToken, ...canViewAnalytics, async (r
 });
 
 // ── REPORT: MENU ENGINEERING (Stars / Plowhorses / Puzzles / Dogs) ───────────
-app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, requirePermission('screen.reports.menueng'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
@@ -912,7 +979,7 @@ app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, async (
       if (start) match.createdAt.$gte = dayStart(start);
       if (end) { match.createdAt.$lte = dayEnd(end); }
     }
-    const [ordersData, prods, invItems] = await Promise.all([
+    const [ordersData, prods, invItems, globalAddOns] = await Promise.all([
       Order.find(match, { items: 1 }).lean(),
       Product.find(bizScope, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1, addOns: 1, modifierGroups: 1 })
         // addOns / modifierGroups carry their own recipes: an Extra Shot costs
@@ -921,14 +988,17 @@ app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, async (
         // reports are used to judge.
         .populate('modifierGroups').lean(),
       Inventory.find(bizScope, { _id: 1, itemCode: 1, itemName: 1, unitCost: 1, unitMultiplier: 1 }).lean(),
+      // An add-on's own recipe, for the ones a product does not carry a copy of.
+      AddOn.find({}, { name: 1, recipe: 1 }).lean(),
     ]);
+    const addOnMap = Object.fromEntries(globalAddOns.map(a => [a.name, a.recipe || []]));
     const prodMap = Object.fromEntries(prods.map(p => [p._id.toString(), p]));
     const invMap = {};
     invItems.forEach(i => { invMap[i._id.toString()] = i; if (i.itemCode) invMap[i.itemCode] = i; if (i.itemName) invMap[i.itemName] = i; });
     const stat = {};
     for (const o of ordersData) {
       for (const it of (o.items || [])) {
-        for (const line of reportLinesForItem(it, prods, prodMap, invMap)) {
+        for (const line of reportLinesForItem(it, prods, prodMap, invMap, addOnMap)) {
           const key = line.name;
           if (!stat[key]) stat[key] = { name: key, qty: 0, revenue: 0, cogs: 0 };
           stat[key].qty += line.qty;
@@ -953,7 +1023,7 @@ app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, async (
 });
 
 // ── REPORT: CASHIER VARIANCE TREND ───────────────────────────────────────────
-app.get('/api/reports/cashier-variance', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/cashier-variance', verifyToken, ...canViewReports, requirePermission('screen.reports.variance'), async (req, res) => {
   try {
     const owner = await ownerIdentity();
     const agg = await Shift.aggregate([
@@ -972,32 +1042,186 @@ app.get('/api/reports/cashier-variance', verifyToken, ...canViewReports, async (
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
+// ── DAILY CLOSING CHECK ──────────────────────────────────────────────────────
+// One day, three things side by side: what was sold (and how it was paid),
+// what the drawer was counted at against what it should have held, and what
+// went to the bank. A difference is caught the same day instead of at month end.
+app.get('/api/reports/daily-closing', verifyToken, requireStaff, requirePermission('shifts.view'), async (req, res) => {
+  try {
+    const dayKey = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || '')) ? req.query.date : businessDateStr();
+    const from = dayStart(dayKey), to = dayEnd(dayKey);
+    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+    const [orders, shifts, deposits] = await Promise.all([
+      Order.find({ ...bizScope, status: 'Completed', isComplimentary: { $ne: true }, isBackdated: { $ne: true }, createdAt: { $gte: from, $lte: to } },
+        { total: 1, paymentMethod: 1, payments: 1 }).lean(),
+      Shift.find({ shiftStart: { $gte: from, $lte: to } }).sort({ shiftStart: 1 }).lean(),
+      BankDeposit.find({ createdAt: { $gte: from, $lte: to } }).sort({ createdAt: 1 }).lean(),
+    ]);
+    // Sales by how they were paid; a split sale counts each part under its own.
+    const byMethod = {};
+    for (const o of orders) {
+      const parts = (o.payments || []).length ? o.payments : [{ method: o.paymentMethod || 'Cash', amount: o.total }];
+      for (const p of parts) byMethod[p.method || 'Cash'] = r2((byMethod[p.method || 'Cash'] || 0) + (Number(p.amount) || 0));
+    }
+    const cashSales = r2(byMethod.Cash || 0);
+    const drawers = shifts.map(sh => ({
+      _id: sh._id, cashier: sh.scope === 'drawer' ? 'Shop drawer' : (sh.cashierName || ''), status: sh.status,
+      startingCash: r2(sh.startingCash), cashSales: r2(sh.salesTotal), payIns: r2(sh.payInsTotal), payOuts: r2(sh.payOutsTotal),
+      expected: sh.expectedCash == null ? null : r2(sh.expectedCash), counted: sh.actualCash == null ? null : r2(sh.actualCash),
+      variance: sh.variance == null ? null : r2(sh.variance), needsReview: !!sh.needsReview,
+    }));
+    const closed = drawers.filter(d => d.status !== 'Open' && d.counted != null);
+    const variance = r2(closed.reduce((sum, d) => sum + (d.variance || 0), 0));
+    const deposited = r2(deposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0));
+    const counted = r2(closed.reduce((sum, d) => sum + (d.counted || 0), 0));
+    const floats = r2(closed.reduce((sum, d) => sum + (d.startingCash || 0), 0));
+    // What is still in the building: everything counted, less what went to the bank.
+    const issues = [];
+    const openCount = drawers.filter(d => d.status === 'Open').length;
+    if (openCount) issues.push(`${openCount} drawer session(s) still open - not counted yet.`);
+    if (orders.length && !drawers.length) issues.push('There were sales but no drawer session - nobody counted the cash.');
+    if (Math.abs(variance) > 0.005) issues.push(`The drawer count is ${variance > 0 ? 'over' : 'short'} by ₱${Math.abs(variance).toFixed(2)}.`);
+    if (drawers.some(d => d.needsReview)) issues.push('A drawer difference is large enough to need a review.');
+    if (closed.length && deposited > counted + 0.005) issues.push('More was deposited than was counted in the drawer.');
+    res.json({
+      success: true, date: dayKey,
+      sales: { total: r2(orders.reduce((sum, o) => sum + (o.total || 0), 0)), count: orders.length, cash: cashSales, byMethod },
+      drawers, totals: { counted, floats, variance, deposited, leftInDrawer: r2(counted - deposited) },
+      deposits: deposits.map(d => ({ _id: d._id, amount: r2(d.amount), by: d.depositedBy || '', reference: d.reference || '', at: d.createdAt })),
+      issues,
+    });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// ── OWNER OVERVIEW ───────────────────────────────────────────────────────────
+// One read for the owner's page: sales, the month's result, cash, what is owed
+// either way, stock, and what is waiting for a decision. Money figures come
+// from the ledger wherever the ledger holds them, so this page and the
+// reports it links to cannot disagree.
+app.get('/api/owner/overview', verifyToken, requireStaff, requirePermission('owner.view'), async (req, res) => {
+  try {
+    const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+    const now = new Date();
+    const todayKey = businessDateStr(now);
+    const todayStart = dayStart(todayKey);
+    // The period sales and profit cover (default: this month so far), and the
+    // one just before it of the same length, to compare against. What is owed,
+    // the cash and the stock are always as of now - a balance, not a period.
+    const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+    const startKey = isDay(req.query.start) ? req.query.start : `${todayKey.slice(0, 7)}-01`;
+    const endKey = isDay(req.query.end) ? req.query.end : todayKey;
+    if (startKey > endKey) return res.status(400).json({ success: false, error: 'The start date is after the end date.' });
+    const monthStart = dayStart(startKey);
+    const periodEnd = endKey >= todayKey ? now : dayEnd(endKey);
+    const spanMs = periodEnd.getTime() - monthStart.getTime();
+    const lastMonthStart = new Date(monthStart.getTime() - spanMs - 1);
+    const lastMonthSameDay = new Date(monthStart.getTime() - 1);
+    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const salesBetween = async (from, to) => {
+      const [row] = await Order.aggregate([
+        { $match: { ...bizScope, status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: from, $lte: to } } },
+        { $group: { _id: null, total: { $sum: '$total' }, count: { $sum: 1 } } },
+      ]);
+      return { total: r2(row?.total), count: row?.count || 0 };
+    };
+    // Net movement per account prefix: debit minus credit.
+    const ledger = async (match) => {
+      const rows = await JournalEntry.aggregate([
+        ...(match ? [{ $match: match }] : []),
+        { $unwind: '$lines' },
+        { $group: { _id: { $substrCP: ['$lines.accountCode', 0, 3] }, net: { $sum: { $subtract: [{ $ifNull: ['$lines.debit', 0] }, { $ifNull: ['$lines.credit', 0] }] } } } },
+      ]);
+      return (test) => r2(rows.filter(r => test(String(r._id || ''))).reduce((sum, r) => sum + r.net, 0));
+    };
+    const [today, mtd, lastMtd, all, thisMonth, arOrders, bills, items, requisitions, fundSpends, changes, openOrders] = await Promise.all([
+      salesBetween(todayStart, now),
+      salesBetween(monthStart, periodEnd),
+      salesBetween(lastMonthStart, lastMonthSameDay),
+      ledger(null),
+      ledger({ date: { $gte: monthStart, $lte: periodEnd } }),
+      Order.find({ ...bizScope, status: 'Completed', paymentMethod: AR_PAYMENT_METHOD_FILTER, isComplimentary: { $ne: true }, arSettled: { $ne: true } },
+        { total: 1, arPaidAmount: 1, refundedAmount: 1, arDueDate: 1 }).limit(20000).lean(),
+      Bill.find({ ...bizScope, status: { $in: ['Pending', 'Approved', 'Partially Paid'] } }, { amount: 1, paidAmount: 1, dueDate: 1, status: 1 }).lean(),
+      Inventory.find(bizScope, { stockQty: 1, unitCost: 1, lowStockThreshold: 1 }).lean(),
+      mongoose.model('RequisitionSlip').countDocuments({ status: 'Pending' }),
+      RevolvingFundTx.countDocuments({ type: 'disbursement', 'validation.status': 'Unvalidated' }),
+      ChangeRequest.countDocuments({ status: 'Pending' }),
+      mongoose.model('PurchaseOrder').countDocuments({ ...tenantScope(req), status: { $in: ['Ordered', 'Processing', 'Incomplete'] } }),
+    ]);
+    // Backdated sales in the period with no cost of goods sold behind them:
+    // while there are any, the profit shown is too high.
+    const uncosted = await Order.countDocuments({
+      ...bizScope, isBackdated: true, status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: monthStart, $lte: periodEnd },
+      $and: [{ $or: [{ costPosted: { $exists: false } }, { costPosted: { $lte: 0 } }] }, { $or: [{ stockMoves: { $exists: false } }, { stockMoves: { $size: 0 } }] }],
+    });
+
+    const owed = arOrders.map(o => Math.max(0, r2((o.total || 0) - (o.arPaidAmount || 0) - (o.refundedAmount || 0)))).map((bal, i) => ({ bal, due: arOrders[i].arDueDate })).filter(x => x.bal > 0.004);
+    const overdueAr = owed.filter(x => x.due && new Date(x.due) < now);
+    const openBills = bills.map(b => ({ left: Math.max(0, r2((b.amount || 0) - (b.paidAmount || 0))), due: b.dueDate, status: b.status })).filter(b => b.left > 0.004);
+    const in7 = new Date(now.getTime() + 7 * 86400000);
+    const income = -thisMonth(c => c.startsWith('4'));
+    const costOfSales = thisMonth(c => c.startsWith('51'));
+    const expenses = r2(thisMonth(c => /^[5-9]/.test(c)) - costOfSales);
+    const cash = { onHand: all(c => c === '111'), bank: all(c => c === '112'), eWallet: all(c => c === '113'), petty: all(c => c === '114') };
+
+    res.json({
+      success: true, asOf: now, period: { start: startKey, end: endKey, previousStart: businessDateStr(lastMonthStart), previousEnd: businessDateStr(lastMonthSameDay) },
+      sales: { today: today.total, todayCount: today.count, monthToDate: mtd.total, monthCount: mtd.count, lastMonthToDate: lastMtd.total },
+      month: { income: r2(income), costOfSales, expenses, netIncome: r2(income - costOfSales - expenses), uncostedSales: uncosted },
+      cash: { ...cash, total: r2(cash.onHand + cash.bank + cash.eWallet + cash.petty) },
+      receivables: { total: r2(owed.reduce((s, x) => s + x.bal, 0)), count: owed.length, overdue: r2(overdueAr.reduce((s, x) => s + x.bal, 0)), overdueCount: overdueAr.length },
+      payables: {
+        total: r2(openBills.reduce((s, b) => s + b.left, 0)), count: openBills.length,
+        overdue: r2(openBills.filter(b => b.due && new Date(b.due) < todayStart).reduce((s, b) => s + b.left, 0)),
+        dueSoon: r2(openBills.filter(b => b.due && new Date(b.due) >= todayStart && new Date(b.due) <= in7).reduce((s, b) => s + b.left, 0)),
+      },
+      stock: {
+        value: r2(items.reduce((s, i) => s + Math.max(0, i.stockQty || 0) * (i.unitCost || 0), 0)),
+        out: items.filter(i => (i.stockQty || 0) <= 0).length,
+        low: items.filter(i => (i.stockQty || 0) > 0 && (i.lowStockThreshold || 0) > 0 && i.stockQty <= i.lowStockThreshold).length,
+      },
+      waiting: { requisitions, fundSpends, bills: bills.filter(b => b.status === 'Pending').length, changes, openOrders },
+    });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 // ── REPORT: PURCHASE ORDER SUGGESTION (from low stock + velocity) ────────────
 app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (req, res) => {
   try {
     const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
     const days = Math.max(1, parseInt(req.query.days) || 7); // cover N days of supply
     const since = new Date(Date.now() - 30 * 86400000);
-    const [inv, orders, products, suppliers] = await Promise.all([
+    const [inv, orders, products] = await Promise.all([
       Inventory.find(bizScope, { itemCode: 1, itemName: 1, stockQty: 1, unit: 1, unitCost: 1, lowStockThreshold: 1, displayUnit: 1, unitMultiplier: 1, packSize: 1 }).lean(),
       Order.find({ ...bizScope, status: 'Completed', createdAt: { $gte: since } }, { items: 1 }).lean(),
       Product.find(bizScope, { _id: 1, name: 1, productCode: 1, baseRecipe: 1, sizes: 1 }).lean(),
-      Supplier.find({ ...tenantScope(req), isActive: true, 'catalog.invId': { $ne: null } }, { name: 1, catalog: 1 }).lean(),
     ]);
     const prodMap = Object.fromEntries(products.map(p => [p._id.toString(), p]));
-    // Cheapest supplier quote per inventory item, so a reorder suggestion can be
-    // grouped into per-supplier draft POs instead of one manually-assigned PO.
-    const bestSupplierByInv = {};
-    for (const s of suppliers) {
-      for (const c of (s.catalog || [])) {
-        if (!c.invId) continue;
-        const key = c.invId.toString();
-        const cur = bestSupplierByInv[key];
-        if (!cur || (c.unitCost || 0) < cur.unitCost) {
-          bestSupplierByInv[key] = { supplierId: s._id.toString(), supplierName: s.name, unitCost: c.unitCost, packSize: c.packSize };
-        }
-      }
+    // The days there have actually been sales to average over (a month at most).
+    const firstSale = await Order.findOne({ ...bizScope, status: 'Completed' }, { createdAt: 1 }).sort({ createdAt: 1 }).lean();
+    const historyDays = Math.min(30, firstSale ? Math.max(1, Math.ceil((Date.now() - new Date(firstSale.createdAt).getTime()) / 86400000)) : 1);
+    // Already on its way on open purchase orders (base units) - not suggested again.
+    const onOrder = {};
+    const invByIdStr = new Map(inv.map(i => [i._id.toString(), i]));
+    const openPos = await mongoose.model('PurchaseOrder').find({ ...tenantScope(req), status: { $in: ['Ordered', 'Processing', 'Incomplete'] } }, { lines: 1 }).lean();
+    for (const po of openPos) for (const l of (po.lines || [])) {
+      const item = l.invId && invByIdStr.get(String(l.invId));
+      if (!item) continue;
+      const left = Math.max(0, (Number(l.orderedQty) || 0) - (Number(l.receivedQty) || 0));
+      onOrder[String(item._id)] = (onOrder[String(item._id)] || 0) + left * basePerPack({ unitMultiplier: item.unitMultiplier, packSize: Number(l.packSize) > 0 ? Number(l.packSize) : item.packSize });
     }
+    // Days allowed for a delivery to arrive, plus spare - as the Reorder Forecast.
+    const WAIT_DAYS = 10;   // 7 days delivery + 3 spare, unless the item's supplier has its own lead time
+    const waitFor = (invId) => { const lt = bestSupplierByInv[String(invId)]?.leadTimeDays; return lt != null ? lt + 3 : WAIT_DAYS; };
+    // Who each item comes from (cheapest catalog quote, else whoever it was last
+    // bought from) and that supplier's delivery time - the same answer Stock
+    // movement uses (lib/itemSuppliers.js), so drafts split by supplier.
+    const bestSupplierByInv = {};
+    try {
+      const found = await itemSuppliers({ Supplier, PurchaseOrder: mongoose.model('PurchaseOrder'), tenant: tenantScope(req) });
+      for (const [k, v] of found) bestSupplierByInv[k] = v;
+    } catch (err) { captureError(req, err); }
     // LOG 1:1: resolve the inventory doc that backs a recipe-less product (by code/name).
     const invByCode = {}, invByName = {};
     inv.forEach(i => { if (i.itemCode) invByCode[i.itemCode] = i; if (i.itemName) invByName[i.itemName] = i; });
@@ -1021,10 +1245,15 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
       }
     }
     const lines = inv.map(i => {
-      const adu = (usage[i._id.toString()] || 0) / 30; // avg daily usage (base units)
+      const adu = (usage[i._id.toString()] || 0) / historyDays; // avg daily usage (base units)
       const threshold = i.lowStockThreshold || 0;
       const lowFlag = threshold > 0 && i.stockQty <= threshold;
-      if (!lowFlag) return null;
+      // Selling out: what is on the shelf and on order will not last the wait
+      // for a delivery. This is what catches an item with no low-stock
+      // threshold set - before, only items with one were ever suggested.
+      const coming = onOrder[i._id.toString()] || 0;
+      const sellingOut = adu > 0 && (Math.max(0, i.stockQty) + coming) <= adu * waitFor(i._id);
+      if (!lowFlag && !sellingOut) return null;
 
       // For LOG mode display in pcs (pack units); otherwise promote g→kg, ml→L.
       const { displayUnit: effUnit, mult: effMult } = effectiveDisplay(i);
@@ -1035,27 +1264,62 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
 
       // Best qty = whichever is larger: velocity-based cover OR refill to 2× threshold.
       // This ensures items with low/no velocity still get a sensible restock target.
-      const velocityTarget = adu * days;               // base units for N-day cover
-      const refillTarget   = threshold * 2;            // bring back to 2× the alert floor
+      const velocityTarget = adu * (days + waitFor(i._id)); // base units: N days of cover, plus the wait for delivery
+      const refillTarget   = lowFlag ? threshold * 2 : 0; // bring back to 2× the alert floor
       const bestTarget     = Math.max(velocityTarget, refillTarget);
-      const needBase       = Math.max(0, bestTarget - i.stockQty);
+      const needBase       = Math.max(0, bestTarget - Math.max(0, i.stockQty) - coming);
+      if (!(needBase > 0)) return null;
 
       const best = bestSupplierByInv[i._id.toString()] || null;
       return {
         invId: i._id, itemCode: i.itemCode || '', unit: i.unit || '', unitCost: i.unitCost || 0,
         itemName: i.itemName, currentStock: Math.round(i.stockQty / divisor), displayUnit,
         avgDailyUse: +(adu / divisor).toFixed(3), suggestedOrder: Math.ceil(needBase / divisor),
-        estCost: +((needBase) * (i.unitCost || 0)).toFixed(2), lowStock: true,
-        supplierId: best?.supplierId || null, supplierName: best?.supplierName || null,
+        estCost: +((needBase) * (i.unitCost || 0)).toFixed(2), lowStock: lowFlag, sellingOut,
+        supplierId: best?.supplierId || null, supplierName: best?.supplierName || null, leadTimeDays: best?.leadTimeDays ?? null,
       };
-    }).filter(Boolean).sort((a, b) => (b.suggestedOrder - a.suggestedOrder));
+    }).filter(Boolean);
+    // What Analytics -> Stock movement says to buy (fast and slow sellers, over
+    // the last 30 days, at its cover / delivery / spare days) is suggested here
+    // too - it counts sales the recipe matching above can miss. Where both have
+    // a figure for an item, the larger one is kept.
+    try {
+      const mv = ctx.computeStockMovement ? await ctx.computeStockMovement(req, {}) : null;
+      const byInv = new Map(lines.map(l => [String(l.invId), l]));
+      for (const r of (mv?.rows || [])) {
+        if (!(r.recommend > 0)) continue;
+        const i = invByIdStr.get(String(r._id));
+        if (!i) continue;
+        const needBase = r.recommend * (r.baseUnits || 1);
+        const { displayUnit: effUnit, mult: effMult } = effectiveDisplay(i);
+        const isLogBiz = (BUSINESS_TYPE || '').toLowerCase() === 'log';
+        const divisor = isLogBiz ? (i.packSize > 0 ? i.packSize * effMult : effMult) : effMult;
+        const suggestedOrder = Math.ceil(needBase / divisor - 1e-9);
+        const cur = byInv.get(String(i._id));
+        if (cur) {
+          if (suggestedOrder > cur.suggestedOrder) { cur.suggestedOrder = suggestedOrder; cur.estCost = +(needBase * (i.unitCost || 0)).toFixed(2); }
+          cur.movement = r.class;
+          continue;
+        }
+        const best = bestSupplierByInv[i._id.toString()] || null;
+        const line = {
+          invId: i._id, itemCode: i.itemCode || '', unit: i.unit || '', unitCost: i.unitCost || 0,
+          itemName: i.itemName, currentStock: Math.round(i.stockQty / divisor), displayUnit: isLogBiz ? 'pcs' : effUnit,
+          avgDailyUse: +((r.adu * (r.baseUnits || 1)) / divisor).toFixed(3), suggestedOrder,
+          estCost: +(needBase * (i.unitCost || 0)).toFixed(2), lowStock: false, sellingOut: false, movement: r.class,
+          supplierId: best?.supplierId || null, supplierName: best?.supplierName || null, leadTimeDays: best?.leadTimeDays ?? null,
+        };
+        lines.push(line); byInv.set(String(i._id), line);
+      }
+    } catch (err) { captureError(req, err); }
+    lines.sort((a, b) => (b.suggestedOrder - a.suggestedOrder));
     const totalEstCost = lines.reduce((s, l) => s + l.estCost, 0);
     res.json({ success: true, coverDays: days, lines, totalEstCost });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // ── GROSS PROFIT BY CATEGORY ─────────────────────────────────────────────────
-app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, requirePermission('screen.reports.profitcat'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
@@ -1065,7 +1329,7 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async
       if (start) match.createdAt.$gte = dayStart(start);
       if (end) { match.createdAt.$lte = dayEnd(end); }
     }
-    const [ordersData, prods, invItems] = await Promise.all([
+    const [ordersData, prods, invItems, globalAddOns] = await Promise.all([
       Order.find(match, { items: 1 }).lean(),
       Product.find(bizScope, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1, addOns: 1, modifierGroups: 1 })
         // addOns / modifierGroups carry their own recipes: an Extra Shot costs
@@ -1074,14 +1338,17 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async
         // reports are used to judge.
         .populate('modifierGroups').lean(),
       Inventory.find(bizScope, { _id: 1, itemCode: 1, itemName: 1, unitCost: 1, unitMultiplier: 1 }).lean(),
+      // An add-on's own recipe, for the ones a product does not carry a copy of.
+      AddOn.find({}, { name: 1, recipe: 1 }).lean(),
     ]);
+    const addOnMap = Object.fromEntries(globalAddOns.map(a => [a.name, a.recipe || []]));
     const prodMap  = Object.fromEntries(prods.map(p => [p._id.toString(), p]));
     const invMap   = {};
     invItems.forEach(i => { invMap[i._id.toString()] = i; if (i.itemCode) invMap[i.itemCode] = i; if (i.itemName) invMap[i.itemName] = i; });
     const stats    = {};
     for (const order of ordersData) {
       for (const item of (order.items || [])) {
-        for (const line of reportLinesForItem(item, prods, prodMap, invMap)) {
+        for (const line of reportLinesForItem(item, prods, prodMap, invMap, addOnMap)) {
           const cat = line.category || 'Uncategorized';
           if (!stats[cat]) stats[cat] = { category: cat, revenue: 0, estimatedCOGS: 0, items: 0 };
           stats[cat].revenue += line.revenue;
@@ -1100,16 +1367,26 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, async
 });
 
 // ── SELLER COMMISSIONS ────────────────────────────────────────────────────────
-// Per-seller (Order.cashier, matched against User.name) commission over a date
+// Per-seller commission over a date. The seller is the order's salesperson
+// (picked at the POS, or the client's assigned one) and, for orders that
+// predate salespeople, whoever rang it up (Order.cashier), matched against
+// User.name.
 // range: sales total × that user's commissionRate. Complimentary orders are
 // excluded - same convention as profit-by-category - since no revenue actually
 // came in to take a commission from. Every user with any sales in range is
 // listed, including a 0%-rate one, so an admin can see who still needs a rate
 // set rather than have them silently vanish from the report.
-app.get('/api/reports/commissions', verifyToken, ...canViewReports, async (req, res) => {
+
+// ?source=backdated | live narrows a sales report to backdated sales (entered
+// after the fact - Ledger -> Backdate Sale, or an import) or to live ones (the
+// till, the client portal). Anything else means all of them - the default, so
+// every existing caller is unchanged.
+const salesSourceFilter = (source) => (source === 'backdated' ? { isBackdated: true }
+  : source === 'live' ? { isBackdated: { $ne: true } } : {});
+app.get('/api/reports/commissions', verifyToken, ...canViewReports, requirePermission('screen.reports.commissions'), async (req, res) => {
   try {
     const { start, end } = req.query;
-    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
+    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...salesSourceFilter(req.query.source) };
     if (start || end) {
       match.createdAt = {};
       if (start) match.createdAt.$gte = dayStart(start);
@@ -1118,7 +1395,10 @@ app.get('/api/reports/commissions', verifyToken, ...canViewReports, async (req, 
     const [agg, users] = await Promise.all([
       Order.aggregate([
         { $match: match },
-        { $group: { _id: '$cashier', salesTotal: { $sum: '$total' }, orderCount: { $sum: 1 } } },
+        { $group: {
+            _id: { $cond: [{ $gt: [{ $strLenCP: { $ifNull: ['$salesperson', ''] } }, 0] }, '$salesperson', '$cashier'] },
+            salesTotal: { $sum: '$total' }, orderCount: { $sum: 1 },
+        } },
       ]),
       User.find({}, { name: 1, userCode: 1, commissionRate: 1 }).lean(),
     ]);
@@ -1143,11 +1423,92 @@ app.get('/api/reports/commissions', verifyToken, ...canViewReports, async (req, 
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-// ── SALES BY PAYMENT METHOD ───────────────────────────────────────────────────
-app.get('/api/reports/sales-by-payment', verifyToken, ...canViewReports, async (req, res) => {
+// ── SALES BY CHANNEL (wholesale / retail) ────────────────────────────────────
+// Orders placed before channels were recorded count as wholesale when their
+// buyer's account carries a "wholesale" segment today.
+app.get('/api/reports/sales-by-channel', verifyToken, ...canViewReports, requirePermission('screen.reports.saleschannel'), async (req, res) => {
   try {
     const { start, end } = req.query;
-    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
+    if (!start || !end) return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
+    const orders = await Order.find({
+      businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true },
+      createdAt: { $gte: dayStart(start), $lte: dayEnd(end) },
+    }, { channel: 1, clientId: 1, clientAccountId: 1, subtotal: 1, discount: 1, total: 1, items: 1, refundedAmount: 1 }).limit(50000).lean();
+    const ids = [...new Set(orders.map(o => o.clientAccountId || o.clientId).filter(id => id && mongoose.Types.ObjectId.isValid(String(id))))];
+    const wholesaleIds = new Set((await ClientAccount.find({ _id: { $in: ids }, segments: { $regex: /wholesale/i } }, { _id: 1 }).lean()).map(c => String(c._id)));
+    const acc = {};
+    for (const o of orders) {
+      const ch = o.channel === 'Wholesale' || wholesaleIds.has(String(o.clientAccountId || o.clientId || '')) ? 'Wholesale' : 'Retail';
+      const a = acc[ch] || (acc[ch] = { channel: ch, orders: 0, units: 0, gross: 0, discount: 0, net: 0, products: new Map() });
+      a.orders += 1;
+      a.gross += Number(o.subtotal) || 0;
+      a.discount += Number(o.discount) || 0;
+      a.net += (Number(o.total) || 0) - (Number(o.refundedAmount) || 0);
+      for (const it of o.items || []) {
+        const q = Number(it.quantity) || 0;
+        a.units += q;
+        const p = a.products.get(it.name) || { name: it.name, qty: 0, sales: 0 };
+        p.qty += q; p.sales += (Number(it.price) || 0) * q;
+        a.products.set(it.name, p);
+      }
+    }
+    const totalNet = Object.values(acc).reduce((s, a) => s + a.net, 0);
+    const channels = ['Retail', 'Wholesale'].map(ch => acc[ch] || { channel: ch, orders: 0, units: 0, gross: 0, discount: 0, net: 0, products: new Map() }).map(a => ({
+      channel: a.channel, orders: a.orders, units: a.units,
+      gross: roundMoney(a.gross), discount: roundMoney(a.discount), net: roundMoney(a.net),
+      share: totalNet > 0 ? roundMoney((a.net / totalNet) * 100) : 0,
+      topProducts: [...a.products.values()].sort((x, y) => y.sales - x.sales).slice(0, 10).map(p => ({ ...p, sales: roundMoney(p.sales) })),
+    }));
+    res.json({ success: true, channels, totalNet: roundMoney(totalNet) });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// ── SALES BY CUSTOMER ─────────────────────────────────────────────────────────
+// Completed sales totalled per buyer, largest first, with what each still owes.
+// A buyer is their client account when the order has one; otherwise the name
+// on the order, so walk-in sales stay together under WALK-IN.
+app.get('/api/reports/sales-by-customer', verifyToken, ...canViewReports, requirePermission('screen.reports.salescustomer'), async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
+    const orders = await Order.find({
+      businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true },
+      createdAt: { $gte: dayStart(start), $lte: dayEnd(end) },
+    }, { customerName: 1, clientId: 1, clientAccountId: 1, subtotal: 1, discount: 1, total: 1, refundedAmount: 1, items: 1, createdAt: 1, paymentMethod: 1, arSettled: 1, amountPaid: 1 }).limit(100000).lean();
+    const ids = [...new Set(orders.map(o => String(o.clientAccountId || o.clientId || '')).filter(id => mongoose.Types.ObjectId.isValid(id)))];
+    const accounts = new Map((await ClientAccount.find({ _id: { $in: ids } }, { name: 1, clientCode: 1, segments: 1 }).lean()).map(c => [String(c._id), c]));
+    const acc = new Map();
+    for (const o of orders) {
+      const id = String(o.clientAccountId || o.clientId || '');
+      const account = accounts.get(id);
+      const key = account ? `acct:${id}` : `name:${String(o.customerName || 'WALK-IN').trim().toUpperCase() || 'WALK-IN'}`;
+      const row = acc.get(key) || {
+        customerId: account ? id : '', customerNumber: String(account?.clientCode || '').toUpperCase(),
+        customer: account?.name || (String(o.customerName || '').trim().toUpperCase() || 'WALK-IN'),
+        segments: account?.segments || [],
+        orders: 0, units: 0, gross: 0, discount: 0, net: 0, lastSale: null,
+      };
+      row.orders += 1;
+      row.units += (o.items || []).reduce((s, it) => s + (Number(it.quantity) || 0), 0);
+      row.gross += Number(o.subtotal) || 0;
+      row.discount += Number(o.discount) || 0;
+      row.net += (Number(o.total) || 0) - (Number(o.refundedAmount) || 0);
+      if (!row.lastSale || o.createdAt > row.lastSale) row.lastSale = o.createdAt;
+      acc.set(key, row);
+    }
+    const totalNet = [...acc.values()].reduce((s, r) => s + r.net, 0);
+    const customers = [...acc.values()]
+      .map(r => ({ ...r, gross: roundMoney(r.gross), discount: roundMoney(r.discount), net: roundMoney(r.net), share: totalNet > 0 ? roundMoney((r.net / totalNet) * 100) : 0 }))
+      .sort((a, b) => b.net - a.net);
+    res.json({ success: true, customers, totalNet: roundMoney(totalNet), orders: orders.length });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// ── SALES BY PAYMENT METHOD ───────────────────────────────────────────────────
+app.get('/api/reports/sales-by-payment', verifyToken, ...canViewReports, requirePermission('screen.reports.payments'), async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...salesSourceFilter(req.query.source) };
     if (start || end) {
       match.createdAt = {};
       if (start) match.createdAt.$gte = dayStart(start);
@@ -1176,12 +1537,11 @@ app.get('/api/reports/sales-trend', verifyToken, ...canViewReports, async (req, 
     const defaultEnd = new Date();
     const defaultStart = new Date(defaultEnd.getTime() - (days - 1) * 86400000);
     // Default window must be expressed in the SAME timezone the buckets are
-    // grouped by (Asia/Manila, below), or "today" resolves to a UTC date whose
-    // Manila day-end can fall before the current moment - silently dropping
-    // sales made during Manila's early-morning hours. en-CA gives YYYY-MM-DD.
-    const manilaDateStr = (d) => d.toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
-    const startStr = req.query.start || manilaDateStr(defaultStart);
-    const endStr = req.query.end || manilaDateStr(defaultEnd);
+    // grouped by (the business's own, below), or "today" resolves to a UTC date
+    // whose local day-end can fall before the current moment - silently dropping
+    // sales made during the early-morning hours.
+    const startStr = req.query.start || businessDateStr(defaultStart);
+    const endStr = req.query.end || businessDateStr(defaultEnd);
     const range = validateDateRange(startStr, endStr);
     if (!range.ok) return res.status(400).json({ success: false, error: range.error });
     const { startDate, endDate } = range;
@@ -1196,7 +1556,7 @@ app.get('/api/reports/sales-trend', verifyToken, ...canViewReports, async (req, 
       Order.aggregate([
         { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: startDate, $lte: endDate } } },
         { $group: {
-            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'Asia/Manila' } },
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: businessTimeZone() } },
             net: { $sum: { $cond: ['$isComplimentary', 0, '$total'] } },
         }},
         { $sort: { _id: 1 } },
@@ -1233,17 +1593,17 @@ app.get('/api/reports/sales-trend', verifyToken, ...canViewReports, async (req, 
   }
 });
 
-app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePermission('screen.reports.salessummary'), async (req, res) => {
   try {
     const { start, end } = req.query;
-    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
+    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...salesSourceFilter(req.query.source) };
     if (start || end) {
       match.createdAt = {};
       if (start) match.createdAt.$gte = dayStart(start);
       if (end) { match.createdAt.$lte = dayEnd(end); }
     }
     const orders = await Order.find(match, {
-      orderNumber: 1, total: 1, paymentMethod: 1, payments: 1, createdAt: 1,
+      orderNumber: 1, total: 1, subtotal: 1, paymentMethod: 1, payments: 1, createdAt: 1,
       customerName: 1, clientId: 1, clientAccountId: 1,
     }).sort({ createdAt: 1 }).lean();
 
@@ -1274,15 +1634,18 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req
         date: o.createdAt, orderNumber: o.orderNumber,
         customerId: (clientCodeById[String(refId)] || WALK_IN_CUSTOMER_CODE).toUpperCase(),
         customerName: (o.customerName || 'WALK-IN').toUpperCase(),
-        ...ch, methods, total: Number(o.total) || 0,
+        // Subtotal is the sale before discount and delivery fee; Total is what
+        // was charged. Both are shown, side by side.
+        ...ch, methods, subtotal: Number(o.subtotal) || 0, total: Number(o.total) || 0,
       };
     });
 
     const totals = rows.reduce((t, r) => {
-      t.cash += r.cash; t.ewallet += r.ewallet; t.bank += r.bank; t.delivery += r.delivery; t.total += r.total;
+      t.cash += r.cash; t.ewallet += r.ewallet; t.bank += r.bank; t.delivery += r.delivery; t.total += r.total; t.subtotal += r.subtotal;
       for (const [m, a] of Object.entries(r.methods)) t.methods[m] = (t.methods[m] || 0) + a;
       return t;
-    }, { cash: 0, ewallet: 0, bank: 0, delivery: 0, total: 0, methods: {} });
+    }, { cash: 0, ewallet: 0, bank: 0, delivery: 0, subtotal: 0, total: 0, methods: {} });
+    totals.subtotal = roundMoney(totals.subtotal);
 
     res.json({ success: true, rows, totals });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
@@ -1292,17 +1655,18 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, async (req
 // One row per order LINE (not per order) - the item-level detail Summary Sales
 // deliberately leaves out. Same Completed/non-comp filter and date range as
 // sales-summary, so the two reports reconcile against each other.
-app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, requirePermission('screen.reports.salessummary'), async (req, res) => {
   try {
     const { start, end } = req.query;
-    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true } };
+    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...salesSourceFilter(req.query.source) };
     if (start || end) {
       match.createdAt = {};
       if (start) match.createdAt.$gte = dayStart(start);
       if (end) { match.createdAt.$lte = dayEnd(end); }
     }
     const orders = await Order.find(match, {
-      orderNumber: 1, paymentMethod: 1, createdAt: 1, customerName: 1, clientId: 1, clientAccountId: 1, items: 1,
+      orderNumber: 1, paymentMethod: 1, createdAt: 1, completedAt: 1, customerName: 1, clientId: 1, clientAccountId: 1, items: 1,
+      billingNumber: 1, orNumber: 1, drNumber: 1, deliveryReceipts: 1, discount: 1,
     }).sort({ createdAt: 1 }).lean();
 
     const clientRefIds = [...new Set(orders.map(o => o.clientId || o.clientAccountId).filter(Boolean))];
@@ -1320,19 +1684,61 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (
           .map(p => [String(p._id), p.productCode || '']))
       : {};
 
+    // SRP for a sale made before lines carried it: the product's current SRP,
+    // for a line sold as the product itself (not a size).
+    const oldLineIds = [...new Set(orders.flatMap(o => (o.items || [])
+      .filter(it => it.listPrice == null && it.productId && !it.isCombo).map(it => String(it.productId))))]
+      .filter(id => mongoose.Types.ObjectId.isValid(id));
+    const srpNow = oldLineIds.length
+      ? new Map((await Product.find({ _id: { $in: oldLineIds } }, { name: 1, basePrice: 1 }).lean()).map(p => [String(p._id), p]))
+      : new Map();
+
     const rows = [];
     for (const o of orders) {
       const refId = o.clientId || o.clientAccountId || '';
       const customerId = (clientCodeById[String(refId)] || WALK_IN_CUSTOMER_CODE).toUpperCase();
       const customerName = (o.customerName || 'WALK-IN').toUpperCase();
-      for (const it of (o.items || [])) {
+      // The document-level fields the daily sales report asks for: posting date
+      // (when the sale completed and reached the books), document date (when
+      // the order was taken), and the billing / delivery / invoice numbers.
+      const docFields = {
+        postingDate: o.completedAt || o.createdAt, documentDate: o.createdAt,
+        billingNumber: o.billingNumber || '', orNumber: o.orNumber || '',
+        drNumbers: (o.deliveryReceipts || []).map(d => d.drNumber).join(', ') || o.drNumber || '',
+      };
+      // Each line's discount: its own (product/cashier) percent first, then its
+      // share of any order-level discount, spread by what is left of each line.
+      const lineInfo = (o.items || []).map((it) => {
         const qty = Number(it.quantity) || 0;
-        const lineTotal = (Number(it.price) || 0) * qty + (it.selectedAddOns || []).reduce((s, a) => s + (Number(a.price) || 0), 0) * qty;
+        const gross = (Number(it.price) || 0) * qty + (it.selectedAddOns || []).reduce((s, a) => s + (Number(a.price) || 0), 0) * qty;
+        const pct = Math.max(Number(it.productDiscountPercent) || 0, Number(it.discountPercent) || 0);
+        return { gross, own: Math.round(gross * pct) / 100 };
+      });
+      const ownTotal = lineInfo.reduce((s, l) => s + l.own, 0);
+      const orderLevel = Math.max(0, (Number(o.discount) || 0) - ownTotal);
+      const base = lineInfo.reduce((s, l) => s + (l.gross - l.own), 0);
+      for (const [idx, it] of (o.items || []).entries()) {
+        const qty = Number(it.quantity) || 0;
+        const lineTotal = lineInfo[idx].gross;
+        const share = base > 0 ? orderLevel * (lineInfo[idx].gross - lineInfo[idx].own) / base : 0;
+        const lineDiscount = Math.round((lineInfo[idx].own + share) * 100) / 100;
         const isCombo = it.isCombo && Array.isArray(it.comboItems) && it.comboItems.length > 0;
+        const netSales = Math.round((lineTotal - lineDiscount) * 100) / 100;
+        // SRP beside what was actually charged: a client on a price tier shows
+        // its SRP and the lower (or higher) price it paid; a sale at SRP shows
+        // the same figure in both. Add-ons are counted in both, as charged.
+        const addOnUnit = (it.selectedAddOns || []).reduce((sum, a) => sum + (Number(a.price) || 0), 0);
+        const old = srpNow.get(String(it.productId || ''));
+        const baseSrp = it.listPrice != null ? Number(it.listPrice)
+          : (old && old.name === it.name ? Number(old.basePrice) || 0 : Number(it.price) || 0);
         rows.push({
           date: o.createdAt, orderNumber: o.orderNumber, paymentMethod: o.paymentMethod,
-          customerId, customerName,
+          customerId, customerName, ...docFields,
           itemCode: (it.productCode || '').toUpperCase(), itemName: (it.name || '').toUpperCase(), quantity: qty, lineTotal,
+          unitPrice: qty ? Math.round((lineTotal / qty) * 100) / 100 : 0,
+          srp: roundMoney(baseSrp + addOnUnit),
+          unitAfterDiscount: qty ? Math.round((netSales / qty) * 100) / 100 : 0,
+          grossSales: lineTotal, discount: lineDiscount, netSales,
           isCombo,
         });
         // For a promo/combo, list the products it includes as indented sub-rows.
@@ -1342,7 +1748,8 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (
           for (const comp of it.comboItems) {
             rows.push({
               date: o.createdAt, orderNumber: o.orderNumber, paymentMethod: o.paymentMethod,
-              customerId, customerName,
+              customerId, customerName, ...docFields,
+              unitPrice: 0, grossSales: 0, discount: 0, netSales: 0,
               itemCode: (codeByProductId[String(comp.productId)] || '').toUpperCase(),
               itemName: (comp.name || '').toUpperCase() + (comp.sizeName ? ` (${comp.sizeName})` : ''),
               quantity: (Number(comp.quantity) || 1) * qty, lineTotal: 0,
@@ -1353,7 +1760,76 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (
       }
     }
     const grandTotal = rows.reduce((s, r) => s + r.lineTotal, 0);
-    res.json({ success: true, rows, grandTotal });
+    const totals = rows.reduce((t, r) => ({ gross: t.gross + (r.grossSales || 0), discount: t.discount + (r.discount || 0), net: t.net + (r.netSales || 0) }), { gross: 0, discount: 0, net: 0 });
+    res.json({ success: true, rows, grandTotal, totals: { gross: roundMoney(totals.gross), discount: roundMoney(totals.discount), net: roundMoney(totals.net) } });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// ── STATEMENT OF CASH FLOWS (direct method) ──────────────────────────────────
+// Read from the ledger, like the P&L and balance sheet: every entry that moved
+// cash, classified by what was on the other side of it (lib/cashFlow.js).
+// Opening cash is every cash line dated before the range; the closing figure
+// is checked against the ledger's own cash balance at the end of it.
+app.get('/api/reports/cash-flow', verifyToken, ...canViewReports, requirePermission('screen.reports.cashflow'), async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
+    const from = dayStart(start), to = dayEnd(end);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) return res.status(400).json({ success: false, error: 'Invalid date range.' });
+    const CASH = /^11[1-5]/;
+    const cashBalanceBefore = async (when, inclusive) => {
+      const agg = await JournalEntry.aggregate([
+        { $match: { date: inclusive ? { $lte: when } : { $lt: when }, 'lines.accountCode': CASH } },
+        { $unwind: '$lines' },
+        { $match: { 'lines.accountCode': CASH } },
+        { $group: { _id: null, dr: { $sum: { $ifNull: ['$lines.debit', 0] } }, cr: { $sum: { $ifNull: ['$lines.credit', 0] } } } },
+      ]);
+      return roundMoney((agg[0]?.dr || 0) - (agg[0]?.cr || 0));
+    };
+    const [openingCash, ledgerClosing, entries] = await Promise.all([
+      cashBalanceBefore(from, false),
+      cashBalanceBefore(to, true),
+      JournalEntry.find({ date: { $gte: from, $lte: to }, 'lines.accountCode': CASH }, { lines: 1 }).lean(),
+    ]);
+    const cf = buildCashFlow({ entries, openingCash });
+    res.json({ success: true, period: { start: from, end: to }, ...cf, ledgerClosingCash: ledgerClosing, ties: Math.abs(ledgerClosing - cf.closingCash) < 0.01 });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// ── DAILY SALES SUMMARY: one row per sales document ─────────────────────────
+// Posting date, document date, customer number and name, billing / delivery /
+// invoice numbers and the amount - the summary the daily sales report calls
+// for, beside the detailed line report above. Filtered by POSTING date (when
+// the sale reached the books), which is what the day's deposit ties to.
+app.get('/api/reports/sales-documents', verifyToken, ...canViewReports, requirePermission('screen.reports.salessummary'), async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
+    const from = dayStart(start), to = dayEnd(end);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return res.status(400).json({ success: false, error: 'Invalid date range.' });
+    const orders = await Order.find({
+      businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...salesSourceFilter(req.query.source),
+      $or: [{ completedAt: { $gte: from, $lte: to } }, { completedAt: null, createdAt: { $gte: from, $lte: to } }],
+    }, {
+      orderNumber: 1, createdAt: 1, completedAt: 1, customerName: 1, clientId: 1, clientAccountId: 1, paymentMethod: 1,
+      billingNumber: 1, orNumber: 1, drNumber: 1, deliveryReceipts: 1, subtotal: 1, discount: 1, total: 1, vatAmount: 1,
+    }).sort({ completedAt: 1, createdAt: 1 }).limit(20000).lean();
+    const refIds = [...new Set(orders.map(o => o.clientId || o.clientAccountId).filter(Boolean))].filter(id => mongoose.Types.ObjectId.isValid(String(id)));
+    const accounts = refIds.length ? await ClientAccount.find({ _id: { $in: refIds } }, { clientCode: 1, name: 1 }).lean() : [];
+    const codeById = Object.fromEntries(accounts.map(c => [String(c._id), c.clientCode]));
+    const nameById = Object.fromEntries(accounts.map(c => [String(c._id), c.name]));
+    const rows = orders.map(o => ({
+      postingDate: o.completedAt || o.createdAt, documentDate: o.createdAt,
+      customerNumber: (codeById[String(o.clientId || o.clientAccountId || '')] || WALK_IN_CUSTOMER_CODE).toUpperCase(),
+      // A sale on a client's account is theirs, whatever the till typed as the name.
+      customerName: (nameById[String(o.clientId || o.clientAccountId || '')] || o.customerName || 'WALK-IN').toUpperCase(),
+      orderNumber: o.orderNumber, billingNumber: o.billingNumber || '', orNumber: o.orNumber || '',
+      drNumbers: (o.deliveryReceipts || []).map(d => d.drNumber).join(', ') || o.drNumber || '',
+      paymentMethod: o.paymentMethod || '',
+      gross: roundMoney(o.subtotal || 0), discount: roundMoney(o.discount || 0), amount: roundMoney(o.total || 0), vat: roundMoney(o.vatAmount || 0),
+    }));
+    const total = roundMoney(rows.reduce((s, r) => s + r.amount, 0));
+    res.json({ success: true, rows, total, count: rows.length });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
@@ -1364,25 +1840,119 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, async (
 // excluded). 410000 is booked gross-of-discount, so an explicit "less: sales
 // discounts" line is returned and the figure reconciles to cash received.
 // Aggregate-based - no in-memory full scan. No schema/journal changes (report only).
-app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (req, res) => {
+// The report and the accrual below read the SAME figure, so what the books
+// carry is what the return will show.
+// Only NON-VAT sales count: an order stamped with a VAT rate was a VAT sale
+// (it owes output VAT, never this tax), so a month in which the business
+// registered for VAT part-way through is taxed only on the days before. And
+// money handed back on a partial refund was never a receipt, so it comes off.
+async function percentageTaxBetween(req, startDate, endDate) {
+  const agg = await Order.aggregate([
+    { $match: { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, vatRate: { $in: [0, null] }, createdAt: { $gte: startDate, $lte: endDate } } },
+    { $group: {
+        _id: null,
+        netCollected: { $sum: { $subtract: [{ $ifNull: ['$total', 0] }, { $ifNull: ['$refundedAmount', 0] }] } },
+        discounts:    { $sum: { $ifNull: ['$discount', 0] } },
+        orders:       { $sum: 1 },
+    } },
+  ]);
+  const a = agg[0] || { netCollected: 0, discounts: 0, orders: 0 };
+  return { a, tax: computePercentageTax({ netCollected: a.netCollected, discounts: a.discounts }) };
+}
+
+// ── ACCRUE PERCENTAGE TAX FOR A MONTH ─────────────────────────────────────
+// Books the month's 3% percentage tax: DR 745000 Percentage Tax Expense /
+// CR 230400 Percentage Tax Payable, dated the last day of the month.
+//
+// It posts the DIFFERENCE between what the month owes now and what has
+// already been accrued for it. So running it again after a sale in that month
+// was voided corrects the books (a negative difference reverses the excess),
+// and running it with nothing changed posts nothing. Refused for a closed
+// month. Whether VAT applies is decided per sale (see percentageTaxBetween),
+// not by today's setting, so a month from before VAT registration can still
+// be accrued after it.
+//
+// Runs as one transaction that first bumps a per-month lock counter: two
+// clicks at once used to both read "nothing accrued yet" and post twice.
+app.post('/api/reports/percentage-tax/accrue', verifyToken, requireStaff, requirePermission('accounting.manage'), atomic(mongoose, async (req, res) => {
+  try {
+    const m = /^(\d{4})-(\d{2})$/.exec(String(req.body?.month || ''));
+    if (!m) return res.status(400).json({ success: false, error: 'Give the month as YYYY-MM.' });
+    const year = Number(m[1]); const month = Number(m[2]);
+    if (month < 1 || month > 12) return res.status(400).json({ success: false, error: 'Give the month as YYYY-MM.' });
+
+    const startDate = new Date(year, month - 1, 1, 0, 0, 0, 0);
+    const endDate = new Date(year, month, 0, 23, 59, 59, 999);      // last day of the month
+    if (endDate > new Date()) {
+      return res.status(400).json({ success: false, error: 'A month can only be accrued once it has ended.' });
+    }
+    const lock = await periodLockFor(endDate);
+    if (lock) return res.status(423).json({ success: false, error: `${m[1]}-${m[2]} is closed. Reopen it to accrue, or accrue before closing.` });
+
+    const refBase = `PCT-${m[1]}-${m[2]}`;
+    await mongoose.model('Counter').findOneAndUpdate({ _id: `LOCK-${refBase}` }, { $inc: { seq: 1 } }, { upsert: true });
+    const { a, tax } = await percentageTaxBetween(req, startDate, endDate);
+    if (!a.orders) {
+      const vatRow = await Settings.findOne({ key: 'vatEnabled' }).lean();
+      if (vatRow?.value === true || vatRow?.value === 'true') {
+        return res.status(400).json({ success: false, error: 'This business is VAT-registered and had no non-VAT sales that month, so it owes no 3% percentage tax for it.' });
+      }
+    }
+    const prior = await JournalEntry.aggregate([
+      { $match: { reference: { $regex: `^${refBase}` } } },
+      { $unwind: '$lines' },
+      { $match: { 'lines.accountCode': '230400' } },
+      { $group: { _id: null, cr: { $sum: { $ifNull: ['$lines.credit', 0] } }, dr: { $sum: { $ifNull: ['$lines.debit', 0] } } } },
+    ]);
+    const alreadyAccrued = Math.round(((prior[0]?.cr || 0) - (prior[0]?.dr || 0)) * 100) / 100;
+    const delta = Math.round((tax.taxDue - alreadyAccrued) * 100) / 100;
+    if (Math.abs(delta) < 0.01) {
+      return res.json({ success: true, posted: false, taxDue: tax.taxDue, alreadyAccrued, note: 'Already up to date - nothing to post.' });
+    }
+
+    const priorCount = await JournalEntry.countDocuments({ reference: { $regex: `^${refBase}` } });
+    const reference = priorCount ? `${refBase}-ADJ${priorCount}` : refBase;
+    const amt = Math.abs(delta);
+    const lines = delta > 0
+      ? [{ accountCode: '745000', accountName: 'Percentage Tax Expense', debit: amt, credit: 0 },
+         { accountCode: '230400', accountName: 'Percentage Tax Payable', debit: 0, credit: amt }]
+      : [{ accountCode: '230400', accountName: 'Percentage Tax Payable', debit: amt, credit: 0 },
+         { accountCode: '745000', accountName: 'Percentage Tax Expense', debit: 0, credit: amt }];
+    const entry = await JournalEntry.create({
+      date: endDate, reference,
+      description: `${delta > 0 ? 'Percentage tax accrued' : 'Percentage tax accrual reduced'} for ${m[1]}-${m[2]} (3% of ₱${tax.netCollected.toLocaleString('en-PH', { minimumFractionDigits: 2 })} gross receipts)`,
+      lines, totalDebit: amt, totalCredit: amt,
+      postedBy: req.user?.name || '',
+    });
+    await logAudit(req, { action: 'accrue', entity: 'PercentageTax', entityId: reference, after: { month: `${m[1]}-${m[2]}`, taxDue: tax.taxDue, alreadyAccrued, posted: delta } });
+    emitToMgr?.('erpUpdated');
+    res.json({ success: true, posted: true, reference, amount: delta, taxDue: tax.taxDue, alreadyAccrued, entry });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+}));
+
+app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, requirePermission('screen.reports.percentagetax'), async (req, res) => {
   try {
     const { start, end } = req.query;
     if (!start || !end) {
       return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
     }
     const startDate = dayStart(start);
-    const endDate = dayStart(end);
+    const endDate = dayEnd(end);
     if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
       return res.status(400).json({ success: false, error: 'Invalid date range.' });
     }
-    endDate.setHours(23, 59, 59, 999);
 
     // A VAT-registered business owes 12% VAT and is NOT liable for the 3%
     // percentage tax (NIRC §116) - the two are mutually exclusive. Returning a
     // figure here while VAT is on would invite someone to pay a tax they do not
-    // owe, so the report reports its own inapplicability instead.
+    // owe, so the report reports its own inapplicability instead - unless the
+    // range still holds non-VAT sales (the days before VAT registration),
+    // which do owe it.
+    const { a, tax } = await percentageTaxBetween(req, startDate, endDate);
     const vatRow = await Settings.findOne({ key: 'vatEnabled' }).lean();
-    if (vatRow?.value === true || vatRow?.value === 'true') {
+    if ((vatRow?.value === true || vatRow?.value === 'true') && !a.orders) {
       return res.json({
         success: true,
         notApplicable: true,
@@ -1392,18 +1962,6 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (re
         rate: PERCENTAGE_TAX_RATE, taxDue: 0, lines: [],
       });
     }
-
-    const agg = await Order.aggregate([
-      { $match: { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: startDate, $lte: endDate } } },
-      { $group: {
-          _id: null,
-          netCollected: { $sum: { $ifNull: ['$total', 0] } },
-          discounts:    { $sum: { $ifNull: ['$discount', 0] } },
-          orders:       { $sum: 1 },
-      } },
-    ]);
-    const a = agg[0] || { netCollected: 0, discounts: 0, orders: 0 };
-    const tax = computePercentageTax({ netCollected: a.netCollected, discounts: a.discounts });
 
     res.json({
       success: true,
@@ -1424,6 +1982,246 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (re
   }
 });
 // ============================================================
+// VAT RETURN - what was collected, what is creditable, what is owed.
+//
+// Read straight from the ledger rather than recomputed from orders: the
+// accounts ARE the return. Output VAT (230300) is what customers paid on our
+// sales; input VAT (170300) is VAT charged by VAT-registered suppliers, which
+// is creditable against it. The difference is what goes to the BIR.
+//
+// A non-VAT business gets an explicit "not applicable" instead of a page of
+// zeroes it might mistake for a filing obligation - the mirror of what the
+// percentage-tax report does for a VAT-registered one.
+// ============================================================
+app.get('/api/reports/vat', verifyToken, ...canViewReports, requirePermission('screen.reports.vatreturn'), async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) {
+      return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
+    }
+    const startDate = dayStart(start);
+    const endDate = dayEnd(end);
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      return res.status(400).json({ success: false, error: 'Invalid date range.' });
+    }
+
+    const vatRow = await Settings.findOne({ key: 'vatEnabled' }).lean();
+    const vatOn = vatRow?.value === true || vatRow?.value === 'true';
+    if (!vatOn) {
+      return res.json({
+        success: true,
+        notApplicable: true,
+        reason: 'This business is not VAT-registered. It files the 3% percentage tax under NIRC §116 instead - see the Percentage Tax report.',
+        period: { start: startDate, end: endDate },
+        outputVat: 0, inputVat: 0, netPayable: 0, vatableSales: 0, vatExemptSales: 0, lines: [],
+      });
+    }
+
+    const movement = async (code) => {
+      const [row] = await JournalEntry.aggregate([
+        { $match: { date: { $gte: startDate, $lte: endDate } } },
+        { $unwind: '$lines' },
+        { $match: { 'lines.accountCode': code } },
+        { $group: {
+          _id: null,
+          debit: { $sum: { $ifNull: ['$lines.debit', 0] } },
+          credit: { $sum: { $ifNull: ['$lines.credit', 0] } },
+        } },
+      ]);
+      return { debit: +(row?.debit || 0).toFixed(2), credit: +(row?.credit || 0).toFixed(2) };
+    };
+
+    // Output VAT sits on the credit side (collected), less any debits from
+    // refunds and voids. Input VAT is the mirror image.
+    const out = await movement('230300');
+    const inp = await movement('170300');
+    const outputVat = +(out.credit - out.debit).toFixed(2);
+    const inputVat = +(inp.debit - inp.credit).toFixed(2);
+    const netPayable = +(outputVat - inputVat).toFixed(2);
+
+    // Sales split, from the orders themselves: the return asks for VATable and
+    // VAT-exempt (SC/PWD) sales, which the ledger's revenue total does not
+    // separate.
+    const [sales] = await Order.aggregate([
+      { $match: { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: startDate, $lte: endDate } } },
+      { $group: {
+        _id: null,
+        vatableSales: { $sum: { $ifNull: ['$vatableSales', 0] } },
+        vatExemptSales: { $sum: { $ifNull: ['$vatExemptSales', 0] } },
+        orders: { $sum: 1 },
+      } },
+    ]);
+
+    res.json({
+      success: true,
+      period: { start: startDate, end: endDate },
+      orders: sales?.orders || 0,
+      vatableSales: +(sales?.vatableSales || 0).toFixed(2),
+      vatExemptSales: +(sales?.vatExemptSales || 0).toFixed(2),
+      outputVat, inputVat, netPayable,
+      lines: [
+        { label: 'VATable sales (net of VAT)', amount: +(sales?.vatableSales || 0).toFixed(2) },
+        { label: 'VAT-exempt sales (SC/PWD)', amount: +(sales?.vatExemptSales || 0).toFixed(2) },
+        { label: 'Output VAT collected on sales', amount: outputVat },
+        { label: 'Less: input VAT on purchases', amount: -inputVat },
+        { label: netPayable >= 0 ? 'VAT payable to the BIR' : 'Excess input VAT carried forward', amount: netPayable },
+      ],
+    });
+  } catch (err) {
+    log.error({ err }, 'VAT report failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ============================================================
+// BOOKS HEALTH - do the documents and the ledger still agree?
+//
+// Every screen in the app is a subledger: open invoices, unpaid bills, stock on
+// the shelf, deposits held, petty cash. Each has a control account in the
+// general ledger that is supposed to equal it. An entry posted to the right
+// account in the wrong amount - or a document changed without its entry -
+// breaks that equality silently, and the first symptom is usually an
+// accountant's question months later.
+//
+// This runs the checks an accountant would run, in one pass, and names the
+// difference. Every line is derived: nothing here writes, and a red line points
+// at the subledger to reconcile rather than inviting a plug entry.
+// ============================================================
+app.get('/api/reports/books-health', verifyToken, ...canViewReports, async (req, res) => {
+  try {
+    const scope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+    // Ledger balances, in each account's natural direction, so a positive
+    // number always means "what the account is supposed to hold".
+    const glRows = await JournalEntry.aggregate([
+      { $unwind: '$lines' },
+      { $group: {
+        _id: '$lines.accountCode',
+        debit: { $sum: { $ifNull: ['$lines.debit', 0] } },
+        credit: { $sum: { $ifNull: ['$lines.credit', 0] } },
+      } },
+    ]);
+    const gl = new Map(glRows.map(r => {
+      const natural = normalBalanceForCode(r._id) === 'Debit' ? r.debit - r.credit : r.credit - r.debit;
+      return [String(r._id), r2(natural)];
+    }));
+    const glOf = (...codes) => r2(codes.reduce((s, c) => s + (gl.get(c) || 0), 0));
+
+    const [orders, bills, inventory, clients, suppliers, advances, funds] = await Promise.all([
+      Order.find({ ...scope, status: { $nin: ['Cancelled', 'Voided', 'Parked'] } },
+        { total: 1, arPaidAmount: 1, refundedAmount: 1, arSettled: 1, paymentMethod: 1, isComplimentary: 1, status: 1, isParked: 1, depositRemaining: 1, depositAccount: 1, arPayments: 1 }).lean(),
+      Bill.find({ ...scope, status: { $in: ['Approved', 'Partially Paid'] } }, { amount: 1, paidAmount: 1 }).lean(),
+      Inventory.find(scope, { stockQty: 1, unitCost: 1 }).lean(),
+      ClientAccount.find(tenantScope(req), { creditBalance: 1 }).lean(),
+      Supplier.find(tenantScope(req), { creditBalance: 1 }).lean(),
+      Advance.find({ ...scope, status: { $in: ['Open', 'Partially Liquidated'] } }, { type: 1, amount: 1, liquidatedAmount: 1 }).lean(),
+      RevolvingFund.find({ ...scope, isActive: true }, { currentBalance: 1 }).lean(),
+    ]);
+
+    // A/R: what completed, unsettled, non-cash sales still owe.
+    const arDocs = r2(orders
+      .filter(o => isReceivableStatus(o.status) && o.paymentMethod !== 'Cash' && !o.isComplimentary && o.arSettled !== true && o.isParked !== true)
+      // Netting the refund is what keeps this agreeing with the ledger: a
+      // partial refund credits 120000 there, so a subledger still counting the
+      // face value reports a divergence that does not exist.
+      .reduce((s, o) => s + Math.max(0, (Number(o.total) || 0) - (Number(o.refundedAmount) || 0) - (Number(o.arPaidAmount) || 0)), 0));
+
+    const apDocs = r2(bills.reduce((s, b) => s + Math.max(0, (Number(b.amount) || 0) - (Number(b.paidAmount) || 0)), 0));
+    const stockDocs = r2(inventory.reduce((s, i) => s + (Number(i.stockQty) || 0) * (Number(i.unitCost) || 0), 0));
+    const clientCredit = r2(clients.reduce((s, c) => s + (Number(c.creditBalance) || 0), 0));
+    const supplierCredit = r2(suppliers.reduce((s, x) => s + (Number(x.creditBalance) || 0), 0));
+    const advanceLeft = (type) => r2(advances.filter(a => a.type === type)
+      .reduce((s, a) => s + ((Number(a.amount) || 0) - (Number(a.liquidatedAmount) || 0)), 0));
+    const fundDocs = r2(funds.reduce((s, f) => s + (Number(f.currentBalance) || 0), 0));
+
+    // Deposits: prepaid-but-undelivered value on orders, plus customer advances
+    // recorded on the Advances screen. Legacy orders sit in 260000.
+    const orderDeposits = orders.filter(o => (o.depositRemaining || 0) > 0);
+    const depositsNew = r2(orderDeposits.filter(o => (o.depositAccount || '260200') === '260200').reduce((s, o) => s + o.depositRemaining, 0) + advanceLeft('customer'));
+    const depositsLegacy = r2(orderDeposits.filter(o => o.depositAccount === '260000').reduce((s, o) => s + o.depositRemaining, 0));
+
+    // Checks received and not yet cleared or bounced.
+    const checksOnHand = r2(orders.reduce((s, o) => s + (o.arPayments || [])
+      .filter(p => ['On Hand', 'Deposited'].includes(p.checkStatus))
+      .reduce((t, p) => t + (Number(p.amount) || 0), 0), 0));
+
+    const check = (key, label, documents, ledger, fix) => {
+      const difference = r2(documents - ledger);
+      return { key, label, documents: r2(documents), ledger: r2(ledger), difference, ok: Math.abs(difference) < 0.01, fix };
+    };
+
+    const checks = [
+      check('ar', 'Receivables', arDocs, glOf('120000'), 'Open invoices in the A/R Report should add up to Accounts Receivable.'),
+      check('ap', 'Payables', apDocs, glOf('220000'), 'Unpaid approved bills should add up to Accounts Payable.'),
+      check('inventory', 'Inventory', stockDocs, glOf('130000'), 'Stock on hand × unit cost should equal the Inventory account. Balance Sheet → Reconcile Inventory posts the difference.'),
+      check('deposits', 'Customer deposits', depositsNew, glOf('260200'), 'Deposits held on orders and on the Advances screen should equal Customer Advances / Deposits.'),
+      ...(depositsLegacy > 0 || Math.abs(glOf('260000')) > 0.01
+        ? [check('depositsLegacy', 'Customer deposits (pre-change)', depositsLegacy, glOf('260000'), 'Deposits started before deposits moved to 260200. Clears itself as those orders finish.')]
+        : []),
+      check('clientCredit', 'Client credit balances', clientCredit, glOf('260100'), 'Credit balances on client accounts should equal Client Credit Balance.'),
+      check('supplierCredit', 'Supplier credit balances', supplierCredit, glOf('160100'), 'Credit balances on suppliers should equal Supplier Credit Balance.'),
+      check('employeeAdvances', 'Employee advances', advanceLeft('employee'), glOf('170100'), 'Open employee advances should equal Advances to Employees.'),
+      check('supplierAdvances', 'Supplier advances', advanceLeft('supplier'), glOf('170200'), 'Open supplier advances and prepaid POs should equal Advances to Suppliers.'),
+      check('revolvingFunds', 'Petty cash / revolving funds', fundDocs, glOf('114000'), 'Fund balances should equal Petty Cash / Revolving Fund.'),
+      check('checks', 'Checks on hand', checksOnHand, glOf('115000'), 'Checks received and not yet cleared should equal Checks on Hand.'),
+    ];
+
+    // Stock card vs stock on hand. The stock card is the movement ledger behind
+    // every balance (append-only, see StockCardSchema): each item's balance
+    // should equal the sum of its movements. A difference means stock moved
+    // without a movement being written - the kind of drift no money check
+    // sees, because the value can still tie.
+    const cardTotals = await StockCard.aggregate([
+      { $group: { _id: '$inventoryId', total: { $sum: { $ifNull: ['$qtyChange', 0] } } } },
+    ]);
+    const cardOf = new Map(cardTotals.map(c => [String(c._id), c.total]));
+    const stockItems = await Inventory.find(scope, { itemName: 1, stockQty: 1, unit: 1 }).lean();
+    const drifting = stockItems
+      .map(i => ({ itemName: i.itemName, unit: i.unit || '', onHand: +(Number(i.stockQty) || 0).toFixed(4), cardTotal: +(Number(cardOf.get(String(i._id))) || 0).toFixed(4) }))
+      .map(i => ({ ...i, difference: +(i.onHand - i.cardTotal).toFixed(4) }))
+      .filter(i => Math.abs(i.difference) > 0.001);
+    checks.push({
+      key: 'stockCard', label: 'Stock card vs stock on hand', count: true,
+      documents: stockItems.length, ledger: stockItems.length - drifting.length,
+      difference: drifting.length, ok: drifting.length === 0,
+      detail: drifting.slice(0, 50),
+      fix: 'Each item stock balance should equal the sum of its stock card. Count the items listed and post the difference as a stock count.',
+    });
+
+    // The accounting equation, from the ledger alone.
+    let assets = 0, liabilities = 0, equity = 0, income = 0, expenses = 0;
+    for (const [code, amount] of gl) {
+      const head = String(code)[0];
+      if (head === '1') assets += amount;
+      else if (head === '2') liabilities += amount;
+      else if (head === '3') equity += amount;
+      else if (head === '4' || head === '8') income += amount;
+      else expenses += amount;
+    }
+    const earnings = r2(income - expenses);
+    const equation = {
+      key: 'equation', label: 'Assets = Liabilities + Equity',
+      documents: r2(assets), ledger: r2(liabilities + equity + earnings),
+      difference: r2(assets - (liabilities + equity + earnings)),
+      ok: Math.abs(r2(assets - (liabilities + equity + earnings))) < 0.01,
+      fix: 'Every entry balances individually, so a difference here means an account is classified under the wrong head.',
+    };
+
+    res.json({
+      success: true,
+      checkedAt: new Date(),
+      checks: [...checks, equation],
+      failing: [...checks, equation].filter(c => !c.ok).length,
+      vat: { outputVat: glOf('230300'), inputVat: glOf('170300'), netPayable: r2(glOf('230300') - glOf('170300')) },
+    });
+  } catch (err) {
+    log.error({ err }, 'Books health report failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ============================================================
 // A/R REPORT - every open receivable as of a date, aged, with what has
 // already been collected against it.
 //
@@ -1436,7 +2234,7 @@ app.get('/api/reports/percentage-tax', verifyToken, ...canViewReports, async (re
 // collections deposited AFTER that date, so re-running last month's report
 // still reproduces last month's numbers instead of silently restating them.
 // ============================================================
-app.get('/api/reports/ar-aging', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/ar-aging', verifyToken, ...canViewReports, requirePermission('screen.reports.arreport'), async (req, res) => {
   try {
     const asOf = req.query.asOf ? dayEnd(req.query.asOf) : new Date();
     if (Number.isNaN(asOf.getTime())) return res.status(400).json({ success: false, error: 'Invalid asOf date.' });
@@ -1447,8 +2245,8 @@ app.get('/api/reports/ar-aging', verifyToken, ...canViewReports, async (req, res
     // report date two weeks ago.
     const rows = await Order.find({
       businessType: BUSINESS_TYPE, ...tenantScope(req),
-      status: 'Completed',
-      paymentMethod: { $ne: 'Cash' },
+      status: { $in: RECEIVABLE_STATUSES },
+      paymentMethod: AR_PAYMENT_METHOD_FILTER,
       isComplimentary: { $ne: true },
       createdAt: { $lte: asOf },
     }, {
@@ -1532,7 +2330,7 @@ app.get('/api/reports/ar-aging', verifyToken, ...canViewReports, async (req, res
 // Undeposited collections (collected in range, deposited after it, or not yet)
 // are called out separately - that gap is exactly where cash goes missing.
 // ============================================================
-app.get('/api/reports/collections', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/collections', verifyToken, ...canViewReports, requirePermission('screen.reports.collections'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const basis = req.query.basis === 'deposit' ? 'deposit' : 'collection';
@@ -1605,7 +2403,7 @@ app.get('/api/reports/collections', verifyToken, ...canViewReports, async (req, 
     const dailyMap = new Map();
     for (const r of rows) {
       const d = (basis === 'deposit' ? r.depositDate : r.collectionDate);
-      const k = new Date(d).toISOString().slice(0, 10);
+      const k = businessDateStr(d);
       dailyMap.set(k, Math.round(((dailyMap.get(k) || 0) + r.amount) * 100) / 100);
     }
 
@@ -1640,7 +2438,7 @@ app.get('/api/reports/collections', verifyToken, ...canViewReports, async (req, 
 // change made directly and one that went through the approval queue both
 // appear, distinguishable by `viaApproval`.
 // ============================================================
-app.get('/api/reports/price-changes', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/price-changes', verifyToken, ...canViewReports, requirePermission('screen.reports.pricelog'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const filter = {
@@ -1758,7 +2556,7 @@ app.get('/api/reports/price-changes', verifyToken, ...canViewReports, async (req
 // and bills paid after it are counted as still open, so last month's report
 // still reproduces last month's numbers.
 // ============================================================
-app.get('/api/reports/ap-aging', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/ap-aging', verifyToken, ...canViewReports, requirePermission('screen.reports.apreport'), async (req, res) => {
   try {
     const asOf = req.query.asOf ? dayEnd(req.query.asOf) : new Date();
     if (Number.isNaN(asOf.getTime())) return res.status(400).json({ success: false, error: 'Invalid asOf date.' });
@@ -1866,7 +2664,7 @@ app.get('/api/reports/ap-aging', verifyToken, ...canViewReports, async (req, res
 // so a direct supplier payment that never had a bill raised against it still
 // appears - otherwise the report would quietly understate what left the bank.
 // ============================================================
-app.get('/api/reports/supplier-payments', verifyToken, ...canViewReports, async (req, res) => {
+app.get('/api/reports/supplier-payments', verifyToken, ...canViewReports, requirePermission('screen.reports.supplierpay'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const from = start ? dayStart(start) : dayStart(new Date(Date.now() - 30 * 86400000));
@@ -1926,7 +2724,7 @@ app.get('/api/reports/supplier-payments', verifyToken, ...canViewReports, async 
 
     const dailyMap = new Map();
     for (const p of payments) {
-      const k = new Date(p.date).toISOString().slice(0, 10);
+      const k = businessDateStr(p.date);
       dailyMap.set(k, Math.round(((dailyMap.get(k) || 0) + p.amount) * 100) / 100);
     }
 

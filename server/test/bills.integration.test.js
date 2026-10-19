@@ -162,10 +162,182 @@ describe('PO receipt auto-creates a Bill', () => {
     const afterJe = await JournalEntry.countDocuments({});
     expect(afterJe).toBe(beforeJe + 1);
 
+    // A PO bill is released only once the supplier's invoice matches.
+    const early = await auth('post', `/api/bills/${recvRes.body.bill._id}/approve`, tok);
+    expect(early.status).toBe(409);
+    expect(early.body.needsInvoice).toBe(true);
+    const invRes = await auth('post', `/api/bills/${recvRes.body.bill._id}/invoice`, tok).send({ supplierInvoiceNo: 'ACME-001', invoiceAmount: 50 });
+    expect(invRes.body.match.status).toBe('Matched');
+
     // Approving a PO-sourced bill must NOT post a second journal entry.
     const approve = await auth('post', `/api/bills/${recvRes.body.bill._id}/approve`, tok);
     expect(approve.status).toBe(200);
     const afterApprove = await JournalEntry.countDocuments({});
     expect(afterApprove).toBe(beforeJe + 1);
+  });
+});
+
+describe('a PO number on a payable that did not come from a PO here', () => {
+  // A bill as the workbook's Bills sheet brings it in: pending, marked carried in.
+  const carriedIn = async (body) => {
+    const made = await auth('post', '/api/bills', tok).send({ supplierId, ...body });
+    await mongoose.model('Bill').updateOne({ _id: made.body.bill._id }, { $set: { imported: true } });
+    return made;
+  };
+
+  it('arrives with the workbook row, can be written on afterwards, and shows on the matching PO', async () => {
+    const Bill = mongoose.model('Bill');
+    const imp = await auth('post', '/api/setup/open-payables/import', tok).send({ rows: [
+      { supplier: 'Acme Supplies', invoiceNo: 'INV-PO-1', amountOwed: 900, poNumber: 'PO-OLD-77' },
+      { supplier: 'Acme Supplies', invoiceNo: 'INV-PO-2', amountOwed: 400 },
+    ] });
+    expect(imp.status, JSON.stringify(imp.body)).toBe(200);
+    expect(imp.body.created).toBe(2);
+    expect((await Bill.findOne({ supplierInvoiceNo: 'INV-PO-1' }).lean()).poNumber).toBe('PO-OLD-77');
+
+    const po = await mongoose.model('PurchaseOrder').create({ poNumber: 'PO-TEST-LINK', supplier: 'Acme Supplies', status: 'Ordered', lines: [], estTotal: 400 });
+    const second = await Bill.findOne({ supplierInvoiceNo: 'INV-PO-2' }).lean();
+    const set = await auth('patch', `/api/bills/${second._id}/po-number`, tok).send({ poNumber: 'PO-TEST-LINK' });
+    expect(set.status, JSON.stringify(set.body)).toBe(200);
+    expect(set.body.bill.poNumber).toBe('PO-TEST-LINK');
+    expect(set.body.linked).toBe(true);
+    expect(String(set.body.bill.purchaseOrderId)).toBe(String(po._id));
+    // Linked, the order closes on its own and cannot be received.
+    const PO = mongoose.model('PurchaseOrder');
+    let closed = await PO.findById(po._id).lean();
+    expect(closed.status).toBe('Complete');
+    expect(closed.closedByBill).toBe(second.billNumber);
+    const rcv = await auth('post', `/api/purchase-orders/${po._id}/receive`, tok).send({ received: [] });
+    expect(rcv.status).toBe(409);
+    // Saving the same number again is fine; taking it off reopens the order.
+    expect((await auth('patch', `/api/bills/${second._id}/po-number`, tok).send({ poNumber: 'po-test-link' })).status).toBe(200);
+    expect((await auth('patch', `/api/bills/${second._id}/po-number`, tok).send({ poNumber: '' })).status).toBe(200);
+    closed = await PO.findById(po._id).lean();
+    expect([closed.status, closed.closedByBill]).toEqual(['Ordered', '']);
+    await auth('patch', `/api/bills/${second._id}/po-number`, tok).send({ poNumber: 'PO-TEST-LINK' });
+    // A number that is no order here is kept as a reference.
+    const first = await Bill.findOne({ supplierInvoiceNo: 'INV-PO-1' }).lean();
+    const ref = await auth('patch', `/api/bills/${first._id}/po-number`, tok).send({ poNumber: 'PAPER-9' });
+    expect(ref.body.linked).toBe(false);
+    expect(ref.body.bill.purchaseOrderId).toBeNull();
+
+    const list = await auth('get', '/api/purchase-orders', tok);
+    const row = list.body.purchaseOrders.find(p => String(p._id) === String(po._id));
+    expect(row.payables.map(b => b.billNumber)).toEqual([second.billNumber]);
+  });
+
+  it('a workbook row naming an open order links to it and closes it', async () => {
+    const PO = mongoose.model('PurchaseOrder');
+    const Bill = mongoose.model('Bill');
+    const po = await PO.create({ poNumber: 'PO-TEST-WB', supplier: 'Acme Supplies', supplierId, status: 'Ordered', lines: [], estTotal: 250 });
+    const imp = await auth('post', '/api/setup/open-payables/import', tok).send({ rows: [
+      { supplier: 'Acme Supplies', invoiceNo: 'INV-PO-3', amountOwed: 250, poNumber: 'po-test-wb' },
+    ] });
+    expect(imp.body.created, JSON.stringify(imp.body)).toBe(1);
+    const bill = await Bill.findOne({ supplierInvoiceNo: 'INV-PO-3' }).lean();
+    expect(String(bill.purchaseOrderId)).toBe(String(po._id));
+    expect(bill.poNumber).toBe('PO-TEST-WB');
+    const closed = await PO.findById(po._id).lean();
+    expect([closed.status, closed.closedByBill]).toEqual(['Complete', bill.billNumber]);
+  });
+
+  it('a pending typed-in bill leaves its order open, and becomes the payable when the order is received', async () => {
+    const PO = mongoose.model('PurchaseOrder');
+    const Bill = mongoose.model('Bill');
+    const po = await PO.create({ poNumber: 'PO-TEST-PEND', supplier: 'Acme Supplies', supplierId, status: 'Processing',
+      lines: [{ invId: inv._id, itemName: 'Widget', unit: 'pcs', orderedQty: 10, unitCost: 5 }], estTotal: 50 });
+    const made = await carriedIn({ description: 'Typed in ahead of delivery', amount: 50, expenseAccountCode: '130000' });
+    const id = made.body.bill._id;
+    expect((await auth('patch', `/api/bills/${id}/po-number`, tok).send({ poNumber: 'PO-TEST-PEND' })).body.linked).toBe(true);
+    // Not received, so not closed.
+    expect((await PO.findById(po._id).lean()).status).toBe('Processing');
+
+    // One order, one linked bill.
+    const other = await carriedIn({ description: 'Another', amount: 50, expenseAccountCode: '130000' });
+    const second = await auth('patch', `/api/bills/${other.body.bill._id}/po-number`, tok).send({ poNumber: 'PO-TEST-PEND' });
+    expect(second.status).toBe(409);
+    expect(second.body.error).toMatch(/already linked/i);
+
+    // Approving it before the delivery would book the payable twice.
+    const early = await auth('post', `/api/bills/${id}/approve`, tok).send({});
+    expect(early.status).toBe(409);
+    expect(early.body.error).toMatch(/not been received/i);
+
+    // Receiving raises no second bill: the typed-in one is the delivery's payable.
+    const before = await Bill.countDocuments({});
+    const rcv = await auth('post', `/api/purchase-orders/${po._id}/receive`, tok).send({ received: [{ index: 0, receivedQty: 10 }] });
+    expect(rcv.status, JSON.stringify(rcv.body)).toBe(200);
+    expect(await Bill.countDocuments({})).toBe(before);
+    const bill = await Bill.findById(id).lean();
+    expect([bill.source, bill.amount, String(bill.purchaseOrderId)]).toEqual(['PO', 50, String(po._id)]);
+    expect((await PO.findById(po._id).lean()).status).toBe('Complete');
+  });
+
+  it('rejecting a pending linked bill frees the order for another', async () => {
+    const PO = mongoose.model('PurchaseOrder');
+    const po = await PO.create({ poNumber: 'PO-TEST-REJ', supplier: 'Acme Supplies', supplierId, status: 'Ordered', lines: [], estTotal: 300 });
+    const a = await carriedIn({ description: 'First', amount: 300, expenseAccountCode: '520000' });
+    expect((await auth('patch', `/api/bills/${a.body.bill._id}/po-number`, tok).send({ poNumber: 'PO-TEST-REJ' })).body.linked).toBe(true);
+    expect((await auth('post', `/api/bills/${a.body.bill._id}/reject`, tok).send({ reason: 'Entered by mistake' })).status).toBe(200);
+    const b = await carriedIn({ description: 'Second', amount: 300, expenseAccountCode: '520000' });
+    expect((await auth('patch', `/api/bills/${b.body.bill._id}/po-number`, tok).send({ poNumber: 'PO-TEST-REJ' })).body.linked).toBe(true);
+    expect((await PO.findById(po._id).lean()).status).toBe('Ordered');
+  });
+
+  it('a bill for a different amount than the order cannot be linked', async () => {
+    await mongoose.model('PurchaseOrder').create({ poNumber: 'PO-TEST-AMT', supplier: 'Acme Supplies', supplierId, status: 'Ordered', lines: [], estTotal: 1000 });
+    const made = await carriedIn({ description: 'Not the same total', amount: 999, expenseAccountCode: '520000' });
+    const r = await auth('patch', `/api/bills/${made.body.bill._id}/po-number`, tok).send({ poNumber: 'PO-TEST-AMT' });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/same amount/i);
+    expect((await mongoose.model('Bill').findById(made.body.bill._id).lean()).purchaseOrderId).toBeNull();
+  });
+
+  it('a bill typed in on screen cannot be given a PO number by hand', async () => {
+    const made = await auth('post', '/api/bills', tok).send({ supplierId, description: 'Typed today', amount: 75, expenseAccountCode: '520000' });
+    const r = await auth('patch', `/api/bills/${made.body.bill._id}/po-number`, tok).send({ poNumber: 'ANY-1' });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/setup workbook/i);
+  });
+
+  it('the workbook brings orders and their payables in together, already linked', async () => {
+    const PO = mongoose.model('PurchaseOrder');
+    const Bill = mongoose.model('Bill');
+    const imp = await auth('post', '/api/setup/purchase-orders/import', tok).send({ rows: [
+      { poNumber: 'PO-WB-9', supplier: 'Acme Supplies', orderDate: '2026-08-01', itemCode: 'WID-1', itemName: 'Widget', qty: 40, unitCost: 5 },
+      { poNumber: 'PO-WB-9', itemName: 'Freight', qty: 1, unitCost: 50 },
+      { poNumber: 'PO-WB-10', supplier: 'Nobody Known', itemName: 'X', qty: 1, unitCost: 1 },
+    ] });
+    expect(imp.status, JSON.stringify(imp.body)).toBe(200);
+    expect(imp.body.created).toBe(1);
+    expect(imp.body.skipped[0].error).toMatch(/No supplier named/);
+    const po = await PO.findOne({ poNumber: 'PO-WB-9' }).lean();
+    expect([po.status, po.estTotal, po.lines.length, String(po.lines[0].invId)]).toEqual(['Ordered', 250, 2, String(inv._id)]);
+    // the same file again adds nothing
+    expect((await auth('post', '/api/setup/purchase-orders/import', tok).send({ rows: [{ poNumber: 'po-wb-9', supplier: 'Acme Supplies', itemName: 'Widget', qty: 1, unitCost: 1 }] })).body.created).toBe(0);
+    // its opening payable, same total: linked, and the order closes
+    const pay = await auth('post', '/api/setup/open-payables/import', tok).send({ rows: [{ supplier: 'Acme Supplies', invoiceNo: 'INV-WB-9', amountOwed: 250, poNumber: 'PO-WB-9' }] });
+    expect(pay.body.created, JSON.stringify(pay.body)).toBe(1);
+    const bill = await Bill.findOne({ supplierInvoiceNo: 'INV-WB-9' }).lean();
+    expect([String(bill.purchaseOrderId), bill.imported]).toEqual([String(po._id), true]);
+    expect((await PO.findById(po._id).lean()).status).toBe('Complete');
+  });
+
+  it('receiving an order line carried in without its stock item finds the item by code', async () => {
+    const PO = mongoose.model('PurchaseOrder');
+    const po = await PO.create({ poNumber: 'PO-TEST-NOINV', supplier: 'Acme Supplies', supplierId, status: 'Ordered', estTotal: 20,
+      lines: [{ purchaseType: 'inventory', invId: null, itemCode: 'wid-1', itemName: 'Widget', unit: 'pcs', orderedQty: 4, unitCost: 5 }] });
+    const before = (await mongoose.model('Inventory').findById(inv._id).lean()).stockQty;
+    const rcv = await auth('post', `/api/purchase-orders/${po._id}/receive`, tok).send({ received: [{ index: 0, receivedQty: 4 }] });
+    expect(rcv.status, JSON.stringify(rcv.body)).toBe(200);
+    expect((await mongoose.model('Inventory').findById(inv._id).lean()).stockQty).toBe(before + 4);
+  });
+
+  it('a bill raised from one of our own POs keeps its number', async () => {
+    const Bill = mongoose.model('Bill');
+    const own = await Bill.findOne({ source: 'PO' }).lean();
+    if (!own) return;
+    const r = await auth('patch', `/api/bills/${own._id}/po-number`, tok).send({ poNumber: 'X' });
+    expect(r.status).toBe(409);
   });
 });

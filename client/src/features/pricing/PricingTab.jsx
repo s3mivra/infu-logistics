@@ -1,8 +1,9 @@
 ﻿import React, { useState, useMemo } from 'react';
+import { dateStr } from '../../shared/businessDay.js';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, History } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { BUSINESS_TYPE, BUSINESS_NAME } from '../../shared/businessType.js';
 
 // ── PricingTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
@@ -27,7 +28,7 @@ export default function PricingTab({ ctx }) {
     currentInventory, currentOrders, currentPage, currentPricingProducts, currentProducts,
     dailyMovement, deleteAddOn, deleteCategory, deleteInventory, deleteProduct,
     departmentFilter, discountForm, discountInputs, discountList, discounts,
-    displayOrders, downloadImportTemplate, downloadJournalCsv, editInvForm, editInvModal,
+    displayOrders, downloadImportTemplate, editInvForm, editInvModal,
     editInvSubmitting, editPriceId, editPriceVal, editCostId, setEditCostId, editCostVal, setEditCostVal, editingCategory, editingProduct,
     effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
@@ -50,7 +51,7 @@ export default function PricingTab({ ctx }) {
     posDiscountType, posDiscountValue, posGrandTotal, posPage, posPayment,
     posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable,
     pricingItemsPerPage, pricingPage, printOrderSlip, printXReading, products,
-    priceTiers, pricingTable, fetchPricingTable, handleTierCellUpdate, handleTierPercentUpdate,
+    priceTiers, pricingTable, fetchPricingTable, fetchPriceTiers, handleTierCellUpdate, handleTierPercentUpdate,
     tierBreaksFor, addTierBulkBreak, removeTierBulkBreak, fetchTierPriceHistory,
     exportPriceTiersExcel, priceTierImportPreview, setPriceTierImportPreview, parsePriceTierExcel, submitPriceTierImport, priceTierImporting,
     removeAddOnFromOrder, removeComplimentary, removeMaterial, removeSize, restockData,
@@ -78,25 +79,152 @@ export default function PricingTab({ ctx }) {
     settleForm, settleModal, settleSubmitting, shiftFilter, shiftHistory,
     shiftHistoryPage, shiftHistoryTotal, spoilageForm, spoilageLoading, spoilageModal,
     standardAccounts, stockHistory, submitManualOrder, submitPhysicalCounts, submitRfDisb,
-    toggleProductAvailability, toggleProductOOS,
+    toggleProductAvailability, toggleProductOOS, toggleProductQr, can,
     submitRfNew, submitRfRepl, toggleDay, toggleOrderList,
     totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
     updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
     users, varianceNoteMode, varianceReasons,
   } = ctx;
 
+  // Café only: which products the table QR menu shows.
+  const showQrCol = BUSINESS_TYPE !== 'log' && (isSuperAdmin || can?.('products.manage'));
   const [pricingSort, setPricingSort] = useState('az');
   const [pricingCatFilter, setPricingCatFilter] = useState('');
   const [pricingSearch, setPricingSearch] = useState('');
   const [localPage, setLocalPage] = useState(1);
   const [tierSearch, setTierSearch] = useState('');
   const [tierPage, setTierPage] = useState(1);
-  const tierItemsPerPage = 12;
+  const tierItemsPerPage = 8;
+  // Filters: category, and "has / has no price in this tier" - the second finds
+  // the products a price list still needs filling in.
+  const [tierCat, setTierCat] = useState('');
+  const [tierHas, setTierHas] = useState('');   // '' | 'has:<tierId>' | 'none:<tierId>'
   const [editTierCell, setEditTierCell] = useState(null); // `${tierId}:${productId}` or null
   const [editTierCellVal, setEditTierCellVal] = useState('');
   // The append mini-form for a quantity break, shown while a per_product cell
   // is open - separate from the flat-price input above it, since the two
   // save independently (see saveTierBulkBreaks in AdminDashboard.jsx).
+  // ── AUTOMATIC DISCOUNTS (DiscountRule engine) ──────────────────────────────
+  // The server-side rule engine has had full CRUD and an /evaluate endpoint all
+  // along with nothing calling it. This is the missing UI.
+  //
+  // Distinct from the "Manual Discounts" panel beside the price table, which
+  // manages the flat `Discount` list a cashier picks by hand (PWD, Senior). A
+  // rule here fires on its own when its conditions hold - "spend over 1000 on a
+  // Tuesday". The engine only ever SUGGESTS a percent; it is applied through
+  // the order's existing discountPercent field, so the VAT and ledger maths are
+  // untouched by anything on this panel.
+  const [autoRules, setAutoRules] = useState(null);
+  const [autoRuleBusy, setAutoRuleBusy] = useState(false);
+  // The manual-discount form had no busy state at all: on a slow connection it
+  // looked like nothing had happened, so the natural response was to press Save
+  // again. The server now collapses those repeat presses, but the real fix is
+  // to stop inviting them - the button says what it is doing and cannot be
+  // pressed twice.
+  const [discountSaving, setDiscountSaving] = useState(false);
+  const [autoRuleForm, setAutoRuleForm] = useState({
+    name: '', percent: '', minSubtotal: '', daysOfWeek: [], startDate: '', endDate: '', segment: '', priority: 0,
+  });
+  const [autoRuleEditId, setAutoRuleEditId] = useState(null);
+  const DOW = [['Sun', 0], ['Mon', 1], ['Tue', 2], ['Wed', 3], ['Thu', 4], ['Fri', 5], ['Sat', 6]];
+
+  const fetchAutoRules = React.useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/discount-rules');
+      const d = await r.json();
+      if (d.success) setAutoRules(d.rules || []);
+      else setAutoRules([]);
+    } catch { setAutoRules([]); }
+  }, [apiFetch]);
+
+  React.useEffect(() => { if (activeTab === 'pricing' && autoRules === null) fetchAutoRules(); }, [activeTab, autoRules, fetchAutoRules]);
+
+  const resetAutoRuleForm = () => {
+    setAutoRuleEditId(null);
+    setAutoRuleForm({ name: '', percent: '', minSubtotal: '', daysOfWeek: [], startDate: '', endDate: '', segment: '', priority: 0 });
+  };
+
+  const submitAutoRule = async (e) => {
+    e.preventDefault();
+    if (autoRuleBusy) return;
+    const name = autoRuleForm.name.trim();
+    const percent = Number(autoRuleForm.percent);
+    if (!name) return ui.alert('Give the rule a name.');
+    if (!(percent > 0 && percent <= 100)) return ui.alert('Percent must be between 1 and 100.');
+    if (autoRuleForm.startDate && autoRuleForm.endDate && autoRuleForm.startDate > autoRuleForm.endDate) {
+      return ui.alert('The end date cannot be before the start date.');
+    }
+    setAutoRuleBusy(true);
+    try {
+      const payload = {
+        name, percent,
+        minSubtotal: autoRuleForm.minSubtotal === '' ? null : Number(autoRuleForm.minSubtotal),
+        daysOfWeek: autoRuleForm.daysOfWeek,
+        startDate: autoRuleForm.startDate || null,
+        endDate: autoRuleForm.endDate || null,
+        segment: autoRuleForm.segment.trim(),
+        priority: Number(autoRuleForm.priority) || 0,
+      };
+      const r = autoRuleEditId
+        ? await apiFetch(`/api/discount-rules/${autoRuleEditId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+        : await apiFetch('/api/discount-rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const d = await r.json();
+      if (!d.success) return ui.alert(d.error || 'Could not save the rule.');
+      resetAutoRuleForm();
+      await fetchAutoRules();
+    } catch { ui.alert('Network error while saving the rule.'); }
+    finally { setAutoRuleBusy(false); }
+  };
+
+  const editAutoRule = (rule) => {
+    const iso = (d) => (d ? dateStr(d) : '');
+    setAutoRuleEditId(rule._id);
+    setAutoRuleForm({
+      name: rule.name || '', percent: String(rule.percent ?? ''),
+      minSubtotal: rule.minSubtotal == null ? '' : String(rule.minSubtotal),
+      daysOfWeek: rule.daysOfWeek || [], startDate: iso(rule.startDate), endDate: iso(rule.endDate),
+      segment: rule.segment || '', priority: rule.priority || 0,
+    });
+  };
+
+  const toggleAutoRule = async (rule) => {
+    setAutoRuleBusy(true);
+    try {
+      await apiFetch(`/api/discount-rules/${rule._id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: !rule.active }),
+      });
+      await fetchAutoRules();
+    } catch { ui.alert('Network error.'); }
+    finally { setAutoRuleBusy(false); }
+  };
+
+  const deleteAutoRule = async (rule) => {
+    if (!(await ui.confirm(`Delete the automatic discount "${rule.name}"?`))) return;
+    setAutoRuleBusy(true);
+    try {
+      await apiFetch(`/api/discount-rules/${rule._id}`, { method: 'DELETE' });
+      if (autoRuleEditId === rule._id) resetAutoRuleForm();
+      await fetchAutoRules();
+    } catch { ui.alert('Network error.'); }
+    finally { setAutoRuleBusy(false); }
+  };
+
+  // Reads a rule back as the sentence it actually means. "10% - min 1000, Tue"
+  // is quicker to audit than a row of columns, and mistakes stand out.
+  const describeAutoRule = (r) => {
+    const bits = [];
+    if (r.minSubtotal != null) bits.push(`orders of ₱${Number(r.minSubtotal).toLocaleString()} or more`);
+    if (r.daysOfWeek?.length) bits.push(`on ${r.daysOfWeek.slice().sort().map(d => DOW[d]?.[0]).join(', ')}`);
+    if (r.segment) bits.push(`for ${r.segment} clients`);
+    if (r.startDate || r.endDate) {
+      const f = (d) => new Date(d).toLocaleDateString();
+      bits.push(r.startDate && r.endDate ? `between ${f(r.startDate)} and ${f(r.endDate)}`
+        : r.startDate ? `from ${f(r.startDate)}` : `until ${f(r.endDate)}`);
+    }
+    return bits.length ? bits.join(', ') : 'every order, always';
+  };
+
   const [newBreakQty, setNewBreakQty] = useState('');
   const [newBreakPrice, setNewBreakPrice] = useState('');
 
@@ -127,12 +255,57 @@ export default function PricingTab({ ctx }) {
   const tierFilteredProducts = useMemo(() => {
     const q = tierSearch.trim().toLowerCase();
     let list = pricingTable.products || [];
-    if (q) list = list.filter(p => (p.name || '').toLowerCase().includes(q));
+    if (q) list = list.filter(p => (p.name || '').toLowerCase().includes(q) || (p.productCode || '').toLowerCase().includes(q));
+    if (tierCat) list = list.filter(p => (p.category || '') === tierCat);
+    if (tierHas) {
+      const [mode, tierId] = tierHas.split(':');
+      const t = (pricingTable.tiers || []).find(x => String(x._id) === tierId);
+      if (t) {
+        // A percent tier prices everything, so "has" means an explicit price-list row.
+        const has = (p) => t.pricingMode === 'per_product' && t.prices?.[p._id] != null;
+        list = list.filter(p => (mode === 'has' ? has(p) : !has(p)));
+      }
+    }
     return list;
-  }, [pricingTable.products, tierSearch]);
+  }, [pricingTable.products, pricingTable.tiers, tierSearch, tierCat, tierHas]);
+  // A tier's price list on paper: what that class of customer pays for each
+  // product, to hand or send to them. The products are the ones the filters
+  // above leave showing; a product the tier has no price for is left out,
+  // because that customer pays the list price for it like anyone else.
+  const printTierPriceList = (tierId) => {
+    const t = (pricingTable.tiers || []).find(x => String(x._id) === String(tierId));
+    if (!t) return;
+    const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const money = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const lines = tierFilteredProducts.filter(pr => t.prices?.[pr._id] != null)
+      .sort((a, b) => String(a.category || '').localeCompare(String(b.category || '')) || String(a.name).localeCompare(String(b.name)));
+    if (!lines.length) return ui.alert(`${t.name} has no prices among the products showing.`);
+    let lastCat = null;
+    const rows = lines.map((pr) => {
+      const head = pr.category !== lastCat ? `<tr class="cat"><td colspan="4">${esc(pr.category || 'Other')}</td></tr>` : '';
+      lastCat = pr.category;
+      const price = Number(t.prices[pr._id]);
+      const off = pr.basePrice > 0 && price < pr.basePrice ? `${Math.round((1 - price / pr.basePrice) * 100)}% off` : '';
+      return `${head}<tr><td>${esc(pr.productCode || '')}</td><td>${esc(pr.name)}</td><td class="r">${esc(money(pr.basePrice))}</td><td class="r"><b>${esc(money(price))}</b>${off ? `<br><small>${off}</small>` : ''}</td></tr>`;
+    }).join('');
+    const w = window.open('', '_blank', 'width=900,height=700');
+    if (!w) return ui.alert('Allow pop-ups for this site to print the price list.');
+    w.document.write(`<!doctype html><html><head><title>${esc(t.name)} price list</title><style>
+      body{font-family:Arial,sans-serif;font-size:12px;margin:28px;color:#000}h1{font-size:20px;margin:0}p{margin:4px 0 14px;color:#444}
+      table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #ccc;padding:6px 8px;text-align:left;vertical-align:top}
+      th{border-bottom:2px solid #000;font-size:11px;text-transform:uppercase}.r{text-align:right;white-space:nowrap}
+      .cat td{background:#f0f0f0;font-weight:bold;text-transform:uppercase;font-size:11px}small{color:#555}
+    </style></head><body><h1>${esc(BUSINESS_NAME || 'Price list')}</h1>
+      <p>${esc(t.name)} price list · ${new Date().toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })} · ${lines.length} product(s). Prices may change without notice.</p>
+      <table><thead><tr><th>Code</th><th>Product</th><th class="r">List price</th><th class="r">${esc(t.name)} price</th></tr></thead><tbody>${rows}</tbody></table></body></html>`);
+    w.document.close(); w.focus(); w.print();
+  };
+
+  const tierCategories = useMemo(() => [...new Set((pricingTable.products || []).map(p => p.category).filter(Boolean))].sort(), [pricingTable.products]);
   const tierTotalPages = Math.max(1, Math.ceil(tierFilteredProducts.length / tierItemsPerPage));
   const tierPagedProducts = tierFilteredProducts.slice((tierPage - 1) * tierItemsPerPage, tierPage * tierItemsPerPage);
   const handleTierSearchChange = (val) => { setTierSearch(val); setTierPage(1); };
+  const tierFiltersOn = !!(tierSearch || tierCat || tierHas);
 
   return (
       <>
@@ -182,13 +355,14 @@ export default function PricingTab({ ctx }) {
                     <th className="pb-3 text-right uppercase tracking-wider text-xs">Selling Price</th>
                     <th className="pb-3 text-right uppercase tracking-wider text-xs">{BUSINESS_TYPE === 'log' ? 'Unit Cost' : 'Recipe Cost'}</th>
                     <th className="pb-3 text-right uppercase tracking-wider text-xs">Margin</th>
-                    {isSuperAdmin && <th className="pb-3 text-center uppercase tracking-wider text-xs">Removed</th>}
-                    {isSuperAdmin && <th className="pb-3 text-center uppercase tracking-wider text-xs">OOS</th>}
+                    {(isSuperAdmin || can?.('products.manage')) && <th className="pb-3 text-center uppercase tracking-wider text-xs">Removed</th>}
+                    {(isSuperAdmin || can?.('products.manage')) && <th className="pb-3 text-center uppercase tracking-wider text-xs">OOS</th>}
+                    {showQrCol && <th className="pb-3 text-center uppercase tracking-wider text-xs" title="Shown on the table QR menu, or counter-only">QR</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {filteredSortedProducts.length === 0 ? (
-                    <tr><td colSpan={isSuperAdmin ? 8 : 6} className="py-4 text-center text-fg/70">No products found.</td></tr>
+                    <tr><td colSpan={(isSuperAdmin || can?.('products.manage')) ? 8 : 6} className="py-4 text-center text-fg/70">No products found.</td></tr>
                   ) : localProducts.flatMap(p => {
                     // 1:1 logistics cost - no recipes in 'log' mode, so cost is
                     // always the linked inventory item's cost per named pack.
@@ -227,7 +401,7 @@ export default function PricingTab({ ctx }) {
                     <tr key={row.id} className={`border-white/10 hover:bg-page-bg/30 transition ${row.name !== '' ? 'border-t' : ''} ${isUnavailable ? 'opacity-50' : ''}`}>
                       <td className={`py-2 font-bold ${row.name !== '' ? 'text-fg pt-4' : ''}`}>
                         {row.name}
-                        {isUnavailable && <span className="ml-2 text-[9px] bg-red-500 text-white border border-red-500 rounded px-1 py-0.5 font-black uppercase tracking-wider">Removed</span>}
+                        {isUnavailable && <span className="ml-2 text-[9px] bg-red-700 text-white border border-red-500 rounded px-1 py-0.5 font-black uppercase tracking-wider">Removed</span>}
                         {row.isBase && row.product.isOutOfStock && <span className="ml-2 text-[9px] bg-amber-500 text-white border border-amber-500 rounded px-1 py-0.5 font-black uppercase tracking-wider">OOS</span>}
                       </td>
                       <td className={`py-2 text-xs text-fg ${row.name !== '' ? 'pt-4' : ''}`}>{row.cat}</td>
@@ -246,8 +420,8 @@ export default function PricingTab({ ctx }) {
                               autoFocus
                               onKeyDown={(e) => { if (e.key === 'Enter') handleInlinePriceUpdate(row.productId, row.sizeIndex); }}
                             />
-                            <button onClick={() => handleInlinePriceUpdate(row.productId, row.sizeIndex)} className="text-success hover:text-green-300 flex items-center"><Check size={14} /></button>
-                            <button onClick={() => setEditPriceId(null)} className="text-danger hover:text-red-300">✕</button>
+                            <button onClick={() => handleInlinePriceUpdate(row.productId, row.sizeIndex)} className="text-success flex items-center"><Check size={14} /></button>
+                            <button onClick={() => setEditPriceId(null)} className="text-danger">✕</button>
                           </div>
                         ) : (
                           <div className="inline-flex items-center gap-1.5">
@@ -283,8 +457,8 @@ export default function PricingTab({ ctx }) {
                               autoFocus
                               onKeyDown={(e) => { if (e.key === 'Enter') handleInlineCostUpdate(row.productId, row.sizeIndex); if (e.key === 'Escape') setEditCostId(null); }}
                             />
-                            <button onClick={() => handleInlineCostUpdate(row.productId, row.sizeIndex)} className="text-success hover:text-green-300"><Check size={12} /></button>
-                            <button onClick={() => setEditCostId(null)} className="text-danger hover:text-red-300 text-[10px]">✕</button>
+                            <button onClick={() => handleInlineCostUpdate(row.productId, row.sizeIndex)} className="text-success"><Check size={12} /></button>
+                            <button onClick={() => setEditCostId(null)} className="text-danger text-[10px]">✕</button>
                           </div>
                         ) : (
                           <div
@@ -299,7 +473,7 @@ export default function PricingTab({ ctx }) {
                             ) : (
                               <span className="text-fg/70 text-[10px]">set cost</span>
                             )}
-                            {!row.hasOverride && <span className="text-[10px] text-gray-700 group-hover:text-warning">✎</span>}
+                            {!row.hasOverride && <span className="text-[10px] text-fg/65 group-hover:text-warning">✎</span>}
                           </div>
                         )}
                       </td>
@@ -311,12 +485,12 @@ export default function PricingTab({ ctx }) {
                             {margin.toFixed(1)}%
                           </span>
                         ) : (
-                          <span className="text-gray-700 text-[10px]">-</span>
+                          <span className="text-fg/65 text-[10px]">-</span>
                         )}
                       </td>
 
-                      {/* Removed toggle (superadmin only, base-product rows only). Permanently hides from menu - reports keep showing it while stock remains. */}
-                      {isSuperAdmin && (
+                      {/* Removed toggle (menu managers, base-product rows only). Permanently hides from menu - reports keep showing it while stock remains. */}
+                      {(isSuperAdmin || can?.('products.manage')) && (
                         <td className={`py-2 text-center ${row.name !== '' ? 'pt-4' : ''}`}>
                           {row.isBase ? (
                             <button
@@ -324,8 +498,8 @@ export default function PricingTab({ ctx }) {
                               title={isUnavailable ? 'Click to restore (un-remove)' : 'Click to REMOVE from menu (kept in reporting until stock is zero)'}
                               className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition border ${
                                 isUnavailable
-                                  ? 'bg-red-500 text-white border-red-500 hover:bg-green-500 hover:text-white hover:border-green-500'
-                                  : 'bg-transparent text-fg/70 border-white/10 hover:bg-red-500 hover:text-white hover:border-red-500'
+                                  ? 'bg-red-700 text-white border-red-700 hover:bg-green-500 hover:text-white hover:border-green-500'
+                                  : 'bg-transparent text-fg/70 border-white/10 hover:bg-red-700 hover:text-white hover:border-red-500'
                               }`}
                             >
                               {isUnavailable ? 'REMOVED' : 'LIVE'}
@@ -334,7 +508,7 @@ export default function PricingTab({ ctx }) {
                         </td>
                       )}
                       {/* OOS toggle. Stays on menu (with a badge) and in all reports - for temporary stockouts. */}
-                      {isSuperAdmin && (
+                      {(isSuperAdmin || can?.('products.manage')) && (
                         <td className={`py-2 text-center ${row.name !== '' ? 'pt-4' : ''}`}>
                           {row.isBase ? (
                             <button
@@ -347,6 +521,26 @@ export default function PricingTab({ ctx }) {
                               }`}
                             >
                               {row.product.isOutOfStock ? 'OOS' : 'OK'}
+                            </button>
+                          ) : <span />}
+                        </td>
+                      )}
+                      {/* QR menu toggle (café). Off = counter-only: still sold at the POS, never on the table QR. */}
+                      {showQrCol && (
+                        <td className={`py-2 text-center ${row.name !== '' ? 'pt-4' : ''}`}>
+                          {row.isBase ? (
+                            <button
+                              onClick={() => toggleProductQr && toggleProductQr(row.product)}
+                              aria-pressed={row.product.showOnQr !== false}
+                              aria-label={`${row.product.name}: ${row.product.showOnQr === false ? 'counter only, not on the QR menu' : 'shown on the QR menu'}`}
+                              title={row.product.showOnQr === false ? 'Counter only. Click to show on the QR menu' : 'On the QR menu. Click to make it counter-only'}
+                              className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider transition border ${
+                                row.product.showOnQr === false
+                                  ? 'bg-transparent text-fg/70 border-white/20 hover:bg-emerald-500 hover:text-white hover:border-emerald-500'
+                                  : 'bg-emerald-700 text-white border-emerald-700 hover:bg-transparent hover:text-fg hover:border-white/30'
+                              }`}
+                            >
+                              {row.product.showOnQr === false ? 'Counter' : 'On QR'}
                             </button>
                           ) : <span />}
                         </td>
@@ -384,7 +578,11 @@ export default function PricingTab({ ctx }) {
           {/* RIGHT COLUMN: Discount CRUD */}
           {/* Changed width breaks to lg:w-80 so it perfectly fits beside the table on tablets */}
           <div className="w-full lg:w-80 xl:w-96 bg-surface border border-white/10 rounded-xl p-6 min-h-[400px] lg:min-h-0 lg:h-full overflow-y-auto custom-scrollbar flex flex-col">
-            <h3 className="text-xl font-bold mb-4 text-brand-text border-b border-white/10 pb-2">Discount Rules</h3>
+            {/* Renamed from "Discount Rules": the conditional engine below is also
+                called discount rules, and two panels with one name in the same
+                screen is how the wrong one gets edited. */}
+            <h3 className="text-xl font-bold mb-4 text-brand-text border-b border-white/10 pb-2">Manual Discounts</h3>
+            <p className="text-[10px] text-fg/70 -mt-3 mb-4">Picked by hand at the register - PWD, Senior Citizen, staff.</p>
             
             <div className="flex-1 overflow-y-auto mb-6 pr-2 scrollbar-thin scrollbar-thumb-gray-700">
               <div className="space-y-3">
@@ -418,13 +616,17 @@ export default function PricingTab({ ctx }) {
               <form 
                 onSubmit={async (e) => {
                   e.preventDefault();
+                  if (discountSaving) return;
                   if (!discountForm.name || !discountForm.percentage) return;
-                  await apiFetch(`/api/discounts`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: discountForm.name, percentage: Number(discountForm.percentage) })
-                  });
-                  setDiscountForm({ name: '', percentage: '' });
-                  fetchData(); // Refresh the list
+                  setDiscountSaving(true);
+                  try {
+                    await apiFetch(`/api/discounts`, {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ name: discountForm.name, percentage: Number(discountForm.percentage) })
+                    });
+                    setDiscountForm({ name: '', percentage: '' });
+                    fetchData(); // Refresh the list
+                  } finally { setDiscountSaving(false); }
                 }} 
                 className="space-y-3"
               >
@@ -434,11 +636,164 @@ export default function PricingTab({ ctx }) {
                 </div>
                 <div>
                   <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Percentage (%)</label>
-                  <input type="number" placeholder="e.g., 20" max="100" min="1" value={discountForm.percentage} onChange={(e) => setDiscountForm({...discountForm, percentage: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" required />
+                  <input type="number" placeholder="e.g., 12.5" max="100" min="0" step="any" value={discountForm.percentage} onChange={(e) => setDiscountForm({...discountForm, percentage: e.target.value})} className="w-full bg-page-bg border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" required />
                 </div>
-                <button type="submit" className="w-full bg-accent text-on-brand font-black py-3 rounded hover:bg-brand-dark transition shadow-lg shadow-accent/20 uppercase tracking-wider text-xs">
-                  Save Rule
+                <button type="submit" disabled={discountSaving}
+                  className="w-full bg-accent text-on-brand font-black py-3 rounded hover:bg-brand-dark transition shadow-lg shadow-accent/20 uppercase tracking-wider text-xs disabled:opacity-50">
+                  {discountSaving ? 'Saving…' : 'Save Discount'}
                 </button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {/* AUTOMATIC DISCOUNTS - the conditional rule engine                */}
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        <div className="bg-surface border border-white/10 rounded-xl p-6 mt-6">
+          <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-4 flex-wrap gap-2">
+            <h3 className="text-xl font-bold text-brand-text flex items-center gap-2">
+              <Zap size={18} /> Automatic Discounts
+            </h3>
+            <button onClick={fetchAutoRules} className="text-[10px] bg-accent/10 hover:bg-accent/20 text-brand-text px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition shrink-0">
+              Refresh
+            </button>
+          </div>
+          <p className="text-[11px] text-fg/70 mb-4 leading-relaxed">
+            Rules that apply on their own when their conditions hold - spend &#8369;1,000 on a Tuesday, get 10% off.
+            Every condition you fill in must be true; the ones you leave blank are not checked.
+            Rules do not stack: the best single match wins, and <span className="text-fg font-bold">Priority</span> breaks a tie between equal percentages.
+            The discount is applied through the order&apos;s existing discount field, so nothing here changes how VAT or the ledger are computed.
+          </p>
+
+          <div className="flex flex-col lg:flex-row gap-6">
+            {/* EXISTING RULES */}
+            <div className="flex-1 min-w-0">
+              {autoRules === null ? (
+                <p className="text-sm text-fg/70 italic">Loading rules&hellip;</p>
+              ) : autoRules.length === 0 ? (
+                <div className="bg-page-bg border border-white/10 rounded-lg p-6 text-center">
+                  <p className="text-sm text-fg/70 italic">No automatic discounts yet.</p>
+                  <p className="text-[11px] text-fg/70 mt-1">Add one on the right and it starts applying at the register straight away.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {autoRules.map(r => (
+                    <div key={r._id} className={`bg-page-bg border rounded-lg p-3 flex items-start justify-between gap-3 ${r.active ? 'border-white/10' : 'border-white/5 opacity-60'}`}>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-bold text-fg text-sm truncate" title={String((r.name) ?? '')}>{r.name}</p>
+                          <span className="text-xs font-mono font-black text-brand-text">{r.percent}% OFF</span>
+                          {!r.active && <span className="text-[9px] uppercase tracking-widest font-black text-warning border border-warning/40 rounded px-1.5 py-0.5">Paused</span>}
+                          {!!r.priority && <span className="text-[9px] uppercase tracking-widest font-bold text-fg/70">Priority {r.priority}</span>}
+                        </div>
+                        <p className="text-[11px] text-fg/70 mt-0.5">Applies to {describeAutoRule(r)}.</p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button onClick={() => editAutoRule(r)} disabled={autoRuleBusy}
+                          className="text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-2 py-1 rounded font-bold uppercase tracking-wider transition disabled:opacity-40">
+                          Edit
+                        </button>
+                        <button onClick={() => toggleAutoRule(r)} disabled={autoRuleBusy}
+                          title={r.active ? 'Stop this rule applying, without deleting it' : 'Start applying this rule again'}
+                          className="text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-2 py-1 rounded font-bold uppercase tracking-wider transition disabled:opacity-40">
+                          {r.active ? 'Pause' : 'Resume'}
+                        </button>
+                        <button onClick={() => deleteAutoRule(r)} disabled={autoRuleBusy}
+                          className="text-[10px] bg-danger/10 hover:bg-danger/20 text-danger px-2 py-1 rounded font-bold uppercase tracking-wider transition disabled:opacity-40">
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* ADD / EDIT */}
+            <div className="w-full lg:w-96 shrink-0 bg-page-bg border border-white/10 rounded-lg p-4">
+              <h4 className="text-sm font-bold text-fg uppercase tracking-wider mb-3">
+                {autoRuleEditId ? 'Edit Rule' : 'New Automatic Discount'}
+              </h4>
+              <form onSubmit={submitAutoRule} className="space-y-3">
+                <div>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Rule Name</label>
+                  <input type="text" required value={autoRuleForm.name} placeholder="e.g., Tuesday Bulk Deal"
+                    onChange={e => setAutoRuleForm(f => ({ ...f, name: e.target.value }))}
+                    className="w-full bg-surface border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Discount (%)</label>
+                    <input type="number" required min="0" max="100" step="any" value={autoRuleForm.percent} placeholder="12.5"
+                      onChange={e => setAutoRuleForm(f => ({ ...f, percent: e.target.value }))}
+                      className="w-full bg-surface border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Priority</label>
+                    <input type="number" value={autoRuleForm.priority} title="Higher wins when two rules grant the same percent"
+                      onChange={e => setAutoRuleForm(f => ({ ...f, priority: e.target.value }))}
+                      className="w-full bg-surface border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Minimum Order Subtotal</label>
+                  <input type="number" min="0" value={autoRuleForm.minSubtotal} placeholder="Leave blank for any amount"
+                    onChange={e => setAutoRuleForm(f => ({ ...f, minSubtotal: e.target.value }))}
+                    className="w-full bg-surface border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Days of the Week</label>
+                  <div className="flex flex-wrap gap-1">
+                    {DOW.map(([label, n]) => {
+                      const on = autoRuleForm.daysOfWeek.includes(n);
+                      return (
+                        <button type="button" key={n}
+                          onClick={() => setAutoRuleForm(f => ({
+                            ...f,
+                            daysOfWeek: on ? f.daysOfWeek.filter(d => d !== n) : [...f.daysOfWeek, n],
+                          }))}
+                          className={`text-[10px] px-2 py-1 rounded font-bold uppercase tracking-wider transition border ${on ? 'bg-accent text-on-brand border-accent' : 'border-white/15 text-fg/70 hover:text-fg hover:bg-white/5'}`}>
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-fg/70 mt-1">None selected means any day. Days are read in Manila time.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Starts</label>
+                    <input type="date" value={autoRuleForm.startDate}
+                      onChange={e => setAutoRuleForm(f => ({ ...f, startDate: e.target.value }))}
+                      className="w-full bg-surface border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Ends</label>
+                    <input type="date" value={autoRuleForm.endDate}
+                      onChange={e => setAutoRuleForm(f => ({ ...f, endDate: e.target.value }))}
+                      className="w-full bg-surface border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] text-fg/70 font-bold uppercase tracking-wider mb-1 block">Client Segment</label>
+                  <input type="text" value={autoRuleForm.segment} placeholder="Leave blank for every buyer"
+                    onChange={e => setAutoRuleForm(f => ({ ...f, segment: e.target.value }))}
+                    className="w-full bg-surface border border-white/10 rounded p-2 text-sm text-fg outline-none focus:border-accent" />
+                  <p className="text-[10px] text-fg/70 mt-1">Must match a tag on the client account exactly, including capitals.</p>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <button type="submit" disabled={autoRuleBusy}
+                    className="flex-1 bg-accent text-on-brand font-black py-2.5 rounded hover:bg-brand-dark transition uppercase tracking-wider text-xs disabled:opacity-50">
+                    {autoRuleBusy ? 'Saving…' : autoRuleEditId ? 'Save Changes' : 'Add Rule'}
+                  </button>
+                  {autoRuleEditId && (
+                    <button type="button" onClick={resetAutoRuleForm} disabled={autoRuleBusy}
+                      className="px-4 border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 rounded font-bold uppercase tracking-wider text-xs transition disabled:opacity-50">
+                      Cancel
+                    </button>
+                  )}
+                </div>
               </form>
             </div>
           </div>
@@ -447,7 +802,7 @@ export default function PricingTab({ ctx }) {
         {/* ═══════════════════════════════════════════════════════════════ */}
         {/* MARKET SEGMENT PRICING - dealer/satellite/wholesale price table  */}
         {/* ═══════════════════════════════════════════════════════════════ */}
-        {BUSINESS_TYPE === 'log' && priceTiers && priceTiers.length > 0 && (
+        {BUSINESS_TYPE === 'log' && ((priceTiers && priceTiers.length > 0) || can?.('pricing.tiers')) && (
           <div className="bg-surface border border-white/10 rounded-xl p-6 mt-6">
             <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-4 flex-wrap gap-2">
               <h3 className="text-xl font-bold text-brand-text flex items-center gap-2">
@@ -469,7 +824,7 @@ export default function PricingTab({ ctx }) {
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg/70 pointer-events-none" />
                 <input
                   type="text"
-                  placeholder="Search product name…"
+                  placeholder="Search name or code…"
                   value={tierSearch}
                   onChange={e => handleTierSearchChange(e.target.value)}
                   className="bg-page-bg border border-white/10 rounded-lg pl-8 pr-3 py-1.5 text-xs text-fg outline-none focus:border-accent w-56"
@@ -477,10 +832,74 @@ export default function PricingTab({ ctx }) {
               </div>
               </div>
             </div>
+            {/* The tiers themselves - added and removed here by whoever is
+                given "Create and remove price tiers". */}
+            {can?.('pricing.tiers') && (
+              <div className="flex flex-wrap items-center gap-2 mb-3 p-2.5 rounded-lg bg-white/5 border border-white/10">
+                <span className="text-[10px] font-black uppercase tracking-widest text-fg/70">Tiers</span>
+                {(priceTiers || []).map(t => (
+                  <span key={t._id} className="inline-flex items-center gap-1 text-[11px] font-bold text-fg bg-page-bg border border-white/10 rounded-full pl-2.5 pr-1 py-0.5">
+                    {t.name}
+                    <button type="button" aria-label={`Remove tier ${t.name}`} title="Remove this tier"
+                      onClick={async () => {
+                        if (!(await ui.confirm(`Remove price tier "${t.name}"?`))) return;
+                        const d = await (await apiFetch(`/api/price-tiers/${t._id}`, { method: 'DELETE' })).json();
+                        if (!d.success) return ui.alert(d.error || 'Could not remove the tier.');
+                        fetchPriceTiers?.(); fetchPricingTable?.();
+                      }}
+                      className="w-4 h-4 rounded-full text-fg/65 hover:text-danger hover:bg-red-500/10 leading-none">×</button>
+                  </span>
+                ))}
+                <form className="inline-flex items-center gap-1"
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const name = e.currentTarget.elements.tierName.value.trim();
+                    if (!name) return;
+                    const d = await (await apiFetch('/api/price-tiers', { method: 'POST', body: JSON.stringify({ name, pricingMode: 'per_product', percent: 0 }) })).json();
+                    if (!d.success) return ui.alert(d.error || 'Could not add the tier.');
+                    e.currentTarget.reset();
+                    fetchPriceTiers?.(); fetchPricingTable?.();
+                  }}>
+                  <input name="tierName" maxLength={60} placeholder="New tier, e.g. Dealer" aria-label="New tier name"
+                    className="bg-page-bg border border-white/10 rounded-lg px-2 py-1 text-xs text-fg outline-none focus:border-accent w-40" />
+                  <button type="submit" className="text-[10px] bg-accent text-on-brand px-2.5 py-1 rounded-lg font-bold uppercase tracking-wider">Add</button>
+                </form>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <select value={tierCat} onChange={e => { setTierCat(e.target.value); setTierPage(1); }} aria-label="Filter by category"
+                className="bg-page-bg border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-accent">
+                <option value="">All categories</option>
+                {tierCategories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <select value={tierHas} onChange={e => { setTierHas(e.target.value); setTierPage(1); }} aria-label="Filter by tier price"
+                className="bg-page-bg border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-accent">
+                <option value="">Any tier price</option>
+                {(pricingTable.tiers || []).filter(t => t.pricingMode === 'per_product').map(t => (
+                  <optgroup key={t._id} label={t.name}>
+                    <option value={`has:${t._id}`}>Has a {t.name} price</option>
+                    <option value={`none:${t._id}`}>No {t.name} price yet</option>
+                  </optgroup>
+                ))}
+              </select>
+              <span className="text-[11px] text-fg/70 font-bold">{tierFilteredProducts.length} product{tierFilteredProducts.length === 1 ? '' : 's'}</span>
+              {tierFiltersOn && (
+                <button onClick={() => { setTierSearch(''); setTierCat(''); setTierHas(''); setTierPage(1); }}
+                  className="text-[10px] font-bold uppercase tracking-wider text-fg/70 hover:text-fg px-2 py-1.5">Clear</button>
+              )}
+              {/* A price list to hand to that class of customer. */}
+              {(pricingTable.tiers || []).length > 0 && (
+                <select value="" onChange={e => { if (e.target.value) printTierPriceList(e.target.value); }} aria-label="Print a price list"
+                  className="bg-page-bg border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-accent ml-auto">
+                  <option value="">Print a price list…</option>
+                  {pricingTable.tiers.map(t => <option key={t._id} value={t._id}>{t.name}</option>)}
+                </select>
+              )}
+            </div>
             <p className="text-[11px] text-fg/70 mb-4 leading-relaxed">
               What each customer class pays, right next to the regular price. Click any cell to edit it.
-              <span className="text-fg/60 font-bold"> Default %</span> tiers edit as a <span className="text-fg/60 font-bold">percent</span> - one shared rate, so
-              it moves every product in that column together. <span className="text-fg/60 font-bold">Price List</span> tiers edit as a <span className="text-fg/60 font-bold">₱ price</span>,
+              <span className="text-fg/65 font-bold"> Default %</span> tiers edit as a <span className="text-fg/65 font-bold">percent</span> - one shared rate, so
+              it moves every product in that column together. <span className="text-fg/65 font-bold">Price List</span> tiers edit as a <span className="text-fg/65 font-bold">₱ price</span>,
               independently per product.
             </p>
 
@@ -562,8 +981,8 @@ export default function PricingTab({ ctx }) {
                                     <span className="absolute right-2 top-1/2 -translate-y-1/2 text-fg/65 text-xs">%</span>
                                   </div>
                                 )}
-                                <button onClick={save} title="Save price" className="text-success hover:text-green-300"><Check size={14} /></button>
-                                <button onClick={() => setEditTierCell(null)} title="Cancel" className="text-danger hover:text-red-300">✕</button>
+                                <button onClick={save} title="Save price" className="text-success"><Check size={14} /></button>
+                                <button onClick={() => setEditTierCell(null)} title="Cancel" className="text-danger">✕</button>
                                 <button
                                   onClick={() => fetchTierPriceHistory(t._id, isPerProduct ? p._id : null, t.name, isPerProduct ? p.name : null, isPerProduct ? price : t.percent)}
                                   title="Price history" className="text-fg/65 hover:text-brand-text"
@@ -577,10 +996,10 @@ export default function PricingTab({ ctx }) {
                                   <p className="text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1.5">Quantity Breaks</p>
                                   {breaks.map(b => (
                                     <div key={b.minQty} className="flex items-center justify-between text-[11px] mb-1">
-                                      <span className="text-fg/60 font-normal">{b.minQty}+ units</span>
+                                      <span className="text-fg/65 font-normal">{b.minQty}+ units</span>
                                       <span className="flex items-center gap-1.5">
                                         <span className="font-bold text-fg tabular-nums">₱{Number(b.price).toFixed(2)}</span>
-                                        <button onClick={() => removeTierBulkBreak(t._id, p._id, b.minQty)} title="Remove this break" className="text-danger/80 hover:text-danger">✕</button>
+                                        <button onClick={() => removeTierBulkBreak(t._id, p._id, b.minQty)} title="Remove this break" className="text-danger">✕</button>
                                       </span>
                                     </div>
                                   ))}
@@ -618,7 +1037,7 @@ export default function PricingTab({ ctx }) {
                               title={isPerProduct ? 'Set this product\'s price for this tier' : `Shared rate - editing this changes ${t.name}'s % for every product`}
                             >
                               {price === null ? (
-                                <span className="text-fg/60 text-xs">not set</span>
+                                <span className="text-fg/65 text-xs">not set</span>
                               ) : (
                                 <span className={off > 0 ? (isPerProduct ? 'text-brand-text font-bold' : 'text-fg/70 font-bold') : 'text-fg/70'}>
                                   ₱{price.toFixed(2)}
@@ -633,7 +1052,7 @@ export default function PricingTab({ ctx }) {
                               <div className="mt-0.5 text-right">
                                 {breaks.map(b => (
                                   <p key={b.minQty} className="text-[9px] text-fg/70 tabular-nums leading-tight">
-                                    {b.minQty}+ <span className="text-fg/60 font-bold">₱{Number(b.price).toFixed(2)}</span>
+                                    {b.minQty}+ <span className="text-fg/65 font-bold">₱{Number(b.price).toFixed(2)}</span>
                                   </p>
                                 ))}
                               </div>

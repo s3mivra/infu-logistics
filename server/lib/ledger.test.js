@@ -83,7 +83,11 @@ describe('ledger.suggestedSettleAccount', () => {
   it('Delivery partners → 1010 Cash in Bank (typical payout)', () => {
     expect(suggestedSettleAccount('Grab Delivery').code).toBe('112000');
     expect(suggestedSettleAccount('Foodpanda').code).toBe('112000');
-    expect(suggestedSettleAccount('Manual Delivery').code).toBe('112000');
+  });
+  it('Manual Delivery → Cash on Hand, where it was actually collected', () => {
+    // It is a cash-on-hand method (never a receivable), so suggesting a bank
+    // account for "settling" it pointed at money that was never in the bank.
+    expect(suggestedSettleAccount('Manual Delivery').code).toBe('111000');
   });
   it('Unknown method → 1000 fallback', () => {
     expect(suggestedSettleAccount('Bitcoin').code).toBe('111000');
@@ -134,7 +138,13 @@ describe('ledger.assertBalanced - throw path (coverage)', () => {
   it('throws a descriptive error when debits != credits', () => {
     expect(() => assertBalanced([{ debit: 10 }, { credit: 5 }], 'sale')).toThrow(/UNBALANCED/);
   });
-  it('does not throw within tolerance', () => {
-    expect(() => assertBalanced([{ debit: 10 }, { credit: 10.005 }])).not.toThrow();
+  it('ignores float noise below half a centavo', () => {
+    expect(() => assertBalanced([{ debit: 0.1 }, { debit: 0.2 }, { credit: 0.3 }])).not.toThrow();
+    expect(() => assertBalanced([{ debit: 10 }, { credit: 10.004 }])).not.toThrow();
+  });
+  it('refuses an entry one centavo out (it used to pass as "within tolerance")', () => {
+    expect(() => assertBalanced([{ debit: 100 }, { credit: 99.99 }])).toThrow(/UNBALANCED/);
+    // 10.005 is stored as 10.01, so it no longer balances against 10.00.
+    expect(() => assertBalanced([{ debit: 10 }, { credit: 10.005 }])).toThrow(/UNBALANCED/);
   });
 });

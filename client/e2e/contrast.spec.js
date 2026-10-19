@@ -15,7 +15,34 @@ const THEMES = ['default', 'yellow', 'ocean', 'light'];
 
 // Screens worth auditing: each puts a different mix of labels, table headers,
 // status chips and buttons on screen. An empty dashboard proves nothing.
-const SCREENS = ['Orders & POS', 'Inventory & Stock', 'Clients', 'Ledger', 'Quotations', 'Analytics', 'Reports'];
+const SCREENS = ['Orders & POS', 'Inventory & Stock', 'Clients', 'Ledger', 'Quotations', 'Analytics', 'Reports', 'Pricing Control', 'Production',
+  // Were never measured at all until the 2026-09 audit.
+  'Hub', 'Procurement', 'Shifts & Cash', 'Audit Report', 'Fixed Assets', 'Bank Reconciliation', 'Withholding Tax', 'Payroll', 'Settings'];
+
+// Pages reached without the staff sign-in: the client portal login and the
+// legal pages a customer opens. Measured signed-out, per theme.
+const PUBLIC_PAGES = ['/client/portal', '/privacy', '/terms'];
+
+// Sub-pages worth auditing in their own right. The walk above only ever sees a
+// tab's DEFAULT page, so panels living behind a sub-nav were never measured -
+// which is how a screen can pass this audit and still be unreadable. Each entry
+// is [group tab, page tab]: the ledger sub-nav is two-level, and a page button
+// only exists while its own group is the active one.
+// Panels behind a collapsed form: the audit only sees what is rendered, so a
+// closed form means its contents are never measured. Each entry is the button
+// that opens one on that screen.
+const EXPANDERS = {
+  Production: ['New Production Order'],
+};
+
+const SUB_SCREENS = {
+  Ledger: [
+    ['Setup', 'Tenancy Health'],
+    ['Setup', 'Export All'],
+    ['Books', 'Trial Balance'],
+    ['Cash Out', 'Expenses'],
+  ],
+};
 
 // Runs inside the page. Returns every leaf text node that misses its WCAG AA
 // threshold, with enough detail to find it again.
@@ -90,6 +117,52 @@ function auditContrast() {
   return { measured, bad: out };
 }
 
+// Form fields are UI components: WCAG 1.4.11 wants the field itself - its
+// border or its fill - at 3:1 against the ground it sits on, or a person can't
+// find where to type. Text contrast (above) never measured this, which is how
+// ~73 of 81 fields slipped through at about 1.3:1.
+function auditFields() {
+  const lum = (c) => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const parse = (x) => (String(x).match(/[\d.]+/g) || []).map(Number);
+  const groundOf = (el) => { for (let n = el.parentElement; n; n = n.parentElement) { const c = parse(getComputedStyle(n).backgroundColor); if (c.length >= 3 && (c[3] === undefined || c[3] > 0.85)) return c.slice(0, 3); } return [255, 255, 255]; };
+  const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const over = (c, ground) => { const a = c[3] === undefined ? 1 : c[3]; return [0, 1, 2].map(i => c[i] * a + ground[i] * (1 - a)); };
+  const bad = [];
+  let measured = 0;
+  for (const el of document.querySelectorAll('input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=range]):not([type=color]):not([type=file]), select, textarea')) {
+    const st = getComputedStyle(el); const r = el.getBoundingClientRect();
+    if (r.width < 2 || st.display === 'none' || st.visibility === 'hidden') continue;
+    measured++;
+    const ground = groundOf(el);
+    const hasBorder = parseFloat(st.borderTopWidth) > 0 || parseFloat(st.borderBottomWidth) > 0;
+    const edge = hasBorder ? ratio(over(parse(st.borderBottomColor), ground), ground) : 1;
+    const fill = ratio(over(parse(st.backgroundColor), ground), ground);
+    const best = Math.max(edge, fill);
+    if (best + 0.02 < 3) bad.push({ ratio: Number(best.toFixed(2)), name: el.getAttribute('placeholder') || el.getAttribute('aria-label') || el.name || el.type, cls: String(el.className).slice(0, 90) });
+  }
+  return { measured, bad };
+}
+
+for (const theme of THEMES) {
+  test(`form fields are findable on the ${theme} theme`, async ({ page }) => {
+    await login(page);
+    await page.evaluate((t) => { document.documentElement.setAttribute('data-theme', t); }, theme);
+    const failures = []; let measured = 0;
+    for (const screen of ['Inventory & Stock', 'Menu Setup', 'Catalog Setup', 'Ledger', 'Pricing Control', 'Audit Report', 'Fixed Assets', 'Reports']) {
+      const nav = page.getByRole('button', { name: new RegExp('^' + screen.replace(/[.*+?^${}()|[\]\\&]/g, '\\$&')) }).first();
+      if (await nav.count() === 0) continue;
+      await nav.click();
+      await page.waitForTimeout(600);
+      const r = await page.evaluate(auditFields);
+      measured += r.measured;
+      for (const b of r.bad) failures.push({ ...b, screen });
+    }
+    expect(measured, 'no fields measured - the audit is not looking at anything').toBeGreaterThan(30);
+    expect(failures, `${failures.length} of ${measured} fields below 3:1 on "${theme}":` + String.fromCharCode(10) +
+      failures.slice(0, 12).map(f => `  ${f.ratio}:1 [${f.screen}] "${f.name}" | ${f.cls}`).join(String.fromCharCode(10))).toEqual([]);
+  });
+}
+
 for (const theme of THEMES) {
   test(`text is readable on the ${theme} theme`, async ({ page }) => {
     await login(page);
@@ -100,6 +173,13 @@ for (const theme of THEMES) {
 
     const failures = [];
     let measured = 0;
+    // Counted so a sub-page that silently fails to open cannot be mistaken for
+    // one that opened and was clean - the same trap the `measured` guard below
+    // exists for.
+    let subScreensVisited = 0;
+    const subScreensExpected = Object.values(SUB_SCREENS).reduce((n, list) => n + list.length, 0);
+    let expandersOpened = 0;
+    const expandersExpected = Object.values(EXPANDERS).reduce((n, list) => n + list.length, 0);
 
     for (const screen of SCREENS) {
       const nav = page.getByRole('button', { name: new RegExp('^' + screen.replace(/[.*+?^${}()|[\]\\&]/g, '\\$&')) }).first();
@@ -111,12 +191,46 @@ for (const theme of THEMES) {
       const r = await page.evaluate(auditContrast);
       measured += r.measured;
       for (const b of r.bad) failures.push({ ...b, screen });
+
+      for (const opener of EXPANDERS[screen] || []) {
+        const btn = page.getByRole('button', { name: new RegExp('^' + opener) }).first();
+        if (await btn.count() === 0) continue;
+        await btn.click();
+        await page.waitForTimeout(400);
+        const opened = await page.evaluate(auditContrast);
+        expandersOpened += 1;
+        measured += opened.measured;
+        for (const b of opened.bad) failures.push({ ...b, screen: `${screen} › ${opener}` });
+      }
+
+      for (const [group, page_] of SUB_SCREENS[screen] || []) {
+        const groupBtn = page.getByRole('button', { name: new RegExp('^' + group + '$') }).first();
+        if (await groupBtn.count() === 0) continue;
+        await groupBtn.click();
+        const pageBtn = page.getByRole('button', { name: new RegExp('^' + page_) }).first();
+        if (await pageBtn.count() === 0) continue;
+        await pageBtn.click();
+        await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
+        await page.waitForTimeout(600);
+        const sub = await page.evaluate(auditContrast);
+        subScreensVisited += 1;
+        measured += sub.measured;
+        for (const b of sub.bad) failures.push({ ...b, screen: `${screen} › ${page_}` });
+      }
     }
 
     // Guards against the failure mode this test is most prone to: passing
     // because it looked at nothing. If the walk stops finding text, that is a
     // broken test, not a readable app.
     expect(measured, 'the audit found no text to measure - the walk is broken').toBeGreaterThan(150);
+    expect(
+      subScreensVisited,
+      `only ${subScreensVisited} of ${subScreensExpected} sub-pages opened - a renamed tab makes this audit skip them silently`,
+    ).toBe(subScreensExpected);
+    expect(
+      expandersOpened,
+      `only ${expandersOpened} of ${expandersExpected} collapsed panels opened - their contents went unmeasured`,
+    ).toBe(expandersExpected);
 
     const worst = failures.sort((a, b) => a.ratio - b.ratio).slice(0, 15);
     expect(
@@ -124,5 +238,22 @@ for (const theme of THEMES) {
       `${failures.length} of ${measured} text nodes are below AA on "${theme}":\n` +
       worst.map(b => '  ' + b.ratio + ':1 (needs ' + b.need + ') ' + b.px + 'px  [' + b.screen + ']  "' + b.text + '"  |  ' + b.cls).join(String.fromCharCode(10)),
     ).toEqual([]);
+  });
+}
+
+for (const theme of THEMES) {
+  test(`public pages are readable on the ${theme} theme`, async ({ page }) => {
+    const failures = []; let measured = 0;
+    for (const path of PUBLIC_PAGES) {
+      await page.goto(path);
+      await page.evaluate((t) => { document.documentElement.setAttribute('data-theme', t); }, theme);
+      await page.waitForTimeout(600);
+      const r = await page.evaluate(auditContrast);
+      measured += r.measured;
+      for (const b of r.bad) failures.push({ ...b, screen: path });
+    }
+    expect(measured, 'nothing measured on the public pages').toBeGreaterThan(5);
+    expect(failures, `${failures.length} of ${measured} text elements below AA on "${theme}":` + String.fromCharCode(10) +
+      failures.slice(0, 12).map(f => `  ${f.ratio}:1 (needs ${f.need}) [${f.screen}] "${f.text}" | ${f.cls}`).join(String.fromCharCode(10))).toEqual([]);
   });
 }

@@ -1,11 +1,27 @@
 ﻿// finance routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { ageingBuckets, ageingByClient, resolveCreditLimit, resolveClientKey, arBalance, withArBalance, DEFAULT_CREDIT_MODE } from '../lib/credit.js';
+import { sheetDay, SHEET_DATE_HELP } from '../lib/sheetDate.js';
+import { positiveMoney } from '../lib/normalize.js';
+import { buildOpeningEntry } from '../lib/setupBooks.js';
+import { ageingBuckets, ageingByClient, resolveCreditLimit, resolveClientKey, arBalance, withArBalance, DEFAULT_CREDIT_MODE, RECEIVABLE_STATUSES } from '../lib/credit.js';
+import { businessDateStr } from '../lib/businessTime.js';
+import { INPUT_VAT } from '../lib/vatPosting.js';
+import { loadVatConfig } from '../lib/vatSettings.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
 import { isModuleEnabled } from '../lib/optionalModules.js';
+// Action permissions. Each route below changes data, and was guarded only by
+// "is staff" - so a plain staff account could, through the API, do what the
+// permission catalogue reserves for a role that holds the matching
+// .manage key (see lib/authz.js PERMISSIONS). `permit` is the same
+// requirePermission the context hands out, imported under a short name so
+// it reads the same in every file.
+import { requirePermission as permit, requireAnyPermission as permitAny, hasPermission } from '../lib/authz.js';
+import { roundMoney } from '../lib/money.js';
+import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 
+import { atomic } from '../lib/atomicRoute.js';
 export default function registerFinance(ctx) {
   const {
     app,
@@ -111,6 +127,8 @@ export default function registerFinance(ctx) {
     Inventory,
     JournalEntrySchema,
     JournalEntry,
+    ManualJournal,
+    MANUAL_JOURNAL_STATUSES,
     InventoryMovementSchema,
     InventoryMovement,
     StockCardSchema,
@@ -127,6 +145,7 @@ export default function registerFinance(ctx) {
     DEFAULT_PAYMENT_ACCOUNT_MAP,
     refreshPaymentMap,
     accountForPaymentMethod,
+    issueCheckVoucher,
     ClosedPeriodSchema,
     ClosedPeriod,
     periodLockFor,
@@ -214,33 +233,135 @@ app.get('/api/journal', verifyToken, ...canViewAcct, async (req, res) => {
   }
 });
 
-app.post('/api/journal', verifyToken, ...canPostAcct, async (req, res) => {
-  try {
-    const { description, lines, date: requestedDate } = req.body;
-
-    // Calculate totals to ensure it balances
-    const totalDebit = lines.reduce((sum, line) => sum + Number(line.debit || 0), 0);
-    const totalCredit = lines.reduce((sum, line) => sum + Number(line.credit || 0), 0);
-
-    if (Math.abs(totalDebit - totalCredit) > 0.01) {
-      return res.status(400).json({ success: false, error: 'Debits must equal Credits' });
+// ── MANUAL JOURNAL ENTRIES: prepare → approve → post ─────────────────────────
+// Automatic entries come from transactions that were approved already. One
+// typed by hand is approved before it reaches the ledger: an approver's own
+// entry posts at once (recorded as approved by them); anyone else's is held
+// as Pending until an approver posts or rejects it.
+//
+// The lines are checked here - every account real, every amount a positive
+// number, debits equal to credits - so a Pending entry is one that WILL post.
+const readJournalLines = (lines) => {
+  if (!Array.isArray(lines) || lines.length < 2) return { error: 'A journal entry needs at least two lines.' };
+  if (lines.length > 200) return { error: 'At most 200 lines per entry.' };
+  const out = [];
+  for (const [i, l] of lines.entries()) {
+    const meta = acctMeta(String(l?.accountCode || ''));
+    if (!meta) return { error: `Line ${i + 1}: "${l?.accountCode || ''}" is not an account.` };
+    const debit = Number(l.debit || 0), credit = Number(l.credit || 0);
+    if (!Number.isFinite(debit) || !Number.isFinite(credit) || debit < 0 || credit < 0 || debit > 999_999_999.99 || credit > 999_999_999.99) {
+      return { error: `Line ${i + 1}: amounts must be positive numbers.` };
     }
+    if (debit > 0 && credit > 0) return { error: `Line ${i + 1}: a line is a debit or a credit, not both.` };
+    if (!(debit > 0) && !(credit > 0)) continue;   // a blank line from the form
+    out.push({ accountCode: String(l.accountCode), accountName: meta.name, debit: roundMoney(debit), credit: roundMoney(credit) });
+  }
+  if (out.length < 2) return { error: 'A journal entry needs at least two lines with an amount.' };
+  const totalDebit = roundMoney(out.reduce((s, l) => s + l.debit, 0));
+  const totalCredit = roundMoney(out.reduce((s, l) => s + l.credit, 0));
+  if (Math.round(totalDebit * 100) !== Math.round(totalCredit * 100)) return { error: 'Debits must equal Credits' };
+  return { lines: out, totalDebit, totalCredit };
+};
 
-    // Period-lock guard: block back-dated entries into a closed period.
+// Posts an approved manual entry. Shared by "approver enters it" and
+// "approver approves someone else's".
+const postManualJournal = async (req, { description, lines, totalDebit, totalCredit, date, preparedBy }) => {
+  const when = date ? new Date(date) : new Date();
+  const lock = await periodLockFor(when);
+  if (lock) {
+    const e = new Error(`Period ${lock.year}-${String(lock.month).padStart(2, '0')} is closed. Reopen the period first.`);
+    e.status = 423; throw e;
+  }
+  const reference = await mkSeqRef('JRN');
+  const approvedBy = req.user?.name || '';
+  const payload = {
+    reference, lines, totalDebit, totalCredit,
+    description: `${description || 'Manual journal entry'}${preparedBy && preparedBy !== approvedBy ? ` (prepared by ${preparedBy}, approved by ${approvedBy})` : ''}`,
+  };
+  if (date) payload.date = when;
+  const entry = await JournalEntry.create(payload);
+  await logAudit(req, { action: 'create', entity: 'JournalEntry', entityId: entry._id, after: { reference, description, totalDebit, preparedBy: preparedBy || approvedBy, approvedBy } });
+  emitToMgr('erpUpdated');
+  return entry;
+};
+
+app.post('/api/journal', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
+  try {
+    const { description, lines, date: requestedDate } = req.body || {};
+    const read = readJournalLines(lines);
+    if (read.error) return res.status(400).json({ success: false, error: read.error });
+    if (requestedDate && Number.isNaN(new Date(requestedDate).getTime())) return res.status(400).json({ success: false, error: 'Invalid date.' });
+    // Refused now rather than after it has waited for approval.
     const lock = await periodLockFor(requestedDate || new Date());
     if (lock) return res.status(423).json({ success: false, error: `Period ${lock.year}-${String(lock.month).padStart(2,'0')} is closed. Reopen the period first.` });
+    const clean = String(description || '').trim().slice(0, 500);
 
-    const reference = await mkSeqRef('JRN');
-    const payload = { reference, description, lines, totalDebit, totalCredit };
-    if (requestedDate) payload.date = new Date(requestedDate);
-    const newEntry = await JournalEntry.create(payload);
-    await logAudit(req, { action: 'create', entity: 'JournalEntry', entityId: newEntry._id, after: { reference, description, totalDebit } });
-
+    if (hasPermission(req.user, 'journal.approve')) {
+      const entry = await postManualJournal(req, { description: clean, ...read, date: requestedDate });
+      return res.json({ success: true, entry, pending: false });
+    }
+    const draft = await ManualJournal.create({
+      businessType: BUSINESS_TYPE, ...tenantScope(req),
+      draftNumber: await mkSeqRef('MJ'),
+      date: requestedDate ? new Date(requestedDate) : null,
+      description: clean, ...read,
+      preparedBy: req.user?.name || '', preparedById: String(req.user?._id || ''),
+    });
+    await logAudit(req, { action: 'prepare', entity: 'ManualJournal', entityId: draft._id, after: { draftNumber: draft.draftNumber, totalDebit: read.totalDebit } });
     emitToMgr('erpUpdated');
-    res.json({ success: true, entry: newEntry });
+    res.status(202).json({ success: true, pending: true, draft, message: `Saved as ${draft.draftNumber} - it posts once an approver signs off.` });
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ success: false, error: err.message });
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
+}));
+
+app.get('/api/journal/drafts', verifyToken, ...canViewAcct, async (req, res) => {
+  try {
+    const status = MANUAL_JOURNAL_STATUSES.includes(req.query.status) ? req.query.status : 'Pending';
+    const drafts = await ManualJournal.find({ businessType: BUSINESS_TYPE, ...tenantScope(req), status }).sort({ createdAt: -1 }).limit(200).lean();
+    res.json({ success: true, drafts });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+app.post('/api/journal/drafts/:id/approve', verifyToken, requireStaff, permit('journal.approve'), atomic(mongoose, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+    // Claimed atomically: two approvers clicking at once post it once.
+    const draft = await ManualJournal.findOneAndUpdate(
+      { _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Pending' },
+      { $set: { status: 'Posted', approvedBy: req.user?.name || '', approvedAt: new Date() } },
+      { returnDocument: 'after' },
+    );
+    if (!draft) return res.status(409).json({ success: false, error: 'This entry is no longer pending.' });
+    const entry = await postManualJournal(req, {
+      description: draft.description, lines: draft.lines.map(l => ({ accountCode: l.accountCode, accountName: l.accountName, debit: l.debit, credit: l.credit })),
+      totalDebit: draft.totalDebit, totalCredit: draft.totalCredit, date: draft.date, preparedBy: draft.preparedBy,
+    });
+    draft.postedReference = entry.reference;
+    await draft.save();
+    res.json({ success: true, draft, entry });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ success: false, error: err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+}));
+
+app.post('/api/journal/drafts/:id/reject', verifyToken, requireStaff, permit('journal.approve'), async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+    const reason = String(req.body?.reason || '').trim();
+    if (!reason) return res.status(400).json({ success: false, error: 'Give the preparer a reason.' });
+    const draft = await ManualJournal.findOneAndUpdate(
+      { _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Pending' },
+      { $set: { status: 'Rejected', rejectedBy: req.user?.name || '', rejectedAt: new Date(), rejectionReason: reason.slice(0, 500) } },
+      { returnDocument: 'after' },
+    );
+    if (!draft) return res.status(409).json({ success: false, error: 'This entry is no longer pending.' });
+    await logAudit(req, { action: 'reject', entity: 'ManualJournal', entityId: draft._id, after: { draftNumber: draft.draftNumber, reason } });
+    emitToMgr('erpUpdated');
+    res.json({ success: true, draft });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // ── OPENING BALANCES ─────────────────────────────────────────────────────────
@@ -263,7 +384,7 @@ app.get('/api/finance/opening-balances', verifyToken, ...canViewAcct, async (req
   }
 });
 
-app.post('/api/finance/opening-balances', verifyToken, ...canPostAcct, async (req, res) => {
+app.post('/api/finance/opening-balances', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
   try {
     const { date: requestedDate, lines, note, referenceNumber, force } = req.body || {};
     if (!Array.isArray(lines) || lines.length === 0) {
@@ -280,40 +401,14 @@ app.post('/api/finance/opening-balances', verifyToken, ...canPostAcct, async (re
     const lock = await periodLockFor(requestedDate || new Date());
     if (lock) return res.status(423).json({ success: false, error: `Period ${lock.year}-${String(lock.month).padStart(2, '0')} is closed. Reopen the period first.` });
 
-    const jeLines = [];
-    let totalDebit = 0, totalCredit = 0;
-    for (const raw of lines) {
-      const code = String(raw.accountCode || '').trim();
-      const amount = Math.round((Number(raw.amount) || 0) * 100) / 100;
-      if (!amount) continue; // a blank row is not an error, just nothing to carry
-      const meta = acctMeta(code);
-      if (!meta) return res.status(400).json({ success: false, error: `Unknown account code: ${code}.` });
-      if (!['asset', 'liability', 'equity'].includes(meta.type)) {
-        return res.status(400).json({ success: false, error: `${code} ${meta.name} is a ${meta.type} account. Opening balances carry the balance sheet only - accumulated results belong in equity.` });
-      }
-      // Natural side: assets are debit-balance, liabilities and equity credit.
-      // A negative amount flips the side, which is how a contra balance
-      // (e.g. accumulated depreciation) is carried in.
-      const debit = meta.type === 'asset' ? Math.max(0, amount) : Math.max(0, -amount);
-      const credit = meta.type === 'asset' ? Math.max(0, -amount) : Math.max(0, amount);
-      jeLines.push({ accountCode: code, accountName: meta.name, debit, credit });
-      totalDebit += debit; totalCredit += credit;
-    }
-    if (jeLines.length === 0) return res.status(400).json({ success: false, error: 'Every line was zero - nothing to carry in.' });
-
-    // Whatever does not balance is, by definition, the owner's stake in what
-    // was carried in. Plugging it to Owner's Capital is what makes this usable
-    // without the user pre-computing equity themselves.
-    const diff = Math.round((totalDebit - totalCredit) * 100) / 100;
-    if (Math.abs(diff) > 0.01) {
-      const plugMeta = acctMeta('310000');
-      jeLines.push({
-        accountCode: '310000', accountName: plugMeta?.name || "Owner's Capital",
-        debit: diff < 0 ? Math.abs(diff) : 0,
-        credit: diff > 0 ? diff : 0,
-      });
-      if (diff > 0) totalCredit += diff; else totalDebit += Math.abs(diff);
-    }
+    // Each account's NATURAL balance as a positive number (a negative flips it,
+    // which is how a contra balance like accumulated depreciation comes in);
+    // whatever does not balance is, by definition, the owner's stake in what
+    // was carried in, and is plugged to Owner's Capital - see lib/setupBooks.js.
+    const built = buildOpeningEntry(lines, acctMeta);
+    if (built.error) return res.status(400).json({ success: false, error: built.error });
+    const { jeLines, totalDebit, totalCredit } = built;
+    const diff = built.plug;
 
     const reference = await mkSeqRef('OPEN');
     assertBalanced(jeLines, reference);
@@ -333,7 +428,7 @@ app.post('/api/finance/opening-balances', verifyToken, ...canPostAcct, async (re
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 app.get('/api/finance/balances', verifyToken, ...canViewAcct, async (req, res) => {
   try {
@@ -358,7 +453,7 @@ app.get('/api/finance/balances', verifyToken, ...canViewAcct, async (req, res) =
 // ── TRIAL BALANCE ─────────────────────────────────────────────────────────────
 // Every account with its net debit/credit balance; total debits must equal total
 // credits when the books are balanced. Optional ?start&end date range.
-app.get('/api/reports/trial-balance', verifyToken, ...canViewAcct, async (req, res) => {
+app.get('/api/reports/trial-balance', verifyToken, ...canViewAcct, requirePermission('screen.ledger.trial'), async (req, res) => {
   try {
     const { start, end } = req.query;
     const match = {};
@@ -459,8 +554,8 @@ app.get('/api/expenses', verifyToken, ...canViewAcct, async (req, res) => {
     // checking "what have we spent" almost always means.
     const now = new Date();
     const start = req.query.start ? dayStart(req.query.start) : new Date(now.getFullYear(), now.getMonth(), 1);
-    const end = req.query.end ? dayEnd(req.query.end) : now;
-    if (!req.query.end) end.setHours(23, 59, 59, 999);
+    let end = req.query.end ? dayEnd(req.query.end) : now;
+    if (!req.query.end) end = dayEnd(businessDateStr());
 
     const rows = await JournalEntry.aggregate([
       { $match: { date: { $gte: start, $lte: end } } },
@@ -509,7 +604,7 @@ app.get('/api/expenses', verifyToken, ...canViewAcct, async (req, res) => {
 // { ok:true, je } or { ok:false, error } instead of throwing/writing to
 // `res` itself, so the importer can collect one error per row without a bad
 // row aborting the whole batch.
-async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, description, vendor, refNo, date, withholdingRate, withholdingAccount }) {
+async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, description, vendor, refNo, date, withholdingRate, withholdingAccount, claimInputVat }) {
   // A closed month is closed to expenses too. Without this an expense dated
   // into a reported month posted freely, and the month's figures moved after
   // they had been signed off - the manual journal route guarded against
@@ -520,6 +615,9 @@ async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, de
   }
   const amt = parseFloat(amount);
   if (!amt || amt <= 0) return { ok: false, error: 'Amount must be > 0.' };
+  // An expense above a billion pesos is a typo or an attack, not a bill; it
+  // used to reach the ledger and fail there as an "unbalanced" 500.
+  if (!Number.isFinite(amt) || amt > 999_999_999.99) return { ok: false, error: 'Amount is too large.' };
   // Validated against the same derived set the picker offers. Checking the
   // hand-written twelve here would have rejected every account the picker had
   // just started offering.
@@ -560,9 +658,18 @@ async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, de
   if (withheld > amt) return { ok: false, error: 'Withholding cannot exceed the amount.' };
   const netPaid = Math.round((amt - withheld) * 100) / 100;
 
+  // VAT charged by a VAT-registered supplier is creditable, not a cost: it is
+  // split out of the amount and held in 170300 until the return offsets it
+  // against output VAT. Withholding is computed on the full amount either way -
+  // it is withheld from what the supplier is paid, VAT included.
+  const vatCfg = await loadVatConfig(Settings);
+  const inputVat = claimInputVat && vatCfg.enabled ? Math.round((amt - amt / (1 + vatCfg.rate)) * 100) / 100 : 0;
+  const netCost = Math.round((amt - inputVat) * 100) / 100;
+
   const lines = [
-    { accountCode: categoryCode, accountName: acct.name, debit: amt, credit: 0 },
+    { accountCode: categoryCode, accountName: acct.name, debit: netCost, credit: 0 },
   ];
+  if (inputVat > 0) lines.push({ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: inputVat, credit: 0 });
   if (withheld > 0) {
     lines.push({ accountCode: whAccount, accountName: acctMeta(whAccount)?.name || 'Withholding Tax Payable', debit: 0, credit: withheld });
   }
@@ -581,7 +688,18 @@ async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, de
     totalCredit: amt,
     date: entryDate,
   });
-  return { ok: true, je };
+
+  // The document for the money going out. Declined automatically when the
+  // expense was put on account rather than paid - nothing left the drawer.
+  const voucher = await issueCheckVoucher(req, {
+    payeeType: 'other',
+    payeeName: vendor?.trim() || description.trim(),
+    amount: netPaid, purpose: 'expense', sourceAccount: credAcct.code,
+    referenceNumber: refNo?.trim() || '',
+    notes: `${cat.label}: ${description.trim()}`,
+    journalEntryRef: reference, date: entryDate,
+  });
+  return { ok: true, je, voucher };
 }
 
 // What has been withheld and not yet remitted.
@@ -637,7 +755,7 @@ app.get('/api/reports/withholding-tax', verifyToken, ...canViewAcct, async (req,
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.post('/api/expenses', verifyToken, ...canPostAcct, async (req, res) => {
+app.post('/api/expenses', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
   try {
     const result = await createExpenseEntry(req, req.body || {});
     if (!result.ok) return res.status(400).json({ success: false, error: result.error });
@@ -647,7 +765,7 @@ app.post('/api/expenses', verifyToken, ...canPostAcct, async (req, res) => {
     log.error({ err }, 'POST /api/expenses failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // Bulk Excel import - the client has already parsed/validated/previewed the
 // file (see AdminDashboard.jsx's parseExpenseImportExcel); this just creates
@@ -656,7 +774,7 @@ app.post('/api/expenses', verifyToken, ...canPostAcct, async (req, res) => {
 // skipped, not fatal to the batch - one typo shouldn't lose 40 good rows.
 // Capped so one runaway file can't flood the ledger with thousands of entries.
 const EXPENSE_IMPORT_MAX_ROWS = 500;
-app.post('/api/expenses/import', verifyToken, ...canPostAcct, async (req, res) => {
+app.post('/api/expenses/import', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
   try {
     const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
     if (!rows.length) return res.status(400).json({ success: false, error: 'No rows to import.' });
@@ -668,7 +786,11 @@ app.post('/api/expenses/import', verifyToken, ...canPostAcct, async (req, res) =
     let totalAmount = 0;
     const skipped = [];
     for (let i = 0; i < rows.length; i++) {
-      const result = await createExpenseEntry(req, rows[i]);
+      // The date as a spreadsheet gives it (lib/sheetDate.js), not as JavaScript
+      // guesses it: a bare Excel date number used to post the expense in 1970.
+      const day = sheetDay(rows[i]?.date);
+      if (day === null) { skipped.push({ row: i + 1, error: `"${rows[i].date}" is not a date. ${SHEET_DATE_HELP}`, data: rows[i] }); continue; }
+      const result = await createExpenseEntry(req, { ...rows[i], date: day });
       if (result.ok) { created++; totalAmount += Number(result.je.totalDebit) || 0; }
       else skipped.push({ row: i + 1, error: result.error, data: rows[i] });
     }
@@ -680,27 +802,35 @@ app.post('/api/expenses/import', verifyToken, ...canPostAcct, async (req, res) =
     log.error({ err }, 'POST /api/expenses/import failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // Outstanding A/R list (delivery orders, Completed, not yet settled)
 app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, res) => {
   try {
     const rows = await Order.find({
       businessType: BUSINESS_TYPE,
-      status: 'Completed',
-      paymentMethod: { $ne: 'Cash' },
+      status: { $in: RECEIVABLE_STATUSES },
+      paymentMethod: AR_PAYMENT_METHOD_FILTER,
       isComplimentary: { $ne: true }, // comps collect no money - never an A/R
       arSettled: { $ne: true }
       // paymentReference / paymentCheckDate carry the check details captured at
       // the sale, so collecting the receivable can pre-fill them instead of
       // making someone read the check number off the paper a second time.
-    }, { orderNumber: 1, customerName: 1, table: 1, total: 1, paymentMethod: 1, createdAt: 1, arTermsDays: 1, arDueDate: 1, arPaidAmount: 1, arPayments: 1, paymentReference: 1, paymentCheckDate: 1, clientId: 1 })
+    }, { orderNumber: 1, customerName: 1, table: 1, total: 1, paymentMethod: 1, createdAt: 1, arTermsDays: 1, arDueDate: 1, arPaidAmount: 1, refundedAmount: 1, arPayments: 1, paymentReference: 1, paymentCheckDate: 1, clientId: 1, clientAccountId: 1 })
       .sort({ createdAt: -1 }).limit(500).lean();
 
     // Stored credit the client is sitting on (from a past overpayment). Attached
     // here so the A/R table can offer "apply credit" against a specific invoice
     // without a lookup per row - see POST /api/client-accounts/:id/credit/apply.
     const clientIds = [...new Set(rows.map(r => r.clientId).filter(Boolean).map(String))];
+    // Which of these are owed by a related business (a satellite or affiliate),
+    // so the screen can total them apart from what outside customers owe. By
+    // either link an order carries: its portal client or its billed account.
+    const linkedIds = [...new Set(rows.flatMap(r => [r.clientId, r.clientAccountId]).filter(Boolean).map(String))]
+      .filter(id => mongoose.Types.ObjectId.isValid(id));
+    const affiliateIds = new Set(linkedIds.length
+      ? (await ClientAccount.find({ _id: { $in: linkedIds }, isAffiliate: true }, { _id: 1 }).lean()).map(c => String(c._id))
+      : []);
     const creditByClient = new Map();
     if (clientIds.length) {
       const withCredit = await ClientAccount.find(
@@ -726,10 +856,16 @@ app.get('/api/finance/ar-outstanding', verifyToken, ...canViewAcct, async (req, 
         paid: Math.round(((Number(r.arPaidAmount) || 0)) * 100) / 100,
         paymentCount: (r.arPayments || []).length, arPayments: undefined,
         clientCredit: creditByClient.get(String(r.clientId)) || 0,
+        affiliate: affiliateIds.has(String(r.clientAccountId || '')) || affiliateIds.has(String(r.clientId || '')),
       };
     });
     const totalOutstanding = orders.reduce((s, r) => s + (r.balance || 0), 0);
-    res.json({ success: true, orders, totalOutstanding, overdueTotal, overdueCount });
+    const affiliateOutstanding = Math.round(orders.filter(r => r.affiliate).reduce((s, r) => s + (r.balance || 0), 0) * 100) / 100;
+    res.json({
+      success: true, orders, totalOutstanding, overdueTotal, overdueCount,
+      // The same total, split: related businesses, and everyone else.
+      affiliateOutstanding, tradeOutstanding: Math.round((totalOutstanding - affiliateOutstanding) * 100) / 100,
+    });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -743,11 +879,11 @@ app.get('/api/finance/ar-ageing', verifyToken, ...canViewAcct, async (req, res) 
   try {
     const rows = await Order.find({
       businessType: BUSINESS_TYPE,
-      status: 'Completed',
-      paymentMethod: { $ne: 'Cash' },
+      status: { $in: RECEIVABLE_STATUSES },
+      paymentMethod: AR_PAYMENT_METHOD_FILTER,
       isComplimentary: { $ne: true },
       arSettled: { $ne: true },
-    }, { customerName: 1, total: 1, createdAt: 1, clientAccountId: 1, clientId: 1, arPaidAmount: 1 }).lean()
+    }, { customerName: 1, total: 1, createdAt: 1, clientAccountId: 1, clientId: 1, arPaidAmount: 1, refundedAmount: 1 }).lean()
       .then(withArBalance);
 
     const [modeRow, globalRow, clients] = await Promise.all([
@@ -770,10 +906,10 @@ app.get('/api/finance/ar-ageing', verifyToken, ...canViewAcct, async (req, res) 
       businessType: BUSINESS_TYPE,
       status: { $nin: ['Cancelled', 'Voided', 'Refunded', 'Parked'] },
       isParked: { $ne: true },
-      paymentMethod: { $ne: 'Cash' },
+      paymentMethod: AR_PAYMENT_METHOD_FILTER,
       isComplimentary: { $ne: true },
       arSettled: { $ne: true },
-    }, { customerName: 1, total: 1, clientAccountId: 1, clientId: 1, arPaidAmount: 1 }).lean()
+    }, { customerName: 1, total: 1, clientAccountId: 1, clientId: 1, arPaidAmount: 1, refundedAmount: 1 }).lean()
       .then(withArBalance);
 
     const exposureByClient = new Map();
@@ -907,10 +1043,12 @@ app.get('/api/finance/vendor-statement/:supplierId', verifyToken, ...canViewAcct
     const supplier = await Supplier.findOne({ _id: req.params.supplierId, ...tenantScope(req) }).lean();
     if (!supplier) return res.status(404).json({ success: false, error: 'Supplier not found.' });
 
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-    const start = req.query.start || monthStart.toISOString().slice(0, 10);
-    const end = req.query.end || new Date().toISOString().slice(0, 10);
+    // The business's own calendar, not UTC's: at 07:00 in Manila the UTC date
+    // is still yesterday, which dropped today's entries and started the month
+    // on the last day of the previous one.
+    const todayStr = businessDateStr();
+    const start = req.query.start || `${todayStr.slice(0, 8)}01`;
+    const end = req.query.end || todayStr;
     const range = validateDateRange(start, end);
     if (!range.ok) return res.status(400).json({ success: false, error: range.error });
     const { startDate, endDate } = range;
@@ -961,11 +1099,11 @@ app.get('/api/finance/vendor-statement/:supplierId', verifyToken, ...canViewAcct
 });
 
 // POST /api/finance/ap-payment - record a supplier payment (DR 2000 AP / CR cash account)
-app.post('/api/finance/ap-payment', verifyToken, ...canPostAcct, async (req, res) => {
+app.post('/api/finance/ap-payment', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
   try {
     const { amount, payFromAccount, description, vendorName, supplierId, referenceNumber } = req.body;
-    const amt = parseFloat(amount);
-    if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Amount must be positive.' });
+    const amt = positiveMoney(amount);
+    if (Number.isNaN(amt)) return res.status(400).json({ success: false, error: 'Enter a positive amount up to ₱999,999,999.99.' });
 
     // Resolve the supplier server-side so the stored name is the canonical record,
     // not whatever the client typed. vendorName remains accepted for ad-hoc payees
@@ -1011,7 +1149,7 @@ app.post('/api/finance/ap-payment', verifyToken, ...canPostAcct, async (req, res
     log.error({ err }, 'POST /api/finance/ap-payment failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // ============================================================
 // JOURNAL CSV EXPORT
@@ -1044,7 +1182,7 @@ app.get('/api/journal/export', verifyToken, ...canViewAcct, async (req, res) => 
       .lean()
       .cursor();
     for await (const e of cursor) {
-      const dateStr = new Date(e.date).toISOString().slice(0, 10);
+      const dateStr = businessDateStr(e.date);
       for (const line of e.lines) {
         res.write([
           esc(dateStr), esc(e.reference), esc(e.description),
@@ -1063,11 +1201,11 @@ app.get('/api/journal/export', verifyToken, ...canViewAcct, async (req, res) => 
 });
 
 // --- BANK DEPOSIT ROUTES ---
-app.post('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/bank-deposits', verifyToken, requireStaff, permitAny('pos.use', 'accounting.manage'), atomic(mongoose, async (req, res) => {
   try {
     const { shiftId, amount, reference, sourceAccount: rawSrc, destAccount: rawDest } = req.body;
-    const depositAmount = parseFloat(amount);
-    if (isNaN(depositAmount) || depositAmount <= 0)
+    const depositAmount = positiveMoney(amount);
+    if (Number.isNaN(depositAmount))
       return res.status(400).json({ success: false, error: 'Invalid deposit amount.' });
 
     const shift = await Shift.findById(shiftId);
@@ -1122,14 +1260,17 @@ app.post('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
       isDrawerReconciled: isReconciled,
     });
 
+    await logAudit(req, { action: 'deposit', entity: 'BankDeposit', entityId: depRef, after: { amount: depositAmount, drawerBalanceAfter, isReconciled } });
     emitToMgr('erpUpdated'); // auto-refresh the general ledger (bank deposit)
     res.json({ success: true, deposit, shift, drawerBalanceAfter, isReconciled });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
-app.get('/api/bank-deposits', verifyToken, requireStaff, async (req, res) => {
+// Deposits are recorded at the till and listed on Shifts & Cash - readable by
+// the people who use either, and by accounting; not by every signed-in staff.
+app.get('/api/bank-deposits', verifyToken, requireStaff, permitAny('pos.use', 'shifts.view', 'accounting.view'), async (req, res) => {
   try {
     // String() coercion: req.query.shiftId can arrive as a nested object
     // (e.g. ?shiftId[$exists]=true, parsed by express's extended query
@@ -1162,7 +1303,7 @@ app.get('/api/coa', verifyToken, requireStaff, async (req, res) => {
     const customMapped = custom.map(a => ({
       _id: a._id, code: a.code, name: a.name, type: a.type,
       parent: a.parent || null, isParent: false, custom: true,
-      isActive: a.isActive !== false,
+      isActive: a.isActive !== false, externalCode: a.externalCode || null,
     }));
     res.json({ success: true, accounts: [...canonical, ...customMapped] });
   } catch (err) {
@@ -1185,17 +1326,33 @@ app.post('/api/accounts', verifyToken, ...canPostAcct, async (req, res) => {
       ...Object.keys(ACCOUNTS),
       ...(await Account.find({ code: { $regex: `^${base}` } }, { code: 1 }).lean()).map(a => a.code),
     ]);
-    let code = null;
-    for (let i = 1; i <= 999; i++) {
-      const cand = base + String(i).padStart(3, '0');
-      if (!taken.has(cand)) { code = cand; break; }
-    }
-    if (!code) return res.status(400).json({ success: false, error: 'No free code under this parent.' });
+    const nextFree = () => {
+      for (let i = 1; i <= 999; i++) {
+        const cand = base + String(i).padStart(3, '0');
+        if (!taken.has(cand)) return cand;
+      }
+      return null;
+    };
 
-    const account = await Account.create({
-      code, name: name.trim(), type: parent.type, parent: parentCode,
-      custom: true, normalBalance: normalBalanceForCode(code),
-    });
+    // Two people adding a sub-account under the same parent at the same moment
+    // both read the same free code, and the code is unique, so the second one
+    // used to fail with a server error. Losing that race now just means taking
+    // the next code along.
+    let account = null;
+    for (let attempt = 0; attempt < 5 && !account; attempt++) {
+      const code = nextFree();
+      if (!code) return res.status(400).json({ success: false, error: 'No free code under this parent.' });
+      try {
+        account = await Account.create({
+          code, name: name.trim(), type: parent.type, parent: parentCode,
+          custom: true, normalBalance: normalBalanceForCode(code),
+        });
+      } catch (e) {
+        if (e?.code !== 11000) throw e;
+        taken.add(code);
+      }
+    }
+    if (!account) return res.status(409).json({ success: false, error: 'Could not reserve an account code - try again.' });
     await refreshCustomMeta();
     // Event-driven invalidation: every connected POS/portal/QR-menu client
     // holds its OWN payment-method list in local state (no polling). This is
@@ -1290,6 +1447,15 @@ app.post('/api/periods/close', verifyToken, ...canPostAcct, async (req, res) => 
     const lastDay = new Date(year, month, 0, 23, 59, 59);
     if (lastDay > now) return res.status(400).json({ success: false, error: 'Cannot close a period that has not ended yet.' });
 
+    // The closing checklist (features/closing.js). Two of its steps block the
+    // close outright: an unapproved manual entry would be locked out of its
+    // own month, and an unbalanced trial balance means the month is wrong.
+    // The rest are shown as warnings on the checklist.
+    if (typeof ctx.closingChecklist === 'function') {
+      const cl = await ctx.closingChecklist(req, { year, month, from: new Date(year, month - 1, 1, 0, 0, 0, 0), to: new Date(year, month, 0, 23, 59, 59, 999) });
+      if (cl.blocking.length) return res.status(409).json({ success: false, error: `Not closed - first: ${cl.blocking.join('; ')}.`, blocking: cl.blocking });
+    }
+
     const upsert = await ClosedPeriod.findOneAndUpdate(
       { year, month },
       { year, month, isOpen: false, closedBy: req.user?.name || 'system', closedAt: new Date(), notes },
@@ -1302,7 +1468,9 @@ app.post('/api/periods/close', verifyToken, ...canPostAcct, async (req, res) => 
   }
 });
 
-app.post('/api/periods/:id/reopen', verifyToken, ...canPostAcct, async (req, res) => {
+// Reopening a closed month lets it be posted to again, so it takes the same
+// sign-off as a manual journal entry, and it is recorded.
+app.post('/api/periods/:id/reopen', verifyToken, requireStaff, permit('journal.approve'), async (req, res) => {
   try {
     const p = await ClosedPeriod.findById(req.params.id);
     if (!p) return res.status(404).json({ success: false, error: 'Period not found.' });
@@ -1387,7 +1555,7 @@ app.get('/api/revolving-funds', verifyToken, requireStaff, async (req, res) => {
 // by anyone with accounting.manage despite the comment already saying
 // "superadmin only", which is exactly the gap that let a staff account create
 // a fully-funded fund with no approval step at all.
-app.post('/api/revolving-funds', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/revolving-funds', verifyToken, requireSuperAdmin, atomic(mongoose, async (req, res) => {
   try {
     const { name, initialAmount, description, sourceAccount } = req.body;
     if (!name || !initialAmount || Number(initialAmount) <= 0)
@@ -1418,6 +1586,14 @@ app.post('/api/revolving-funds', verifyToken, requireSuperAdmin, async (req, res
       reference: await mkSeqRef('RF-OPEN'),
     });
 
+    // The float came out of a real account, so it is documented like any
+    // other payment out of it.
+    await issueCheckVoucher(req, {
+      payeeType: 'other', payeeName: `Petty cash: ${name}`,
+      amount: amt, purpose: 'petty-cash', sourceAccount: srcCode,
+      notes: 'Fund opened', journalEntryRef: je.reference || '',
+    });
+
     // Record opening tx
     await RevolvingFundTx.create({
       fundId: fund._id, type: 'replenishment',
@@ -1432,19 +1608,22 @@ app.post('/api/revolving-funds', verifyToken, requireSuperAdmin, async (req, res
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
-// POST disburse from a fund (any staff - they need to log what they spend).
-// Deliberately NOT approval-gated: an expense against a revolving fund is
+// POST disburse from a fund - for those given "Spend from a revolving fund".
+// Everyone else files a petty-cash requisition slip, which waits for approval.
+// Deliberately NOT approval-gated here: an expense against a revolving fund is
 // capped by its own currentBalance (can never overdraw it) and reflects
 // immediately - see 'fund-replenish' below for why money going the OTHER
 // way (topping the fund back up) is held for approval instead.
-app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, permit('funds.spend'), atomic(mongoose, async (req, res) => {
   try {
     const fund = await RevolvingFund.findById(req.params.id);
     if (!fund || !fund.isActive) return res.status(404).json({ success: false, error: 'Fund not found.' });
 
     const { amount, description, categoryCode } = req.body;
+    const payee = String(req.body.payee || '').trim().slice(0, 120);
+    const refNo = String(req.body.refNo || '').trim().slice(0, 60);
     const amt = Number(amount);
     if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Amount must be a positive number.' });
     if (!description?.trim()) return res.status(400).json({ success: false, error: 'Description is required.' });
@@ -1469,9 +1648,14 @@ app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, async (
       reference: await mkSeqRef('RF-OUT'),
     });
 
+    await issueCheckVoucher(req, {
+      payeeType: 'other', payeeName: payee || description.trim() || `Petty cash: ${fund.name}`,
+      amount: amt, purpose: 'petty-cash', sourceAccount: '114000',
+      notes: `Paid out of ${fund.name}`, journalEntryRef: je.reference || '',
+    });
     const tx = await RevolvingFundTx.create({
       fundId: fund._id, type: 'disbursement', amount: amt,
-      description, categoryCode: expCode,
+      description, categoryCode: expCode, payee, refNo,
       performedBy: req.user?.name,
       balanceAfter: fund.currentBalance,
       journalRef: je._id,
@@ -1482,7 +1666,7 @@ app.post('/api/revolving-funds/:id/disburse', verifyToken, requireStaff, async (
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // Replenishing a fund used to be immediate here (superadmin/accounting.manage
 // only). It now ALWAYS requires approval - unlike a disbursement (capped by
@@ -1502,6 +1686,140 @@ app.get('/api/revolving-funds/:id/transactions', verifyToken, ...canViewAcct, as
     const txs   = await RevolvingFundTx.find({ fundId: req.params.id })
       .sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit);
     res.json({ success: true, txs, total, page, pages: Math.ceil(total / limit) });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ── VALIDATION ────────────────────────────────────────────────────────────────
+// Spending from a fund posts at once (see /disburse), but the fund is not
+// topped up again until every spend has been checked against its receipt.
+// Validated: the receipt supports it. Rejected: it does not - the amount comes
+// back off the expense and is owed by the person who spent it (Advances to
+// Employees), to be settled like any other advance.
+const txForValidation = async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.txId || '')) { res.status(400).json({ success: false, error: 'Invalid transaction.' }); return null; }
+  const tx = await RevolvingFundTx.findOne({ _id: req.params.txId, fundId: req.params.id });
+  if (!tx || tx.type !== 'disbursement') { res.status(404).json({ success: false, error: 'Spend not found in this fund.' }); return null; }
+  if (tx.validation?.status !== 'Unvalidated') { res.status(409).json({ success: false, error: `This spend is already ${tx.validation?.status || 'settled'}.` }); return null; }
+  // Nobody checks their own receipts.
+  if (tx.performedBy && tx.performedBy === req.user?.name && String(req.user?.role || '').toLowerCase() !== 'superadmin') {
+    res.status(403).json({ success: false, error: 'Someone other than the person who spent it has to validate this.' }); return null;
+  }
+  return tx;
+};
+
+// Every spend still waiting for that check, across all funds - what the
+// Approvals page lists, so nobody has to open each fund to find them.
+app.get('/api/revolving-funds/unvalidated', verifyToken, ...canViewAcct, async (req, res) => {
+  try {
+    const txs = await RevolvingFundTx.find({ type: 'disbursement', 'validation.status': 'Unvalidated' }).sort({ date: 1 }).limit(500).lean();
+    const funds = new Map((await RevolvingFund.find({ _id: { $in: txs.map(t => t.fundId) } }, { name: 1 }).lean()).map(f => [String(f._id), f.name]));
+    res.json({
+      success: true,
+      rows: txs.map(t => ({
+        _id: t._id, fundId: t.fundId, fundName: funds.get(String(t.fundId)) || 'Fund', date: t.date, amount: t.amount,
+        description: t.description, payee: t.payee || '', refNo: t.refNo || '', spentBy: t.performedBy || '',
+        account: acctMeta(t.categoryCode)?.name || t.categoryCode || '',
+      })),
+    });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.post('/api/revolving-funds/:id/transactions/:txId/validate', verifyToken, ...canPostAcct, async (req, res) => {
+  try {
+    const tx = await txForValidation(req, res); if (!tx) return;
+    tx.validation = { status: 'Validated', by: req.user?.name || '', at: new Date(), reason: '', reversalRef: '' };
+    await tx.save();
+    await logAudit(req, { action: 'validate', entity: 'RevolvingFundTx', entityId: tx._id, after: { amount: tx.amount, description: tx.description } });
+    res.json({ success: true, tx });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.post('/api/revolving-funds/:id/transactions/:txId/reject', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
+  try {
+    const reason = String(req.body?.reason || '').trim();
+    if (!reason) return res.status(400).json({ success: false, error: 'Say why the receipt is not accepted.' });
+    const tx = await txForValidation(req, res); if (!tx) return;
+    // Stock bought from the fund is on the shelf; taking it off the books
+    // here would leave the stock count and the ledger disagreeing.
+    if (!/^[5-9]/.test(String(tx.categoryCode || ''))) {
+      return res.status(400).json({ success: false, error: 'This spend bought stock. Return or adjust the stock instead of rejecting the receipt.' });
+    }
+    const fund = await RevolvingFund.findById(tx.fundId, { name: 1 }).lean();
+    const expName = acctMeta(tx.categoryCode)?.name || tx.categoryCode;
+    const reference = await mkSeqRef('RF-REJ');
+    await JournalEntry.create({
+      date: new Date(),
+      description: `Revolving fund receipt rejected (${fund?.name || 'fund'}): ${tx.description} - owed by ${tx.performedBy || 'the custodian'}. ${reason}`,
+      lines: [
+        { accountCode: '170100', accountName: 'Advances to Employees', debit: tx.amount, credit: 0 },
+        { accountCode: tx.categoryCode, accountName: expName, debit: 0, credit: tx.amount },
+      ],
+      totalDebit: tx.amount, totalCredit: tx.amount, reference,
+    });
+    tx.validation = { status: 'Rejected', by: req.user?.name || '', at: new Date(), reason: reason.slice(0, 500), reversalRef: reference };
+    await tx.save();
+    await logAudit(req, { action: 'reject', entity: 'RevolvingFundTx', entityId: tx._id, after: { amount: tx.amount, reason, reference } });
+    emitToMgr('erpUpdated');
+    res.json({ success: true, tx, reference });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+}));
+
+// ── LIQUIDATION REPORT ────────────────────────────────────────────────────────
+// The revolving-fund liquidation sheet the office already fills in by hand:
+// every spend in the period with its payee, account, particulars and amount,
+// the share of the fund still left after each one, and the total to
+// replenish. Oldest first, the way the sheet reads. Defaults to the last 7 days.
+app.get('/api/revolving-funds/:id/liquidation', verifyToken, ...canViewAcct, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id || '')) return res.status(400).json({ success: false, error: 'Invalid fund.' });
+    const fund = await RevolvingFund.findById(req.params.id).lean();
+    if (!fund) return res.status(404).json({ success: false, error: 'Fund not found.' });
+    const end = req.query.end ? dayEnd(req.query.end) : new Date();
+    const start = req.query.start ? dayStart(req.query.start) : new Date(end.getTime() - 6 * 86400000);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+      return res.status(400).json({ success: false, error: 'Give a valid start and end date.' });
+    }
+    const txs = await RevolvingFundTx.find({ fundId: fund._id, type: 'disbursement', date: { $gte: start, $lte: end } })
+      .sort({ date: 1, createdAt: 1 }).lean();
+    const float = Number(fund.initialAmount) || 0;
+    let remaining = float;
+    const rows = txs.map((t) => {
+      remaining = +(remaining - t.amount).toFixed(2);
+      const meta = acctMeta(t.categoryCode);
+      return {
+        _id: t._id, date: t.date, refNo: t.refNo || '', payee: t.payee || '',
+        account: `${t.categoryCode}${meta ? ` - ${meta.name}` : ''}`,
+        particulars: t.description, amount: t.amount,
+        pctRemaining: float ? +(remaining / float).toFixed(5) : 0,
+        runningBalance: remaining,
+        spentBy: t.performedBy || '',
+        status: t.validation?.status || 'Validated',
+        validatedBy: t.validation?.by || '', reason: t.validation?.reason || '',
+      };
+    });
+    const sum = (list) => +list.reduce((s, r) => s + r.amount, 0).toFixed(2);
+    res.json({
+      success: true,
+      fund: { _id: fund._id, name: fund.name, float, currentBalance: fund.currentBalance },
+      period: { start, end },
+      rows,
+      totals: {
+        spent: sum(rows),
+        validated: sum(rows.filter(r => r.status === 'Validated')),
+        unvalidated: sum(rows.filter(r => r.status === 'Unvalidated')),
+        rejected: sum(rows.filter(r => r.status === 'Rejected')),
+        // What the fund needs to be whole again, whatever the period shows.
+        toReplenish: +(float - fund.currentBalance).toFixed(2),
+      },
+    });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -1584,5 +1902,10 @@ app.get('/api/payment-methods/active', async (req, res) => {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
+
+// Cash taken out of the till for a purchase is an expense, and the shift route
+// files it through this same function - one way of recording an expense, not
+// two that can drift apart.
+ctx.createExpenseEntry = createExpenseEntry;
 
 }

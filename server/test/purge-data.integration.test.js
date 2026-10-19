@@ -111,3 +111,59 @@ describe('purge data', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('suppliers in the purge', () => {
+  it('are kept by a default purge and cleared when chosen, with their catalogs', async () => {
+    const Supplier = mongoose.model('Supplier');
+    await Supplier.create({ name: 'Lauriat Beverages', creditBalance: 1500, catalog: [{ itemName: 'LB ROSE', unitCost: 340 }] });
+    await mongoose.model('ClientAccount').create({ clientCode: 'CL-PURGE', username: 'purgeclient', password: 'x', name: 'Purge Client', creditBalance: 800 });
+
+    const cats = await request(app).get('/api/admin/purge-data/categories').set(auth(superToken));
+    const sup = cats.body.categories.find(c => c.key === 'suppliers');
+    expect(sup).toMatchObject({ defaultOn: false });
+
+    // The ledger goes, suppliers stay: their credit balance goes with the ledger.
+    const ledgerOnly = await request(app).post('/api/admin/purge-data').set(auth(superToken))
+      .send({ confirmPhrase: 'PURGE', categories: ['ledger'] });
+    expect(ledgerOnly.body.success).toBe(true);
+    const kept = await Supplier.findOne({ name: /^Lauriat Beverages$/i }).lean();
+    expect(kept).toBeTruthy();
+    expect(kept.creditBalance).toBe(0);
+    // Clients are never purged, but their credit balance goes with the ledger too.
+    expect((await mongoose.model('ClientAccount').findOne({ clientCode: 'CL-PURGE' }).lean()).creditBalance).toBe(0);
+
+    const chosen = await request(app).post('/api/admin/purge-data').set(auth(superToken))
+      .send({ confirmPhrase: 'PURGE', categories: ['suppliers'] });
+    expect(chosen.body.success).toBe(true);
+    expect(chosen.body.deleted.suppliers).toBeGreaterThanOrEqual(1);
+    expect(await Supplier.countDocuments({})).toBe(0);
+  });
+});
+
+describe('purging client accounts', () => {
+  const CA = () => mongoose.model('ClientAccount');
+  const purge = (categories) => request(app).post('/api/admin/purge-data').set(auth(superToken)).send({ confirmPhrase: 'PURGE', categories });
+
+  it('auto-created walk-in clients go; real client accounts stay', async () => {
+    await CA().create({ name: 'PG WALKIN', clientCode: 'PG-1', username: '_pos_pg-1', password: 'x', source: 'pos' });
+    await CA().create({ name: 'PG REAL', clientCode: 'PG-2', username: 'pgreal', password: 'x', source: 'portal' });
+    const r = await purge(['walkInClients']);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(await CA().exists({ clientCode: 'PG-1' })).toBeFalsy();
+    expect(await CA().exists({ clientCode: 'PG-2' })).toBeTruthy();
+  });
+
+  it('a client that still has orders is kept', async () => {
+    const busy = await CA().create({ name: 'PG BUSY', clientCode: 'PG-3', username: '_pos_pg-3', password: 'x', source: 'pos' });
+    await mongoose.model('Order').collection.insertOne({ orderNumber: 'PG-O1', clientId: String(busy._id), items: [], total: 0 });
+    const r = await purge(['walkInClients']);
+    expect(r.body.deleted.clientsKeptWithHistory).toBeGreaterThanOrEqual(1);
+    expect(await CA().exists({ clientCode: 'PG-3' })).toBeTruthy();
+  });
+
+  it('"All client accounts" takes the real ones too', async () => {
+    await CA().create({ name: 'PG REAL 2', clientCode: 'PG-4', username: 'pgreal2', password: 'x', source: 'portal' });
+    await purge(['clients']);
+    expect(await CA().exists({ clientCode: 'PG-4' })).toBeFalsy();
+  });
+});

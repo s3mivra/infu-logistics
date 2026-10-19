@@ -1,37 +1,38 @@
 ﻿import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as auth from '../auth/auth';
+import { effectivePermissions, togglePermission, pageLocked } from '../../shared/permissions.js';
 import {
   Users, Shield, Menu, X, LogOut, Plus, Edit2, Trash2,
   Search, Eye, EyeOff, AlertCircle, Tag, Loader2, Lock,
   ChevronRight, UserCheck, Monitor, Check, Package, ToggleLeft, ToggleRight,
-  KeyRound, Copy, AlertTriangle, RefreshCw, Settings, Download, Upload, Database
+  KeyRound, Copy, AlertTriangle, RefreshCw, Settings, Database
 } from 'lucide-react';
 
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
+import { API_URL } from '../../shared/apiBase.js';
 
 const ROLE_META = {
-  superadmin: { label: 'Superadmin', bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30' },
+  superadmin: { label: 'Superadmin', bg: 'bg-emerald-500/20', text: 'text-success', border: 'border-emerald-500/30' },
   Admin:      { label: 'Admin',      bg: 'bg-blue-500/20',    text: 'text-info',    border: 'border-blue-500/30' },
   Staff:      { label: 'Staff',      bg: 'bg-gray-500/20',    text: 'text-fg/70',    border: 'border-gray-500/30' },
 };
 const getRoleMeta = (role) =>
-  ROLE_META[role] ?? { label: role, bg: 'bg-purple-500/20', text: 'text-purple-400', border: 'border-purple-500/30' };
+  ROLE_META[role] ?? { label: role, bg: 'bg-purple-500/20', text: 'text-special', border: 'border-purple-500/30' };
 
 // Built-in roles shown (read-only) in the Access Roles list. Mirrors the server's
 // ROLE_DEFAULT_PERMISSIONS (lib/authz.js) for admin & staff. Superadmin is
 // intentionally omitted - it bypasses the permission system and must not be
 // assignable or presented as an editable role.
 const BUILTIN_ROLES = [
-  { name: 'Admin', permissions: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete',
-    'inventory.view', 'inventory.manage', 'inventory.delete', 'products.view', 'products.manage',
+  { name: 'Admin', permissions: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp',
+    'inventory.view', 'inventory.manage', 'inventory.delete', 'inventory.waste', 'inventory.count', 'products.view', 'products.manage',
     'procurement.view', 'procurement.manage', 'procurement.delete',
     'accounting.view', 'reports.view', 'analytics.view', 'audit.view', 'settings.manage'] },
-  { name: 'Staff', permissions: ['pos.use', 'orders.view', 'inventory.view', 'products.view'] },
+  { name: 'Staff', permissions: ['pos.use', 'orders.view', 'orders.comp', 'inventory.view', 'inventory.waste', 'inventory.count', 'products.view'] },
 ];
 
 // ---------------------------------------------------------------------------
@@ -77,7 +78,7 @@ const UserCard = memo(({ user, isSelected, onSelect, onEdit, onDelete }) => {
       </div>
 
       <div className="flex-1 min-w-0">
-        <p className="font-bold text-fg truncate">{user.name}</p>
+        <p className="font-bold text-fg truncate" title={String((user.name) ?? '')}>{user.name}</p>
         <p className="text-xs text-fg/70 font-mono">{user.userCode}</p>
       </div>
 
@@ -97,14 +98,14 @@ const UserCard = memo(({ user, isSelected, onSelect, onEdit, onDelete }) => {
           </button>
           <button
             onClick={() => onDelete(user)}
-            className="p-2 rounded-lg text-red-400/50 hover:text-danger hover:bg-red-500/10 transition"
+            className="p-2 rounded-lg text-danger hover:bg-red-500/10 transition"
             aria-label={`Delete ${user.name}`}
           >
             <Trash2 size={14} />
           </button>
         </div>
       ) : (
-        <Lock size={13} className="text-fg/60 flex-shrink-0" />
+        <Lock size={13} className="text-fg/65 flex-shrink-0" />
       )}
     </div>
   );
@@ -117,8 +118,8 @@ const NAV_ITEMS = [
   { id: 'users', label: 'User Control',  icon: Users },
   { id: 'roles', label: 'Access Roles',  icon: Tag },
   ...(BUSINESS_TYPE === 'log' ? [
-    { id: 'clients', label: 'Client Accounts', icon: Package },
-    { id: 'tiers', label: 'Price Tiers', icon: Tag },
+    // Logins and passwords. Everyday client details are edited on the Clients tab.
+    { id: 'clients', label: 'Client Logins', icon: Package },
   ] : []),
   // Purge Data / Rewire Recipe Links used to sit permanently visible at the
   // bottom of every other section (Client Accounts, Roles, ...) - a
@@ -127,7 +128,7 @@ const NAV_ITEMS = [
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
-function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }) {
+function SidebarNav({ items = NAV_ITEMS, activeSection, onSectionChange, onPOS, onLogout, onClose }) {
   return (
     <>
       <div className="p-5 border-b border-white/5">
@@ -148,7 +149,7 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
       </div>
 
       <nav className="flex-1 p-3 space-y-0.5">
-        {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
+        {items.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             onClick={() => { onSectionChange(id); onClose?.(); }}
@@ -173,7 +174,7 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
         </button>
         <button
           onClick={onLogout}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-danger/80 hover:text-danger hover:bg-red-500/10 transition font-bold text-sm"
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-danger hover:bg-red-500/10 transition font-bold text-sm"
         >
           <LogOut size={16} />
           Lock Panel
@@ -187,26 +188,42 @@ function SidebarNav({ activeSection, onSectionChange, onPOS, onLogout, onClose }
 // Main component
 // ---------------------------------------------------------------------------
 
-const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false, permissions: [], customPerms: false, commissionRate: '' };
+// Who may open this panel, read from the access token.
+//   'super' - the owner: every section.
+//   'staff' - holds "Manage staff & permissions" (users.manage) but is not a
+//             superadmin: User Control only. The server enforces the same line
+//             (lib/authz.js guardStaffEscalation); this keeps the screen from
+//             offering what the server would refuse.
+function panelAccess() {
+  const p = auth.decodeToken();
+  if (!p) return null;
+  if (String(p.role || '').toLowerCase() === 'superadmin') return 'super';
+  return auth.can('users.manage') ? 'staff' : null;
+}
+
+const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false, permissions: [], customPerms: false, commissionRate: '', dailyRate: '', pin: '', employeeNumber: '', sssNumber: '', philhealthNumber: '', pagibigNumber: '', tin: '' };
 
 export default function SuperAdminPanel() {
   const navigate = useNavigate();
 
   // Auth - access token lives in memory; restored via silent refresh on mount.
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [access, setAccess] = useState(null); // 'super' | 'staff'
+  const isDelegate = access === 'staff';
   const [authBootstrapping, setAuthBootstrapping] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     auth.refreshSession(API_URL).then((data) => {
       if (cancelled) return;
-      // This panel is superadmin-only - only authenticate if the role matches.
-      if (data?.user?.role === 'superadmin') setIsAuthenticated(true);
+      const lvl = data ? panelAccess() : null;
+      if (lvl) { setAccess(lvl); setIsAuthenticated(true); }
       setAuthBootstrapping(false);
     });
     return () => { cancelled = true; };
   }, []);
   const [loginForm, setLoginForm]   = useState({ name: '', password: '', showPassword: false });
+  const [loginNeedsCode, setLoginNeedsCode] = useState(false);   // two-step sign-in: password was right, now the code
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
 
@@ -237,6 +254,7 @@ export default function SuperAdminPanel() {
 
   // Navigation / layout
   const [activeSection, setActiveSection] = useState('users');
+  const [clientSearch, setClientSearch] = useState('');
   const [drawerOpen, setDrawerOpen]       = useState(false);
 
   // Toast
@@ -248,20 +266,12 @@ export default function SuperAdminPanel() {
 
   // Client accounts (logistics mode)
   const [clients, setClients]           = useState([]);
+  const clientNeedle = clientSearch.trim().toLowerCase();
+  const shownClients = clientNeedle
+    ? clients.filter(c => [c.name, c.clientCode, c.username].some(v => String(v || '').toLowerCase().includes(clientNeedle)))
+    : clients;
   const [clientsLoading, setClientsLoading] = useState(false);
   const [priceTiers, setPriceTiers]     = useState([]);
-  const [tierImportPreview, setTierImportPreview] = useState(null);
-  const [tierImporting, setTierImporting] = useState(false);
-  const [tierModal, setTierModal]       = useState({ open: false, mode: 'create', tier: null });
-  const [tierForm, setTierForm]         = useState({ name: '', percent: '', pricingMode: 'percent', note: '', isActive: true });
-  const [tierFormError, setTierFormError]     = useState('');
-  const [tierFormLoading, setTierFormLoading] = useState(false);
-  const [tierView, setTierView] = useState('list'); // 'list' | 'table' - the pricing table across every tier
-  const [pricingTable, setPricingTable] = useState({ products: [], tiers: [] });
-  const [pricingTableLoading, setPricingTableLoading] = useState(false);
-  const [productPriceModal, setProductPriceModal] = useState({ open: false, tier: null });
-  const [productPriceRows, setProductPriceRows] = useState({}); // { [productId]: string }
-  const [productPriceSaving, setProductPriceSaving] = useState(false);
   const [clientModal, setClientModal]   = useState({ open: false, mode: 'create', client: null });
   // Reset-password flow: confirm your OWN password first, then a freshly-
   // generated client password is shown exactly once (it can't be shown again
@@ -308,7 +318,10 @@ export default function SuperAdminPanel() {
 
   const apiFetch = useCallback(async (endpoint, options = {}) => {
     const res = await auth.apiFetch(API_URL, endpoint, options);
-    if ((res.status === 401 || res.status === 403) && endpoint !== '/api/users/login') handleLogout();
+    // Only an expired/invalid session logs out. A 403 is the server refusing
+    // one action (a delegate granting something they do not hold) - the
+    // caller shows its reason; throwing the user out would lose their work.
+    if (res.status === 401 && endpoint !== '/api/users/login') handleLogout();
     return res;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -363,16 +376,23 @@ export default function SuperAdminPanel() {
     try {
       const res = await apiFetch('/api/users/login', {
         method: 'POST',
-        body: JSON.stringify({ name: loginForm.name, password: loginForm.password }),
+        body: JSON.stringify({ name: loginForm.name, password: loginForm.password, ...(loginForm.code ? { code: loginForm.code } : {}) }),
       });
       const data = await res.json();
+      if (!data.success && data.needsCode) {
+        setLoginNeedsCode(true);
+        setLoginError(data.message || 'Enter the 6-digit code from your authenticator app.');
+        return;
+      }
       if (data.success) {
-        const payload = JSON.parse(atob(data.token.split('.')[1]));
-        if (payload.role !== 'superadmin') {
-          setLoginError('Access Denied: Superadmin credentials required.');
+        auth.setToken(data.token);
+        const lvl = panelAccess();
+        if (!lvl) {
+          auth.clearToken();
+          setLoginError('Access denied: this needs a superadmin, or the "Manage staff & permissions" permission.');
           return;
         }
-        auth.setToken(data.token);
+        setAccess(lvl);
         setIsAuthenticated(true);
       } else {
         // Surface the server's reason (e.g. rate-limit lockout) rather than
@@ -389,6 +409,8 @@ export default function SuperAdminPanel() {
     auth.logout(API_URL); // revoke refresh session + clear cookie
     auth.clearToken();
     setIsAuthenticated(false);
+    setAccess(null);
+    setActiveSection('users');
     setLoginForm({ name: '', password: '', showPassword: false });
     setUsers([]);
     setSelected(new Set());
@@ -423,7 +445,16 @@ export default function SuperAdminPanel() {
 
   const openEditModal = useCallback((user) => {
     const perms = Array.isArray(user.permissions) ? user.permissions : [];
-    setForm({ name: user.name, password: '', role: user.role, showPassword: false, permissions: perms, customPerms: perms.length > 0, commissionRate: user.commissionRate ?? '' });
+    setForm({
+      name: user.name, password: '', role: user.role, showPassword: false,
+      permissions: perms, customPerms: perms.length > 0, commissionRate: user.commissionRate ?? '', dailyRate: user.dailyRate || '',
+      // Never prefilled: the PIN is hashed and cannot be read back. Empty means
+      // "leave it as it is"; typing one replaces it.
+      pin: '', hasPin: !!user.hasPin || !!user.pinHash,
+      employeeNumber: user.employeeNumber || '', sssNumber: user.sssNumber || '',
+      philhealthNumber: user.philhealthNumber || '', pagibigNumber: user.pagibigNumber || '',
+      tin: user.tin || '',
+    });
     setFormErrors({});
     setModal({ open: true, mode: 'edit', user });
   }, []);
@@ -443,19 +474,43 @@ export default function SuperAdminPanel() {
   }, [validateForm, modal.mode, modal.user]);
 
   // Toggle a single permission in the custom override set.
+  // Pages ride on their tab's permission - see shared/permissions.js.
   const togglePerm = useCallback((key) => {
-    setForm(prev => {
-      const has = prev.permissions.includes(key);
-      return { ...prev, permissions: has ? prev.permissions.filter(k => k !== key) : [...prev.permissions, key] };
-    });
-  }, []);
+    setForm(prev => ({ ...prev, permissions: togglePermission(prev.permissions, key, permCatalog) }));
+  }, [permCatalog]);
 
   // Permission catalogue grouped by domain, for the editor. [ [group, [perm,...]], ... ]
   const groupedPerms = useMemo(() => {
     const by = {};
-    for (const p of permCatalog) { (by[p.group] = by[p.group] || []).push(p); }
+    const mine = isDelegate ? new Set(auth.getPermissions()) : null;
+    for (const p of permCatalog) {
+      if (mine && !mine.has(p.key)) continue;
+      (by[p.group] = by[p.group] || []).push(p);
+    }
     return Object.entries(by);
   }, [permCatalog]);
+  const permLabel = useMemo(() => Object.fromEntries(permCatalog.map(p => [p.key, p.label])), [permCatalog]);
+  // One checkbox, for either editor. A page shows what it actually grants -
+  // every page of an open tab with none named is ticked - and is greyed out
+  // while its tab is closed, or when it is the only page left open.
+  const renderPermBox = (p, list, onToggle) => {
+    const eff = effectivePermissions(list, permCatalog);
+    const locked = p.parent ? pageLocked(list, p.key, permCatalog) : false;
+    const why = p.parent && !list.includes(p.parent)
+      ? `Needs "${permLabel[p.parent] || p.parent}" first`
+      : locked ? 'The last open page of this tab - remove the tab permission to close it' : undefined;
+    return (
+      <label key={p.key} title={why}
+        className={`flex items-center gap-2 text-[13px] transition ${locked ? 'text-fg/80 cursor-not-allowed' : 'text-fg/80 cursor-pointer hover:text-fg'}`}>
+        <input type="checkbox" checked={eff.has(p.key)} disabled={locked} onChange={() => onToggle(p.key)} className="accent-brand shrink-0" />
+        <span className="leading-tight">{p.label}</span>
+      </label>
+    );
+  };
+  const groupHint = (perms) => {
+    const parent = perms.find(p => p.parent)?.parent;
+    return parent ? ` · needs ${permLabel[parent] || parent}` : '';
+  };
 
   const handleSubmitModal = async (e) => {
     e.preventDefault();
@@ -480,6 +535,15 @@ export default function SuperAdminPanel() {
         const body = { name: form.name.trim(), role: form.role, permissions: permsPayload };
         if (form.password) body.password = form.password;
         if (form.commissionRate !== '') body.commissionRate = form.commissionRate;
+        body.dailyRate = Number(form.dailyRate) || 0;
+        // Payroll copies these onto each run, so they are worth having on file
+        // before the first payslip rather than after the first filing.
+        for (const key of ['employeeNumber', 'sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin']) {
+          body[key] = form[key] || '';
+        }
+        // Only sent when something was typed, so saving the form for another
+        // reason never wipes an existing PIN.
+        if (form.pin !== '') body.pin = form.pin;
         const res = await apiFetch(`/api/users/${modal.user._id}`, {
           method: 'PATCH',
           body: JSON.stringify(body),
@@ -504,7 +568,10 @@ export default function SuperAdminPanel() {
         setSelected(s => { const n = new Set(s); n.delete(confirmDelete.user._id); return n; });
         setConfirmDelete({ open: false, user: null });
         fetchUsers();
-      } else { showToast('Failed to remove user.', 'error'); }
+      } else {
+        const d = await res.json().catch(() => ({}));
+        showToast(d.error || 'Failed to remove user.', 'error');
+      }
     } finally { setDeleteLoading(false); }
   };
 
@@ -521,14 +588,28 @@ export default function SuperAdminPanel() {
     );
   }, [selected, selectableUsers]);
 
+  // Batch results are counted, not assumed. These used to report "updated N
+  // user(s)" without looking at a single response, so an account the server
+  // refused was reported as changed.
+  const summarizeBatch = async (responses, verb) => {
+    let ok = 0; let reason = '';
+    for (const res of responses) {
+      if (res.ok) { ok++; continue; }
+      if (!reason) reason = (await res.json().catch(() => ({}))).error || '';
+    }
+    const refused = responses.length - ok;
+    if (!refused) showToast(`${verb} ${ok} user(s).`);
+    else showToast(`${verb} ${ok} of ${responses.length}. ${refused} refused${reason ? `: ${reason}` : '.'}`, 'error');
+  };
+
   const handleBatchChangeRole = async () => {
     if (!batchRole || !selected.size) return;
     setBatchLoading(true);
     try {
-      await Promise.all([...selected].map(id =>
+      const results = await Promise.all([...selected].map(id =>
         apiFetch(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify({ role: batchRole }) })
       ));
-      showToast(`Role updated for ${selected.size} user(s).`);
+      await summarizeBatch(results, 'Role updated for');
       setSelected(new Set()); setBatchRole(''); fetchUsers();
     } catch { showToast('Failed to update roles.', 'error'); }
     finally { setBatchLoading(false); }
@@ -538,8 +619,8 @@ export default function SuperAdminPanel() {
     if (!selected.size) return;
     setBatchLoading(true);
     try {
-      await Promise.all([...selected].map(id => apiFetch(`/api/users/${id}`, { method: 'DELETE' })));
-      showToast(`${selected.size} user(s) removed.`);
+      const results = await Promise.all([...selected].map(id => apiFetch(`/api/users/${id}`, { method: 'DELETE' })));
+      await summarizeBatch(results, 'Removed');
       setSelected(new Set()); fetchUsers();
     } catch { showToast('Failed to remove users.', 'error'); }
     finally { setBatchLoading(false); }
@@ -624,7 +705,7 @@ export default function SuperAdminPanel() {
   const editRole = (r) => setRoleForm({ id: r._id, name: r.name, permissions: Array.isArray(r.permissions) ? r.permissions : [] });
   const toggleRolePerm = (key) => setRoleForm(prev => ({
     ...prev,
-    permissions: prev.permissions.includes(key) ? prev.permissions.filter(k => k !== key) : [...prev.permissions, key],
+    permissions: togglePermission(prev.permissions, key, permCatalog),
   }));
 
   const handleSaveRole = async (e) => {
@@ -681,260 +762,8 @@ export default function SuperAdminPanel() {
     if (isAuthenticated) fetchPriceTiers();
   }, [isAuthenticated, fetchPriceTiers]);
 
-  // ── PRICE TIER EXCEL EXPORT/IMPORT ────────────────────────────────────────
-  // Same shape and rules as Pricing Control's copy of this flow (see
-  // exportPriceTiersExcel/parsePriceTierExcel/submitPriceTierImport in
-  // AdminDashboard.jsx): Code | Product | List Price | one column per tier,
-  // prefilled with its current rate (blank = no rate set, never 0 - so
-  // re-importing an untouched cell can't zero a price out). A column merges
-  // onto the tier's EXISTING prices rather than replacing them wholesale, and
-  // a percent-mode tier receiving explicit prices switches to per_product
-  // first - otherwise resolveTierPrice ignores them entirely.
-  const exportTierPricingExcel = async () => {
-    // No tiers yet is fine - the sheet just comes back as Code/Product/List
-    // Price with no tier columns. Add a column yourself, name it after the
-    // tier you want (new or existing), fill in prices, and importing it
-    // creates that tier - see parseTierPricingExcel/submitTierPricingImport.
-    if (!pricingTable.products || pricingTable.products.length === 0) {
-      return showToast('No products to export yet.', 'error');
-    }
-    const XLSX = await import('xlsx');
-    const headers = ['Code', 'Product', 'List Price', ...pricingTable.tiers.map(t => t.name)];
-    // Sorted by code so the sheet reads in the same order as the item numbering
-    // scheme (P10001, P10002, ...) instead of whatever order Mongo happened to
-    // return - makes a long catalogue actually scannable, and a re-export after
-    // editing prices lines up the same way every time. Blank codes (no code
-    // assigned) sink to the bottom rather than sorting first.
-    const sortedProducts = [...(pricingTable.products || [])].sort((a, b) => {
-      const ca = a.productCode || '', cb = b.productCode || '';
-      if (!ca && !cb) return a.name.localeCompare(b.name);
-      if (!ca) return 1;
-      if (!cb) return -1;
-      return ca.localeCompare(cb, undefined, { numeric: true, sensitivity: 'base' });
-    });
-    const rows = sortedProducts.map(p => [
-      p.productCode || '',
-      p.name,
-      Number(p.basePrice || 0),
-      ...pricingTable.tiers.map(t => {
-        const v = t.prices?.[String(p._id)];
-        return (v === null || v === undefined) ? '' : Number(v);
-      }),
-    ]);
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-    ws['!cols'] = headers.map(h => ({ wch: Math.max(10, Math.min(24, h.length + 4)) }));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Price Tiers');
-    XLSX.writeFile(wb, `price-tiers-${new Date().toISOString().slice(0, 10)}.xlsx`);
-  };
-
-  const parseTierPricingExcel = async (file) => {
-    if (!file) return;
-    try {
-      const XLSX = await import('xlsx');
-      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-      if (!grid.length) return showToast('That file has no rows.', 'error');
-
-      const header = grid[0].map(h => String(h ?? '').trim());
-      const norm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      const codeCol = header.findIndex(h => norm(h) === 'code');
-      const nameCol = header.findIndex(h => norm(h).includes('product'));
-      if (codeCol === -1 && nameCol === -1) {
-        return showToast('Could not find a "Code" or "Product" column - use the downloaded template.', 'error');
-      }
-      const tierCols = header
-        .map((h, i) => ({ h, i }))
-        .filter(({ h, i }) => i !== codeCol && i !== nameCol && norm(h) !== 'listprice' && h.trim());
-
-      const byCode = new Map((pricingTable.products || []).filter(p => p.productCode).map(p => [norm(p.productCode), p]));
-      const byName = new Map((pricingTable.products || []).map(p => [norm(p.name), p]));
-
-      const tierResults = tierCols.map(({ h }) => ({ name: h.trim(), rows: [] }));
-      const unmatchedCodes = [];
-
-      for (let r = 1; r < grid.length; r++) {
-        const row = grid[r];
-        if (!row || row.every(c => c === '' || c === null || c === undefined)) continue;
-        const code = codeCol >= 0 ? String(row[codeCol] ?? '').trim() : '';
-        const name = nameCol >= 0 ? String(row[nameCol] ?? '').trim() : '';
-        const product = (code && byCode.get(norm(code))) || (name && byName.get(norm(name)));
-        if (!product) { if (code || name) unmatchedCodes.push(code || name); continue; }
-
-        tierCols.forEach(({ i }, ti) => {
-          const raw = row[i];
-          if (raw === '' || raw === null || raw === undefined) return;
-          const price = Number(raw);
-          if (!Number.isFinite(price) || price < 0) return;
-          tierResults[ti].rows.push({ productId: product._id, name: product.name, price });
-        });
-      }
-
-      const withMatch = tierResults
-        .filter(t => t.rows.length > 0)
-        .map(t => {
-          const existing = (priceTiers || []).find(pt => pt.name.trim().toLowerCase() === t.name.toLowerCase());
-          return { ...t, tierId: existing?._id || null, wasPercent: existing?.pricingMode !== 'per_product' };
-        });
-
-      if (withMatch.length === 0) return showToast('No prices to import - every tier column was left blank.', 'error');
-      setTierImportPreview({ tiers: withMatch, unmatchedCodes: [...new Set(unmatchedCodes)] });
-    } catch (err) {
-      console.error('parseTierPricingExcel', err);
-      showToast('Could not read that file. Use the downloaded template as a starting point.', 'error');
-    }
-  };
-
-  const submitTierPricingImport = async () => {
-    if (!tierImportPreview || tierImporting) return;
-    setTierImporting(true);
-    let okCount = 0, failCount = 0;
-    try {
-      for (const t of tierImportPreview.tiers) {
-        let tierId = t.tierId;
-        try {
-          if (!tierId) {
-            const created = await apiFetch('/api/price-tiers', {
-              method: 'POST',
-              body: JSON.stringify({ name: t.name, pricingMode: 'per_product', percent: 0 }),
-            });
-            const cd = await created.json();
-            if (!cd.success) { failCount++; continue; }
-            tierId = cd.tier._id;
-          } else if (t.wasPercent) {
-            await apiFetch(`/api/price-tiers/${tierId}`, { method: 'PUT', body: JSON.stringify({ pricingMode: 'per_product' }) });
-          }
-
-          const existingRow = pricingTable.tiers.find(pt => pt._id === tierId);
-          const merged = new Map(
-            existingRow && !t.wasPercent
-              ? Object.entries(existingRow.prices || {}).filter(([, v]) => v !== null && v !== undefined)
-              : []
-          );
-          for (const row of t.rows) merged.set(String(row.productId), row.price);
-          const prices = [...merged.entries()].map(([productId, price]) => ({ productId, price }));
-
-          const res = await apiFetch(`/api/price-tiers/${tierId}/products`, { method: 'PUT', body: JSON.stringify({ prices }) });
-          const data = await res.json();
-          if (data.success) okCount++; else failCount++;
-        } catch { failCount++; }
-      }
-      setTierImportPreview(null);
-      fetchPriceTiers(); fetchPricingTable();
-      showToast(failCount > 0 ? `Imported ${okCount} tier(s), ${failCount} failed.` : `Imported ${okCount} tier(s) of prices.`, failCount > 0 ? 'error' : 'success');
-    } finally {
-      setTierImporting(false);
-    }
-  };
-
-  const openTierCreate = () => {
-    setTierForm({ name: '', percent: '', pricingMode: 'percent', note: '', isActive: true });
-    setTierFormError('');
-    setTierModal({ open: true, mode: 'create', tier: null });
-  };
-
-  const openTierEdit = (tier) => {
-    setTierForm({ name: tier.name, percent: String(tier.percent ?? 0), pricingMode: tier.pricingMode === 'per_product' ? 'per_product' : 'percent', note: tier.note || '', isActive: tier.isActive !== false });
-    setTierFormError('');
-    setTierModal({ open: true, mode: 'edit', tier });
-  };
-
-  const closeTierModal = () => setTierModal({ open: false, mode: 'create', tier: null });
-
-  const handleTierSubmit = async (e) => {
-    e.preventDefault();
-    setTierFormError('');
-    if (!tierForm.name.trim()) { setTierFormError('Tier name is required.'); return; }
-    setTierFormLoading(true);
-    const body = {
-      name: tierForm.name.trim(),
-      percent: Math.max(0, Math.min(100, parseFloat(tierForm.percent) || 0)),
-      pricingMode: tierForm.pricingMode,
-      note: tierForm.note.trim(),
-      isActive: tierForm.isActive,
-    };
-    try {
-      const isCreate = tierModal.mode === 'create';
-      const res = await apiFetch(
-        isCreate ? '/api/price-tiers' : `/api/price-tiers/${tierModal.tier._id}`,
-        { method: isCreate ? 'POST' : 'PUT', body: JSON.stringify(body) },
-      );
-      const data = await res.json();
-      if (data.success) {
-        // A rename cascades onto every tagged client, so refresh both lists.
-        showToast(data.retagged ? `Tier saved. ${data.retagged} client${data.retagged === 1 ? '' : 's'} re-tagged.` : 'Tier saved.');
-        closeTierModal(); fetchPriceTiers(); fetchClients(); fetchPricingTable();
-        // Per-product tiers need a price for every product - walk straight into
-        // that screen instead of leaving a freshly-created tier with no rates.
-        if (data.tier.pricingMode === 'per_product') openProductPricing(data.tier);
-      } else setTierFormError(data.error || 'Failed to save tier.');
-    } catch { setTierFormError('Network error.'); }
-    finally { setTierFormLoading(false); }
-  };
-
-  // -------------------------------------------------------------------------
-  // Pricing table + per-product tier price list
-  const fetchPricingTable = useCallback(async () => {
-    if (BUSINESS_TYPE !== 'log') return;
-    setPricingTableLoading(true);
-    try {
-      const res = await apiFetch('/api/price-tiers/pricing-table');
-      if (res.ok) setPricingTable(await res.json());
-    } catch { /* non-fatal */ } finally { setPricingTableLoading(false); }
-  }, [apiFetch]);
-
-  useEffect(() => {
-    if (isAuthenticated) fetchPricingTable();
-  }, [isAuthenticated, fetchPricingTable]);
-
-  const openProductPricing = (tier) => {
-    // Pre-fill from the pricing table's already-resolved prices for this tier -
-    // for a per_product tier a resolved value IS the stored row; a product with
-    // no row resolves to null and starts blank (this tier grants nothing for it
-    // until a price is typed in).
-    const row = pricingTable.tiers.find(t => t._id === tier._id);
-    const rows = {};
-    for (const p of pricingTable.products) {
-      const v = row?.prices?.[p._id];
-      rows[p._id] = v === null || v === undefined ? '' : String(v);
-    }
-    setProductPriceRows(rows);
-    setProductPriceModal({ open: true, tier });
-  };
-
-  const closeProductPricing = () => setProductPriceModal({ open: false, tier: null });
-
-  const handleProductPricingSubmit = async () => {
-    setProductPriceSaving(true);
-    const prices = Object.entries(productPriceRows)
-      .filter(([, v]) => v !== '' && v !== null && !Number.isNaN(parseFloat(v)))
-      .map(([productId, v]) => ({ productId, price: Math.max(0, parseFloat(v)) }));
-    try {
-      const res = await apiFetch(`/api/price-tiers/${productPriceModal.tier._id}/products`, { method: 'PUT', body: JSON.stringify({ prices }) });
-      const data = await res.json();
-      if (data.success) {
-        showToast(`Prices saved for ${prices.length} of ${pricingTable.products.length} products.`);
-        closeProductPricing(); fetchPricingTable(); fetchPriceTiers();
-      } else showToast(data.error || 'Failed to save prices.', 'error');
-    } catch { showToast('Network error.', 'error'); }
-    finally { setProductPriceSaving(false); }
-  };
-
-  const handleTierDelete = async (tier) => {
-    if (!confirm(`Remove price tier "${tier.name}"?`)) return;
-    try {
-      const res = await apiFetch(`/api/price-tiers/${tier._id}`, { method: 'DELETE' });
-      const data = await res.json();
-      // The server refuses while clients still carry the tag - surface that
-      // reason rather than a generic failure, it tells you what to do next.
-      if (data.success) { showToast('Tier removed.'); fetchPriceTiers(); }
-      else showToast(data.error || 'Failed to remove tier.', 'error');
-    } catch { showToast('Failed to remove tier.', 'error'); }
-  };
-
   const openClientCreate = () => {
-    setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '', creditTermsDays: '', segments: '', requiresQuote: false });
+    setClientForm({ username: '', password: '', name: '', paymentMethod: 'Cash', isActive: true, showPassword: false, creditLimit: '', creditTermsDays: '', segments: '', requiresQuote: false, isVatRegistered: false, tin: '', registeredName: '', registeredAddress: '', assignedSalesperson: '' });
     setClientFormError('');
     setClientModal({ open: true, mode: 'create', client: null });
   };
@@ -942,7 +771,7 @@ export default function SuperAdminPanel() {
   const openClientEdit = (client) => {
     // null/undefined means "no limit set"; 0 is a real value (cash only), so it
     // must render as "0" rather than collapsing to an empty field.
-    setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false, creditLimit: client.creditLimit === null || client.creditLimit === undefined ? '' : String(client.creditLimit), creditTermsDays: client.creditTermsDays === null || client.creditTermsDays === undefined ? '' : String(client.creditTermsDays), segments: (client.segments || []).join(', '), requiresQuote: client.requiresQuote === true });
+    setClientForm({ username: client.username, password: '', name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, showPassword: false, creditLimit: client.creditLimit === null || client.creditLimit === undefined ? '' : String(client.creditLimit), creditTermsDays: client.creditTermsDays === null || client.creditTermsDays === undefined ? '' : String(client.creditTermsDays), segments: (client.segments || []).join(', '), requiresQuote: client.requiresQuote === true, isVatRegistered: client.isVatRegistered === true, tin: client.tin || '', registeredName: client.registeredName || '', registeredAddress: client.registeredAddress || '', assignedSalesperson: client.assignedSalesperson || '' });
     setClientFormError('');
     setClientModal({ open: true, mode: 'edit', client });
     fetchClientPricing(client._id);
@@ -988,7 +817,11 @@ export default function SuperAdminPanel() {
       setClientModal(m => ({ ...m, client: { ...m.client, creditBalance: d.client.creditBalance } }));
       setClientCreditRefundForm(null);
       fetchClients();
-      showToast(`Refunded ₱${amt.toFixed(2)} via Check Voucher ${d.voucher.voucherNumber}.`);
+      // The voucher is issued alongside the refund but is not the refund: if
+      // writing it failed, the money still moved and the message must not throw.
+      showToast(d.voucher
+        ? `Refunded ₱${amt.toFixed(2)} via Check Voucher ${d.voucher.voucherNumber}.`
+        : `Refunded ₱${amt.toFixed(2)}.`);
     } catch { showToast('Network error.', 'error'); }
     finally { setClientCreditBusy(false); }
   };
@@ -1008,13 +841,13 @@ export default function SuperAdminPanel() {
       if (clientModal.mode === 'create') {
         const res = await apiFetch('/api/client-accounts', {
           method: 'POST',
-          body: JSON.stringify({ username: clientForm.username.trim(), password: clientForm.password, name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments, requiresQuote: !!clientForm.requiresQuote }),
+          body: JSON.stringify({ username: clientForm.username.trim(), password: clientForm.password, name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments, requiresQuote: !!clientForm.requiresQuote, isVatRegistered: !!clientForm.isVatRegistered, tin: clientForm.tin.trim(), registeredName: clientForm.registeredName.trim(), registeredAddress: clientForm.registeredAddress.trim() }),
         });
         const data = await res.json();
         if (data.success) { showToast('Client account created.'); closeClientModal(); fetchClients(); }
         else setClientFormError(data.error || 'Failed to create client.');
       } else {
-        const body = { name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, isActive: clientForm.isActive, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments, requiresQuote: !!clientForm.requiresQuote };
+        const body = { assignedSalesperson: clientForm.assignedSalesperson || '', name: clientForm.name.trim(), paymentMethod: clientForm.paymentMethod, isActive: clientForm.isActive, creditLimit: clientForm.creditLimit, creditTermsDays: clientForm.creditTermsDays, segments, requiresQuote: !!clientForm.requiresQuote, isVatRegistered: !!clientForm.isVatRegistered, tin: clientForm.tin.trim(), registeredName: clientForm.registeredName.trim(), registeredAddress: clientForm.registeredAddress.trim() };
         if (clientForm.username.trim()) body.username = clientForm.username.trim();
         if (clientForm.password) body.password = clientForm.password;
         const res = await apiFetch(`/api/client-accounts/${clientModal.client._id}`, { method: 'PATCH', body: JSON.stringify(body) });
@@ -1029,7 +862,8 @@ export default function SuperAdminPanel() {
   const handleClientDelete = async (client) => {
     if (!confirm(`Remove client account "${client.name}"?`)) return;
     try {
-      await apiFetch(`/api/client-accounts/${client._id}`, { method: 'DELETE' });
+      const d = await (await apiFetch(`/api/client-accounts/${client._id}`, { method: 'DELETE' })).json();
+      if (!d.success) { showToast(d.error || 'Could not remove that client.', 'error'); return; }
       showToast(`${client.name} removed.`); fetchClients();
     } catch { showToast('Failed to remove client.', 'error'); }
   };
@@ -1083,7 +917,7 @@ export default function SuperAdminPanel() {
   // =========================================================================
   if (authBootstrapping) {
     return (
-      <div className="min-h-screen bg-page-bg flex items-center justify-center text-fg/60 text-sm">
+      <div className="min-h-screen bg-page-bg flex items-center justify-center text-fg/65 text-sm">
         Restoring session…
       </div>
     );
@@ -1115,7 +949,7 @@ export default function SuperAdminPanel() {
               aria-label="Admin Name"
               value={loginForm.name}
               onChange={e => setLoginForm(f => ({ ...f, name: e.target.value }))}
-              className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/30 px-4 py-3 rounded-xl outline-none transition text-sm font-medium"
+              className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm font-medium"
               required
               autoFocus
             />
@@ -1126,7 +960,7 @@ export default function SuperAdminPanel() {
                 aria-label="Password"
                 value={loginForm.password}
                 onChange={e => setLoginForm(f => ({ ...f, password: e.target.value }))}
-                className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/30 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
+                className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
                 required
               />
               <button
@@ -1138,12 +972,21 @@ export default function SuperAdminPanel() {
                 {loginForm.showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
+            {loginNeedsCode && (
+              <input
+                type="text" inputMode="numeric" autoComplete="one-time-code" autoFocus
+                aria-label="Sign-in code" placeholder="6-digit code, or a backup code"
+                value={loginForm.code || ''}
+                onChange={e => setLoginForm(f => ({ ...f, code: e.target.value }))}
+                className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm tracking-widest"
+              />
+            )}
           </div>
 
           <button
             type="submit"
             disabled={loginLoading}
-            className="w-full bg-brand hover:bg-brand-dark text-fg font-black py-3 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
+            className="w-full bg-brand hover:bg-brand-dark text-on-brand font-black py-3 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest text-sm flex items-center justify-center gap-2 disabled:opacity-60"
           >
             {loginLoading ? <Loader2 size={15} className="animate-spin" /> : <Lock size={15} />}
             {loginLoading ? 'Authenticating…' : 'Authenticate'}
@@ -1152,7 +995,7 @@ export default function SuperAdminPanel() {
           <button
             type="button"
             onClick={() => navigate('/admin')}
-            className="w-full text-fg/65 hover:text-fg/60 text-xs font-bold uppercase tracking-widest transition mt-4"
+            className="w-full text-fg/65 text-xs font-bold uppercase tracking-widest transition mt-4"
           >
             Return to POS
           </button>
@@ -1172,7 +1015,7 @@ export default function SuperAdminPanel() {
         ${toast.show ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'}`}>
         <div className={`flex items-center gap-3 px-5 py-3 rounded-xl shadow-2xl border text-sm font-bold
           ${toast.type === 'success'
-            ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400'
+            ? 'bg-emerald-500/20 border-emerald-500/30 text-success'
             : 'bg-red-500/20 border-red-500/30 text-danger'}`}>
           {toast.type === 'success' ? <UserCheck size={14} /> : <AlertCircle size={14} />}
           {toast.message}
@@ -1191,6 +1034,7 @@ export default function SuperAdminPanel() {
       <aside className={`lg:hidden fixed top-0 left-0 h-full w-64 bg-sidebar-bg z-50 flex flex-col border-r border-white/5
         transition-transform duration-300 ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <SidebarNav
+          items={isDelegate ? NAV_ITEMS.filter(n => n.id === 'users') : NAV_ITEMS}
           activeSection={activeSection}
           onSectionChange={setActiveSection}
           onPOS={() => navigate('/admin')}
@@ -1202,6 +1046,7 @@ export default function SuperAdminPanel() {
       {/* Desktop sidebar */}
       <aside className="hidden lg:flex flex-col w-64 flex-shrink-0 bg-sidebar-bg border-r border-white/5 h-screen sticky top-0 overflow-y-auto">
         <SidebarNav
+          items={isDelegate ? NAV_ITEMS.filter(n => n.id === 'users') : NAV_ITEMS}
           activeSection={activeSection}
           onSectionChange={setActiveSection}
           onPOS={() => navigate('/admin')}
@@ -1250,37 +1095,11 @@ export default function SuperAdminPanel() {
           {activeSection === 'clients' && (
             <button
               onClick={openClientCreate}
-              className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-fg font-bold px-4 py-2.5 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex-shrink-0"
+              className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-on-brand font-bold px-4 py-2.5 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex-shrink-0"
             >
               <Plus size={15} />
               New Client
             </button>
-          )}
-          {activeSection === 'tiers' && (
-            <div className="flex items-center gap-2 flex-shrink-0">
-              {/* Bulk pricing round-trip: download Code/Product/one-column-per-tier
-                  prefilled with current rates, edit offline, import it back. */}
-              <button
-                onClick={exportTierPricingExcel}
-                className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold px-3.5 py-2.5 rounded-xl transition text-sm"
-              >
-                <Download size={14} />
-                Download Excel
-              </button>
-              <label className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold px-3.5 py-2.5 rounded-xl transition text-sm cursor-pointer">
-                <Upload size={14} />
-                Import Excel
-                <input type="file" accept=".xlsx,.xls" className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) parseTierPricingExcel(f); e.target.value = ''; }} />
-              </label>
-              <button
-                onClick={openTierCreate}
-                className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-fg font-bold px-4 py-2.5 rounded-xl transition shadow-lg shadow-brand/20 text-sm"
-              >
-                <Plus size={15} />
-                New Tier
-              </button>
-            </div>
           )}
         </div>
 
@@ -1299,7 +1118,7 @@ export default function SuperAdminPanel() {
                   placeholder="Search name, code, or role…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/30
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70
                     pl-10 pr-4 py-2.5 rounded-xl outline-none transition text-sm"
                 />
               </div>
@@ -1372,149 +1191,15 @@ export default function SuperAdminPanel() {
         )}
 
         {/* ----------------------------------------------------------------- */}
-        {/* PRICE TIERS SECTION (logistics mode only)                         */}
-        {/* ----------------------------------------------------------------- */}
-        {activeSection === 'tiers' && (
-          <div className="flex-1 p-6 space-y-3">
-            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-              <p className="text-[11px] text-fg/75 leading-relaxed">
-                A tier is a class of customer &mdash; <span className="text-fg/80 font-bold">Dealer</span>, <span className="text-fg/80 font-bold">Satellite</span>, <span className="text-fg/80 font-bold">Wholesale</span>.
-                Give it either a flat <span className="text-fg/80 font-bold">Default %</span> off every product, or a full <span className="text-fg/80 font-bold">Price List</span> with an
-                exact price per product. Assign a client to a tier in <span className="text-fg/80 font-bold">Client Accounts</span>.
-              </p>
-              <p className="text-[11px] text-fg/70 leading-relaxed mt-2">
-                Need one product priced differently for a <em>Default %</em> tier? Add a <span className="text-fg/60 font-bold">Segment Override</span> on that product
-                (Products tab). A per-client override beats everything.
-              </p>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div className="flex bg-white/5 p-1 rounded-xl">
-                <button
-                  onClick={() => setTierView('list')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${tierView === 'list' ? 'bg-brand text-on-brand' : 'text-fg/75 hover:text-fg'}`}
-                >Tiers</button>
-                <button
-                  onClick={() => setTierView('table')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${tierView === 'table' ? 'bg-brand text-on-brand' : 'text-fg/75 hover:text-fg'}`}
-                >Pricing Table</button>
-              </div>
-            </div>
-
-            {tierView === 'list' ? (
-              priceTiers.length === 0 ? (
-                <div className="flex flex-col items-center py-20 text-center">
-                  <Tag size={40} className="text-fg/10 mb-4" />
-                  <p className="text-fg/70 font-bold text-sm">No price tiers yet.</p>
-                  <button
-                    onClick={openTierCreate}
-                    className="mt-4 flex items-center gap-2 bg-brand/20 hover:bg-brand/30 text-brand-text font-bold px-4 py-2 rounded-xl transition text-sm"
-                  >
-                    <Plus size={14} /> Add First Tier
-                  </button>
-                </div>
-              ) : priceTiers.map(tier => {
-                const assigned = clients.filter(c => (c.segments || []).some(s => s.toLowerCase() === tier.name.toLowerCase())).length;
-                const isPerProduct = tier.pricingMode === 'per_product';
-                const priced = isPerProduct ? (pricingTable.tiers.find(t => t._id === tier._id)?.prices
-                  ? Object.values(pricingTable.tiers.find(t => t._id === tier._id).prices).filter(v => v !== null).length : 0) : null;
-                return (
-                  <div key={tier._id} className="flex items-center gap-4 p-4 rounded-xl border bg-white/5 border-white/5 hover:border-white/15 transition-all">
-                    <div className="w-11 h-11 rounded-xl bg-brand/15 border border-brand/25 flex items-center justify-center flex-shrink-0">
-                      {isPerProduct
-                        ? <Tag size={16} className="text-brand-text" />
-                        : <span className="text-brand-text font-black text-sm tabular-nums">{tier.percent}%</span>}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="font-bold text-fg text-sm truncate">{tier.name}</p>
-                        {tier.isActive === false && (
-                          <span className="text-[9px] font-black uppercase tracking-wider bg-white/10 text-fg/70 px-1.5 py-0.5 rounded">Inactive</span>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-fg/70 truncate">
-                        {assigned} client{assigned === 1 ? '' : 's'}
-                        {isPerProduct
-                          ? ` · price list · ${priced}/${pricingTable.products.length} products priced`
-                          : ''}
-                        {tier.note ? ` · ${tier.note}` : ''}
-                      </p>
-                    </div>
-                    {isPerProduct && (
-                      <button
-                        onClick={() => openProductPricing(tier)}
-                        className="text-[11px] font-bold text-brand-text hover:text-fg transition px-3 py-2 flex-shrink-0"
-                      >Set Prices</button>
-                    )}
-                    <button
-                      onClick={() => openTierEdit(tier)}
-                      className="text-[11px] font-bold text-fg/75 hover:text-brand-text transition px-3 py-2 flex-shrink-0"
-                    >Edit</button>
-                    <button
-                      onClick={() => handleTierDelete(tier)}
-                      className="text-[11px] font-bold text-red-400/70 hover:text-danger transition px-3 py-2 flex-shrink-0"
-                    >Remove</button>
-                  </div>
-                );
-              })
-            ) : (
-              // ── PRICING TABLE: every product x every tier's resolved price ──
-              pricingTableLoading ? (
-                <div className="flex justify-center py-20"><Loader2 size={24} className="animate-spin text-fg/65" /></div>
-              ) : pricingTable.products.length === 0 ? (
-                <p className="text-fg/70 text-sm text-center py-20">No products yet - add some in the Products tab.</p>
-              ) : pricingTable.tiers.length === 0 ? (
-                <p className="text-fg/70 text-sm text-center py-20">No price tiers yet - create one to see prices here.</p>
-              ) : (
-                <div className="overflow-x-auto rounded-xl border border-white/10">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-white/5 border-b border-white/10">
-                        <th className="text-left px-4 py-3 font-black text-[10px] uppercase tracking-widest text-fg/70 sticky left-0 bg-sidebar-bg">Product</th>
-                        <th className="text-right px-4 py-3 font-black text-[10px] uppercase tracking-widest text-fg/70">List Price</th>
-                        {pricingTable.tiers.map(t => (
-                          <th key={t._id} className="text-right px-4 py-3 font-black text-[10px] uppercase tracking-widest text-fg/70 whitespace-nowrap">
-                            {t.name}{t.isActive === false ? ' (inactive)' : ''}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pricingTable.products.map(p => (
-                        <tr key={p._id} className="border-b border-white/5 hover:bg-white/[0.03]">
-                          <td className="px-4 py-2.5 text-fg font-bold truncate max-w-[220px] sticky left-0 bg-sidebar-bg">{p.name}</td>
-                          <td className="px-4 py-2.5 text-right text-fg/75 font-mono tabular-nums">₱{Number(p.basePrice || 0).toFixed(2)}</td>
-                          {pricingTable.tiers.map(t => {
-                            const price = t.prices[p._id];
-                            const off = price !== null && p.basePrice > 0 ? Math.round((1 - price / p.basePrice) * 100) : null;
-                            return (
-                              <td key={t._id} className="px-4 py-2.5 text-right font-mono tabular-nums">
-                                {price === null ? (
-                                  <span className="text-fg/60">&mdash;</span>
-                                ) : (
-                                  <span className={off > 0 ? 'text-brand-text font-bold' : 'text-fg/70'}>
-                                    ₱{price.toFixed(2)}
-                                    {off > 0 && <span className="text-[9px] text-fg/65 ml-1">-{off}%</span>}
-                                  </span>
-                                )}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )
-            )}
-          </div>
-        )}
-
-        {/* ----------------------------------------------------------------- */}
         {/* CLIENT ACCOUNTS SECTION (logistics mode only)                     */}
         {/* ----------------------------------------------------------------- */}
         {activeSection === 'clients' && (
           <div className="flex-1 p-6 space-y-3">
+            {clients.length > 0 && (
+              <input type="search" value={clientSearch} onChange={e => setClientSearch(e.target.value)}
+                placeholder="Search client accounts - name, code or username" aria-label="Search client accounts"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-fg placeholder:text-fg/50 outline-none focus:border-brand/60" />
+            )}
             {clientsLoading
               ? Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)
               : clients.length === 0
@@ -1530,13 +1215,15 @@ export default function SuperAdminPanel() {
                     </button>
                   </div>
                 )
-                : clients.map(client => (
+                : shownClients.length === 0
+                ? <p className="text-fg/70 font-bold text-sm py-10 text-center">No client account matches "{clientSearch.trim()}".</p>
+                : shownClients.map(client => (
                   <div key={client._id} className="flex items-center gap-4 p-4 rounded-xl border bg-white/5 border-white/5 hover:border-white/15 transition-all">
                     <div className="w-10 h-10 rounded-xl bg-brand/20 flex items-center justify-center font-black text-sm text-brand-text flex-shrink-0">
                       {client.name.slice(0, 2).toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-bold text-fg truncate">{client.name}</p>
+                      <p className="font-bold text-fg truncate" title={String((client.name) ?? '')}>{client.name}</p>
                       <p className="text-xs text-fg/70 font-mono">
                         {client.clientCode} · {client.source === 'pos' ? 'no portal login (auto-promoted)' : `@${client.username}`}
                       </p>
@@ -1546,7 +1233,7 @@ export default function SuperAdminPanel() {
                     </span>
                     <button
                       onClick={() => toggleClientActive(client)}
-                      className={`flex-shrink-0 transition ${client.isActive ? 'text-emerald-400' : 'text-fg/60'}`}
+                      className={`flex-shrink-0 transition ${client.isActive ? 'text-success' : 'text-fg/65'}`}
                       title={client.isActive ? 'Active - click to deactivate' : 'Inactive - click to activate'}
                     >
                       {client.isActive ? <ToggleRight size={22} /> : <ToggleLeft size={22} />}
@@ -1556,7 +1243,7 @@ export default function SuperAdminPanel() {
                         <Edit2 size={14} />
                       </button>
                       {client.source === 'pos' ? (
-                        <button onClick={() => copyOnboardLink(client)} className="p-2 rounded-lg text-brand/70 hover:text-brand-text hover:bg-brand/10 transition" aria-label="Copy onboarding link" title="Copy a self-service onboarding link for this client to set up their own login">
+                        <button onClick={() => copyOnboardLink(client)} className="p-2 rounded-lg text-brand-text hover:bg-brand/10 transition" aria-label="Copy onboarding link" title="Copy a self-service onboarding link for this client to set up their own login">
                           <Copy size={14} />
                         </button>
                       ) : (
@@ -1564,7 +1251,7 @@ export default function SuperAdminPanel() {
                           <KeyRound size={14} />
                         </button>
                       )}
-                      <button onClick={() => handleClientDelete(client)} className="p-2 rounded-lg text-red-400/50 hover:text-danger hover:bg-red-500/10 transition" aria-label="Delete">
+                      <button onClick={() => handleClientDelete(client)} className="p-2 rounded-lg text-danger hover:bg-red-500/10 transition" aria-label="Delete">
                         <Trash2 size={14} />
                       </button>
                     </div>
@@ -1592,7 +1279,7 @@ export default function SuperAdminPanel() {
                 placeholder="Role name (e.g. Barista, Bookkeeper)"
                 value={roleForm.name}
                 onChange={e => setRoleForm(f => ({ ...f, name: e.target.value }))}
-                className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/30 px-4 py-2.5 rounded-xl outline-none transition text-sm mb-4"
+                className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-2.5 rounded-xl outline-none transition text-sm mb-4"
               />
 
               <p className="text-[10px] font-bold text-fg/80 uppercase tracking-widest mb-2">What this role can do</p>
@@ -1600,14 +1287,9 @@ export default function SuperAdminPanel() {
                 {groupedPerms.length === 0 && <p className="text-fg/65 text-xs">Loading permissions…</p>}
                 {groupedPerms.map(([group, perms]) => (
                   <div key={group}>
-                    <p className="text-[10px] font-black uppercase tracking-wider text-fg/80 mb-1">{group}</p>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-fg/80 mb-1">{group}<span className="normal-case font-bold tracking-normal">{groupHint(perms)}</span></p>
                     <div className="grid sm:grid-cols-2 gap-x-3 gap-y-1">
-                      {perms.map(p => (
-                        <label key={p.key} className="flex items-center gap-2 text-[13px] text-fg/70 cursor-pointer hover:text-fg transition">
-                          <input type="checkbox" checked={roleForm.permissions.includes(p.key)} onChange={() => toggleRolePerm(p.key)} className="accent-brand shrink-0" />
-                          <span className="leading-tight">{p.label}</span>
-                        </label>
-                      ))}
+                      {perms.map(p => renderPermBox(p, roleForm.permissions, toggleRolePerm))}
                     </div>
                   </div>
                 ))}
@@ -1649,7 +1331,7 @@ export default function SuperAdminPanel() {
                 <div className="flex flex-col items-center py-10 text-center">
                   <Tag size={32} className="text-fg/10 mb-3" />
                   <p className="text-fg/70 font-bold text-sm">No custom roles yet.</p>
-                  <p className="text-fg/60 text-xs mt-1">Create one above to extend beyond the built-in roles.</p>
+                  <p className="text-fg/65 text-xs mt-1">Create one above to extend beyond the built-in roles.</p>
                 </div>
               ) : roles.map(r => (
                 <div
@@ -1672,7 +1354,7 @@ export default function SuperAdminPanel() {
                       </button>
                       <button
                         onClick={() => handleDeleteRole(r._id, r.name)}
-                        className="p-1.5 rounded-lg text-red-400/40 hover:text-danger hover:bg-red-500/10 transition"
+                        className="p-1.5 rounded-lg text-danger hover:bg-red-500/10 transition"
                         aria-label={`Delete ${r.name} role`}
                       >
                         <Trash2 size={14} />
@@ -1683,7 +1365,7 @@ export default function SuperAdminPanel() {
                     <div className="flex flex-wrap gap-1.5 mt-2.5 pl-6">
                       {r.permissions.map(k => {
                         const meta = permCatalog.find(p => p.key === k);
-                        return <span key={k} className="text-[10px] font-bold bg-brand/10 border border-brand/25 text-brand/90 px-2 py-0.5 rounded-full">{meta ? meta.label : k}</span>;
+                        return <span key={k} className="text-[10px] font-bold bg-brand/10 border border-brand/25 text-brand-text px-2 py-0.5 rounded-full">{meta ? meta.label : k}</span>;
                       })}
                     </div>
                   )}
@@ -1883,8 +1565,8 @@ export default function SuperAdminPanel() {
       {/* PURGE DATA MODAL                                                     */}
       {/* =================================================================== */}
       {purgeModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !purgeModal.busy && setPurgeModal({ open: false, phrase: '', busy: false, error: '', result: null })}>
-          <div className="bg-sidebar-bg border border-red-500/40 rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex justify-center p-4 overflow-y-auto bg-black/60 backdrop-blur-sm" onClick={() => !purgeModal.busy && setPurgeModal({ open: false, phrase: '', busy: false, error: '', result: null })}>
+          <div className="my-auto bg-sidebar-bg border border-red-500/40 rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
               <div className="flex items-center gap-2">
                 <AlertTriangle size={18} className="text-danger" />
@@ -1945,7 +1627,7 @@ export default function SuperAdminPanel() {
                   <button onClick={() => setPurgeModal({ open: false, phrase: '', busy: false, error: '', result: null })} disabled={purgeModal.busy}
                     className="text-sm font-bold px-4 py-2 rounded-lg text-fg/75 hover:text-fg transition disabled:opacity-40">Cancel</button>
                   <button onClick={handlePurgeData} disabled={purgeModal.busy || purgeModal.phrase.trim() !== 'PURGE' || purgeSelected.size === 0}
-                    className="flex items-center gap-2 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-lg transition">
+                    className="flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-lg transition">
                     {purgeModal.busy ? 'Purging…' : `Purge ${purgeSelected.size ? `${purgeSelected.size} Selected` : 'Selected'}`}
                   </button>
                 </div>
@@ -1959,8 +1641,8 @@ export default function SuperAdminPanel() {
       {/* REWIRE RECIPE LINKS MODAL                                            */}
       {/* =================================================================== */}
       {rewireModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !rewireModal.busy && setRewireModal({ open: false, busy: false, error: '', result: null })}>
-          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex justify-center p-4 overflow-y-auto bg-black/60 backdrop-blur-sm" onClick={() => !rewireModal.busy && setRewireModal({ open: false, busy: false, error: '', result: null })}>
+          <div className="my-auto bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
               <div className="flex items-center gap-2">
                 <RefreshCw size={18} className="text-brand-text" />
@@ -2015,8 +1697,8 @@ export default function SuperAdminPanel() {
       {/* CREATE / EDIT MODAL                                                  */}
       {/* =================================================================== */}
       {modal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md animate-fade-in">
+        <div className="fixed inset-0 z-50 flex justify-center p-4 overflow-y-auto bg-black/60 backdrop-blur-sm">
+          <div className="my-auto bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md animate-fade-in">
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
               <div>
                 <h2 className="font-black text-fg text-lg">
@@ -2054,7 +1736,7 @@ export default function SuperAdminPanel() {
                   onChange={e => handleFormChange('name', e.target.value)}
                   placeholder="e.g. Maria Santos"
                   autoFocus
-                  className={`w-full bg-white/5 border text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm
+                  className={`w-full bg-white/5 border text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm
                     ${formErrors.name ? 'border-red-500/60' : 'border-white/10 focus:border-brand'}`}
                 />
                 {formErrors.name && (
@@ -2075,7 +1757,7 @@ export default function SuperAdminPanel() {
                     value={form.password}
                     onChange={e => handleFormChange('password', e.target.value)}
                     placeholder={modal.mode === 'edit' ? '(unchanged)' : 'Min. 4 characters'}
-                    className={`w-full bg-white/5 border text-fg placeholder-white/20 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest
+                    className={`w-full bg-white/5 border text-fg placeholder-fg/70 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest
                       ${formErrors.password ? 'border-red-500/60' : 'border-white/10 focus:border-brand'}`}
                   />
                   <button
@@ -2121,9 +1803,69 @@ export default function SuperAdminPanel() {
                     value={form.commissionRate}
                     onChange={e => handleFormChange('commissionRate', e.target.value)}
                     placeholder="0"
-                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm"
                   />
                   <p className="text-[10px] text-fg/65 mt-1.5">Percent of this cashier's attributed sales, shown on the Commissions report.</p>
+                </div>
+              )}
+              {modal.mode === 'edit' && (
+                <div>
+                  <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
+                    Daily Rate (₱)
+                  </label>
+                  <input
+                    type="number" min="0" step="0.01"
+                    value={form.dailyRate}
+                    onChange={e => handleFormChange('dailyRate', e.target.value)}
+                    placeholder="0.00"
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm"
+                  />
+                  <p className="text-[10px] text-fg/65 mt-1.5">Pay per working day. Payroll's "Fill from timesheet" multiplies it by days worked and paid leave, plus overtime at 125%.</p>
+                </div>
+              )}
+
+              {/* The terminal PIN: who is at the screen on a shared tablet. Not a
+                  second password - it identifies, and the role still decides
+                  what that person may do. */}
+              {modal.mode === 'edit' && (
+                <div>
+                  <label htmlFor="staff-pin" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
+                    Register PIN {form.hasPin && <span className="text-[9px] text-success normal-case tracking-normal">- one is set</span>}
+                  </label>
+                  <input id="staff-pin" type="text" inputMode="numeric" pattern="\d*" maxLength={6}
+                    value={form.pin || ''}
+                    onChange={e => handleFormChange('pin', e.target.value.replace(/\D/g, ''))}
+                    placeholder={form.hasPin ? 'Leave blank to keep the current PIN' : '4 to 6 digits'}
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm tracking-[0.3em] font-black" />
+                  <p className="text-[10px] text-fg/65 mt-1.5">
+                    Lets this person take the register on a shared tablet without a password, so their sales and clock-ins carry their own name. Must be different from everyone else&apos;s.
+                  </p>
+                </div>
+              )}
+
+              {/* The numbers payroll has to quote when it remits what it withheld.
+                  Edit mode only, same as the commission rate: a brand-new login
+                  is usually created before HR has the paperwork. */}
+              {modal.mode === 'edit' && (
+                <div>
+                  <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Payroll & statutory numbers</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {[
+                      ['employeeNumber', 'Employee no.', 'EMP-001'],
+                      ['tin', 'TIN', '000-000-000-000'],
+                      ['sssNumber', 'SSS no.', '00-0000000-0'],
+                      ['philhealthNumber', 'PhilHealth no.', '00-000000000-0'],
+                      ['pagibigNumber', 'Pag-IBIG MID', '0000-0000-0000'],
+                    ].map(([key, label, placeholder]) => (
+                      <div key={key}>
+                        <label htmlFor={`staff-${key}`} className="text-[10px] font-bold text-fg/65 block mb-1">{label}</label>
+                        <input id={`staff-${key}`} type="text" value={form[key] || ''}
+                          onChange={e => handleFormChange(key, e.target.value)} placeholder={placeholder}
+                          className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-3 py-2.5 rounded-xl outline-none transition text-sm" />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-fg/65 mt-1.5">Copied onto each payroll run when it is created, and printed on the payslip. Leave blank if the paperwork is not in yet.</p>
                 </div>
               )}
 
@@ -2145,14 +1887,9 @@ export default function SuperAdminPanel() {
                     {groupedPerms.length === 0 && <p className="text-fg/65 text-xs">Loading permissions…</p>}
                     {groupedPerms.map(([group, perms]) => (
                       <div key={group}>
-                        <p className="text-[10px] font-black uppercase tracking-wider text-fg/65 mb-1">{group}</p>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-fg/65 mb-1">{group}<span className="normal-case font-bold tracking-normal">{groupHint(perms)}</span></p>
                         <div className="grid sm:grid-cols-2 gap-x-3 gap-y-1">
-                          {perms.map(p => (
-                            <label key={p.key} className="flex items-center gap-2 text-[13px] text-fg/70 cursor-pointer hover:text-fg transition">
-                              <input type="checkbox" checked={form.permissions.includes(p.key)} onChange={() => togglePerm(p.key)} className="accent-brand shrink-0" />
-                              <span className="leading-tight">{p.label}</span>
-                            </label>
-                          ))}
+                          {perms.map(p => renderPermBox(p, form.permissions, togglePerm))}
                         </div>
                       </div>
                     ))}
@@ -2160,7 +1897,7 @@ export default function SuperAdminPanel() {
                 )}
               </div>
 
-              <div className="flex gap-3 pt-2">
+              <div className="sticky bottom-0 -mx-6 -mb-6 px-6 py-4 flex gap-3 bg-sidebar-bg border-t border-white/5 rounded-b-2xl">
                 <button
                   type="button"
                   onClick={closeModal}
@@ -2186,8 +1923,8 @@ export default function SuperAdminPanel() {
       {/* CONFIRM DELETE MODAL                                                 */}
       {/* =================================================================== */}
       {confirmDelete.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-sidebar-bg border border-red-500/20 rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-fade-in">
+        <div className="fixed inset-0 z-50 flex justify-center p-4 overflow-y-auto bg-black/60 backdrop-blur-sm">
+          <div className="my-auto bg-sidebar-bg border border-red-500/20 rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-fade-in">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center flex-shrink-0">
                 <Trash2 size={17} className="text-danger" />
@@ -2214,292 +1951,6 @@ export default function SuperAdminPanel() {
               >
                 {deleteLoading ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                 {deleteLoading ? 'Removing…' : 'Confirm Remove'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* =================================================================== */}
-      {/* PRICE TIER EXCEL IMPORT PREVIEW - nothing writes until confirmed.    */}
-      {/* Each group is one COLUMN from the imported sheet: a tier name plus   */}
-      {/* every product row that got a price. Unrecognized name -> new tier.  */}
-      {/* =================================================================== */}
-      {tierImportPreview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={e => { if (e.target === e.currentTarget) setTierImportPreview(null); }}>
-          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col animate-fade-in">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
-              <div>
-                <h2 className="text-lg font-black text-fg">Import Price Tiers</h2>
-                <p className="text-fg/70 text-xs mt-0.5">
-                  {tierImportPreview.tiers.length} tier column{tierImportPreview.tiers.length === 1 ? '' : 's'} ·{' '}
-                  {tierImportPreview.tiers.reduce((s, t) => s + t.rows.length, 0)} price(s) to set
-                </p>
-              </div>
-              <button onClick={() => setTierImportPreview(null)} className="text-fg/70 hover:text-fg transition"><X size={20} /></button>
-            </div>
-
-            <div className="px-6 py-4 space-y-3 overflow-y-auto">
-              {tierImportPreview.unmatchedCodes.length > 0 && (
-                <div className="rounded-xl border border-yellow-500/25 bg-yellow-500/10 p-3">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-warning flex items-center gap-1.5">
-                    <AlertTriangle size={12} /> {tierImportPreview.unmatchedCodes.length} row(s) skipped - no matching product
-                  </p>
-                  <p className="text-[11px] text-fg/75 mt-1 truncate">
-                    {tierImportPreview.unmatchedCodes.slice(0, 8).join(', ')}
-                    {tierImportPreview.unmatchedCodes.length > 8 ? `, +${tierImportPreview.unmatchedCodes.length - 8} more` : ''}
-                  </p>
-                </div>
-              )}
-
-              {tierImportPreview.tiers.map(t => (
-                <div key={t.name} className="bg-page-bg/50 border border-white/10 rounded-xl p-3">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-2">
-                      <span className="text-fg font-black text-sm">{t.name}</span>
-                      {!t.tierId && <span className="text-[9px] font-black uppercase tracking-wider bg-brand/15 text-brand-text px-1.5 py-0.5 rounded">New Tier</span>}
-                      {t.tierId && t.wasPercent && (
-                        <span className="text-[9px] font-black uppercase tracking-wider bg-yellow-500/15 text-warning px-1.5 py-0.5 rounded" title="Currently a flat % rate - importing prices switches it to a per-product price list.">
-                          Switches to Price List
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-fg/70 text-xs font-bold">{t.rows.length} price{t.rows.length === 1 ? '' : 's'}</span>
-                  </div>
-                  <div className="mt-2 max-h-24 overflow-y-auto space-y-0.5">
-                    {t.rows.slice(0, 6).map(r => (
-                      <div key={r.productId} className="flex justify-between text-[11px] text-fg/75">
-                        <span className="truncate pr-2">{r.name}</span>
-                        <span className="font-mono text-fg/70 shrink-0">₱{r.price.toFixed(2)}</span>
-                      </div>
-                    ))}
-                    {t.rows.length > 6 && <p className="text-[10px] text-fg/65 italic">+{t.rows.length - 6} more</p>}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="px-6 py-4 border-t border-white/5 flex gap-2 shrink-0">
-              <button onClick={() => setTierImportPreview(null)} className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-fg/70 font-bold rounded-xl transition text-sm">
-                Cancel
-              </button>
-              <button onClick={submitTierPricingImport} disabled={tierImporting}
-                className="flex-1 py-3 bg-brand hover:bg-brand-dark text-fg font-bold rounded-xl transition text-sm disabled:opacity-50 flex items-center justify-center gap-2">
-                <Check size={16} /> {tierImporting ? 'Importing…' : 'Import Prices'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* =================================================================== */}
-      {/* PRICE TIER CREATE / EDIT MODAL                                       */}
-      {/* =================================================================== */}
-      {tierModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md animate-fade-in">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
-              <div>
-                <h2 className="font-black text-fg text-lg">
-                  {tierModal.mode === 'create' ? 'New Price Tier' : 'Edit Price Tier'}
-                </h2>
-                <p className="text-fg/70 text-xs mt-0.5">
-                  {tierModal.mode === 'create' ? 'A customer class with its own rate.' : `Editing ${tierModal.tier?.name}`}
-                </p>
-              </div>
-              <button onClick={closeTierModal} className="p-2 rounded-xl text-fg/65 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
-                <X size={16} />
-              </button>
-            </div>
-
-            <form onSubmit={handleTierSubmit} className="px-6 py-5 space-y-4">
-              <div>
-                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Tier Name</label>
-                <input
-                  type="text"
-                  value={tierForm.name}
-                  onChange={e => setTierForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="e.g. Dealer"
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
-                />
-                {tierModal.mode === 'edit' && (
-                  <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
-                    Renaming re-tags every client in this tier and every product override that names it, so nobody silently loses their rate.
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Pricing Mode</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setTierForm(f => ({ ...f, pricingMode: 'percent' }))}
-                    className={`text-left px-3 py-2.5 rounded-xl border text-xs transition ${tierForm.pricingMode === 'percent' ? 'bg-brand/15 border-brand/50 text-fg' : 'bg-white/5 border-white/10 text-fg/75 hover:border-white/20'}`}
-                  >
-                    <span className="font-bold block">Default %</span>
-                    <span className="text-[10px] opacity-70">One rate, every product</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTierForm(f => ({ ...f, pricingMode: 'per_product' }))}
-                    className={`text-left px-3 py-2.5 rounded-xl border text-xs transition ${tierForm.pricingMode === 'per_product' ? 'bg-brand/15 border-brand/50 text-fg' : 'bg-white/5 border-white/10 text-fg/75 hover:border-white/20'}`}
-                  >
-                    <span className="font-bold block">Price List</span>
-                    <span className="text-[10px] opacity-70">Set every product's price</span>
-                  </button>
-                </div>
-              </div>
-
-              {tierForm.pricingMode === 'percent' ? (
-                <div>
-                  <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Default Discount</label>
-                  <div className="relative">
-                    <input
-                      type="number" min="0" max="100" step="0.01"
-                      value={tierForm.percent}
-                      onChange={e => setTierForm(f => ({ ...f, percent: e.target.value }))}
-                      placeholder="e.g. 15"
-                      className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 pr-9 rounded-xl outline-none transition text-sm tabular-nums"
-                    />
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-fg/65 text-sm font-bold">%</span>
-                  </div>
-                  <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
-                    Comes off every product a client in this tier buys. 0 = tag only, no automatic rate.
-                  </p>
-                </div>
-              ) : (
-                <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-                  <p className="text-[11px] text-fg/75 leading-relaxed">
-                    {tierModal.mode === 'create'
-                      ? "You'll set a price for every product right after saving this tier."
-                      : "Use “Set Prices” on the tier list to edit this tier's price list."}
-                    A product with no price set here isn&rsquo;t discounted for this tier at all.
-                  </p>
-                </div>
-              )}
-
-              <div>
-                <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Note</label>
-                <input
-                  type="text"
-                  value={tierForm.note}
-                  onChange={e => setTierForm(f => ({ ...f, note: e.target.value }))}
-                  placeholder="Optional"
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
-                />
-              </div>
-
-              <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-                <div>
-                  <span className="text-sm font-bold text-fg">Tier Active</span>
-                  <p className="text-[10px] text-fg/65 mt-0.5">Inactive tiers grant no rate but keep their tags.</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setTierForm(f => ({ ...f, isActive: !f.isActive }))}
-                  className={`w-11 h-6 rounded-full transition relative flex-shrink-0 ${tierForm.isActive ? 'bg-brand' : 'bg-white/15'}`}
-                  aria-label="Toggle tier active"
-                >
-                  <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${tierForm.isActive ? 'left-6' : 'left-1'}`} />
-                </button>
-              </div>
-
-              {tierFormError && (
-                <p className="text-[11px] text-danger bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{tierFormError}</p>
-              )}
-
-              <div className="flex gap-2 pt-1">
-                <button
-                  type="button" onClick={closeTierModal}
-                  className="flex-1 py-3 rounded-xl font-bold text-sm text-fg/60 hover:text-fg bg-white/5 hover:bg-white/10 transition"
-                >Cancel</button>
-                <button
-                  type="submit" disabled={tierFormLoading}
-                  className="flex-1 py-3 rounded-xl font-bold text-sm bg-brand hover:bg-brand-dark text-fg transition flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {tierFormLoading && <Loader2 size={14} className="animate-spin" />}
-                  {tierFormLoading ? 'Saving…' : 'Save Tier'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* =================================================================== */}
-      {/* PER-PRODUCT PRICE LIST EDITOR                                        */}
-      {/* =================================================================== */}
-      {productPriceModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col animate-fade-in">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 flex-shrink-0">
-              <div>
-                <h2 className="font-black text-fg text-lg">{productPriceModal.tier?.name} &mdash; Prices</h2>
-                <p className="text-fg/70 text-xs mt-0.5">
-                  One price per product. Blank = this tier grants no discount on that product.
-                </p>
-              </div>
-              <button onClick={closeProductPricing} className="p-2 rounded-xl text-fg/65 hover:text-fg hover:bg-white/10 transition" aria-label="Close">
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="overflow-y-auto flex-1 px-6 py-4">
-              {pricingTable.products.length === 0 ? (
-                <p className="text-fg/70 text-sm text-center py-10">No products yet - add some in the Products tab first.</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {pricingTable.products.map(p => {
-                    const val = productPriceRows[p._id] ?? '';
-                    const off = val !== '' && p.basePrice > 0 ? Math.round((1 - parseFloat(val) / p.basePrice) * 100) : null;
-                    return (
-                      <div key={p._id} className="flex items-center gap-3 py-1.5">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-fg font-bold truncate">{p.name}</p>
-                          <p className="text-[10px] text-fg/70">List ₱{Number(p.basePrice || 0).toFixed(2)}{p.category ? ` · ${p.category}` : ''}</p>
-                        </div>
-                        {off !== null && (
-                          <span className={`text-[10px] font-bold tabular-nums w-14 text-right flex-shrink-0 ${off > 0 ? 'text-brand-text' : off < 0 ? 'text-danger' : 'text-fg/65'}`}>
-                            {off > 0 ? `-${off}%` : off < 0 ? `+${Math.abs(off)}%` : '-'}
-                          </span>
-                        )}
-                        <div className="relative w-32 flex-shrink-0">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/65 text-xs font-bold">₱</span>
-                          <input
-                            type="number" min="0" step="0.01"
-                            value={val}
-                            placeholder={Number(p.basePrice || 0).toFixed(2)}
-                            onChange={e => setProductPriceRows(r => ({ ...r, [p._id]: e.target.value }))}
-                            className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/15 pl-6 pr-2 py-2 rounded-lg outline-none transition text-xs tabular-nums text-right"
-                          />
-                        </div>
-                        {val !== '' && (
-                          <button
-                            type="button"
-                            onClick={() => setProductPriceRows(r => { const n = { ...r }; delete n[p._id]; return n; })}
-                            className="text-fg/60 hover:text-danger transition flex-shrink-0"
-                            aria-label={`Clear price for ${p.name}`}
-                          ><X size={13} /></button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-2 px-6 py-4 border-t border-white/5 flex-shrink-0">
-              <button
-                type="button" onClick={closeProductPricing}
-                className="flex-1 py-3 rounded-xl font-bold text-sm text-fg/60 hover:text-fg bg-white/5 hover:bg-white/10 transition"
-              >Cancel</button>
-              <button
-                type="button" onClick={handleProductPricingSubmit} disabled={productPriceSaving}
-                className="flex-1 py-3 rounded-xl font-bold text-sm bg-brand hover:bg-brand-dark text-fg transition flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {productPriceSaving && <Loader2 size={14} className="animate-spin" />}
-                {productPriceSaving ? 'Saving…' : 'Save Prices'}
               </button>
             </div>
           </div>
@@ -2542,7 +1993,7 @@ export default function SuperAdminPanel() {
                   onChange={e => setClientForm(f => ({ ...f, name: e.target.value }))}
                   placeholder="e.g. Acme Corp"
                   autoFocus
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm"
                 />
               </div>
 
@@ -2554,7 +2005,7 @@ export default function SuperAdminPanel() {
                   onChange={e => setClientForm(f => ({ ...f, username: e.target.value }))}
                   placeholder="e.g. acme_corp"
                   autoComplete="off"
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm"
                 />
               </div>
 
@@ -2569,7 +2020,7 @@ export default function SuperAdminPanel() {
                     onChange={e => setClientForm(f => ({ ...f, password: e.target.value }))}
                     placeholder={clientModal.mode === 'edit' ? '(unchanged)' : 'Set a password'}
                     autoComplete="new-password"
-                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
                   />
                   <button
                     type="button"
@@ -2603,7 +2054,7 @@ export default function SuperAdminPanel() {
                   value={clientForm.creditLimit}
                   onChange={e => setClientForm(f => ({ ...f, creditLimit: e.target.value }))}
                   placeholder="Leave blank for no limit"
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
                 />
                 <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
                   Blank = no limit for this client. <span className="text-fg/75 font-bold">0 = cash only</span> (blocks all on-account orders).
@@ -2619,7 +2070,7 @@ export default function SuperAdminPanel() {
                   value={clientForm.creditTermsDays}
                   onChange={e => setClientForm(f => ({ ...f, creditTermsDays: e.target.value }))}
                   placeholder="e.g. 7, 15, 30"
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
                 />
                 <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
                   Days an on-account (utang) sale has before it turns <span className="text-fg/75 font-bold">overdue</span>. Blank = no terms. 0 = due on receipt.
@@ -2647,6 +2098,63 @@ export default function SuperAdminPanel() {
                 </span>
               </label>
 
+              {/* A VAT-registered BUYER cannot claim the VAT they pay us unless
+                  their invoice carries their registered name, TIN and address.
+                  Off by default - most customers are not registered. */}
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!clientForm.isVatRegistered}
+                  onChange={e => setClientForm(f => ({ ...f, isVatRegistered: e.target.checked }))}
+                  className="mt-0.5"
+                />
+                <span className="min-w-0">
+                  <span className="block text-[11px] font-bold text-fg">VAT-registered customer</span>
+                  <span className="block text-[10px] text-fg/70 leading-relaxed mt-0.5">
+                    Their invoices are made out to the registered details below, so they can claim the VAT.
+                  </span>
+                </span>
+              </label>
+
+              {clientForm.isVatRegistered && (
+                <div className="space-y-2.5 border-l-2 border-brand/30 pl-3">
+                  <div>
+                    <label htmlFor="client-tin" className="text-[10px] font-bold text-fg/70 uppercase tracking-wider block mb-1">TIN</label>
+                    <input id="client-tin" type="text" value={clientForm.tin}
+                      onChange={e => setClientForm(f => ({ ...f, tin: e.target.value }))}
+                      placeholder="000-000-000-00000"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
+                  </div>
+                  <div>
+                    <label htmlFor="client-regname" className="text-[10px] font-bold text-fg/70 uppercase tracking-wider block mb-1">Registered name</label>
+                    <input id="client-regname" type="text" value={clientForm.registeredName}
+                      onChange={e => setClientForm(f => ({ ...f, registeredName: e.target.value }))}
+                      placeholder="As registered with the BIR"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
+                  </div>
+                  <div>
+                    <label htmlFor="client-regaddr" className="text-[10px] font-bold text-fg/70 uppercase tracking-wider block mb-1">Registered address</label>
+                    <input id="client-regaddr" type="text" value={clientForm.registeredAddress}
+                      onChange={e => setClientForm(f => ({ ...f, registeredAddress: e.target.value }))}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
+                  </div>
+                </div>
+              )}
+
+              {clientModal.mode === 'edit' && (
+                <div>
+                  <label htmlFor="client-rep" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Salesperson</label>
+                  <select id="client-rep" value={clientForm.assignedSalesperson}
+                    onChange={e => setClientForm(f => ({ ...f, assignedSalesperson: e.target.value }))}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand">
+                    <option value="">None - credit the cashier</option>
+                    {clientForm.assignedSalesperson && !users.some(u => u.name === clientForm.assignedSalesperson) && <option value={clientForm.assignedSalesperson}>{clientForm.assignedSalesperson}</option>}
+                    {users.filter(u => u.role !== 'client').map(u => <option key={u._id} value={u.name}>{u.name}</option>)}
+                  </select>
+                  <p className="text-[10px] text-fg/65 mt-1">Their sales are credited to this person on the Commissions report, whoever rings them up.</p>
+                </div>
+              )}
+
               <div>
                 <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Price Tier</label>
                 {(() => {
@@ -2668,7 +2176,7 @@ export default function SuperAdminPanel() {
                     <>
                       {priceTiers.length === 0 ? (
                         <p className="text-[11px] text-fg/70 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-                          No price tiers yet. Create them in <span className="text-fg/70 font-bold">Price Tiers</span> below, then assign one here.
+                          No price tiers yet. Create them in <span className="text-fg/70 font-bold">Pricing Control</span>, then assign one here.
                         </p>
                       ) : (
                         <div className="flex flex-wrap gap-2">
@@ -2693,7 +2201,7 @@ export default function SuperAdminPanel() {
                         </div>
                       )}
                       {orphans.length > 0 && (
-                        <p className="text-[10px] text-yellow-400/70 mt-2 bg-yellow-500/8 border border-yellow-500/20 rounded-lg px-3 py-2">
+                        <p className="text-[10px] text-warning mt-2 bg-yellow-500/8 border border-yellow-500/20 rounded-lg px-3 py-2">
                           Unrecognised tag{orphans.length === 1 ? '' : 's'}: <span className="font-bold">{orphans.join(', ')}</span>. No tier matches, so no automatic rate applies. Click a tier above to replace, or create a matching tier.
                         </p>
                       )}
@@ -2723,7 +2231,7 @@ export default function SuperAdminPanel() {
                       {clientPricing.map(p => (
                         <details key={p.productId} className="group bg-page-bg/40 border border-white/10 rounded-lg">
                           <summary className="flex items-center justify-between gap-2 px-3 py-2 cursor-pointer list-none">
-                            <span className="text-xs font-bold text-fg truncate">{p.name}</span>
+                            <span className="text-xs font-bold text-fg truncate" title={String((p.name) ?? '')}>{p.name}</span>
                             <span className="flex items-center gap-2 shrink-0">
                               <span className="text-xs font-black text-brand-text tabular-nums">
                                 ₱{(p.flatPrice ?? p.basePrice).toFixed(2)}
@@ -2758,15 +2266,15 @@ export default function SuperAdminPanel() {
               {clientModal.mode === 'edit' && (clientModal.client.creditBalance || 0) > 0 && (
                 <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3">
                   <div className="flex items-center justify-between">
-                    <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Credit Balance</p>
-                    <span className="text-sm font-black text-emerald-400 tabular-nums">₱{clientModal.client.creditBalance.toFixed(2)}</span>
+                    <p className="text-[10px] font-bold text-success uppercase tracking-widest">Credit Balance</p>
+                    <span className="text-sm font-black text-success tabular-nums">₱{clientModal.client.creditBalance.toFixed(2)}</span>
                   </div>
                   <p className="text-[11px] text-fg/70 mt-1">From past overpayments. Apply it to a future order's A/R settlement, or refund it out below.</p>
                   {!clientCreditRefundForm ? (
                     <button
                       type="button"
                       onClick={() => setClientCreditRefundForm({ amount: String(clientModal.client.creditBalance), sourceAccount: '111000', referenceNumber: '' })}
-                      className="mt-2 text-[11px] font-bold text-emerald-400 hover:text-emerald-300 underline"
+                      className="mt-2 text-[11px] font-bold text-success underline"
                     >
                       Refund
                     </button>
@@ -2802,7 +2310,7 @@ export default function SuperAdminPanel() {
                         <button
                           type="button" disabled={clientCreditBusy}
                           onClick={() => setClientCreditRefundForm(null)}
-                          className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-fg/60 text-xs font-bold transition"
+                          className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-fg/65 text-xs font-bold transition"
                         >
                           Cancel
                         </button>
@@ -2818,7 +2326,7 @@ export default function SuperAdminPanel() {
                   <button
                     type="button"
                     onClick={() => setClientForm(f => ({ ...f, isActive: !f.isActive }))}
-                    className={`transition ${clientForm.isActive ? 'text-emerald-400' : 'text-fg/60'}`}
+                    className={`transition ${clientForm.isActive ? 'text-success' : 'text-fg/65'}`}
                   >
                     {clientForm.isActive ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}
                   </button>
@@ -2832,7 +2340,7 @@ export default function SuperAdminPanel() {
                 <button
                   type="submit"
                   disabled={clientFormLoading}
-                  className="flex-1 bg-brand hover:bg-brand-dark text-fg font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="flex-1 bg-brand hover:bg-brand-dark text-on-brand font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {clientFormLoading && <Loader2 size={14} className="animate-spin" />}
                   {clientFormLoading ? 'Saving…' : clientModal.mode === 'create' ? 'Create Client' : 'Save Changes'}
@@ -2847,8 +2355,8 @@ export default function SuperAdminPanel() {
       {/* RESET CLIENT PASSWORD MODAL                                          */}
       {/* =================================================================== */}
       {resetPwModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-fade-in">
+        <div className="fixed inset-0 z-50 flex justify-center p-4 overflow-y-auto bg-black/60 backdrop-blur-sm">
+          <div className="my-auto bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-fade-in">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-xl bg-brand/10 flex items-center justify-center flex-shrink-0">
                 <KeyRound size={17} className="text-brand-text" />
@@ -2878,7 +2386,7 @@ export default function SuperAdminPanel() {
                 <p className="text-[10px] text-fg/65 mb-4 leading-relaxed">
                   This password cannot be shown again after you close this - reset again if it's lost.
                 </p>
-                <button onClick={closeResetPassword} className="w-full bg-brand hover:bg-brand-dark text-fg font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm">
+                <button onClick={closeResetPassword} className="w-full bg-brand hover:bg-brand-dark text-on-brand font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm">
                   Done
                 </button>
               </>
@@ -2901,7 +2409,7 @@ export default function SuperAdminPanel() {
                     value={resetPwModal.confirmPassword}
                     onChange={e => setResetPwModal(m => ({ ...m, confirmPassword: e.target.value }))}
                     placeholder="Re-enter your password"
-                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm"
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm"
                   />
                 </div>
                 <div className="flex gap-3 pt-1">
@@ -2911,7 +2419,7 @@ export default function SuperAdminPanel() {
                   <button
                     type="submit"
                     disabled={resetPwModal.loading}
-                    className="flex-1 bg-brand hover:bg-brand-dark text-fg font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                    className="flex-1 bg-brand hover:bg-brand-dark text-on-brand font-bold py-3 rounded-xl transition shadow-lg shadow-brand/20 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
                   >
                     {resetPwModal.loading && <Loader2 size={14} className="animate-spin" />}
                     {resetPwModal.loading ? 'Resetting…' : 'Reset Password'}

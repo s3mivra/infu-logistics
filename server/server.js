@@ -1,5 +1,15 @@
 ﻿import 'dotenv/config';
+import { requestContext, currentActor } from './lib/requestContext.js';
+import { roundMoney, toCentavos } from './lib/money.js';
+import { createAutoRestorer } from './lib/autoRestore.js';
+import { uppercasePartyNames } from './lib/partyNames.js';
+import { releaseCancelledOrderNumbers } from './lib/orderNumbers.js';
+import { repairBackdatedSalesOnPayables } from './lib/saleAccounts.js';
+import { LEDGER_WRITE_OPS, inLedgerMaintenance, refuseLedgerRewrite, withLedgerMaintenance } from './lib/ledgerGuard.js';
 import express from 'express';
+import { businessDayStart, businessDateStr, businessClosingDateStr, setBusinessTimeZone, isValidTimeZone, DEFAULT_BUSINESS_TZ } from './lib/businessTime.js';
+import { deliveryFeeVat } from './lib/vatPosting.js';
+import { seriesPrefix } from './lib/docSeries.js';
 import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
@@ -11,16 +21,19 @@ import mongoose from 'mongoose';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import compression from 'compression';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import crypto from 'crypto';
 import pino from 'pino';
 import pinoHttp from 'pino-http';
 import { assertBalanced, debitAccountFor, suggestedSettleAccount } from './lib/ledger.js';
+import { createIdempotencyMiddleware } from './lib/idempotency.js';
 import { ACCOUNTS, EXPENSE_CATEGORIES, CODE_MAP } from './lib/chartOfAccounts.js';
-import { resolveUnit, displayToBase, effectiveDisplay, UNIT_TO_BASE, unitTypeOf } from './lib/units.js';
-import { title, code, lower, freeText, zTitle, zText, zMoneyLoose } from './lib/normalize.js';
+import { resolveUnit, displayToBase, effectiveDisplay, UNIT_TO_BASE, unitTypeOf, basePerPack } from './lib/units.js';
+import { title, code, lower, freeText, zTitle, zText, zMoneyLoose, zMoneyStrict, MONEY_MAX } from './lib/normalize.js';
 import { addBatch, consumeBatches, consumeSpecificBatch, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
-import { requireStaff, evaluateClientAccess, requirePermission, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS, setCustomRolePermissions } from './lib/authz.js';
+import { stripQueryOperators, forwardAsyncErrors } from './lib/requestSafety.js';
+import { withFloorActions, withSplitScreens } from './lib/authz.js';
+import { requireStaff, evaluateStaffAccess, evaluateClientAccess, requirePermission, requireAnyPermission, requireUserAdmin, guardStaffEscalation, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS, setCustomRolePermissions } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
 import { computeOrderVat, extractVat, normaliseVatRate, DEFAULT_VAT_RATE } from './lib/vat.js';
 import { validateDateRange } from './lib/reportRange.js';
@@ -45,8 +58,11 @@ import registerAudit from './features/audit.js';
 import registerSettings from './features/settings.js';
 import registerPurchaseOrders from './features/purchase-orders.js';
 import registerBills from './features/bills.js';
+import registerSetupImport from './features/setup-import.js';
 import registerCheckVouchers from './features/check-vouchers.js';
 import registerAdvances from './features/advances.js';
+import registerReservations from './features/reservations.js';
+import registerBackup from './features/backup.js';
 import registerDataExport from './features/data-export.js';
 import registerFixedAssets from './features/fixed-assets.js';
 import registerRequisitions from './features/requisitions.js';
@@ -59,6 +75,22 @@ import registerChangeRequests from './features/change-requests.js';
 import registerNotifications from './features/notifications.js';
 import registerClients from './features/clients.js';
 import registerHub from './features/hub.js';
+import registerInventorySheet from './features/inventory-sheet.js';
+import registerAttachments from './features/attachments.js';
+import registerBudgets from './features/budgets.js';
+import registerExceptions from './features/exceptions.js';
+import registerClosing from './features/closing.js';
+import registerInsights from './features/insights.js';
+import registerCafeExtras from './features/cafe-extras.js';
+import registerOpsExtras from './features/ops-extras.js';
+import registerNotify from './features/notify.js';
+import registerStockMovement from './features/stock-movement.js';
+import registerCosting from './features/costing.js';
+import registerStockControl from './features/stock-control.js';
+import registerTimeOff from './features/timeoff.js';
+import defineClientModels from './models/defineClientModels.js';
+import defineWorkflowModels from './models/defineWorkflowModels.js';
+import defineCatalogModels from './models/defineCatalogModels.js';
 
 const log = pino({
   level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
@@ -96,6 +128,17 @@ if (process.env.NODE_ENV === 'production') {
   if (!(process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL)) {
     weakReasons.push('ALLOWED_ORIGINS (or FRONTEND_URL) must list your frontend origin(s)');
   }
+  // Every tenant's database sits in one mongod. Without a login, any process
+  // that can reach it - another tenant's API included - can read every
+  // tenant's books. That is warned about, loudly, but it does NOT stop the
+  // app: tenants are started by the control plane with no hand-edited .env,
+  // and refusing to boot here took every tenant down on the next "Update all
+  // apps". The control plane shows the same warning on its health panel.
+  // user[:password]@ before the host list (a multi-host URI is not a valid URL).
+  const mongoHasLogin = /^mongodb(\+srv)?:\/\/[^@/]+@/.test(String(process.env.MONGO_URI || ''));
+  if (!mongoHasLogin) {
+    console.warn('⚠️  MongoDB has no login (MONGO_URI carries no username). Any process that reaches the database can read every tenant. See platform/MONGO_AUTH.md.');
+  }
   if (weakReasons.length) {
     console.error('❌ Insecure production config - server will not start:\n  - ' + weakReasons.join('\n  - '));
     process.exit(1);
@@ -103,6 +146,9 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 const app = express();
+// Every route registered from here on sends a thrown error to the error
+// middleware rather than crashing the process - see lib/requestSafety.js.
+forwardAsyncErrors(app);
 const server = http.createServer(app);
 
 // Hardened edge posture:
@@ -111,6 +157,9 @@ const server = http.createServer(app);
 //   reflect the real client IP, not the load balancer's.
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
+// Makes the acting user visible to code deep in a request (journal entries
+// stamp postedBy from it). Must come before every route.
+app.use(requestContext);
 
 // Hardened security headers. This is a JSON API consumed by a separate SPA origin,
 // so the restrictive default CSP is relaxed to avoid breaking nothing-served-here,
@@ -182,6 +231,25 @@ app.use(pinoHttp({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(cookieParser());
+// No `$` query operators from request bodies or query strings - see lib/requestSafety.js.
+app.use(stripQueryOperators);
+
+// Collapses duplicate POSTs that are in flight at the same time, so a laggy
+// connection cannot turn one press of a Create button into several records.
+// Must sit after express.json (it fingerprints the parsed body) and before the
+// feature routes. See lib/idempotency.js for why in-flight only.
+// Identity for duplicate-request detection: the VERIFIED user id, never a
+// claim read from an unverified token (that would let one person replay
+// another's cached answer).
+app.use(createIdempotencyMiddleware({
+  log,
+  identify: (req) => {
+    const h = req.headers.authorization || '';
+    if (!h.startsWith('Bearer ')) return null;
+    try { const d = jwt.verify(h.slice(7), process.env.JWT_SECRET); return d?._id ? `u:${d.aud || 'staff'}:${d._id}` : null; }
+    catch { return null; }
+  },
+}));
 
 // ── STANDARDISED LEDGER REFERENCE GENERATOR ─────────────────────────────────────
 //
@@ -223,7 +291,10 @@ async function resolveLinkedInventory(product, productCode, session) {
   const or = [];
   if (productCode) or.push({ itemCode: productCode });
   if (product?.productCode) or.push({ itemCode: product.productCode });
-  if (product?.name) or.push({ itemName: product.name });
+  // Case-insensitive: the inventory route stores item names UPPERCASE, while
+  // product names keep their case, so an exact match on name could never
+  // succeed - the sale then "skipped cleanly" and recorded no stock movement.
+  if (product?.name) or.push({ itemName: { $regex: new RegExp(`^${escapeRegex(String(product.name).trim())}$`, 'i') } });
   if (!or.length) return null;
   return Inventory.findOne({ $or: or }).session(session);
 }
@@ -234,7 +305,41 @@ async function resolveLinkedInventory(product, productCode, session) {
 // "…500ML") and converted into the inventory item's base unit (inv.unit). NOTE:
 // unitCost is per base unit, so COGS = baseUnitsPerSale × unitCost. Falls back to
 // one full display unit (unitMultiplier) only when no weight token is present.
+// A product the stock import made for a packed item sold one DISPLAY unit
+// per sale (1 kg = 1000 g) instead of one pack (a 377 g can): its one recipe
+// line, linked to its own stock item, carried qty = the item's unitMultiplier.
+// Each can sold took 2.65 cans off the shelf. Put those lines right - one pack
+// per unit sold. Only that exact shape is touched: a recipe someone wrote by
+// hand, one with more than one line, or one already carrying packBase is left
+// alone. Safe to run again: a repaired line no longer matches.
+async function repairPackRecipes() {
+  const Inventory = mongoose.model('Inventory');
+  const Product = mongoose.model('Product');
+  const packed = await Inventory.find({ packSize: { $gt: 0 } }, { itemCode: 1, packSize: 1, unitMultiplier: 1 }).lean();
+  let fixed = 0;
+  for (const inv of packed) {
+    const perPack = basePerPack(inv);
+    const oldQty = Number(inv.unitMultiplier) > 0 ? Number(inv.unitMultiplier) : 1;
+    if (Math.abs(perPack - oldQty) < 1e-9 || !inv.itemCode) continue;
+    const res = await Product.updateMany(
+      {
+        productCode: inv.itemCode,
+        baseRecipe: { $size: 1 },
+        'baseRecipe.0.invId': { $in: [String(inv._id), inv._id] },
+        'baseRecipe.0.qty': oldQty,
+        'baseRecipe.0.packBase': { $exists: false },
+      },
+      { $set: { 'baseRecipe.0.qty': perPack, 'baseRecipe.0.packBase': perPack } },
+    );
+    fixed += res.modifiedCount || 0;
+  }
+  return fixed;
+}
+
 function baseUnitsPerSale(product, invItem) {
+  // A pack size recorded on the item is the answer; the name is only read
+  // for items from before packSize existed.
+  if (Number(invItem?.packSize) > 0) return basePerPack(invItem);
   const src = `${product?.name || ''} ${product?.baseSize || ''} ${invItem?.itemName || ''}`;
   const mt = src.match(/(\d+(?:\.\d+)?)\s*(mg|kg|g|ml|cl|l|pcs|pc|pack|unit)\b/i);
   const invBaseFactor = UNIT_TO_BASE[(invItem?.unit || '').toLowerCase()] || 1;
@@ -272,10 +377,16 @@ const BCRYPT_ROUNDS = 12;
 // holds cash from: every Completed cash sale, PLUS any in-progress (Preparing/Ready)
 // cash order that already has amountTendered recorded. Pending/Cancelled/Voided/
 // Parked are excluded (no cash collected, or cash reversed).
-const shiftCashFilter = (cashierName, shiftStart) => ({
-  cashier: cashierName,
+// On a SHARED drawer the cashier name must not narrow this. Every cash sale
+// rung on that drawer went into the same physical till whoever rang it, so
+// filtering by name would leave each person's expected cash short by everyone
+// else's takings - and the drawer would read as a large loss at every close.
+// Pass cashierName as null for a drawer session; the time window is then the
+// whole boundary, which is exactly what a single till means.
+const shiftCashFilter = (cashierName, shiftStart, shiftEnd = null) => ({
+  ...(cashierName ? { cashier: cashierName } : {}),
   paymentMethod: 'Cash',
-  createdAt: { $gte: shiftStart },
+  createdAt: shiftEnd ? { $gte: shiftStart, $lte: shiftEnd } : { $gte: shiftStart },
   $or: [
     { status: 'Completed' },
     { status: { $in: ['Preparing', 'Ready'] }, amountTendered: { $gt: 0 } },
@@ -296,7 +407,7 @@ const signAccessToken = (user) => jwt.sign(
   // (see verifyToken / lib/authz.js), independent of the role string.
   // `perms` carries the resolved permission set so requirePermission needn't hit
   // the DB; legacy tokens without it fall back to role defaults in hasPermission.
-  { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, tenantId: user.tenantId || null, perms: resolvePermissions(user), aud: 'staff' },
+  { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, tenantId: user.tenantId || null, perms: resolvePermissions(user), tv: user.tokenVersion || 0, aud: 'staff' },
   process.env.JWT_SECRET,
   { expiresIn: ACCESS_TTL }
 );
@@ -342,8 +453,31 @@ const issueSession = async (res, user, meta = {}) => {
 
 // Revoke every active refresh session for a user - call on password/role change
 // or account deletion so existing logins can no longer silently refresh.
-const revokeUserSessions = (userId) =>
-  RefreshSession.updateMany({ userId, revoked: false }, { revoked: true });
+// A privilege change (password, role, permissions, deletion) must take effect
+// NOW, not when the 15-minute access token happens to expire. Revoking the
+// refresh sessions stops new tokens; bumping tokenVersion makes verifyToken
+// refuse the ones already issued, so the client silently refreshes and comes
+// back with the new permission set.
+const tokenVersionCache = new Map();            // userId -> { tv, at }
+const TOKEN_VERSION_TTL_MS = 60_000;
+async function currentTokenVersion(userId) {
+  const key = String(userId);
+  const hit = tokenVersionCache.get(key);
+  if (hit && Date.now() - hit.at < TOKEN_VERSION_TTL_MS) return hit.tv;
+  // A lookup failure throws (the caller refuses with 503) and is NOT cached:
+  // caching it as "deleted" locked every user out for a minute after one blip.
+  const u = await User.findById(key, { tokenVersion: 1 }).lean();
+  // A deleted user has no version to match: -1 would let old tokens through,
+  // so treat the account as gone.
+  const tv = u ? (u.tokenVersion || 0) : Number.POSITIVE_INFINITY;
+  tokenVersionCache.set(key, { tv, at: Date.now() });
+  return tv;
+}
+const revokeUserSessions = async (userId) => {
+  await RefreshSession.updateMany({ userId, revoked: false }, { revoked: true });
+  const u = await User.findByIdAndUpdate(userId, { $inc: { tokenVersion: 1 } }, { new: true, projection: { tokenVersion: 1 } }).lean().catch(() => null);
+  tokenVersionCache.set(String(userId), { tv: u ? (u.tokenVersion || 0) : Number.POSITIVE_INFINITY, at: Date.now() });
+};
 
 // ── BOUNDARY VALIDATION ──────────────────────────────────────────────────────
 // validate(schema) parses req.body against a Zod schema. Zod strips unknown keys
@@ -372,24 +506,48 @@ const zName  = z.string().trim().min(1).max(120);
 // zLabel canonicalizes user-facing names so "abc trading" / "ABC Trading" /
 // "  ABC   Trading " collapse to one stored value.
 const zLabel = zTitle(z, 120);
-const zMoney = z.number().finite().min(0);
+const zMoney = zMoneyStrict(z);   // selling prices: 0..₱999,999,999.99, rounded to the centavo
 const zRole  = z.enum(['superadmin', 'Manager', 'Staff', 'Cashier']).or(z.string().trim().min(1).max(40));
 
+// Reusable recipe-line shape
+// `nonStock` marks an ingredient that is real in the recipe but is not stock -
+// filtered water being the case that forced it. It is measured and written down
+// so a drink can be made the same way twice, but there is nothing to deduct: you
+// never bought units of it, so no quantity can run out. Its cost stays out of
+// COGS too - a cost with no purchase behind it has no credit side, and the
+// filter and water bill are already expenses in the P&L, so charging drinks for
+// water as well would count the same money twice.
+const zRecipe = z.array(z.object({
+  invId: z.string().optional(), name: z.string().optional(),
+  qty: z.number().optional(), cost: z.number().optional(), unit: z.string().optional(),
+  nonStock: z.boolean().optional(),
+  // How many BASE units make up one pack of this ingredient (377 for a 377g
+  // can, 1000 for a 1L carton). `qty` is stored in base units, so without this
+  // the editor cannot turn it back into the "1 carton" a person typed - it was
+  // being dropped on save, and the edit form then reset every quantity to one
+  // full pack to compensate, silently discarding what the user had entered.
+  packBase: z.number().optional(),
+  // Used only when the order leaves the shop (a disposable cup, a lid, a
+  // straw): a dine-in order leaves it on the shelf.
+  takeoutOnly: z.boolean().optional(),
+})).optional();
+
 // Schemas for the previously raw `Model.create(req.body)` routes (mass-assignment fixes)
-const loginSchema    = z.object({ name: zName, password: z.string().min(1).max(200) });
+// `code`: the six digits (or a backup code) of two-step sign-in, sent on the second step.
+const loginSchema    = z.object({ name: zName, password: z.string().min(1).max(200), code: z.string().max(20).optional() });
 // password min 4 to match the client's staff-PIN policy (SuperAdminPanel validateForm).
 // permissions passes through so the create route can honour an explicit override.
 const userCreateSchema = z.object({ name: zName, password: z.string().min(4).max(200), role: zRole.optional(), permissions: z.array(z.string()).optional() });
 const addonSchema    = z.object({
   name: zLabel, price: zMoneyLoose(z), category: zTitle(z, 60).optional(),
-  recipe: z.array(z.object({ invId: z.string(), name: z.string(), qty: z.number(), cost: z.number().optional(), unit: z.string().optional() })).optional(),
+  // The same shape every other recipe uses. Its own stricter copy required an
+  // invId on every line, so an add-on measured in something that is not stock
+  // - the water in an iced drink - was refused outright, and `packBase` was
+  // dropped from the lines that did save, which is what lets the editor show
+  // "1 carton" again instead of 1000 ml.
+  recipe: zRecipe,
 });
 
-// Reusable recipe-line shape
-const zRecipe = z.array(z.object({
-  invId: z.string().optional(), name: z.string().optional(),
-  qty: z.number().optional(), cost: z.number().optional(), unit: z.string().optional(),
-})).optional();
 
 // Mass-assignment fixes: each schema OMITS server-controlled fields
 // (codes, isArchived, timestamps) so a client can never set them via create().
@@ -403,7 +561,7 @@ const productSchema = z.object({
   baseSize: z.string().max(40).optional(), baseRecipe: zRecipe,
   sizes: z.array(z.object({ sizeCode: z.string().optional(), name: z.string().optional(), price: zMoney.optional(), recipe: zRecipe })).optional(),
   addOns: z.array(z.object({ name: z.string(), price: zMoney.optional(), recipe: zRecipe })).optional(),
-  image: z.string().optional(), isAvailable: z.boolean().optional(),
+  image: z.string().optional(), isAvailable: z.boolean().optional(), showOnQr: z.boolean().optional(),
   vatExempt: z.boolean().optional(),
   barcode: z.string().max(120).optional(),
   isBulk: z.boolean().optional(),
@@ -430,15 +588,19 @@ const modifierGroupSchema = z.object({
 //   Atomically increments a per-prefix-per-year counter, zero-collision.
 //   e.g.  await mkSeqRef('EXP')       →  "EXP-2025-000042"
 //          await mkSeqRef('INV-SPOIL') →  "INV-SPOIL-2025-000007"
-const mkSeqRef = async (prefix) => {
+const mkSeqRef = async (code) => {
   const year    = new Date().getFullYear();
-  const key     = `${prefix}-${year}`;
+  // The counter is keyed on the CANONICAL code, never on the printed prefix:
+  // renaming a series in Settings must not restart its numbering, nor collide
+  // with numbers already issued under the old name.
+  const key     = `${code}-${year}`;
   const counter = await Counter.findOneAndUpdate(
     { _id: key },
     { $inc: { seq: 1 } },
     { upsert: true, returnDocument: 'after' }
   );
-  return `${key}-${counter.seq.toString().padStart(6, '0')}`;
+  const label = await seriesPrefix(Settings, code);
+  return `${label}-${year}-${counter.seq.toString().padStart(6, '0')}`;
 };
 
 // currentBranchCode - which inventory this deployment IS ("AC-A001").
@@ -513,19 +675,33 @@ const orderLimiter = rateLimit({
 // nothing wrong. Decoding is best-effort and unverified (jwt.verify already
 // runs downstream in each route's own auth middleware) - this key only needs
 // to be a stable per-device bucket, not a trust boundary.
+// Per-user bucket for a SIGNED token, else per-IP. This used jwt.decode, which
+// does not check the signature: anyone could mint a token with a random _id on
+// every request and get a fresh 300/min bucket each time - no limit at all.
+// ipKeyGenerator groups an IPv6 address by its /56 subnet; keying on the raw
+// req.ip let one IPv6 host rotate through billions of addresses (and is what
+// express-rate-limit's ERR_ERL_KEY_GEN_IPV6 boot warning was about).
 const rateLimitKey = (req) => {
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
     try {
-      const decoded = jwt.decode(authHeader.slice(7));
-      if (decoded?._id) return String(decoded._id);
-    } catch { /* fall through to IP */ }
+      const verified = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+      if (verified?._id) return `u:${verified._id}`;
+    } catch { /* unsigned, expired or forged - fall through to IP */ }
   }
-  return req.ip;
+  // An IPv6 client is handed a whole /64 of its own, so keying on the exact
+  // address lets one caller rotate through addresses and reset its own bucket
+  // at will. ipKeyGenerator collapses the address to its subnet, which is the
+  // unit an ISP actually assigns - and is what express-rate-limit warns about
+  // when a custom keyGenerator returns req.ip raw.
+  return `ip:${ipKeyGenerator(req.ip)}`;
 };
 const generalApiLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 300,            // generous per device; no longer shared across a whole location
+  // Generous per user; no longer shared across a whole location. Overridable
+  // (API_RATE_LIMIT_PER_MIN) for the e2e server, where one account drives
+  // every test back to back.
+  max: Number(process.env.API_RATE_LIMIT_PER_MIN) || 300,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: rateLimitKey,
@@ -533,13 +709,93 @@ const generalApiLimiter = rateLimit({
 });
 app.use('/api', generalApiLimiter);
 
+// A PIN is short by design, so the route it is typed into has to be the thing
+// that makes guessing impractical. More generous than the login limiter - a bar
+// switches operators dozens of times a shift, and a real barista mistyping must
+// not lock the terminal - but still far below what guessing four digits needs.
+const pinLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 20,                  // 20 FAILED attempts per device per 10 minutes
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  keyGenerator: rateLimitKey,
+  message: { success: false, error: 'Too many wrong PINs from this device. Wait a few minutes, or sign in with a password.' },
+});
+
+// Money actions get their own, tighter per-user limit on top of the general
+// one. A void, refund, settlement or manual journal entry is never something a
+// person does dozens of times a minute; a script replaying one is. Keyed on
+// the verified user (rateLimitKey), so one account cannot starve another.
+const moneyActionLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: rateLimitKey,
+  // Only writes count - reading a void screen is not a void.
+  skip: (req) => req.method === 'GET',
+  message: { success: false, error: 'Too many money actions in a minute. Wait a moment and try again.' },
+});
+app.use([
+  '/api/orders/:id/void', '/api/orders/:id/unvoid', '/api/orders/:id/refund', '/api/orders/:id/settle-ar',
+  '/api/orders/:id/partial-refund', '/api/orders/:id/exchange', '/api/orders/:id/complimentary',
+  '/api/bills/:id/pay', '/api/journal', '/api/expenses', '/api/bank-deposits',
+  '/api/finance/ap-payment', '/api/reports/percentage-tax/accrue',
+], moneyActionLimiter);
+
 
 // --- STARTUP TASKS (run once after DB connect) ---
 // Idempotent: seed superadmin, backfill businessType, seed payment-method sub-accounts,
 // run the one-time COA 4→6-digit code migration, and sync atomic counters. Extracted into
 // a named, exported function so integration tests can seed legacy data and invoke it.
+// Hub transfers used to post to 540900, a code never declared in the chart of
+// accounts. Every statement skips unknown codes, so after a transfer the
+// sender's balance sheet stopped balancing and the consolidated books listed it
+// as unmapped. Transfers now post to 160200 Hub Transfer Clearing; this moves
+// the historical lines across so old and new agree.
+//
+// Only the account code and name on the line change - amounts, dates and the
+// entry itself are untouched, and the lines were never on any statement to
+// begin with, so no previously reported figure is restated. Idempotent: once
+// no line carries 540900, it matches nothing.
+async function migrateHubClearingAccount() {
+  const res = await withLedgerMaintenance(() => JournalEntry.updateMany(
+    { 'lines.accountCode': '540900' },
+    { $set: {
+      'lines.$[l].accountCode': '160200',
+      'lines.$[l].accountName': 'Hub Transfer Clearing (Inter-branch)',
+    } },
+    { arrayFilters: [{ 'l.accountCode': '540900' }] },
+  ));
+  if (res.modifiedCount > 0) log.info(`✅ Moved ${res.modifiedCount} hub transfer entr(ies) from 540900 to 160200 Hub Transfer Clearing`);
+  return res.modifiedCount || 0;
+}
+
 const runStartupTasks = async () => {
     log.info('Connected to MongoDB Atlas');
+    // The business's own clock drives every day boundary - report ranges, the
+    // EOD lock, the midnight close. A setting rather than an env var, so a shop
+    // can move or open abroad without a redeploy; the server's own timezone no
+    // longer decides when a day ends.
+    try {
+      const row = await Settings.findOne({ key: 'businessTimeZone' }).lean();
+      const zone = setBusinessTimeZone(row?.value || DEFAULT_BUSINESS_TZ);
+      log.info({ timeZone: zone }, 'Business day boundaries use this timezone (Settings > Time zone)');
+    } catch { /* never let a clock check stop the server booting */ }
+
+    // Build the indexes the reports depend on. Mongoose creates them lazily,
+    // which means an existing deployment upgrading to this version would keep
+    // scanning whole collections until something happened to touch each model.
+    // createIndexes (not syncIndexes) is additive - it never drops an index
+    // somebody added by hand. Failures are logged, not fatal: a slow report is
+    // better than a server that will not start.
+    (async () => {
+      for (const name of ['JournalEntry', 'AuditLog', 'Order', 'StockCard', 'Inventory', 'Bill', 'Budget', 'ManualJournal', 'Attachment', 'LeaveRequest', 'OvertimeRequest']) {
+        try { await mongoose.model(name).createIndexes(); }
+        catch (e) { log.warn({ err: e, model: name }, 'Index build failed - reports on this collection may be slow'); }
+      }
+    })();
     try {
       const adminCount = await User.countDocuments();
       if (adminCount === 0) {
@@ -569,6 +825,8 @@ const runStartupTasks = async () => {
       ]);
       const stampedTotal = (bO.modifiedCount || 0) + (bP.modifiedCount || 0) + (bI.modifiedCount || 0) + (bC.modifiedCount || 0);
       if (stampedTotal > 0) log.info(`✅ Stamped businessType=${BUSINESS_TYPE} on ${stampedTotal} legacy doc(s) - Orders:${bO.modifiedCount} Products:${bP.modifiedCount} Inventory:${bI.modifiedCount} Categories:${bC.modifiedCount}`);
+
+      await migrateHubClearingAccount();
     } catch (err) {
       log.error({ err }, 'Seeding error');
     }
@@ -598,6 +856,67 @@ const runStartupTasks = async () => {
       if (tStamped > 0) log.info(`✅ Backfilled tenantId on ${tStamped} doc(s) - Orders:${tO.modifiedCount} Products:${tP.modifiedCount} Inventory:${tI.modifiedCount} Categories:${tC.modifiedCount} Users:${tU.modifiedCount}`);
     } catch (err) {
       log.error({ err }, 'Tenant seed/backfill error');
+    }
+
+    // ── REFUNDED-AMOUNT BACKFILL (one-time) ───────────────────────────────
+    // Orders refunded before `refundedAmount` existed carry the credit only in
+    // refundHistory, so every A/R view still read their full face value as
+    // owed. Reconstructed here, once: EXCHANGE entries are skipped because an
+    // exchange already adjusted the order's own total, and counting both would
+    // credit it twice. Idempotent - it only touches orders that have no figure.
+    try {
+      const needing = await Order.find(
+        { refundedAmount: { $in: [null, 0] }, 'refundHistory.0': { $exists: true } },
+        { refundHistory: 1, total: 1 },
+      ).lean();
+      let healed = 0;
+      for (const o of needing) {
+        const credited = (o.refundHistory || [])
+          .filter(r => !String(r.reason || '').startsWith('EXCHANGE:'))
+          .reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+        // Never more than the sale itself was worth.
+        const amount = Math.min(Math.round(credited * 100) / 100, Number(o.total) || 0);
+        if (amount > 0.005) {
+          await Order.updateOne({ _id: o._id }, { $set: { refundedAmount: amount } });
+          healed++;
+        }
+      }
+      if (healed > 0) log.info(`✅ Backfilled refundedAmount on ${healed} refunded order(s)`);
+    } catch (err) {
+      log.error({ err }, 'Refunded-amount backfill error');
+    }
+
+    // ── INPUT-VAT-CLAIMED BACKFILL (one-time) ─────────────────────────────
+    // Deliveries received before `inputVatClaimed` existed did not record
+    // whether their VAT was taken as a creditable input. Returning goods from
+    // one would then hand back the goods and the payable but NOT the input VAT,
+    // leaving the business claiming a credit on stock it no longer holds.
+    //
+    // The ledger already knows: a receipt that claimed it posted a 170300 line,
+    // and every receipt entry names the PO it belongs to. Reconstructed from
+    // that here, once. Idempotent - it only sets the flag, never clears one.
+    try {
+      const vatReceipts = await JournalEntry.find(
+        { 'lines.accountCode': '170300' },
+        { description: 1 },
+      ).lean();
+      // The document number the entry names, e.g. "PO-2026-000031". Matched
+      // loosely on shape rather than on a fixed prefix, because the prefix each
+      // series prints under is configurable.
+      const DOC_NO = /\b[A-Z][A-Z0-9/-]{0,11}-\d{4}-\d{6}\b/g;
+      const claimed = new Set();
+      for (const je of vatReceipts) {
+        for (const m of String(je.description || '').matchAll(DOC_NO)) claimed.add(m[0]);
+      }
+      if (claimed.size > 0) {
+        const res = await PurchaseOrder.updateMany(
+          { poNumber: { $in: [...claimed] }, inputVatClaimed: { $ne: true } },
+          { $set: { inputVatClaimed: true } },
+        );
+        if (res.modifiedCount > 0) log.info(`✅ Backfilled inputVatClaimed on ${res.modifiedCount} received PO(s)`);
+      }
+    } catch (err) {
+      log.error({ err }, 'Input-VAT-claimed backfill error');
     }
 
     // ── PAYMENT-METHOD SUB-ACCOUNT SEEDING ────────────────────────────────
@@ -645,12 +964,23 @@ const runStartupTasks = async () => {
         if (existsByName) { PM_DEFAULTS[s.name] = existsByName.code; continue; }
         // Otherwise take the preferred code if free, else next available.
         const existsByCode = await Account.findOne({ code: s.preferred }).lean();
-        const codeToUse = existsByCode ? await nextFreeCodeUnder(s.parent) : s.preferred;
+        let codeToUse = existsByCode ? await nextFreeCodeUnder(s.parent) : s.preferred;
         if (!codeToUse) continue;
-        await Account.create({
-          code: codeToUse, name: s.name, type: parentMeta.type, parent: s.parent,
-          custom: true, normalBalance: /^[15679]/.test(codeToUse) ? 'Debit' : 'Credit',
-        });
+        // A setup import running at the same moment can take the code between
+        // choosing it and creating it; choose again rather than fail.
+        for (let attempt = 1; ; attempt++) {
+          try {
+            await Account.create({
+              code: codeToUse, name: s.name, type: parentMeta.type, parent: s.parent,
+              custom: true, normalBalance: /^[15679]/.test(codeToUse) ? 'Debit' : 'Credit',
+            });
+            break;
+          } catch (err) {
+            if (!(err?.code === 11000 && (err?.keyPattern?.code || /code_1/.test(String(err?.message)))) || attempt >= 5) throw err;
+            codeToUse = await nextFreeCodeUnder(s.parent);
+            if (!codeToUse) throw err;
+          }
+        }
         PM_DEFAULTS[s.name] = codeToUse;
         seededAccts++;
       }
@@ -675,11 +1005,11 @@ const runStartupTasks = async () => {
       if (!done) {
         let migrated = 0;
         for (const [oldC, newC] of Object.entries(CODE_MAP)) {
-          const r = await JournalEntry.updateMany(
+          const r = await withLedgerMaintenance(() => JournalEntry.updateMany(
             { 'lines.accountCode': oldC },
             { $set: { 'lines.$[el].accountCode': newC } },
             { arrayFilters: [{ 'el.accountCode': oldC }] }
-          );
+          ));
           migrated += r.modifiedCount || 0;
         }
         await Settings.updateOne({ key: 'coaV2Migrated' }, { $set: { value: true } }, { upsert: true });
@@ -770,11 +1100,11 @@ const runStartupTasks = async () => {
     // staff, Admin is the full-ops role.
     try {
       const wantedRoles = [
-        { name: 'Logistics',    permissions: ['inventory.view', 'inventory.manage', 'procurement.view', 'orders.view', 'requisitions.view'] },
+        { name: 'Logistics',    permissions: ['inventory.view', 'inventory.manage', 'inventory.waste', 'inventory.count', 'procurement.view', 'orders.view', 'requisitions.view'] },
         { name: 'Office',       permissions: ['orders.view', 'orders.manage', 'procurement.view', 'procurement.manage', 'accounting.view', 'requisitions.view', 'reports.view', 'analytics.view'] },
-        { name: 'Admin',        permissions: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'inventory.view', 'inventory.manage', 'inventory.delete', 'products.view', 'products.manage', 'procurement.view', 'procurement.manage', 'procurement.delete', 'accounting.view', 'requisitions.view', 'requisitions.approve', 'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'] },
-        { name: 'Barista',      permissions: ['pos.use', 'orders.view', 'inventory.view', 'products.view'] },
-        { name: 'Head Barista', permissions: ['pos.use', 'orders.view', 'orders.manage', 'inventory.view', 'inventory.manage', 'products.view', 'requisitions.view'] },
+        { name: 'Admin',        permissions: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'inventory.view', 'inventory.manage', 'inventory.delete', 'inventory.waste', 'inventory.count', 'products.view', 'products.manage', 'procurement.view', 'procurement.manage', 'procurement.delete', 'accounting.view', 'requisitions.view', 'requisitions.approve', 'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'] },
+        { name: 'Barista',      permissions: ['pos.use', 'orders.view', 'orders.comp', 'inventory.view', 'inventory.waste', 'inventory.count', 'products.view'] },
+        { name: 'Head Barista', permissions: ['pos.use', 'orders.view', 'orders.manage', 'orders.comp', 'inventory.view', 'inventory.manage', 'inventory.waste', 'inventory.count', 'products.view', 'requisitions.view'] },
       ];
       for (const r of wantedRoles) {
         const exists = await Role.findOne({ name: { $regex: `^${escapeRegex(r.name)}$`, $options: 'i' } }).lean();
@@ -784,11 +1114,173 @@ const runStartupTasks = async () => {
       log.error({ err }, 'Role seed error');
     }
 
+    // Once: give every stored role and per-person list the floor permissions
+    // (waste, count, comp) its holders could already use - see authz.js.
+    try {
+      const done = await Settings.findOne({ key: 'permsFloorActionsV1' }).lean();
+      if (!done) {
+        for (const r of await Role.find().lean()) {
+          const next = withFloorActions(r.permissions || []);
+          if (next.length !== (r.permissions || []).length) await Role.updateOne({ _id: r._id }, { $set: { permissions: next } });
+        }
+        for (const u of await User.find({ 'permissions.0': { $exists: true } }, { permissions: 1 }).lean()) {
+          const next = withFloorActions(u.permissions);
+          if (next.length !== u.permissions.length) await User.updateOne({ _id: u._id }, { $set: { permissions: next } });
+        }
+        await Settings.findOneAndUpdate({ key: 'permsFloorActionsV1' }, { key: 'permsFloorActionsV1', value: true }, { upsert: true });
+        log.info('✅ Floor-action permissions added to existing roles and users');
+      }
+    } catch (err) {
+      log.error({ err }, 'Floor-action permission migration failed');
+    }
+
+    // Once: backdated sales "On Account" were booked to Accounts Payable - post
+    // the correcting entries that move them to Accounts Receivable.
+    try {
+      const done = await Settings.findOne({ key: 'backdateOnAccountFixV1' }).lean();
+      if (!done) {
+        const fixed = await repairBackdatedSalesOnPayables(mongoose);
+        await Settings.findOneAndUpdate({ key: 'backdateOnAccountFixV1' }, { key: 'backdateOnAccountFixV1', value: true }, { upsert: true });
+        if (fixed.length) log.info({ count: fixed.length, total: fixed.reduce((s, f) => s + f.amount, 0) }, '✅ Backdated On Account sales moved from Accounts Payable to Receivable');
+      }
+    } catch (err) {
+      log.error({ err }, 'Backdated On Account repair failed');
+    }
+
+    // Once: client and supplier names saved before they were kept in capitals.
+    try {
+      const done = await Settings.findOne({ key: 'partyNamesUpperV1' }).lean();
+      if (!done) {
+        const changed = await uppercasePartyNames(mongoose);
+        await Settings.findOneAndUpdate({ key: 'partyNamesUpperV1' }, { key: 'partyNamesUpperV1', value: true }, { upsert: true });
+        log.info({ changed }, '✅ Client and supplier names converted to capitals');
+      }
+    } catch (err) {
+      log.error({ err }, 'Party-name capitals migration failed');
+    }
+
+    // Once: Payroll, Fixed Assets and Bank Reconciliation got their own
+    // permissions. Whoever could use them through accounting keeps them.
+    try {
+      const done = await Settings.findOne({ key: 'permsSplitScreensV1' }).lean();
+      if (!done) {
+        for (const r of await Role.find().lean()) {
+          const next = withSplitScreens(r.permissions || []);
+          if (next.length !== (r.permissions || []).length) await Role.updateOne({ _id: r._id }, { $set: { permissions: next } });
+        }
+        for (const u of await User.find({ 'permissions.0': { $exists: true } }, { permissions: 1 }).lean()) {
+          const next = withSplitScreens(u.permissions);
+          if (next.length !== u.permissions.length) await User.updateOne({ _id: u._id }, { $set: { permissions: next } });
+        }
+        await Settings.findOneAndUpdate({ key: 'permsSplitScreensV1' }, { key: 'permsSplitScreensV1', value: true }, { upsert: true });
+        log.info('✅ Payroll / fixed-asset / bank-rec permissions given to existing accounting holders');
+      }
+    } catch (err) {
+      log.error({ err }, 'Split-screen permission migration failed');
+    }
+
+    // Once: the Owner role, ready to give to an account. An ordinary role from
+    // here on - the superadmin can change what it holds, or delete it.
+    try {
+      const done = await Settings.findOne({ key: 'ownerRoleSeedV1' }).lean();
+      if (!done) {
+        const { OWNER_ROLE_NAME, OWNER_ROLE_PERMISSIONS } = await import('./lib/authz.js');
+        if (!(await Role.exists({ name: { $regex: `^${OWNER_ROLE_NAME}$`, $options: 'i' } }))) {
+          await Role.create({ name: OWNER_ROLE_NAME, permissions: OWNER_ROLE_PERMISSIONS });
+          log.info('✅ Owner role created');
+        }
+        await Settings.findOneAndUpdate({ key: 'ownerRoleSeedV1' }, { key: 'ownerRoleSeedV1', value: true }, { upsert: true });
+      }
+    } catch (err) {
+      log.error({ err }, 'Owner role seed failed');
+    }
+
+    // Once: spending from a revolving fund became a permission. Custom roles
+    // and per-person lists that already see the books keep it; everyone else
+    // files a slip from now on.
+    try {
+      const done = await Settings.findOne({ key: 'permsFundsSpendV1' }).lean();
+      if (!done) {
+        const add = (list) => [...new Set([...(list || []), 'funds.spend'])];
+        const ownerName = (await import('./lib/authz.js')).OWNER_ROLE_NAME.toLowerCase();
+        for (const r of await Role.find({ permissions: 'accounting.view' }).lean()) {
+          if (String(r.name).toLowerCase() === ownerName) continue;
+          await Role.updateOne({ _id: r._id }, { $set: { permissions: add(r.permissions) } });
+        }
+        for (const u of await User.find({ permissions: 'accounting.view' }, { permissions: 1 }).lean()) await User.updateOne({ _id: u._id }, { $set: { permissions: add(u.permissions) } });
+        await Settings.findOneAndUpdate({ key: 'permsFundsSpendV1' }, { key: 'permsFundsSpendV1', value: true }, { upsert: true });
+      }
+    } catch (err) {
+      log.error({ err }, 'Fund spend permission carry-over failed');
+    }
+
+    // Once: the Daily Sales Report page became two views of the Sales page.
+    // Anyone who could open the old page and not the Sales page keeps their
+    // access - they are given the Sales page in its place.
+    try {
+      const done = await Settings.findOne({ key: 'permsSalesPageMergeV1' }).lean();
+      if (!done) {
+        const OLD = 'screen.reports.salesline', NEW = 'screen.reports.salessummary';
+        const merged = (list) => [...new Set(list.map(k => (k === OLD ? NEW : k)))];
+        let changed = 0;
+        for (const r of await Role.find({ permissions: OLD }).lean()) { await Role.updateOne({ _id: r._id }, { $set: { permissions: merged(r.permissions || []) } }); changed++; }
+        for (const u of await User.find({ permissions: OLD }, { permissions: 1 }).lean()) { await User.updateOne({ _id: u._id }, { $set: { permissions: merged(u.permissions || []) } }); changed++; }
+        await Settings.findOneAndUpdate({ key: 'permsSalesPageMergeV1' }, { key: 'permsSalesPageMergeV1', value: true }, { upsert: true });
+        if (changed) log.info({ changed }, '✅ Daily Sales Report access carried over to the Sales page');
+      }
+    } catch (err) {
+      log.error({ err }, 'Sales page permission merge failed');
+    }
+
+    // Once: products made for packed items sold a whole display unit per sale.
+    try {
+      const done = await Settings.findOne({ key: 'packRecipeFixV1' }).lean();
+      if (!done) {
+        const fixed = await repairPackRecipes();
+        await Settings.findOneAndUpdate({ key: 'packRecipeFixV1' }, { key: 'packRecipeFixV1', value: true }, { upsert: true });
+        if (fixed) log.info({ fixed }, '✅ Packed-item products now sell one pack per unit');
+      }
+    } catch (err) {
+      log.error({ err }, 'Packed-item recipe repair failed');
+    }
+
+    // Once: every bill already here that did not come from a delivery counts
+    // as carried in (the app could not tell them apart before), so the ones
+    // imported so far keep their "+ Add PO no.".
+    try {
+      const done = await Settings.findOne({ key: 'billsImportedFlagV1' }).lean();
+      if (!done) {
+        const r = await Bill.updateMany({ source: { $ne: 'PO' }, imported: { $ne: true } }, { $set: { imported: true } });
+        await Settings.findOneAndUpdate({ key: 'billsImportedFlagV1' }, { key: 'billsImportedFlagV1', value: true }, { upsert: true });
+        if (r.modifiedCount) log.info({ bills: r.modifiedCount }, '✅ Existing bills marked as carried in');
+      }
+    } catch (err) {
+      log.error({ err }, 'Marking carried-in bills failed');
+    }
+
+    // Once: orders closed by a link to a bill that was still pending reopen -
+    // only a bill already in the books closes its order.
+    try {
+      const done = await Settings.findOne({ key: 'poLinkPendingReopenV1' }).lean();
+      if (!done) {
+        const { reopenOrdersClosedByPendingBills } = await import('./lib/billPoLink.js');
+        const checked = await reopenOrdersClosedByPendingBills(mongoose);
+        await Settings.findOneAndUpdate({ key: 'poLinkPendingReopenV1' }, { key: 'poLinkPendingReopenV1', value: true }, { upsert: true });
+        if (checked) log.info({ checked }, '✅ Linked purchase orders re-checked against their bills');
+      }
+    } catch (err) {
+      log.error({ err }, 'Linked purchase order re-check failed');
+    }
+
     // Load custom-role → permissions into the authz resolver (function is hoisted).
     await refreshCustomRolePerms();
 };
 
 // --- MONGODB CONNECTION (single connect) ---
+// Lets lib/atomicRoute.js run a whole handler in one transaction: every query
+// inside mongoose.connection.transaction() joins it without passing a session.
+// Queries outside such a callback are unaffected.
+mongoose.set('transactionAsyncLocalStorage', true);
 mongoose.connect(process.env.MONGO_URI, {
   serverSelectionTimeoutMS: 10000, // fail fast on an unreachable cluster instead of hanging
   socketTimeoutMS: 45000,
@@ -798,7 +1290,12 @@ mongoose.connect(process.env.MONGO_URI, {
   // captureError() is a no-op until then, so early boot errors are simply not
   // recorded rather than crashing the process.
   .then(() => { initErrorLog(); return runStartupTasks(); })
-  .catch(err => console.error('❌ MongoDB Connection Error:', err));
+  .catch(err => {
+    console.error('❌ MongoDB Connection Error:', err);
+    // Running on without a database only answers every request with an error
+    // until someone notices. In production, exit and let Docker restart us.
+    if (IS_PROD) process.exit(1);
+  });
 
   // --- 🔒 NEW: JWT MIDDLEWARE 🔒 ---
   const verifyToken = (req, res, next) => {
@@ -819,6 +1316,22 @@ mongoose.connect(process.env.MONGO_URI, {
         return res.status(403).json({ success: false, message: 'Forbidden: client token not permitted here.' });
       }
       req.user = decoded; // Stage 3 (role allowlist) is enforced by requireStaff on staff routes.
+      // Stage 4 - still current? A token minted before the user's last
+      // privilege change is refused (401 -> the client refreshes). Staff
+      // tokens only; client-portal tokens carry no version.
+      if (decoded.aud === 'staff' && decoded._id) {
+        return currentTokenVersion(decoded._id).then((tv) => {
+          if ((decoded.tv || 0) < tv) {
+            return res.status(401).json({ success: false, message: 'Unauthorized: permissions changed, please sign in again' });
+          }
+          next();
+        }, (err) => {
+          // Fail closed: if we cannot tell whether the token was revoked, it
+          // does not get through.
+          log.error({ err }, 'token version lookup failed');
+          res.status(503).json({ success: false, message: 'Could not verify your session. Try again in a moment.' });
+        });
+      }
       next();
     } catch (error) {
       // 401 (not 403) for an expired/invalid token so the client silently refreshes
@@ -832,21 +1345,44 @@ mongoose.connect(process.env.MONGO_URI, {
   // valid signature AND aud:'client' AND role:'client' (see evaluateClientAccess). A
   // staff token, or a client token missing the aud claim, is rejected - clients
   // re-authenticate after deploy. Staff routes use verifyToken + requireStaff instead.
-  const verifyClientToken = (req, res, next) => {
+  // Is the account behind a client session still allowed in? A client token
+  // lasts 8 hours and used to be believed for all of them: a client switched
+  // off (a bad debt, say) went on placing orders on credit until it ran out,
+  // and so did anyone holding a session from before a password reset. Staff
+  // sessions are already checked this way (tokenVersion); this is the same
+  // for clients.
+  const clientSessionLive = async (decoded) => {
+    const id = decoded?.clientId || decoded?._id;
+    if (!id || !mongoose.Types.ObjectId.isValid(String(id))) return false;
+    const c = await mongoose.model('ClientAccount').findById(id, { isActive: 1, sessionsValidFrom: 1 }).lean();
+    if (!c || c.isActive === false) return false;
+    // iat is whole seconds; a session from the same second as the reset is the new one.
+    if (c.sessionsValidFrom && (Number(decoded.iat) || 0) * 1000 < new Date(c.sessionsValidFrom).getTime() - 1000) return false;
+    return true;
+  };
+
+  const verifyClientToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ success: false, error: 'Unauthorized: No token provided' });
     }
+    let decoded;
     try {
-      const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
-      if (!evaluateClientAccess(decoded).ok) {
-        return res.status(403).json({ success: false, error: 'Client session required.' });
-      }
-      req.user = decoded;
-      return next();
+      decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
     } catch (error) {
       return res.status(401).json({ success: false, error: 'Unauthorized: Invalid or expired token' });
     }
+    if (!evaluateClientAccess(decoded).ok) {
+      return res.status(403).json({ success: false, error: 'Client session required.' });
+    }
+    try {
+      if (!(await clientSessionLive(decoded))) return res.status(401).json({ success: false, error: 'This account can no longer sign in here. Please sign in again or contact the shop.' });
+    } catch (err) {
+      log.error({ err }, 'client session lookup failed');
+      return res.status(503).json({ success: false, error: 'Could not verify your session. Try again in a moment.' });
+    }
+    req.user = decoded;
+    return next();
   };
 
   // Hard-gate: role === 'superadmin' ONLY - never trust name strings.
@@ -858,7 +1394,8 @@ mongoose.connect(process.env.MONGO_URI, {
   };
 
   // Allows superadmin OR admin (e.g. for refund). Role match is case-insensitive.
-  // NOTE: voids are superadmin-only (requireSuperAdmin) - do not add void here.
+  // NOTE: voids are governed by the orders.delete permission (see the void
+  // route in features/orders.js), not by this role check.
   const requireSuperOrAdmin = (req, res, next) => {
     const role = String(req.user?.role || '').toLowerCase();
     if (role === 'superadmin' || role === 'admin') return next();
@@ -870,13 +1407,41 @@ mongoose.connect(process.env.MONGO_URI, {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
+      let decoded;
       try {
-        req.user = jwt.verify(token, process.env.JWT_SECRET);
-        return next();
+        decoded = jwt.verify(token, process.env.JWT_SECRET);
       } catch {
         // 401 so the client refreshes + retries instead of failing an expired session.
         return res.status(401).json({ success: false, error: 'Invalid or expired token.' });
       }
+      // A signed token is not enough: it must be a real client-portal session
+      // or a staff session, and a staff token revoked by a role/password
+      // change (tokenVersion) is refused here exactly as verifyToken does -
+      // otherwise a demoted or deleted person kept ringing sales for up to
+      // 15 minutes.
+      if (decoded.aud === 'client' || String(decoded.role || '').toLowerCase() === 'client') {
+        if (!evaluateClientAccess(decoded).ok) return res.status(403).json({ success: false, error: 'Client session required.' });
+        try {
+          if (!(await clientSessionLive(decoded))) return res.status(401).json({ success: false, error: 'This account can no longer sign in here. Please sign in again or contact the shop.' });
+        } catch (err) {
+          log.error({ err }, 'client session lookup failed');
+          return res.status(503).json({ success: false, error: 'Could not verify your session. Try again in a moment.' });
+        }
+        req.user = decoded;
+        return next();
+      }
+      if (!evaluateStaffAccess(decoded).ok) return res.status(403).json({ success: false, error: 'Forbidden: staff access required.' });
+      if (decoded._id) {
+        try {
+          const tv = await currentTokenVersion(decoded._id);
+          if ((decoded.tv || 0) < tv) return res.status(401).json({ success: false, error: 'Unauthorized: permissions changed, please sign in again' });
+        } catch (err) {
+          log.error({ err }, 'token version lookup failed');
+          return res.status(503).json({ success: false, error: 'Could not verify your session. Try again in a moment.' });
+        }
+      }
+      req.user = decoded;
+      return next();
     }
     const { sessionId, table } = req.body;
     if (sessionId && table && !['Takeout', 'Grab Delivery', 'Foodpanda', 'Manual Delivery'].includes(table)) {
@@ -890,457 +1455,12 @@ mongoose.connect(process.env.MONGO_URI, {
     return res.status(401).json({ success: false, error: 'Unauthorized: provide a staff token or a valid QR session.' });
   };
 
-// --- DATABASE SCHEMAS ---
-const CategorySchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  // fb routes to Kitchen/Bar; log routes to Logistics/Warehouse. The enum must
-  // cover both or category creation 500s in log mode, where the Products tab
-  // only offers the logistics pair. Default follows the running BUSINESS_TYPE.
-  department: {
-    type: String,
-    enum: ['Kitchen', 'Bar', 'Logistics', 'Warehouse'],
-    default: () => (BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen'),
-  },
-  // Tenancy seed: which business type owns this category. Defaults to the env
-  // BUSINESS_TYPE on create. Old docs without this field still read fine.
-  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
-  // Multi-tenancy (Phase 1): every tenant-scoped doc carries a tenantId. Backfilled
-  // to the default tenant on boot. Query-scoping/auth wiring lands in Phase 2.
-  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-}, { timestamps: true });
-const Category = mongoose.model('Category', CategorySchema);
-// ── MODIFIER GROUPS ─────────────────────────────────────────────────────────
-// A modifier group is a required or optional selection prompt on a product.
-// e.g. "Choose your milk" (required, pick 1) or "Extra shots" (optional, 0–3).
-const ModifierGroupSchema = new mongoose.Schema({
-  name:       { type: String, required: true },
-  isRequired: { type: Boolean, default: true },
-  minSelect:  { type: Number, default: 1 },
-  maxSelect:  { type: Number, default: 1 },
-  options:    [{ name: String, price: { type: Number, default: 0 }, recipe: [{ invId: String, name: String, qty: Number, unit: String }] }]
-}, { timestamps: true });
-const ModifierGroup = mongoose.model('ModifierGroup', ModifierGroupSchema);
-
-// ── SETTINGS ─────────────────────────────────────────────────────────────────
-// Key/value store for system-wide toggles (isAcceptingQROrders, etc.)
-const SettingsSchema = new mongoose.Schema({ key: { type: String, unique: true, required: true }, value: { type: mongoose.Schema.Types.Mixed } });
-const Settings = mongoose.model('Settings', SettingsSchema);
-
-// ── TENANT (multi-tenancy, Phase 1) ──────────────────────────────────────────
-// A Tenant is an isolated business in a shared deployment. Phase 1 introduces the
-// model + a default tenant + tenantId backfill (additive, non-breaking - existing
-// queries are unchanged). Phase 2 wires tenantId into the access token, per-tenant
-// query scoping, and Socket.io room partitioning.
-const TenantSchema = new mongoose.Schema({
-  name:         { type: String, required: true, trim: true },
-  slug:         { type: String, required: true, unique: true, lowercase: true, trim: true },
-  businessType: { type: String, default: () => BUSINESS_TYPE },
-  isActive:     { type: Boolean, default: true },
-}, { timestamps: true });
-const Tenant = mongoose.model('Tenant', TenantSchema);
-
-// Tenant management - superadmin only (Phase 1 CRUD over the tenant registry).
-const tenantSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  slug: z.string().trim().min(1).max(60).regex(/^[a-z0-9-]+$/i, 'slug must be alphanumeric/hyphen'),
-  businessType: z.enum(['fb', 'log']).optional(),
-  isActive: z.boolean().optional(),
-});
-
-// --- ADD-ONS SCHEMA & ROUTES ---
-const AddOnSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  price: { type: Number, required: true },
-  category: { type: String, default: 'Extras' },
-  recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String }]
-}, { timestamps: true });
-const AddOn = mongoose.model('AddOn', AddOnSchema);
-
-
-
-// 1. UPDATE THE PRODUCT SCHEMA (Add Recipes)
-const ProductSchema = new mongoose.Schema({
-  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
-  // Multi-tenancy (Phase 1): every tenant-scoped doc carries a tenantId. Backfilled
-  // to the default tenant on boot. Query-scoping/auth wiring lands in Phase 2.
-  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  productCode: String,
-  // Scanned barcode (UPC/EAN/QR payload). Sparse index: most products may not
-  // have one, but the ones that do are looked up by it at the POS
-  // (GET /api/products/by-barcode/:code). NOT unique at the schema level - a
-  // shop can legitimately have the same barcode on two size variants, and a
-  // hard unique constraint would reject the second on import; the lookup route
-  // returns the first match and the response notes when a barcode is ambiguous.
-  barcode: { type: String, default: '', index: true },
-  // Bulk-sale flag - surfaces the product under a dedicated "Bulk" filter in the
-  // POS and client portal (e.g. wholesale/sack quantities), separate from the
-  // per-line quantity-break pricing in `bulkBreaks`.
-  isBulk: { type: Boolean, default: false, index: true },
-  name: { type: String, required: true, index: true },
-  description: String,
-  category: { type: String, index: true },
-  basePrice: { type: Number, required: true },
-  // Per-product discount (%). Applies only to this product's order lines, not the
-  // whole order. 0 = no discount. Applies to ALL buyers by default.
-  discountPercent: { type: Number, default: 0 },
-  // VAT classification. Defaults to VATable (false), the ERP convention: the
-  // company-level VAT setting governs, and you flag the EXCEPTIONS here - raw
-  // agricultural produce, prescription medicines, and the like. Defaulting the
-  // other way would silently under-remit VAT on any product left unconfigured,
-  // which surfaces at audit rather than at the counter.
-  vatExempt: { type: Boolean, default: false },
-  // Optional per-client overrides. When a logged-in client buys this product, the
-  // matching entry's percent is used instead of the default discountPercent. Lets
-  // you give a specific client a special rate on a specific product (pre-reg, VIP,
-  // bulk-buyer, etc.). Empty array = no overrides → falls back to discountPercent.
-  clientDiscounts: [{ clientId: String, percent: { type: Number, default: 0 } }],
-  // Segment-level overrides - same idea as clientDiscounts but keyed by a tag on
-  // the buyer's ClientAccount.segments (e.g. "wholesale", "vip") instead of one
-  // specific client id, so a rate can apply to a whole class of buyer at once.
-  // When a buyer carries more than one matching segment, the highest percent
-  // wins (see productDiscPct in orders.js) - never stacked.
-  segmentDiscounts: [{ segment: String, percent: { type: Number, default: 0 } }],
-  // Quantity-break bulk pricing, independent of the fixed-price Combo model.
-  // Each line item's ordered quantity is checked against minQty (highest
-  // qualifying minQty wins) and combined with the other discount percents via
-  // Math.max, same as clientDiscounts/segmentDiscounts - never stacked.
-  bulkBreaks: [{ minQty: { type: Number, required: true }, percent: { type: Number, default: 0 } }],
-  // Per-client quantity breaks that set an explicit PRICE, not a percent -
-  // "once Client X orders 50+ of this, charge them PHP 180 each" rather than
-  // "X% off". Kept as a real price (not a discount%) because that is how the
-  // deal is actually quoted to the client; it is converted to an equivalent
-  // discount percent at resolution time (same technique PriceTier's
-  // per_product mode already uses) so it flows through the existing
-  // percent-based discount/VAT pipeline unchanged. Unlike the universal
-  // bulkBreaks above, this only applies to the named client - someone else
-  // ordering the same quantity pays the regular price.
-  clientBulkBreaks: [{
-    clientId: { type: String, required: true },
-    minQty:   { type: Number, required: true },
-    price:    { type: Number, required: true },
-  }],
-  baseSize: String,
-  costOverride: Number,
-  baseRecipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String }],
-  sizes: [{
-    sizeCode: String,
-    name: String,
-    price: Number,
-    costOverride: Number,
-    recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String }]
-  }],
-  addOns: [{ name: String, price: Number, recipe: [{ invId: String, name: String, qty: Number, cost: Number, unit: String }] }],
-  image: String,
-  // Renamed from "86'd". `isAvailable === false` means REMOVED from the menu
-  // (and from reporting too - unless the product still has stock, in which
-  // case it shows in reporting so historical inventory is visible).
-  isAvailable:    { type: Boolean, default: true },
-  // Manual out-of-stock toggle. OOS products STILL show in menu (with an OOS
-  // badge) and STILL appear in every report. Separate from isAvailable so a
-  // temporary stockout doesn't get conflated with a permanent removal.
-  isOutOfStock:   { type: Boolean, default: false },
-  isArchived:     { type: Boolean, default: false },   // soft-delete; hidden from menu + POS
-  modifierGroups: [{ type: mongoose.Schema.Types.ObjectId, ref: 'ModifierGroup' }]  // required/optional selection prompts
-}, { timestamps: true });
-const Product = mongoose.model('Product', ProductSchema);
-
-// ── COMBO / BUNDLE (Product Promo) ───────────────────────────────────────────
-// A fixed-price set of existing products sold as one line, e.g.
-// "Budget Meal: Americano + Pandesal = ₱99". On completion the ERP engine
-// deducts each component product's recipe so COGS and stock stay accurate.
-const ComboSchema = new mongoose.Schema({
-  comboCode:   String,
-  name:        { type: String, required: true },
-  description: String,
-  price:       { type: Number, required: true },   // fixed bundle price
-  image:       String,
-  isActive:    { type: Boolean, default: true },
-  items: [{
-    productId: String,
-    name:      String,
-    sizeName:  String,   // optional specific size; '' = base
-    quantity:  { type: Number, default: 1 },
-  }],
-}, { timestamps: true });
-const Combo = mongoose.model('Combo', ComboSchema);
-
-// ── SALES / PROMOTIONS ────────────────────────────────────────────────────────
-// Time-boxed promotional pricing overlaid on top of normal product prices.
-// Rules:
-//   fixed_price  – product sells at salePrice during the window
-//   percent_off  – product gets discountPercent% off
-//   threshold    – if order subtotal >= thresholdAmount, a product gets discountPercent% off
-const SaleSchema = new mongoose.Schema({
-  name:        { type: String, required: true },
-  description: String,
-  startsAt:    { type: Date, required: true },
-  endsAt:      { type: Date, required: true },
-  isActive:    { type: Boolean, default: true },
-  rules: [{
-    ruleType:          { type: String, enum: ['fixed_price', 'percent_off', 'threshold'], required: true },
-    productId:         String,
-    productName:       String,
-    salePrice:         Number,   // for fixed_price
-    discountPercent:   Number,   // for percent_off and threshold
-    thresholdAmount:   Number,   // for threshold: minimum order subtotal
-  }],
-}, { timestamps: true });
-const Sale = mongoose.model('Sale', SaleSchema);
-
-const OrderSchema = new mongoose.Schema({
-  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
-  // Multi-tenancy (Phase 1): every tenant-scoped doc carries a tenantId. Backfilled
-  // to the default tenant on boot. Query-scoping/auth wiring lands in Phase 2.
-  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  orderNumber: String,
-  table: String,
-  // Which branch/location rang this up - a StorageLocation name snapshot, set
-  // by the device (see client localStorage 'posBranch'), same convention as
-  // Inventory.stockLocation. Blank means single-location or unset - every
-  // existing order predates this and is untagged, which is fine (reports
-  // treat blank as its own "(Unassigned)" bucket, never dropped).
-  location: { type: String, default: '', index: true },
-  isArchived: { type: Boolean, default: false, index: true },
-  status: { type: String, default: 'Pending' },
-  // Parked / held tabs: saved but not yet sent to the kitchen or completed.
-  isParked: { type: Boolean, default: false, index: true },
-  // Idempotency key - prevents duplicate orders from retries / offline-queue replays.
-  // unique+sparse: makes double-submit protection DB-enforced, not just the
-  // app-level findOne-then-create check in orders.js (which has a TOCTOU
-  // window - two concurrent requests can both pass the findOne before either
-  // create() completes). The unique index turns a lost race into an E11000
-  // the create-order route catches, instead of a duplicate order.
-  idempotencyKey: { type: String, index: true, unique: true, sparse: true },
-  customerName: { type: String, default: 'Guest' },
-  paymentMethod: { type: String, default: 'Cash' },
-  
-  // Item Level Tracking
-items: [{
-    productId: String,
-    productCode: String,
-    name: String,
-    price: Number,
-    quantity: Number,
-    fulfilledQty: { type: Number, default: 0 },        // units fulfilled so far (partial fulfillment)
-    // Cumulative units of THIS line refunded/returned so far, across however many
-    // partial-refund passes (see POST /api/orders/:id/partial-refund). Never
-    // exceeds `quantity`. Whole-order /refund and /void don't touch this - they
-    // already terminate the order outright.
-    refundedQty: { type: Number, default: 0 },
-    // True for a line added by POST /api/orders/:id/exchange (a replacement item) -
-    // distinguishes it from the order's original lines in the UI/receipt history.
-    addedViaExchange: { type: Boolean, default: false },
-    productDiscountPercent: { type: Number, default: 0 }, // per-product discount applied to this line
-    // VAT classification COPIED from the product at ring-up. Stamped rather than
-    // looked up later: reclassifying a product must never rewrite the tax on
-    // receipts already issued.
-    vatExempt: { type: Boolean, default: false },
-    selectedAddOns: [{ name: String, price: Number }],
-    hasDiscount: { type: Boolean, default: true },
-    department: { type: String, default: 'Kitchen' }, // <-- NEW: Routes to Kitchen or Bar
-    itemStatus: { type: String, default: 'Received' }, // <-- NEW: Item-level progress
-    discountPercent: { type: Number, default: 0 },
-    // Combo / bundle line: deducts each component recipe on completion
-    isCombo: { type: Boolean, default: false },
-    comboItems: [{ productId: String, name: String, sizeName: String, quantity: Number }]
-  }],
-  
-  // Strict Accounting Fields
-  isVatInclusive: { type: Boolean, default: true }, // Enforces Rule 3 (System-wide standard)
-  discountType: { type: String, default: 'None' },  // Enforces Rules 6 & 9
-  discountBy: { type: String },                      // staff who applied the discount (logged-in user, not the order's cashier)
-
-  subtotal: { type: Number, default: 0 },           // Gross Sales
-  vatableSales: { type: Number, default: 0 },       // Base for VAT
-  vatExemptSales: { type: Number, default: 0 },     // Base for SC/PWD
-  vatRate: { type: Number, default: 0 },
-  vatAmount: { type: Number, default: 0 },
-  discountPercent: { type: Number, default: 0 },
-  discount: { type: Number, default: 0 },
-  total: { type: Number, default: 0 },
-  // SC/PWD exemption for this sale. Defaults FALSE - an ordinary sale is VATable.
-  // This used to default true, which was harmless only while VAT was disabled
-  // system-wide; with VAT live it would have exempted every legacy order and
-  // quietly zeroed the output VAT on all of them.
-  isVatExempt: { type: Boolean, default: false },
-  // Which SC/PWD basis was in force when this order was rung up. Stamped per
-  // order, not read from settings at read time: changing the setting must never
-  // retroactively alter a receipt that has already been issued, and the math
-  // validator has to be able to reproduce a historical total exactly.
-  scPwdOrder: { type: String, default: 'vat-first' },
-  // --- ENTERPRISE FIELDS ---
-  cashier: { type: String, default: 'System', index: true },
-  // --- PARTIAL FULFILLMENT (logistics - single order, fulfilled in batches) ---
-  amountPaid:       { type: Number, default: 0 },        // cash/AR collected so far
-  depositRemaining: { type: Number, default: 0 },        // prepaid-but-unfulfilled value held as Customer Deposits
-  // When the remaining units of a partially-fulfilled order are dropped, the
-  // order finalizes as Completed at the fulfilled quantity and the dropped units
-  // are recorded here (they carry no ledger entries - they were never fulfilled).
-  droppedItems: [{ name: String, productCode: String, droppedQty: Number, price: Number }],
-  droppedBy:   { type: String, default: '' },
-  droppedAt:   { type: Date },
-  clientReceived:   { type: Boolean, default: false },   // client confirmed receipt from the portal
-  transactionType: { type: String, enum: ['NORMAL', 'COMPLIMENTARY', 'REFUND', 'VOID'], default: 'NORMAL' },
-  isComplimentary: { type: Boolean, default: false },
-  employeeName: { type: String, default: '' },          // beneficiary (who the comp is for)
-  complimentaryReasonType: {
-    type: String,
-    enum: ['VIP_CUSTOMER','CUSTOMER_RECOVERY','FOOD_QUALITY_ISSUE','SERVICE_DELAY','EMPLOYEE_MEAL',
-           'OWNER_APPROVAL','MARKETING_PROMOTION','INFLUENCER_PROMO','SYSTEM_ERROR',
-           'TRAINING_ORDER','LOYALTY_REWARD','EVENT_SPONSORSHIP'],
-    default: null
-  },
-  complimentaryReasonNote: { type: String, default: '' },
-  complimentaryApprovedBy: { type: String, default: '' },
-  complimentaryApprovedAt: { type: Date },
-  complimentaryAmount: { type: Number, default: 0 },
-  complimentaryCost:   { type: Number, default: 0 },
-  complimentaryReferenceNumber: { type: String, default: '' },
-  voidReason: { type: String, default: '' },
-  // Attribution - who actually voided / cancelled the order. Captured from the
-  // verified JWT, never the request body. Distinct from `cashier` (which is the
-  // original placer - could be the client themselves on a client-portal order).
-  voidedBy: { type: String, default: '' },
-  voidedAt: { type: Date },
-  cancelledBy: { type: String, default: '' },
-  cancelledAt: { type: Date },
-  // Audit trail of partial refunds (see POST /api/orders/:id/partial-refund) -
-  // not everything has to be refunded at once, and it can happen more than once
-  // over time as long as no line is ever refunded past what was ordered. Whole-
-  // order /refund and /void are unaffected - they stay one-shot/terminal.
-  refundHistory: [{
-    reference:       { type: String, default: '' },
-    at:              { type: Date, default: Date.now },
-    by:              { type: String, default: '' },
-    reason:          { type: String, default: '' },
-    inventoryAction: { type: String, default: 'None' }, // 'Restock' | 'Spoilage' | 'None'
-    items:           [{ itemIndex: Number, name: String, qty: Number }],
-    amount:          { type: Number, default: 0 },
-  }],
-  // True when a logged-in client placed the order directly from the client portal.
-  // Used to exclude these orders from "staff activity" panels - their `cashier`
-  // is the client's own username, not real staff.
-  placedByClient: { type: Boolean, default: false, index: true },
-  clientAccountId: { type: String, index: true },
-  // Marks orders added via the superadmin Backdate Sales tool. Skips inventory
-  // deduction and recipe COGS - purely a revenue/finance tally.
-  isBackdated:    { type: Boolean, default: false, index: true },
-  // Source transaction/invoice number from a Backdate Sale bulk Excel import
-  // (the sheet's own reference, e.g. "TRANSACTION NO."). Blank for a manually
-  // entered backdated sale, which has no such reference to dedupe against.
-  // Lets re-importing the same (or an overlapping) file skip rows that were
-  // already posted instead of creating a second sale for the same reference.
-  importRef:      { type: String, default: '', index: true },
-  amountTendered: { type: Number, default: 0 },
-  changeDue: { type: Number, default: 0 },
-  // --- DELIVERY / PICKUP FIELDS ---
-  deliveryAddress: { type: String, default: '' },
-  customerPhone:   { type: String, default: '' },
-  deliveryFee:     { type: Number, default: 0 },
-  scheduledTime:   { type: String, default: '' },
-  dispatchStatus:  { type: String, enum: ['', 'Preparing', 'Out for Delivery', 'Awaiting Pickup', 'Delivered', 'Picked Up'], default: '' },
-  // Customer / cashier special instructions (e.g. "no sugar", "extra shot")
-  orderNotes: { type: String, default: '' },
-  // Guest/cover count (for analytics - how many people at the table)
-  guestCount: { type: Number, default: 1 },
-  // Split-payment breakdown: [{ method, amount }]
-  payments: [{ method: String, amount: Number }],
-  // External reference the CUSTOMER supplies for their own payment - the GCash
-  // / Maya / InstaPay confirmation number after scanning a payment QR, a bank
-  // transfer reference, etc. Required for QR orders placed through the client
-  // portal, because a QR payment leaves no trace on our side otherwise: the
-  // money arrives in the wallet and this number is the only thing tying it to
-  // an order. Distinct from arSettledReference, which is OUR reference for
-  // collecting a receivable later.
-  paymentReference: { type: String, default: '' },
-  // Date written on the check when the sale was tendered by check. Post-dated
-  // checks are normal in PH trade, so this is not necessarily the sale date -
-  // it is the earliest the check can be banked. Carried through to the check
-  // register when the receivable is collected.
-  paymentCheckDate: { type: Date, default: null },
-  // A/R settlement tracking (delivery partner payouts: Grab/Foodpanda/Manual Delivery)
-  arSettled:        { type: Boolean, default: false },
-  arSettledAt:      { type: Date },
-  arSettledAmount:  { type: Number, default: 0 },
-  arSettledMethod:  { type: String, default: '' },
-  arSettledNote:    { type: String, default: '' },
-  // External reference for this settlement - a bank transaction ID, check
-  // number, GCash ref, etc. Distinct from the auto-generated internal
-  // JournalEntry.reference (mkRef('ARS', ...)) - this is what ties the record
-  // back to an actual bank statement line or receipt for reconciliation.
-  arSettledReference: { type: String, default: '' },
-  // --- PARTIAL A/R SETTLEMENT ---
-  // A receivable is rarely paid in one clean shot: a client settles ₱1,500 of a
-  // ₱1,700 invoice and the remaining ₱200 must stay on the books. `arPaidAmount`
-  // is the running sum of every collection posted against this order, and
-  // `arSettled` only flips true once that sum reaches `total`. Every A/R view
-  // reads `total - arPaidAmount` (see arBalance in lib/credit.js) so a partly
-  // paid invoice ages on its remaining balance, not its original face value.
-  arPaidAmount: { type: Number, default: 0 },
-  // One row per collection. collectionDate = when the money was actually taken
-  // in from the client (what the collector reports); depositDate = when it hit
-  // the bank/fund. They are genuinely different dates - cash collected Friday
-  // is often only banked Monday - and reconciliation needs both.
-  arPayments: [{
-    amount:          { type: Number, required: true },
-    paymentMethod:   { type: String, default: '' },
-    referenceNumber: { type: String, default: '' },
-    note:            { type: String, default: '' },
-    collectionDate:  { type: Date },
-    depositDate:     { type: Date },
-    collectedBy:     { type: String, default: '' },
-    recordedBy:      { type: String, default: '' },
-    journalRef:      { type: String, default: '' },
-    createdAt:       { type: Date, default: Date.now },
-    // --- CHECK COLLECTIONS ---
-    // A check is a PROMISE of money, not money. It is booked to Checks on Hand
-    // (115000) and only becomes bank cash once it clears, so it carries its own
-    // little lifecycle on top of the collection:
-    //   On Hand -> Deposited -> Cleared      (the money is really ours)
-    //                        -> Bounced      (it never was - the receivable reopens)
-    // checkDate is the date written ON the check: post-dated checks are normal
-    // in PH trade, and one cannot be deposited before that date.
-    checkNumber:     { type: String, default: '' },
-    checkDate:       { type: Date },
-    checkBank:       { type: String, default: '' },
-    // Whose account the check is drawn against - usually but not always the
-    // client themselves (a third-party check is worth flagging).
-    checkDrawer:     { type: String, default: '' },
-    checkStatus:     { type: String, enum: ['', 'On Hand', 'Deposited', 'Cleared', 'Bounced'], default: '' },
-    checkDepositedAt:{ type: Date },
-    checkClearedAt:  { type: Date },
-    checkBouncedAt:  { type: Date },
-    checkBounceReason:{ type: String, default: '' },
-    // Where a cleared check's money landed, so the JE and the register agree.
-    checkClearedTo:  { type: String, default: '' },
-  }],
-  // Payment-terms snapshot for on-account (non-cash) sales, captured when the
-  // order Completes so later changes to the client's default terms don't
-  // retroactively move an existing receivable's due date.
-  //   arTermsDays = the terms in days that applied at completion (null if none)
-  //   arDueDate   = completedAt + arTermsDays; the date this A/R turns overdue.
-  arTermsDays:      { type: Number, default: null },
-  arDueDate:        { type: Date, default: null },
-  // ── Logistics fields ──────────────────────────────────────────────────────
-  // billingNumber: monthly-reset sequential ref (YYYY-MM-XXXX), log mode only
-  billingNumber:   { type: String, default: '' },
-  termsOfPayment:  { type: String, default: '' },
-  // Client who placed the order (log mode; blank for fb/POS-originated orders)
-  clientId:        { type: String, default: '' },
-  clientUsername:  { type: String, default: '' },
-}, { timestamps: true });
-OrderSchema.index({ createdAt: -1 });
-OrderSchema.index({ status: 1, isArchived: 1 });
-OrderSchema.index({ orderNumber: 1 }, { unique: true, sparse: true });
-const Order = mongoose.model('Order', OrderSchema);
-
-const QRSessionSchema = new mongoose.Schema({
-  sessionId: { type: String, unique: true },
-  table: String,
-  isActive: { type: Boolean, default: true },
-  expiresAt: Date
-});
-const QRSession = mongoose.model('QRSession', QRSessionSchema);
+const {
+  Settings, Order, Product, Category, Tenant, QRSession,
+  CategorySchema, ModifierGroupSchema, ModifierGroup, SettingsSchema, TenantSchema, tenantSchema,
+  AddOnSchema, AddOn, ProductSchema, ComboSchema, Combo, SaleSchema,
+  Sale, OrderSchema, QRSessionSchema,
+} = defineCatalogModels({ BUSINESS_TYPE });
 
 // --- NEW ERP SCHEMAS ---
 const InventorySchema = new mongoose.Schema({
@@ -1357,9 +1477,19 @@ const InventorySchema = new mongoose.Schema({
   stockLocation: { type: String, default: '', index: true },
   stockCategory: { type: String, default: '', index: true },
   stockQty: { type: Number, default: 0 },           // ALWAYS stored in base unit (g/ml/pcs) for recipe precision
+  // Held for a named client and not sellable to anyone else (see the Reservation
+  // model below). Always in base units, like stockQty. Available to sell is
+  // stockQty - reservedQty; the reserving client's own order releases its hold
+  // before it deducts, so a reservation never blocks the sale it was made for.
+  reservedQty: { type: Number, default: 0 },
   unit: String,                                       // base unit: 'g', 'ml', 'pcs'
   unitCost: { type: Number, default: 0 },             // ALWAYS per base unit (e.g. P0.07/ml when 1L costs P70)
   lowStockThreshold: { type: Number, default: 0 },
+  // Take-out packaging: a cup, lid, straw or bag that only leaves the shelf
+  // when the drink leaves the shop. A dine-in order served in the bar's own
+  // cups (Order.useBarCups) skips these when it is completed - see the stock
+  // engine in orders.js - and takes them later only if it is made take-out.
+  takeoutPackaging: { type: Boolean, default: false },
   // Display layer - what operators see (kg / L / pcs). storage stays in base units for recipe precision.
   displayUnit:     { type: String, default: '' },     // 'L', 'kg', 'pcs', 'g', 'ml' - falls back to `unit` when empty
   unitMultiplier:  { type: Number, default: 1 },      // base units per displayUnit (1 for g/ml/pcs; 1000 for L/kg)
@@ -1368,6 +1498,21 @@ const InventorySchema = new mongoose.Schema({
   // (the fixed kg/L↔g/ml conversion factor): this is the SKU's own package size,
   // parsed from the item name on import or entered manually. null = not tracked.
   packSize:        { type: Number, default: null },
+  // How this item is MADE, when it is made here rather than bought: Spanish
+  // milk from fresh milk and condensed milk, cold brew from beans and water.
+  // Quantities are in base units and make `recipeYield` base units of this
+  // item, so a batch of any size is the recipe scaled by batch / yield.
+  // Having one is what marks an item as a finished good. Saved from the
+  // Production tab the first time a batch is filed, so the next batch is a
+  // matter of picking the item and saying how much.
+  productionRecipe: [{
+    invId: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
+    itemName: { type: String, default: '' },
+    qty: { type: Number, default: 0 },
+    unit: { type: String, default: '' },
+    nonStock: { type: Boolean, default: false },
+  }],
+  recipeYield: { type: Number, default: null },
   // Suggested Retail Price (per displayUnit) - optional reference for items intended for resale.
   srp:             { type: Number, default: 0 },
   // Expiry monitoring - multi-batch (FEFO)
@@ -1388,6 +1533,14 @@ const InventorySchema = new mongoose.Schema({
 }, { timestamps: true });
 InventorySchema.index({ expiryDate: 1 });
 InventorySchema.index({ itemName: 1 });
+// Any stock write may have refilled an ingredient that took products off the
+// menu - ask the auto-restorer (created once sockets exist) to check.
+let autoRestorer = null;
+const scheduleAutoRestore = () => { autoRestorer?.schedule(); };
+InventorySchema.post('save', scheduleAutoRestore);
+InventorySchema.post(['findOneAndUpdate', 'updateOne', 'updateMany', 'replaceOne'], scheduleAutoRestore);
+InventorySchema.post('insertMany', scheduleAutoRestore);
+InventorySchema.post('bulkWrite', scheduleAutoRestore);
 const Inventory = mongoose.model('Inventory', InventorySchema);
 
 // Storage places - the physical locations stock can sit in (branch, warehouse,
@@ -1469,6 +1622,10 @@ const BackdateQueueItemSchema = new mongoose.Schema({
     productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', default: null },
     productCode: String,
   }],
+  // The sheet's own money beyond the item lines, so a queued sale is posted
+  // with the same total as one imported straight through.
+  deliveryFee: { type: Number, default: 0 },
+  discountAmount: { type: Number, default: 0 },
   missingFields: [{ type: String }], // e.g. ['paymentMethod']
   status: { type: String, enum: ['pending', 'resolved', 'discarded'], default: 'pending', index: true },
   resolvedOrderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null },
@@ -1482,7 +1639,14 @@ const LinkedBusinessSchema = new mongoose.Schema({
   role:         { type: String, enum: ['hub', 'client'], required: true },
   partnerSlug:  { type: String, required: true },
   partnerName:  String,
+  // Where this server CALLS the partner: an internal API address, typically a
+  // container hostname that only resolves inside the network.
   partnerUrl:   String,
+  // Where a PERSON goes to use that branch. Deliberately separate: the two are
+  // different addresses for different audiences, and using the API one as a
+  // link sent the operator's browser to a hostname it cannot resolve, at the
+  // API root rather than the dashboard.
+  partnerAppUrl: String,
   linkToken:    { type: String, required: true },
   status:       { type: String, enum: ['active', 'suspended'], default: 'active' },
   linkedAt:     Date,
@@ -1523,6 +1687,14 @@ const CrossTransferSchema = new mongoose.Schema({
   itemCode:       { type: String, default: '' },
   stockCategory:  { type: String, default: '' },
   reference:    { type: String, index: true },
+  // Inbound only: when the sending branch confirmed it took the goods off its
+  // own stock. Until then the receiver keeps asking (hub.js releasePending) -
+  // a failed call used to be dropped, leaving the goods counted at both ends.
+  releaseConfirmedAt: { type: Date, default: null },
+  // Something the partner still has to be told, because the call that would
+  // have told them failed: 'notify' (an outbound shipment to announce) or
+  // 'reject' (an inbound one we turned down). Retried until it gets through.
+  partnerTodo:  { type: String, enum: ['', 'notify', 'reject'], default: '' },
   // Groups all line-items sent in the same "send" action.
   shipmentRef:  { type: String, index: true },
   // Which expiry batch was picked when sending (internal use only, not shown to customers).
@@ -1593,6 +1765,9 @@ const TransferRequestSchema = new mongoose.Schema({
   respondedBy:   { type: String, default: '' },   // staff name who last acted on the other side
   // Set once Approved - the CrossTransfer shipmentRef the negotiation turned into.
   linkedShipmentRef: { type: String, default: '' },
+  // The partner's copy is behind ours: 'notify' (they have never seen this
+  // request) or 'sync' (they have not seen its latest state). Retried.
+  partnerSync:   { type: String, enum: ['', 'notify', 'sync'], default: '' },
 }, { timestamps: true });
 TransferRequestSchema.index({ businessType: 1, requestRef: 1, side: 1 }, { unique: true });
 const TransferRequest = mongoose.model('TransferRequest', TransferRequestSchema);
@@ -1616,7 +1791,16 @@ const JournalEntrySchema = new mongoose.Schema({
   // that predate it simply group under "Unattributed".
   supplierId:   { type: String, default: null, index: true },
   supplierName: { type: String, default: '' },
+  // Who posted it. Filled from the request (lib/requestContext.js) by the
+  // validate hook below, so every one of the ~60 posting paths is attributed
+  // without each having to remember. Empty means the SYSTEM posted it (the
+  // midnight auto-close, a boot migration) - there was no person.
+  postedBy:     { type: String, default: '' },
+  postedById:   { type: String, default: '' },
 }, { timestamps: true });
+// Per-account lookups (a control-account balance, a ledger drill-down) filter
+// on lines.accountCode; without this each one scanned the whole ledger.
+JournalEntrySchema.index({ 'lines.accountCode': 1, date: 1 });
 
 // ── Data-layer double-entry guarantee ────────────────────────────────────────
 // A journal entry can NEVER be persisted unbalanced. This is the floor beneath
@@ -1625,17 +1809,60 @@ const JournalEntrySchema = new mongoose.Schema({
 // every create()/save()/insertMany() before the document is stored. Debits must
 // equal credits to within one centavo; the denormalized totals are re-derived
 // from the lines here so they can never drift out of sync with them.
+// Append-only: see lib/ledgerGuard.js. Query-level writes and re-saving an
+// existing entry are refused outside withLedgerMaintenance().
+JournalEntrySchema.pre(LEDGER_WRITE_OPS, { query: true, document: false }, function () {
+  if (!inLedgerMaintenance()) throw refuseLedgerRewrite(this.op || 'update');
+});
+JournalEntrySchema.pre('deleteOne', { document: true, query: false }, function () {
+  if (!inLedgerMaintenance()) throw refuseLedgerRewrite('deleteOne');
+});
+JournalEntrySchema.pre('bulkWrite', function (ops) {
+  const rewrites = (Array.isArray(ops) ? ops : []).some((op) => !op.insertOne);
+  if (rewrites && !inLedgerMaintenance()) throw refuseLedgerRewrite('bulkWrite');
+});
+JournalEntrySchema.pre('save', function () {
+  if (!this.isNew && !inLedgerMaintenance()) throw refuseLedgerRewrite('save');
+});
+
 JournalEntrySchema.pre('validate', function () {
+  if (!this.postedBy) {
+    const actor = currentActor();
+    if (actor) { this.postedBy = actor.name; this.postedById = actor.id; }
+  }
   const lines = this.lines || [];
   if (!lines.length) return;
+  // Store every amount to the centavo under the one rounding rule
+  // (lib/money.js), so what balances here is exactly what is summed later.
+  for (const l of lines) {
+    for (const side of ['debit', 'credit']) {
+      const v = Number(l[side] || 0);
+      if (!Number.isFinite(v) || Math.abs(v) > MONEY_MAX) {
+        throw new Error(`Journal entry ref ${this.reference || '?'}: ${side} on ${l.accountCode || '?'} is not a valid amount (${l[side]}).`);
+      }
+    }
+    l.debit = roundMoney(l.debit || 0);
+    l.credit = roundMoney(l.credit || 0);
+  }
   // Throws on imbalance - Mongoose 9 runs validate hooks promise-style, so a
   // throw here rejects the create()/save()/insertMany() before anything is
   // written. This is the single chokepoint every entry must pass through.
   assertBalanced(lines, `ref ${this.reference || '?'}`);
-  this.totalDebit = Math.round(lines.reduce((s, l) => s + (Number(l.debit) || 0), 0) * 100) / 100;
-  this.totalCredit = Math.round(lines.reduce((s, l) => s + (Number(l.credit) || 0), 0) * 100) / 100;
+  this.totalDebit = lines.reduce((s, l) => s + toCentavos(l.debit), 0) / 100;
+  this.totalCredit = lines.reduce((s, l) => s + toCentavos(l.credit), 0) / 100;
 });
 
+// The ledger is the one collection that only ever grows, and nearly every
+// report reads it by DATE (P&L, balance sheet, VAT return, percentage tax) or
+// by ACCOUNT (books health, trial balance). Without these, each of those scans
+// every entry ever written - fine on day one, minutes long after a year of
+// trading. The reference index backs the 'find this document's entry' lookups
+// that voids, refunds and reversals do.
+JournalEntrySchema.index({ date: -1 });
+JournalEntrySchema.index({ businessType: 1, date: -1 });
+JournalEntrySchema.index({ 'lines.accountCode': 1, date: -1 });
+JournalEntrySchema.index({ reference: 1 });
+JournalEntrySchema.index({ supplierId: 1, date: -1 });
 const JournalEntry = mongoose.model('JournalEntry', JournalEntrySchema);
 
 // --- CUMULATIVE DASHBOARD COUNTERS ---
@@ -1700,7 +1927,10 @@ const StockCardSchema = new mongoose.Schema({
   qtyChange: Number, // Positive for in, Negative for out
   balanceAfter: Number,
   unitCost: Number,
-  remarks: String
+  remarks: String,
+  // This movement left the item below zero (a sale in warn mode,
+  // lib/negativeStock.js). Inventory -> Below zero lists them.
+  belowZero: { type: Boolean, default: undefined },
 });
 StockCardSchema.index({ inventoryId: 1 });
 StockCardSchema.index({ reference: 1 });
@@ -1711,23 +1941,110 @@ StockCardSchema.index({ reference: 1 });
 // history view.
 StockCardSchema.index({ date: -1 });
 StockCardSchema.index({ inventoryId: 1, date: -1 });
+// The stock card is the movement ledger behind every stock balance, so it is
+// append-only like the journal (lib/ledgerGuard.js): a wrong movement is
+// corrected by a new one, never by editing or deleting the old. Only declared
+// maintenance - the superadmin's data purge, a backup restore, a test
+// resetting its fixture - may rewrite it.
+StockCardSchema.pre(LEDGER_WRITE_OPS, { query: true, document: false }, function () {
+  if (!inLedgerMaintenance()) throw refuseLedgerRewrite(`stock card ${this.op || 'update'}`);
+});
+StockCardSchema.pre('deleteOne', { document: true, query: false }, function () {
+  if (!inLedgerMaintenance()) throw refuseLedgerRewrite('stock card deleteOne');
+});
+StockCardSchema.pre('save', function () {
+  if (!this.isNew && !inLedgerMaintenance()) throw refuseLedgerRewrite('stock card save');
+});
 const StockCard = mongoose.model('StockCard', StockCardSchema);
 
 // --- SHIFT MANAGEMENT SCHEMA ---
+// A Shift is a CASH DRAWER session, not a person's working day - who worked is
+// ClockEntry's job, and who sold what is stamped on each order.
+//
+// `scope` decides who the session belongs to:
+//   'cashier' - the original model: one float per person. Correct when each
+//               cashier has their own till.
+//   'drawer'  - one session for the shop's single drawer. Whoever opens it
+//               declares the float, everyone rings on it under their own
+//               login, one person counts at close. A bar where three baristas
+//               share one drawer CANNOT use 'cashier': each would declare the
+//               same physical float, so the books would believe three times the
+//               money was in the till, and every variance computed against it
+//               would be arithmetic about a drawer that never existed.
+// Stamped on every record so old and new sessions stay tellable apart forever.
 const ShiftSchema = new mongoose.Schema({
+  scope:           { type: String, enum: ['cashier', 'drawer'], default: 'cashier', index: true },
   cashierId:       { type: String, required: true },
   cashierName:     { type: String, required: true },
+  // Who opened and who closed. On a shared drawer these are often different
+  // people, and "who counted this" is the first question asked about a
+  // variance - cashierName alone cannot answer it.
+  openedBy:        { type: String, default: '' },
+  closedBy:        { type: String, default: '' },
   startingCash:    { type: Number, required: true, default: 0 },
   shiftStart:      { type: Date, default: Date.now },
   shiftEnd:        Date,
   salesTotal:      { type: Number, default: 0 },   // Cash sales only during this shift
-  expectedCash:    Number,                          // startingCash + salesTotal
-  actualCash:      Number,                          // What cashier counted at close
+  // Cash added to or taken from the drawer mid-session: breaking a note for
+  // change, buying milk out of the till, dropping takings to the safe. Without
+  // these the expected figure is wrong the first time anyone touches the
+  // drawer for anything but a sale, and staff quickly learn to ignore a
+  // variance that is never right.
+  //
+  // RECONCILIATION ONLY - these post NO journal entry, deliberately. The money
+  // leaving for milk becomes an expense when the expense is filed, and a safe
+  // drop becomes a deposit when the deposit is recorded; each of those already
+  // writes its own entry. Posting here as well would credit the same cash
+  // twice.
+  movements:       [{
+    type:   { type: String, enum: ['in', 'out'], required: true },
+    amount: { type: Number, required: true },
+    reason: { type: String, default: '' },
+    by:     { type: String, default: '' },
+    at:     { type: Date, default: Date.now },
+    // Cash out of the till is either money SPENT (an expense, filed here and
+    // then, so the ledger loses the cash at the same moment the drawer does)
+    // or money MOVED (a safe drop, change fund) that some other document -
+    // the bank deposit - accounts for. 'filed' says which, so an unexplained
+    // pay-out cannot quietly leave book cash higher than the till.
+    expenseAccount: { type: String, default: '' },
+    journalRef:     { type: String, default: '' },
+    filed:          { type: Boolean, default: false },
+  }],
+  payInsTotal:     { type: Number, default: 0 },
+  payOutsTotal:    { type: Number, default: 0 },
+  expectedCash:    Number,                          // startingCash + salesTotal + payIns - payOuts
+  actualCash:      Number,                          // What was counted at close
   variance:        Number,                          // actualCash - expectedCash
+  // Set when |variance| exceeds the configured threshold. Small differences are
+  // normal and escalating all of them means none of them get looked at.
+  needsReview:     { type: Boolean, default: false },
+  // Closed by the system because the session outran its maximum length, not by
+  // a person counting the till.
+  //
+  // A cash drawer is NEVER auto-closed with an invented count. Writing
+  // actualCash = expectedCash would manufacture a perfect reconciliation for a
+  // drawer nobody looked in, post a variance of zero that means nothing, and
+  // destroy the one control the whole feature exists to provide. A
+  // system-closed session therefore carries NO actualCash and NO variance -
+  // it is bounded, flagged, and left for a human to reconcile.
+  systemClosed:    { type: Boolean, default: false },
   depositedAmount: { type: Number, default: 0 },   // Total posted to bank this shift
   isReconciled:    { type: Boolean, default: false },
   status:          { type: String, default: 'Open' } // 'Open' | 'Closed' | 'Reconciled'
 }, { timestamps: true });
+ShiftSchema.index({ scope: 1, status: 1 });
+// At most ONE open drawer session, enforced by the database rather than by a
+// check in the route. Three baristas arriving together and logging in within
+// the same instant each found no open session and each created one - three
+// floats against one till, which is the exact double-count this whole model
+// exists to prevent. A read-then-write cannot be made safe here; a partial
+// unique index can. The start route catches the duplicate-key error and joins
+// the session that won instead.
+ShiftSchema.index(
+  { scope: 1, status: 1 },
+  { unique: true, partialFilterExpression: { scope: 'drawer', status: 'Open' }, name: 'one_open_drawer' },
+);
 const Shift = mongoose.model('Shift', ShiftSchema);
 
 // ── STAFF CLOCK ENTRIES ──────────────────────────────────────────────────────
@@ -1970,6 +2287,10 @@ const AccountSchema = new mongoose.Schema({
   normalBalance: String, // 'Debit' | 'Credit'
   parent:        String,            // parent account code (for custom child accounts)
   custom:        { type: Boolean, default: false }, // user-created child account
+  // The code this account had in the books the business kept before (e.g.
+  // "B-101501"), when it was carried in through the setup workbook. Their own
+  // sheets keep using it; the system code stays the one everything posts to.
+  externalCode:  { type: String, default: null, index: true },
   // Lets a custom sub-account be pulled out of the payment-method list (POS,
   // client portal, QR menu) WITHOUT deleting it - deleting is blocked once a
   // journal entry has posted to the code, so this is the only way to retire a
@@ -2025,6 +2346,9 @@ const acctMeta = (code) => ACCOUNTS[code] || CUSTOM_META.get(code) || null;
 refreshCustomMeta();
 
 const UserSchema = new mongoose.Schema({
+  // Bumped on every privilege change; access tokens carry it and are refused
+  // once it moves on (see revokeUserSessions / verifyToken).
+  tokenVersion: { type: Number, default: 0 },
   userCode: { type: String, index: true },
   name: { type: String, required: true, index: true },
   password: { type: String, required: true },
@@ -2034,6 +2358,36 @@ const UserSchema = new mongoose.Schema({
   // GET /api/reports/commissions in reports.js). 0 = no commission, the
   // default for every existing account until explicitly set.
   commissionRate: { type: Number, default: 0, min: 0, max: 100 },
+  // The numbers every Philippine employer has to quote when it remits what it
+  // withheld. Payroll could compute the deductions but had nowhere to record
+  // WHOSE account each one belongs to, so the monthly remittance had to be
+  // assembled by hand from someone's spreadsheet. Blank until entered; a
+  // payslip simply omits whichever is missing.
+  // A short code that says WHO IS AT THE SCREEN, on a terminal several people
+  // share. Deliberately not a second password: a password is an account
+  // credential, and making someone type one to ring a drink means they will not
+  // do it - they will ring it on whoever happens to be signed in, and the sale
+  // carries the wrong name. The PIN identifies; what a person may DO still comes
+  // from their role. Stored hashed, like any other secret.
+  pinHash:         { type: String, default: '' },
+  // Two-step sign-in (lib/totp.js). Off until the person turns it on for
+  // themselves. The secret and the backup-code hashes are never selected
+  // unless a query asks for them by name, so no list of users can carry them.
+  totpEnabled:     { type: Boolean, default: false },
+  totpSecret:      { type: String, default: '', select: false },
+  totpPending:     { type: String, default: '', select: false },     // set up but not yet confirmed with a code
+  totpBackupCodes: { type: [String], default: [], select: false },   // sha256 of each unused code
+  // Failed attempts on this PIN, so a short code cannot simply be guessed.
+  pinFailedCount:  { type: Number, default: 0 },
+  pinLockedUntil:  { type: Date, default: null },
+  sssNumber:       { type: String, default: '' },
+  philhealthNumber:{ type: String, default: '' },
+  pagibigNumber:   { type: String, default: '' },
+  tin:             { type: String, default: '' },
+  // What HR calls this person, as distinct from userCode (a login sequence).
+  employeeNumber:  { type: String, default: '' },
+  // Pay per working day, for the payroll timesheet's suggested gross.
+  dailyRate:       { type: Number, default: 0, min: 0 },
   // Granular RBAC: explicit permission override. Empty ⇒ fall back to the role's
   // defaults (see lib/authz.js resolvePermissions). Ignored for superadmin (full).
   permissions: { type: [String], default: [] },
@@ -2043,799 +2397,21 @@ const UserSchema = new mongoose.Schema({
 }, { timestamps: true });
 const User = mongoose.model('User', UserSchema);
 
-// ── CLIENT ACCOUNTS (logistics mode only) ────────────────────────────────────
-// Pre-registered clients who log in to place orders directly (no QR scan).
-// Created/managed by superadmin. paymentMethod is pre-set per client.
-const ClientAccountSchema = new mongoose.Schema({
-  clientCode:    { type: String, index: true },                 // standard customer ID, e.g. CUS-1000-A0001 (legacy accounts may still carry CLT-A0001)
-  username:      { type: String, required: true, unique: true },
-  password:      { type: String, required: true },              // bcrypt-hashed
-  name:          { type: String, required: true },
-  // Contact details for collections/notices/general CRM. All optional and
-  // free-form - a POS-promoted walk-in (source:'pos') often has none, and a
-  // portal signup isn't required to provide them either. `phone`/`email` are
-  // deliberately NOT unique: two family members can legitimately share a phone.
-  phone:         { type: String, default: '' },
-  email:         { type: String, default: '' },
-  contactNotes:  { type: String, default: '' },                 // free-form ("prefers SMS", "call after 5pm", etc.)
-  paymentMethod: { type: String, default: 'Cash' },             // pre-set; can be overridden per order
-  isActive:      { type: Boolean, default: true },
-  // 'portal' = real client-portal login (username/password usable). 'pos' = auto-promoted
-  // from a repeat POS walk-in (3+ Completed orders under the same name) - carries a
-  // placeholder username/unusable password since it has no login of its own.
-  source:        { type: String, enum: ['portal', 'pos'], default: 'portal' },
-  // Credit limit in pesos for on-account (non-cash) buying.
-  //   null  = no per-client limit set - falls back to the global limit if the
-  //           active mode uses one.
-  //   0     = an explicit "no credit at all" (different from null on purpose).
-  // Whether either limit is enforced at all is decided by the `creditLimitMode`
-  // setting; see resolveCreditLimit().
-  creditLimit:   { type: Number, default: null },
-  // Payment terms in days for on-account (non-cash) sales. When a non-cash order
-  // Completes, this is snapshotted onto the order to compute its A/R due date
-  // (dueDate = completedAt + creditTermsDays). 0 = due on receipt (COD-style).
-  // null = no terms configured - the A/R views then age from the order date only.
-  creditTermsDays: { type: Number, default: null },
-  // Free-form tags (e.g. "wholesale", "vip") a product's segmentDiscounts can
-  // target instead of (or in addition to) a one-off clientDiscounts entry for
-  // this specific client. Empty = no segment-level discount applies.
-  segments:      { type: [String], default: [] },
-  // The client's OWN portal appearance, stored on the account so it follows them
-  // across devices. Deliberately separate from the staff-side `dash.theme`
-  // (per-device localStorage): a shop changing its POS theme must not restyle
-  // its customers' portals. null = follow the shipped default.
-  theme:         { type: String, enum: ['default', 'light', 'yellow', 'ocean', null], default: null },
-  // Self-service onboarding link (#10): superadmin generates a one-time token
-  // from the Command Center for an auto-promoted (source:'pos') account that
-  // has no real login yet - the client opens the link, confirms/fills their
-  // own contact details, and sets their own username/password. Single-use:
-  // cleared the moment onboarding completes. null = no link outstanding.
-  // Some buyers are quoted before they buy: wholesale, anything with freight,
-  // anything priced per job. With this on, their portal asks for a quotation
-  // instead of placing an order, and nothing is committed until the business
-  // has priced it and they have accepted. Off by default - a regular who buys
-  // at their tier price should not have to wait for a human.
-  requiresQuote:            { type: Boolean, default: false },
-  onboardingToken:          { type: String, default: null, index: true },
-  onboardingTokenExpiresAt: { type: Date, default: null },
-  // Running credit balance from overpaying an invoice - a LIABILITY (we owe
-  // it back to them), separate from whatever they still owe us on open
-  // orders. Grows when an A/R settlement exceeds the order's remaining
-  // balance; shrinks when that credit is applied to a later order's
-  // settlement or refunded out via a Check Voucher. See
-  // POST /api/orders/:id/settle-ar and /api/client-accounts/:id/credit/* .
-  creditBalance: { type: Number, default: 0 },
-  creditHistory: [{
-    type:        { type: String, enum: ['overpayment', 'applied', 'refunded', 'adjusted'], required: true },
-    amount:      { type: Number, required: true },     // always positive; `type` says the direction
-    orderId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null },
-    orderNumber: { type: String, default: '' },
-    reference:   { type: String, default: '' },        // the JournalEntry / CheckVoucher reference tied to this movement
-    note:        { type: String, default: '' },
-    by:          { type: String, default: '' },
-    at:          { type: Date, default: Date.now },
-  }],
-}, { timestamps: true });
-const ClientAccount = mongoose.model('ClientAccount', ClientAccountSchema);
+const {
+  RefreshSession, Counter, ClientAccount, Role, refreshCustomRolePerms, AuditLog,
+  EODRecord, PriceTierSchema, PriceTier, ChangeRequestSchema, ChangeRequest, CHANGE_REQUEST_STATUSES,
+  ClientAccountSchema, CollectionReminderSchema, CollectionReminder, RefreshSessionSchema, RoleSchema, AuditLogSchema,
+  DiscountSchema, Discount, DiscountRuleSchema, DiscountRule, EODRecordSchema, CounterSchema,
+} = defineClientModels({ BUSINESS_TYPE, log });
 
-// --- AR COLLECTION REMINDERS ---
-// A log of contact attempts against an overdue client, not an automated
-// sender - nothing in this app emails/SMSes a client on its own (same reason
-// payment gateway integration is out of scope: no new third-party dependency).
-// Staff log that a call/text/email/letter went out and when to follow up next;
-// `/api/collections/overdue` and `/api/collections/due` (collections.js) turn
-// that into a worklist.
-//
-// Keyed by `clientKey`, NOT clientAccountId - orders here can carry
-// customerName with no linked ClientAccount at all (see ar-ageing's own
-// `keyOf` resolution in finance.js), so reminders use the exact same resolved
-// key the aging views group by, or the two would silently disagree about who
-// owes what.
-const CollectionReminderSchema = new mongoose.Schema({
-  businessType:     { type: String, default: () => BUSINESS_TYPE, index: true },
-  tenantId:         { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  clientKey:        { type: String, required: true, index: true },
-  clientAccountId:  { type: mongoose.Schema.Types.ObjectId, ref: 'ClientAccount', default: null },
-  method:           { type: String, enum: ['Call', 'SMS', 'Email', 'In-person', 'Letter', 'Other'], required: true },
-  note:             { type: String, default: '' },
-  amountOwedAtTime: { type: Number, default: 0 }, // snapshot - the aged balance keeps moving, this is what it was when contact was made
-  loggedBy:         { type: String, default: '' },
-  nextFollowUpDate: { type: Date, default: null },
-}, { timestamps: true });
-CollectionReminderSchema.index({ businessType: 1, clientKey: 1, createdAt: -1 });
-const CollectionReminder = mongoose.model('CollectionReminder', CollectionReminderSchema);
-
-// Refresh-token session store - enables instant server-side revocation.
-// tokenHash = sha256(rawRefreshToken); the raw token lives only in the client's
-// httpOnly cookie. `revoked` is set on logout/rotation; expired docs auto-purge
-// via the TTL index on expiresAt.
-const RefreshSessionSchema = new mongoose.Schema({
-  tokenHash: { type: String, required: true, index: true },
-  userId:    { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-  revoked:   { type: Boolean, default: false },
-  replacedBy:{ type: String },          // tokenHash of the rotated successor (audit trail)
-  userAgent: { type: String },
-  expiresAt: { type: Date, required: true },
-}, { timestamps: true });
-RefreshSessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // TTL auto-cleanup
-const RefreshSession = mongoose.model('RefreshSession', RefreshSessionSchema);
-
-// --- NEW: CUSTOM ROLES SCHEMA & ROUTES ---
-// Custom roles created in the UI role-maker. `permissions` is the granular set a
-// user with this role gets by default (unless the user has an explicit override).
-const RoleSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  permissions: { type: [String], default: [] },
-});
-const Role = mongoose.model('Role', RoleSchema);
-
-// Load custom-role permissions into the authz resolver. Called at boot and after
-// every role mutation so newly-granted permissions take effect on next login/refresh.
-async function refreshCustomRolePerms() {
-  try { setCustomRolePermissions(await Role.find().lean()); }
-  catch (e) { (typeof log !== 'undefined' ? log.error : console.error)({ err: e }, 'refreshCustomRolePerms failed'); }
-}
-
-
-// ── CLIENT ACCOUNTS (logistics mode only) ────────────────────────────────────
-
-
-
-
-
-
-
-
-// 1. Minimal Audit Log Schema (New)
-// ── CHANGE REQUESTS ──────────────────────────────────────────────────────────
-// A held edit to a money lever - a selling price, a cost basis, a client's
-// credit line. Someone without pricing.approve edits as normal; the guarded
-// FIELDS of that edit are peeled off into one of these and the rest is written
-// straight away, so a price change never lands unreviewed while a harmless
-// rename still works. See lib/changeApproval.js for which fields are gated.
-//
-// `changes` snapshots BOTH values: the approver is agreeing to a specific
-// "250 -> 300", so applying it later re-checks that the current value is still
-// 250 rather than blindly overwriting whatever it has since become.
-const CHANGE_REQUEST_STATUSES = ['Pending', 'Approved', 'Rejected'];
-const ChangeRequestSchema = new mongoose.Schema({
-  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
-  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  entity:       { type: String, enum: ['Product', 'Inventory', 'ClientAccount'], required: true },
-  entityId:     { type: String, required: true, index: true },
-  entityName:   { type: String, default: '' },   // snapshot, so the queue reads well even if renamed later
-  changes: [{
-    field:    { type: String, required: true },
-    label:    { type: String, default: '' },
-    oldValue: mongoose.Schema.Types.Mixed,
-    newValue: mongoose.Schema.Types.Mixed,
-  }],
-  reason:       { type: String, default: '' },
-  status:       { type: String, enum: CHANGE_REQUEST_STATUSES, default: 'Pending', index: true },
-  requestedBy:  { type: String, default: '' },
-  approvedBy:   { type: String, default: '' },
-  approvedAt:   { type: Date },
-  rejectedBy:   { type: String, default: '' },
-  rejectionReason: { type: String, default: '' },
-  appliedAt:    { type: Date },
-}, { timestamps: true });
-ChangeRequestSchema.index({ businessType: 1, status: 1, createdAt: -1 });
-const ChangeRequest = mongoose.model('ChangeRequest', ChangeRequestSchema);
-
-const AuditLogSchema = new mongoose.Schema({
-  userId: { type: String, required: true },
-  action: { type: String, required: true },
-  targetReference: { type: String, required: true },
-  details: { type: Object },
-  timestamp: { type: Date, default: Date.now }
-});
-const AuditLog = mongoose.model('AuditLog', AuditLogSchema);
-
-// (Auth middleware - verifyToken, requireStaff, verifyClientToken, requireSuperAdmin,
-//  requireSuperOrAdmin, verifyOrderAuth - are defined earlier, before the first route
-//  that uses them, to avoid TDZ errors.)
-
-const DiscountSchema = new mongoose.Schema({
-  name: String,        // e.g., "Senior Citizen 20%", "Employee 10%"
-  percentage: Number,  // e.g., 20
-  isSCPWD: { type: Boolean, default: false },
-});
-const Discount = mongoose.model('Discount', DiscountSchema);
-
-// --- CONFIGURABLE DISCOUNT RULE ENGINE ---
-// Order-level CONDITIONAL discount rules - the "spend ₱1000 get 10% off",
-// "15% off on Tuesdays", "wholesale segment gets 5% all December" kind - which
-// none of the existing discount mechanisms cover: Product.discountPercent /
-// clientDiscounts / segmentDiscounts / bulkBreaks are all PER-LINE and
-// unconditional, and the Discount model is just named SC/PWD-style presets.
-//
-// DELIBERATELY NOT auto-applied in the order money path. The POS calls
-// POST /api/discount-rules/evaluate with an order's context, gets back the
-// single best matching rule's percent, and applies it through the EXISTING,
-// fully-tested order-level `discountPercent` field on the order. That keeps the
-// VAT/discount/ledger math - the most safety-critical code in the app -
-// completely untouched; this feature only decides WHICH percent to suggest,
-// never how it's booked.
-const DiscountRuleSchema = new mongoose.Schema({
-  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
-  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  name:         { type: String, required: true },
-  percent:      { type: Number, required: true, min: 0, max: 100 }, // the discount this rule grants
-  active:       { type: Boolean, default: true, index: true },
-  priority:     { type: Number, default: 0 }, // tie-breaker when two rules grant the same percent (higher wins)
-  // Conditions - ALL present ones must hold for the rule to apply. An omitted
-  // condition is simply not checked (a rule with no conditions always applies).
-  minSubtotal:  { type: Number, default: null },        // order subtotal must be ≥ this
-  daysOfWeek:   { type: [Number], default: [] },         // 0=Sun..6=Sat (Manila); empty = any day
-  startDate:    { type: Date, default: null },           // active-from (inclusive)
-  endDate:      { type: Date, default: null },           // active-until (inclusive)
-  segment:      { type: String, default: '' },           // client must carry this segment tag; '' = any
-  createdBy:    { type: String, default: '' },
-}, { timestamps: true });
-DiscountRuleSchema.index({ businessType: 1, active: 1 });
-const DiscountRule = mongoose.model('DiscountRule', DiscountRuleSchema);
-
-// --- PRICE TIERS (customer classes: Dealer, Satellite, Wholesale, ...) ---
-// The canonical registry for the free-form tags that already live in
-// ClientAccount.segments and Product.segmentDiscounts[].segment. Those two
-// fields are matched by EXACT string in orders.js productDiscPct, so a
-// "Dealer" tag on the account and a "dealer" override on the product silently
-// grant no discount at all - money quietly leaks with no error anywhere. This
-// collection makes the tag list pickable in both editors so the two sides can
-// never disagree.
-//
-// `percent` is the tier's DEFAULT rate, applied to every product the buyer
-// touches. It's what makes "Dealers get 15% off" a one-line setup instead of a
-// segmentDiscounts row on every single product. A per-product segment override
-// still beats it (see productDiscPct), so a tier default is a floor, not a cap.
-const PriceTierSchema = new mongoose.Schema({
-  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
-  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  name:     { type: String, required: true },                        // the segment tag itself, e.g. "Dealer"
-  percent:  { type: Number, default: 0, min: 0, max: 100 },          // default discount for this class; 0 = tag only, no automatic rate
-  // 'percent' = the flat `percent` above applies to every product (the original
-  // behaviour). 'per_product' = this tier instead prices EVERY product
-  // individually via `productPrices` below - for a dealer sheet that isn't a
-  // clean percent off list price. `percent` is ignored in that mode.
-  pricingMode: { type: String, enum: ['percent', 'per_product'], default: 'percent' },
-  // Only meaningful when pricingMode === 'per_product'. One row per product
-  // this tier has an explicit price for; a product with no row here has no
-  // per-product rate from this tier (falls through to whatever else applies).
-  productPrices: [{
-    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
-    price:     { type: Number, required: true, min: 0 },
-  }],
-  // Quantity breaks, scoped to this TIER (not one client - see the Product
-  // schema's clientBulkBreaks for that). "Anyone in Kape Sinukuan Price who
-  // orders 20+ of this product pays ₱550 each" rather than the tier's flat
-  // per-product rate above. Independent array (not nested under productPrices)
-  // so a product can have a flat tier rate with no break, a break with no flat
-  // rate, or both - resolveTierPrice takes whichever benefits the buyer more
-  // once the ordered quantity is known.
-  productBulkBreaks: [{
-    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
-    minQty:    { type: Number, required: true },
-    price:     { type: Number, required: true, min: 0 },
-  }],
-  note:     { type: String, default: '' },
-  isActive: { type: Boolean, default: true },
-}, { timestamps: true });
-PriceTierSchema.index({ businessType: 1, name: 1 }, { unique: true });
-const PriceTier = mongoose.model('PriceTier', PriceTierSchema);
-
-const EODRecordSchema = new mongoose.Schema({
-  dateString: String, // e.g., '2026-04-29'
-  status: { type: String, default: 'OPEN' }, // 'OPEN' or 'LOCKED'
-  lockedAt: Date,
-  lockedBy: String
-});
-const EODRecord = mongoose.model('EODRecord', EODRecordSchema);
-
-// Atomic sequence counter - one document per prefix, incremented with $inc to prevent race conditions
-const CounterSchema = new mongoose.Schema({ _id: String, seq: { type: Number, default: 0 } });
-const Counter = mongoose.model('Counter', CounterSchema);
-
-// ── PURCHASE ORDERS (procurement workflow) ───────────────────────────────────
-// Two-stage tracking tool. A PO is drafted with line items pulled from inventory,
-// tracked through Ordered → Processing, then reconciled against the actual
-// delivery (per-line receivedQty typed in by hand) which flips it to Complete
-// (everything arrived) or Incomplete (short/over). Purely a tracking record - it
-// does NOT post to inventory or the ledger; restock + journal entries stay on the
-// existing /api/inventory/restock flow so there's no double counting.
-// Suppliers - a managed directory (CRUD) that POs can be drawn from. A PO stores
-// both a supplierId link AND a supplier name snapshot, so renaming/deleting a
-// supplier never rewrites the history of past POs.
-const SupplierSchema = new mongoose.Schema({
-  supplierCode:  { type: String, index: true },             // SUP-2026-000001
-  name:          { type: String, required: true, index: true },
-  contactPerson: { type: String, default: '' },
-  phone:         { type: String, default: '' },
-  email:         { type: String, default: '' },
-  address:       { type: String, default: '' },
-  notes:         { type: String, default: '' },
-  isActive:      { type: Boolean, default: true },
-  tenantId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  // Catalog: what this supplier says they sell + their quoted price - set by staff,
-  // independent of whether a PO has ever been placed. This is what lets "who's
-  // cheaper for X" be answered before ever buying, not just from purchase history.
-  catalog: [{
-    invId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
-    itemName:  { type: String, required: true },
-    itemCode:  { type: String, default: '' },
-    unit:      { type: String, default: '' },
-    packSize:  { type: Number, default: null },
-    unitCost:  { type: Number, required: true },
-    notes:     { type: String, default: '' },
-  }],
-  // What this supplier's invoices say about when they expect to be paid
-  // ("30 days", "COD"). The data export already had a Terms column and the
-  // schema never declared the field, so Mongoose silently dropped whatever
-  // was written to it and the column came back empty every time.
-  paymentTerms:  { type: String, default: '' },
-  // Running credit balance from overpaying this supplier - an ASSET (they
-  // owe it back to us), separate from whatever they're currently owed on
-  // open bills. Grows when a bill payment exceeds what was actually due;
-  // shrinks when that credit is applied to a later bill or refunded out via
-  // a Check Voucher. See POST /api/bills/:id/pay and
-  // /api/suppliers/:id/credit/* in bills.js.
-  creditBalance: { type: Number, default: 0 },
-  creditHistory: [{
-    type:        { type: String, enum: ['overpayment', 'applied', 'refunded', 'adjusted'], required: true },
-    amount:      { type: Number, required: true },     // always positive; `type` says the direction
-    billId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Bill', default: null },
-    billNumber:  { type: String, default: '' },
-    reference:   { type: String, default: '' },        // the JournalEntry / CheckVoucher reference tied to this movement
-    note:        { type: String, default: '' },
-    by:          { type: String, default: '' },
-    at:          { type: Date, default: Date.now },
-  }],
-}, { timestamps: true });
-const Supplier = mongoose.model('Supplier', SupplierSchema);
-
-const PO_STATUSES = ['Ordered', 'Processing', 'Complete', 'Incomplete', 'Cancelled'];
-const PurchaseOrderSchema = new mongoose.Schema({
-  poNumber:     { type: String, index: true },              // PO-2026-000001
-  supplier:     { type: String, default: '' },              // name snapshot at draft time
-  supplierId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Supplier', default: null },
-  status:       { type: String, default: 'Ordered', enum: PO_STATUSES, index: true },
-  expectedDate: { type: Date },
-  notes:        { type: String, default: '' },
-  lines: [{
-    // What is actually being bought. Every line used to be treated as stock,
-    // so a PO for an espresso machine landed in Inventory - where a recipe
-    // could consume it - and booked a TRADE payable for a non-trade purchase.
-    //   inventory   goods to sell or consume  DR 130000 / CR 220000 (trade)
-    //   fixedAsset  equipment                 DR 1401xx / CR 225100 (non-trade)
-    //   expense     a service                 DR expense / CR 225200 (non-trade)
-    purchaseType: { type: String, enum: ['inventory', 'fixedAsset', 'expense'], default: 'inventory' },
-    // Which account the non-inventory kinds land in. Ignored for inventory.
-    assetAccountCode:   { type: String, default: '' },   // 1401xx for fixedAsset
-    expenseAccountCode: { type: String, default: '' },   // any expense account
-    // Depreciation terms, captured at purchase so the asset register can be
-    // created on receipt rather than chased up afterwards.
-    usefulLifeMonths: { type: Number, default: null },
-    salvageValue:     { type: Number, default: 0 },
-    invId:       { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
-    itemName:    { type: String, default: '' },
-    itemCode:    { type: String, default: '' },
-    unit:        { type: String, default: '' },             // display unit captured at draft time (kg/L/pcs)
-    packSize:    { type: Number, default: null },           // weight/volume per pack, in `unit` (e.g. 1 for "1L", 250 for "250g"); optional
-    orderedQty:  { type: Number, default: 0 },
-    unitCost:    { type: Number, default: 0 },
-    expiryDate:  { type: Date, default: null },             // optional expiry for the incoming stock
-    productionDate: { type: Date, default: null },          // for goods with no real expiry (beans, etc.)
-    receivedQty: { type: Number, default: null },           // null until reconciled
-  }],
-  // Paid before the goods arrive. That is NOT a payable - nothing is owed,
-  // the supplier owes US delivery - so it books a supplier advance (170200)
-  // instead, and receiving liquidates the advance rather than crediting A/P.
-  // Recording it as a payable would overstate both what we owe and, once the
-  // cash also left, what we hold.
-  prepaid:        { type: Boolean, default: false },
-  prepaidAmount:  { type: Number, default: 0 },
-  prepaidDate:    { type: Date, default: null },
-  prepaidFromAccount: { type: String, default: '' },
-  // The Advance this PO was paid through, so receiving can liquidate it.
-  advanceId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Advance', default: null },
-  advanceNumber:  { type: String, default: '' },
-  estTotal:     { type: Number, default: 0 },
-  actualTotal:  { type: Number, default: 0 },
-  receivedAt:   { type: Date, default: null },
-  receivedBy:   { type: String, default: '' },
-  createdBy:    { type: String, default: '' },
-  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-}, { timestamps: true });
-const PurchaseOrder = mongoose.model('PurchaseOrder', PurchaseOrderSchema);
-
-// --- AP BILL APPROVAL WORKFLOW ---
-// A Bill is a payable awaiting sign-off, in one of two ways:
-//   - source:'PO'     - created automatically when a PO delivery is received
-//                        (purchase-orders.js's /receive route). The A/P journal
-//                        entry (DR Inventory / CR 220000) posts immediately at
-//                        receipt as before - that's a real liability the moment
-//                        goods arrive, not something to hold open pending review.
-//                        Approving a PO-sourced bill doesn't post anything new;
-//                        it's the "someone checked this invoice against the PO"
-//                        sign-off gate before it can be scheduled/paid.
-//   - source:'Manual'  - entered directly (a utility bill, rent, anything with
-//                        no PO). No JE exists yet when Pending - approval is
-//                        what books the liability (DR expenseAccountCode /
-//                        CR 220000), since a manual entry has no independent
-//                        physical-receipt event to already justify it.
-// 'Partially Paid' sits between Approved and Paid - a bill only reaches Paid
-// once its running paidAmount (see below) actually reaches its full amount.
-const BILL_STATUSES = ['Pending', 'Approved', 'Partially Paid', 'Rejected', 'Paid'];
-const BillSchema = new mongoose.Schema({
-  businessType:      { type: String, default: () => BUSINESS_TYPE, index: true },
-  tenantId:          { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  billNumber:        { type: String, index: true },              // BILL-2026-000001
-  supplierId:        { type: mongoose.Schema.Types.ObjectId, ref: 'Supplier', required: true },
-  supplierName:      { type: String, default: '' },               // snapshot at creation time
-  source:            { type: String, enum: ['PO', 'Manual'], required: true },
-  purchaseOrderId:   { type: mongoose.Schema.Types.ObjectId, ref: 'PurchaseOrder', default: null },
-  poNumber:          { type: String, default: '' },
-  description:       { type: String, default: '' },               // required context for Manual bills
-  amount:            { type: Number, required: true },
-  expenseAccountCode:{ type: String, default: '' },               // Manual bills only - which account to debit on approval
-  status:            { type: String, default: 'Pending', enum: BILL_STATUSES, index: true },
-  dueDate:           { type: Date, default: null },                // when the supplier expects payment
-  scheduledPaymentDate: { type: Date, default: null },              // when WE plan to pay it - only settable once Approved
-  createdBy:         { type: String, default: '' },
-  approvedBy:        { type: String, default: '' },
-  approvedAt:        { type: Date, default: null },
-  rejectedBy:        { type: String, default: '' },
-  rejectedAt:        { type: Date, default: null },
-  rejectionReason:   { type: String, default: '' },
-  paidAt:            { type: Date, default: null },
-  // Reference of the JournalEntry this bill is tied to: the PO-receipt entry for
-  // source:'PO' bills, the approval entry for source:'Manual' bills, and
-  // overwritten with the LATEST payment entry's reference once any payment lands.
-  journalEntryRef:   { type: String, default: '' },
-  // External reference for the payment - a bank transaction ID, check number,
-  // GCash ref, etc. Distinct from journalEntryRef (the internal mkSeqRef code) -
-  // this is what ties the record back to an actual bank statement or receipt.
-  // Kept for the LATEST payment; the full history is in `payments` below.
-  paymentReference:  { type: String, default: '' },
-  // --- PARTIAL / OVERPAYMENT TRACKING (mirrors Order.arPaidAmount/arPayments) ---
-  // A bill is rarely paid in one clean shot either. `paidAmount` is the
-  // running sum of every payment posted against this bill; `status` only
-  // reaches 'Paid' once it meets `amount`. A payment that pushes paidAmount
-  // PAST `amount` is capped here at exactly `amount` - the excess is
-  // diverted to the supplier's creditBalance instead (see POST .../pay),
-  // never silently overstating what this specific bill "collected".
-  paidAmount:        { type: Number, default: 0 },
-  payments: [{
-    amount:          { type: Number, required: true },
-    payFromAccount:  { type: String, default: '' },
-    referenceNumber: { type: String, default: '' },
-    checkVoucherRef: { type: String, default: '' },      // the CheckVoucher this payment was issued through
-    journalRef:      { type: String, default: '' },
-    paidBy:          { type: String, default: '' },
-    at:              { type: Date, default: Date.now },
-  }],
-}, { timestamps: true });
-BillSchema.index({ businessType: 1, status: 1 });
-const Bill = mongoose.model('Bill', BillSchema);
-
-// --- CHECK VOUCHER ---
-// The actual paper trail for a disbursement - standard PH bookkeeping
-// practice: every outgoing payment (an AP bill payment, or an A/R
-// overpayment refunded back out to a client) gets one numbered voucher,
-// independent of which record it happened to be paid against. A bill/refund
-// keeps its own reference to the voucher (paymentReference / journalRef),
-// but this is the canonical, printable/filable record of the payment itself.
-const CheckVoucherSchema = new mongoose.Schema({
-  businessType:   { type: String, default: () => BUSINESS_TYPE, index: true },
-  tenantId:       { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  voucherNumber:  { type: String, index: true },                    // CV-2026-000001
-  // Which inventory issued this. mkSeqRef numbers restart per deployment, so
-  // the number alone is not unique across a business with several branches -
-  // (branchCode, number) is. Blank until the deployment is given a code; the
-  // consolidated views surface that as "not set" rather than silently
-  // grouping it with everything else.
-  branchCode:     { type: String, default: '', index: true },
-  // Who the money went to. 'other' covers a manual/ad-hoc disbursement not
-  // tied to a Bill or a client credit refund.
-  payeeType:      { type: String, enum: ['supplier', 'client', 'other'], required: true },
-  payeeId:        { type: String, default: '' },                    // Supplier._id or ClientAccount._id, when applicable
-  payeeName:      { type: String, required: true },
-  amount:         { type: Number, required: true },
-  purpose:        { type: String, enum: ['bill-payment', 'client-credit-refund', 'supplier-credit-refund', 'other'], required: true },
-  sourceAccount:  { type: String, default: '111000' },               // which cash/bank account the money left from
-  sourceAccountName: { type: String, default: '' },
-  referenceNumber:{ type: String, default: '' },                    // the actual check number / bank transfer ref
-  notes:          { type: String, default: '' },
-  status:         { type: String, enum: ['Issued', 'Voided'], default: 'Issued' },
-  voidedBy:       { type: String, default: '' },
-  voidedAt:       { type: Date, default: null },
-  voidReason:     { type: String, default: '' },
-  billId:         { type: mongoose.Schema.Types.ObjectId, ref: 'Bill', default: null },
-  journalEntryRef:{ type: String, default: '' },
-  issuedBy:       { type: String, default: '' },
-  date:           { type: Date, default: Date.now },
-}, { timestamps: true });
-CheckVoucherSchema.index({ businessType: 1, date: -1 });
-const CheckVoucher = mongoose.model('CheckVoucher', CheckVoucherSchema);
-
-// ── ADVANCE ──────────────────────────────────────────────────────────────────
-// Money that changed hands BEFORE the transaction it belongs to exists. Three
-// shapes, one model, because the lifecycle is identical - issue, liquidate in
-// parts, close - and only the accounts flip:
-//
-//   employee  cash handed to staff to spend      DR 170100 / CR cash   (asset)
-//   supplier  prepayment/deposit on an order     DR 170200 / CR cash   (asset)
-//   customer  deposit received against future    DR cash   / CR 260200 (liability)
-//
-// Distinct from the credit balances (160100/260100), which are what is left
-// over after OVERpaying something that already existed. An advance is
-// deliberate and comes first; a credit balance is a leftover and comes second.
-const ADVANCE_TYPES = ['employee', 'supplier', 'customer'];
-const ADVANCE_STATUSES = ['Open', 'Partially Liquidated', 'Liquidated', 'Cancelled'];
-const ADVANCE_ACCOUNTS = {
-  employee: { code: '170100', name: 'Advances to Employees' },
-  supplier: { code: '170200', name: 'Advances to Suppliers' },
-  customer: { code: '260200', name: 'Customer Advances / Deposits' },
-};
-const AdvanceSchema = new mongoose.Schema({
-  businessType:   { type: String, default: () => BUSINESS_TYPE, index: true },
-  tenantId:       { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  advanceNumber:  { type: String, index: true },
-  // Which inventory issued this. mkSeqRef numbers restart per deployment, so
-  // the number alone is not unique across a business with several branches -
-  // (branchCode, number) is. Blank until the deployment is given a code; the
-  // consolidated views surface that as "not set" rather than silently
-  // grouping it with everything else.
-  branchCode:     { type: String, default: '', index: true },
-  type:           { type: String, enum: ADVANCE_TYPES, required: true },
-  payeeName:      { type: String, required: true },
-  payeeId:        { type: String, default: '' },
-  amount:         { type: Number, required: true },
-  // How much has been cleared so far. status is derived from this vs amount.
-  liquidatedAmount: { type: Number, default: 0 },
-  status:         { type: String, enum: ADVANCE_STATUSES, default: 'Open', index: true },
-  purpose:        { type: String, default: '' },
-  // The control account this advance sits in (from ADVANCE_ACCOUNTS above).
-  account:        { type: String, default: '' },
-  sourceAccount:  { type: String, default: '111000' },
-  sourceAccountName: { type: String, default: '' },
-  referenceNumber:{ type: String, default: '' },
-  journalEntryRef:{ type: String, default: '' },
-  checkVoucherRef:{ type: String, default: '' },
-  // Each partial clearing. `method` records HOW it cleared, which decides the
-  // contra account: an expense code, a bill, an order, or cash returned.
-  liquidations: [{
-    amount:        { type: Number, required: true },
-    method:        { type: String, enum: ['expense', 'bill', 'order', 'cash-return'], required: true },
-    expenseAccount:{ type: String, default: '' },
-    billId:        { type: mongoose.Schema.Types.ObjectId, ref: 'Bill', default: null },
-    orderId:       { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null },
-    reference:     { type: String, default: '' },
-    journalRef:    { type: String, default: '' },
-    note:          { type: String, default: '' },
-    by:            { type: String, default: '' },
-    at:            { type: Date, default: Date.now },
-  }],
-  issuedBy:       { type: String, default: '' },
-  date:           { type: Date, default: Date.now },
-  cancelledBy:    { type: String, default: '' },
-  cancelledAt:    { type: Date, default: null },
-  cancelReason:   { type: String, default: '' },
-}, { timestamps: true });
-AdvanceSchema.index({ businessType: 1, date: -1 });
-AdvanceSchema.index({ businessType: 1, type: 1, status: 1 });
-const Advance = mongoose.model('Advance', AdvanceSchema);
-
-// ── FIXED ASSET ──────────────────────────────────────────────────────────────
-// Equipment, furniture, vehicles - what the business owns and writes down over
-// time. Until now 140000 Fixed Assets was a header with no children, so none of
-// this could be recorded and the balance sheet understated what the business
-// owned by however much the fit-out cost.
-//
-// Cost and accumulated depreciation are held separately and posted to paired
-// accounts (1401xx asset / 1501xx contra-asset). Netting them into one number
-// loses the distinction between "we own a P60,000 machine that is half worn
-// out" and "we own a P30,000 machine", which are different facts.
-const FIXED_ASSET_STATUSES = ['Active', 'Fully Depreciated', 'Disposed'];
-// Each class pairs its cost account with its own accumulated-depreciation
-// account, so a class can be read net without unpicking a pooled contra.
-const FIXED_ASSET_CLASSES = {
-  '140100': { name: 'Furniture & Fixtures', accum: '150100' },
-  '140200': { name: 'Machinery & Equipment', accum: '150200' },
-  '140300': { name: 'Computer & IT Equipment', accum: '150300' },
-  '140400': { name: 'Vehicles', accum: '150400' },
-  '140500': { name: 'Leasehold Improvements', accum: '150500' },
-};
-const FixedAssetSchema = new mongoose.Schema({
-  businessType:  { type: String, default: () => BUSINESS_TYPE, index: true },
-  tenantId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  assetCode:     { type: String, index: true },
-  branchCode:    { type: String, default: '', index: true },
-  name:          { type: String, required: true },
-  description:   { type: String, default: '' },
-  // Which 1401xx it is carried in; its paired 1501xx is looked up, never stored,
-  // so the two cannot drift apart.
-  accountCode:   { type: String, required: true },
-  acquisitionDate: { type: Date, required: true },
-  acquisitionCost: { type: Number, required: true },
-  salvageValue:  { type: Number, default: 0 },
-  usefulLifeMonths: { type: Number, default: 60 },
-  accumulatedDepreciation: { type: Number, default: 0 },
-  lastDepreciationDate: { type: Date, default: null },
-  status:        { type: String, enum: FIXED_ASSET_STATUSES, default: 'Active', index: true },
-  serialNumber:  { type: String, default: '' },
-  location:      { type: String, default: '' },
-  supplierName:  { type: String, default: '' },
-  referenceNumber: { type: String, default: '' },
-  journalEntryRef: { type: String, default: '' },
-  // Each posting, so a depreciation charge can be traced back to its entry.
-  depreciationHistory: [{
-    amount: { type: Number, required: true },
-    months: { type: Number, default: 0 },
-    throughDate: { type: Date },
-    journalRef: { type: String, default: '' },
-    by: { type: String, default: '' },
-    at: { type: Date, default: Date.now },
-  }],
-  disposedAt:    { type: Date, default: null },
-  disposalProceeds: { type: Number, default: 0 },
-  disposalNote:  { type: String, default: '' },
-  disposalJournalRef: { type: String, default: '' },
-  createdBy:     { type: String, default: '' },
-}, { timestamps: true });
-FixedAssetSchema.index({ businessType: 1, status: 1 });
-const FixedAsset = mongoose.model('FixedAsset', FixedAssetSchema);
-
-// --- BANK RECONCILIATION ---
-// One statement, for one bank account, for one period.
-//
-// The ledger says what the business THINKS is in the bank; the statement says
-// what the bank says. They disagree for legitimate reasons - a cheque written
-// but not yet presented, a deposit in transit, a bank charge nobody has booked
-// - and reconciling is the act of explaining every peso of that difference.
-// The moment it cannot be explained, something is wrong: a missed entry, a
-// duplicate, or money gone.
-const BankReconciliationSchema = new mongoose.Schema({
-  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
-  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  branchCode:   { type: String, default: '', index: true },
-  reference:    { type: String, index: true },              // BREC-2026-000001
-  accountCode:  { type: String, required: true, index: true },
-  accountName:  { type: String, default: '' },
-  statementDate: { type: Date, required: true, index: true },
-  // What the bank's own statement says the closing balance is. Typed in from
-  // the statement, never computed - it is the outside fact being reconciled TO.
-  statementBalance: { type: Number, required: true },
-  // The ledger balance for the same account as at the same date, captured when
-  // the reconciliation is opened so a later posting cannot silently move it.
-  ledgerBalance: { type: Number, default: 0 },
-  // Journal lines the operator has ticked off against the statement.
-  clearedLines: [{
-    journalEntryId: { type: mongoose.Schema.Types.ObjectId, ref: 'JournalEntry' },
-    reference: { type: String, default: '' },
-    date:      { type: Date },
-    debit:     { type: Number, default: 0 },
-    credit:    { type: Number, default: 0 },
-    clearedAt: { type: Date, default: Date.now },
-    clearedBy: { type: String, default: '' },
-  }],
-  status: { type: String, enum: ['Open', 'Reconciled'], default: 'Open', index: true },
-  reconciledAt: { type: Date, default: null },
-  reconciledBy: { type: String, default: '' },
-  notes:        { type: String, default: '' },
-  createdBy:    { type: String, default: '' },
-}, { timestamps: true });
-BankReconciliationSchema.index({ businessType: 1, accountCode: 1, statementDate: -1 });
-const BankReconciliation = mongoose.model('BankReconciliation', BankReconciliationSchema);
-
-// --- QUOTATIONS ---
-// A price asked for, not a sale made.
-//
-// Deliberately its own collection rather than another Order status. If a quote
-// were an order, every sales report, the EOD close, the P&L, the A/R list and
-// each ledger path would have to learn to exclude it, and the first one that
-// forgot would put revenue on the books for something nobody has agreed to
-// buy. A separate collection cannot leak into sales by accident.
-//
-// Nothing here posts. Acceptance creates a real Order through the ordinary
-// path, and from that moment it is an ordinary order in every respect.
-const QUOTATION_STATUSES = ['Requested', 'Quoted', 'Accepted', 'Declined', 'Expired'];
-const QuotationSchema = new mongoose.Schema({
-  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
-  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  branchCode:   { type: String, default: '', index: true },
-  quoteNumber:  { type: String, index: true },              // QUO-2026-000001
-  clientAccountId: { type: mongoose.Schema.Types.ObjectId, ref: 'ClientAccount', required: true, index: true },
-  clientName:   { type: String, default: '' },
-
-  lines: [{
-    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', default: null },
-    name:      { type: String, required: true },
-    quantity:  { type: Number, default: 1 },
-    // What the client saw when they asked. Kept so a later quote can be read
-    // against what they were expecting to pay.
-    askedPrice: { type: Number, default: 0 },
-    // What the business came back with. Null until someone prices it.
-    quotedPrice: { type: Number, default: null },
-    note:      { type: String, default: '' },
-  }],
-
-  clientNotes:  { type: String, default: '' },              // what they asked for
-  quoteNotes:   { type: String, default: '' },              // terms, freight, lead time
-  // A quote that never expires is a price the business is bound to forever.
-  validUntil:   { type: Date, default: null },
-  status:       { type: String, enum: QUOTATION_STATUSES, default: 'Requested', index: true },
-
-  quotedBy:     { type: String, default: '' },
-  quotedAt:     { type: Date, default: null },
-  respondedAt:  { type: Date, default: null },
-  declineReason: { type: String, default: '' },
-  // Set once accepted, so a quote can never be turned into two orders.
-  orderId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null },
-  orderNumber:  { type: String, default: '' },
-}, { timestamps: true });
-QuotationSchema.index({ businessType: 1, status: 1, createdAt: -1 });
-const Quotation = mongoose.model('Quotation', QuotationSchema);
-
-// --- PAYROLL ---
-// One pay period, and what each person earned and had deducted.
-//
-// Gross pay is the expense - it is what the work cost the business. What the
-// employee actually receives is less, because the statutory deductions are
-// withheld from THEIR money and held until each agency is paid. Booking only
-// the net would understate wages and hide three separate liabilities that are
-// remitted to three separate agencies on three separate schedules.
-//
-//   DR 610000 Salaries & Wages   gross
-//   CR 240100 SSS Payable        employee share
-//   CR 240200 PhilHealth Payable employee share
-//   CR 240300 Pag-IBIG Payable   employee share
-//   CR 230200 Withholding Tax    tax on compensation
-//   CR 240400 Net Pay Payable    what is left to hand over
-const PAYROLL_RUN_STATUSES = ['Draft', 'Approved', 'Paid'];
-const PayrollRunSchema = new mongoose.Schema({
-  businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
-  tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
-  branchCode:   { type: String, default: '', index: true },
-  reference:    { type: String, index: true },              // PAY-2026-000001
-  periodStart:  { type: Date, required: true, index: true },
-  periodEnd:    { type: Date, required: true, index: true },
-  payDate:      { type: Date, required: true },
-  lines: [{
-    employeeName: { type: String, required: true },
-    employeeId:   { type: String, default: '' },
-    grossPay:     { type: Number, default: 0 },
-    sss:          { type: Number, default: 0 },
-    philhealth:   { type: Number, default: 0 },
-    pagibig:      { type: Number, default: 0 },
-    withholdingTax: { type: Number, default: 0 },
-    otherDeductions: { type: Number, default: 0 },
-    // Derived, but stored: a payslip is a record of what was actually paid,
-    // and recomputing it later from rates that have since changed would make
-    // the payslip disagree with the bank.
-    netPay:       { type: Number, default: 0 },
-    notes:        { type: String, default: '' },
-  }],
-  totals: {
-    gross: { type: Number, default: 0 },
-    sss: { type: Number, default: 0 },
-    philhealth: { type: Number, default: 0 },
-    pagibig: { type: Number, default: 0 },
-    withholdingTax: { type: Number, default: 0 },
-    otherDeductions: { type: Number, default: 0 },
-    net: { type: Number, default: 0 },
-  },
-  status: { type: String, enum: PAYROLL_RUN_STATUSES, default: 'Draft', index: true },
-  journalEntryRef: { type: String, default: '' },
-  paymentJournalRef: { type: String, default: '' },
-  paidFromAccount: { type: String, default: '' },
-  approvedBy: { type: String, default: '' },
-  approvedAt: { type: Date, default: null },
-  paidAt:     { type: Date, default: null },
-  notes:      { type: String, default: '' },
-  createdBy:  { type: String, default: '' },
-}, { timestamps: true });
-PayrollRunSchema.index({ businessType: 1, status: 1, periodEnd: -1 });
-const PayrollRun = mongoose.model('PayrollRun', PayrollRunSchema);
+const {
+  PurchaseOrder, Bill, Budget, LeaveRequest, OvertimeRequest, ManualJournal,
+  MANUAL_JOURNAL_STATUSES, Attachment, ATTACHMENT_ENTITIES, issueCheckVoucher, SupplierSchema, Supplier,
+  PurchaseOrderSchema, PO_STATUSES, BillSchema, BILL_STATUSES, CheckVoucherSchema, CheckVoucher,
+  ADVANCE_TYPES, FIXED_ASSET_STATUSES, FIXED_ASSET_CLASSES, BankReconciliation, PayrollRun, PAYROLL_RUN_STATUSES,
+  Quotation, QUOTATION_STATUSES, FixedAssetSchema, FixedAsset, ADVANCE_STATUSES, ADVANCE_ACCOUNTS,
+  AdvanceSchema, Advance, Reservation, RESERVATION_STATUSES,
+} = defineWorkflowModels({ BUSINESS_TYPE, currentBranchCode, mkSeqRef, acctMeta, log });
 
 // --- API ROUTES ---
 
@@ -2903,6 +2479,11 @@ const PayrollRun = mongoose.model('PayrollRun', PayrollRunSchema);
 // Helpers so server code stays clean:
 const emitToOps  = (evt, data) => io.to('cashier').to('kitchen').emit(evt, data);   // operational events
 const emitToAll  = (evt, data) => io.emit(evt, data);                               // menu / archive - everyone
+autoRestorer = createAutoRestorer({
+  Product, Inventory, log,
+  onRestored: () => emitToAll('menuUpdated'),
+  intervalMs: process.env.NODE_ENV === 'test' ? 0 : 60_000,
+});
 const emitToMgr  = (evt, data) => io.to('manager').emit(evt, data);                 // ledger/ERP - superadmin only
 
 // Verify JWT on the socket handshake. The client passes the access token via
@@ -2934,9 +2515,14 @@ io.on('connection', (socket) => {
 
   // Auto-room placement based on the verified JWT. The client no longer
   // controls which rooms it joins - the server decides from the token's role.
-  if (user) {
-    socket.join('cashier'); // every authenticated user gets order updates
-    if (role === 'superadmin' || role === 'admin') socket.join('manager');
+  // STAFF tokens only. A client-portal token is also a valid JWT, and it used
+  // to land in 'cashier' too - every other customer's orders, live. Rooms
+  // follow permissions, not role names: 'manager' carries ledger/ERP events,
+  // so it is whoever may view the books - which now includes the finance
+  // role, previously left out because it is not literally "admin".
+  if (user && user.aud !== 'client' && role !== 'client') {
+    socket.join('cashier'); // order flow for every staff member
+    if (hasPermission(user, 'accounting.view')) socket.join('manager');
     if (role === 'kitchen') socket.join('kitchen');
   }
 
@@ -2961,31 +2547,42 @@ const getCategoryPrefix = (categoryName) => {
   return clean[0] + clean[1] + clean[clean.length - 1]; 
 };
 
-const generateNextSequence = async (_Model, prefix, _fieldName) => {
+const generateNextSequence = async (_Model, prefix, _fieldName, code = null) => {
   const counter = await Counter.findOneAndUpdate(
     { _id: prefix },
     { $inc: { seq: 1 } },
     { upsert: true, returnDocument: 'after' }
   );
-  return `${prefix}-A${counter.seq.toString().padStart(4, '0')}`;
+  // `prefix` is the counter's key and stays fixed; `code` (when given) names a
+  // configurable series, so what gets PRINTED can be renamed without moving
+  // the counter the sequence is kept in.
+  const label = code
+    ? `${await seriesPrefix(Settings, code)}${prefix.slice(prefix.indexOf('-'))}`
+    : prefix;
+  return `${label}-A${counter.seq.toString().padStart(4, '0')}`;
 };
 
 // --- MIDNIGHT AUTO-ARCHIVE SYSTEM ---
 function scheduleMidnightArchive() {
   const now = new Date();
   
-  // 1. Calculate precise time to Midnight in the Philippines (Asia/Manila)
-  const manilaDate = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Manila" }));
-  const manilaMidnight = new Date(manilaDate);
-  manilaMidnight.setHours(24, 0, 0, 0); 
-  const msToMidnight = manilaMidnight.getTime() - manilaDate.getTime();
+  // 1. Time until midnight on the BUSINESS's clock (Settings -> Time zone),
+  //    not the server's - the day this closes has to be the same day the
+  //    reports and the EOD count cover.
+  const tomorrow = businessDateStr(new Date(now.getTime() + 26 * 3600000));
+  const msToMidnight = Math.max(1000, businessDayStart(tomorrow).getTime() - now.getTime());
 
   // 2. Set the countdown timer
   setTimeout(async () => {
     // Superadmin-controlled toggle: when autoCloseEnabled is explicitly false,
     // skip the automatic cancel/archive/lock and leave the day open for a manual
     // close. The timer still reschedules for the next midnight.
-    const acSetting = await Settings.findOne({ key: 'autoCloseEnabled' }).lean();
+    // Read on its own: a database hiccup at midnight must not be an unhandled
+    // error, which this server answers by restarting. Unreadable = carry on
+    // and close the day, as it would with the setting never touched.
+    let acSetting = null;
+    try { acSetting = await Settings.findOne({ key: 'autoCloseEnabled' }).lean(); }
+    catch (err) { log.error({ err }, 'Could not read the auto-close setting at midnight'); }
     if (acSetting && acSetting.value === false) {
       log.info('  Midnight reached (PH Time): auto-close is DISABLED - leaving the day open for manual close.');
       scheduleMidnightArchive();
@@ -2996,10 +2593,15 @@ function scheduleMidnightArchive() {
     try {
       // Step A: Force any hanging order to Cancelled - Pending/Preparing/Ready
       //         plus Parked (held unpaid tabs); clear isParked so none linger.
+      const closingIds = (await Order.find(
+        { status: { $in: ['Pending', 'Preparing', 'Ready', 'Parked'] }, isArchived: false }, { _id: 1 },
+      ).lean()).map(o => o._id);
       await Order.updateMany(
-        { status: { $in: ['Pending', 'Preparing', 'Ready', 'Parked'] }, isArchived: false },
-        { $set: { status: 'Cancelled', isParked: false } }
+        { _id: { $in: closingIds } },
+        { $set: { status: 'Cancelled', isParked: false, cancelledBy: 'Midnight auto-close', cancelledAt: new Date() } }
       );
+      // The latest numbers among them go back for tomorrow's first orders.
+      try { await releaseCancelledOrderNumbers(closingIds); } catch (err) { log.error({ err }, 'Order-number release failed'); }
 
       // Step B: Sweep completed/cancelled/voided orders into the archive.
       //         Reserved and Partially Fulfilled carry over to the next day.
@@ -3008,6 +2610,14 @@ function scheduleMidnightArchive() {
         { $set: { isArchived: true, isParked: false } }
       );
       emitToAll('ordersArchived'); // Tell all iPads/phones to clear their screens
+
+      // Step B2: Let expired stock reservations go.
+      // The sweep is otherwise lazy - it runs when someone opens the
+      // Reservations screen - so on a deployment where nobody does, stock stays
+      // held past its expiry and quietly fails to be sellable. The close is the
+      // natural daily cadence for it.
+      try { await ctx.sweepExpiredReservations?.(); }
+      catch (err) { log.error({ err }, 'Reservation sweep during midnight close failed'); }
 
       // Step C: Take the Midnight Inventory Snapshot
       const allItems = await Inventory.find();
@@ -3023,7 +2633,11 @@ function scheduleMidnightArchive() {
       }
 
       // Step D: 🚨 LOCK THE REGISTER IN THE EOD RECORD 🚨
-      const closedDateStr = manilaDate.toLocaleDateString('en-CA'); // YYYY-MM-DD
+      // The day being closed is the one that just ENDED - this runs a moment
+      // after the business's own midnight, so "today" on the business clock is
+      // already the new day. Locking under that date would lock a day that has
+      // not been traded yet and leave the day just closed unlocked.
+      const closedDateStr = businessClosingDateStr();
       await EODRecord.findOneAndUpdate(
         { dateString: closedDateStr },
         { status: 'LOCKED', lockedAt: new Date(), lockedBy: 'SYSTEM AUTO-CLOSE' },
@@ -3121,9 +2735,17 @@ const validateOrderMath = (order) => {
         vatInclusive: order.isVatInclusive !== false,
       });
 
+  // A VATable delivery charge carries VAT of its own; zero for everyone else.
+  const feeVat = deliveryFeeVat(order);
+
   if (Math.abs(expectedGross - order.subtotal) > TOLERANCE) return { valid: false, error: `Gross mismatch. Expected P${expectedGross.toFixed(2)}, got P${order.subtotal}` };
-  if (Math.abs(expected.vatAmount - order.vatAmount) > TOLERANCE) return { valid: false, error: `VAT invalid. Expected P${expected.vatAmount.toFixed(2)}, got P${order.vatAmount}` };
-  if (Math.abs(expected.total - order.total) > TOLERANCE) return { valid: false, error: `Total invalid. Expected P${expected.total.toFixed(2)}, got P${order.total}` };
+  const expectedVat = expected.vatAmount + feeVat;
+  if (Math.abs(expectedVat - order.vatAmount) > TOLERANCE) return { valid: false, error: `VAT invalid. Expected P${expectedVat.toFixed(2)}, got P${order.vatAmount}` };
+  // The delivery fee is added after VAT and discounts. When the business bills
+  // it as VATable, exclusive pricing puts that VAT on top of the fee as well.
+  const expectedTotal = expected.total + (Number(order.deliveryFee) || 0)
+    + (order.isVatInclusive === false ? feeVat : 0);
+  if (Math.abs(expectedTotal - order.total) > TOLERANCE) return { valid: false, error: `Total invalid. Expected P${expectedTotal.toFixed(2)}, got P${order.total}` };
 
   return { valid: true };
 };
@@ -3182,7 +2804,7 @@ const normalBalanceForCode = (code) => (/^[15679]/.test(String(code)) ? 'Debit' 
 //  • Combo: one line per component - the bundle price is allocated across components
 //    by their standalone selling price, and COGS comes from each component's recipe.
 // Keeps combo sales visible in product/category analytics.
-function reportLinesForItem(item, prods, prodMap, invMap) {
+function reportLinesForItem(item, prods, prodMap, invMap, addOnMap) {
   const recipeCost = (recipe) => (recipe || []).reduce((s, ing) => {
     const iv = invMap[ing.invId]; return s + (iv ? (ing.qty || 0) * (iv.unitCost || 0) : 0);
   }, 0);
@@ -3221,6 +2843,13 @@ function reportLinesForItem(item, prods, prodMap, invMap) {
   // An add-on's recipe is resolved exactly the way the stock deduction resolves
   // it (see features/orders.js): a product add-on first, else a modifier-group
   // option, which is stored as "Group name: Option name".
+  // Three tiers, the same three and in the same order: the product's own copy,
+  // a modifier option, then the add-on's own recipe from Menu Setup. That last
+  // one is where an Extra Shot's coffee is actually written down - the copy a
+  // product keeps is created empty - so without it the till deducted beans the
+  // report never charged for, and margin read high on the very items these
+  // reports exist to judge. `addOnMap` is name -> recipe, or absent, in which
+  // case this behaves as it did before.
   const addOnRecipe = (product, addOnName) => {
     const direct = product?.addOns?.find(a => a.name === addOnName)?.recipe;
     if (direct?.length) return direct;
@@ -3229,7 +2858,7 @@ function reportLinesForItem(item, prods, prodMap, invMap) {
       const grp = (product?.modifierGroups || []).find(g => g && g.name === grpName);
       return grp?.options?.find(o => o.name === optName)?.recipe || [];
     }
-    return [];
+    return addOnMap?.[addOnName] || [];
   };
   // Per unit, matching how add-on revenue is counted above.
   const addOnCost = (item.selectedAddOns || [])
@@ -3312,9 +2941,31 @@ const RevolvingFundTxSchema = new mongoose.Schema({
   date:        { type: Date, default: Date.now },
   balanceAfter:{ type: Number },                       // snapshot of fund balance after this tx
   journalRef:  { type: mongoose.Schema.Types.ObjectId, ref: 'JournalEntry' },
+  // For the liquidation report: who was paid and their OR / invoice number.
+  payee:       { type: String, default: '' },
+  refNo:       { type: String, default: '' },
+  // Every spend is checked against its receipt before the fund may be topped
+  // up. Deliberately NO schema default: mongoose would stamp 'Unvalidated'
+  // onto every historic row as it loads, and those were settled long ago. A
+  // row without a status is treated as validated.
+  validation: {
+    status:      { type: String, enum: ['Unvalidated', 'Validated', 'Rejected'] },
+    by:          { type: String, default: '' },
+    at:          { type: Date },
+    reason:      { type: String, default: '' },
+    reversalRef: { type: String, default: '' },         // the JE that moved a rejected spend off the books
+  },
 }, { timestamps: true });
+// Set on creation rather than by default (see above), so every path that
+// spends from a fund - the Revolving Funds screen, an approved petty-cash
+// slip, stock paid for out of a fund - lands in the validation queue.
+RevolvingFundTxSchema.pre('validate', function () {
+  if (this.isNew && this.type === 'disbursement' && !this.validation?.status) {
+    this.set('validation.status', 'Unvalidated');
+  }
+});
 
-const RevolvingFundTx = mongoose.model('RevolvingFundTx', RevolvingFundTxSchema);
+const RevolvingFundTx =mongoose.model('RevolvingFundTx', RevolvingFundTxSchema);
 
 // ── REQUISITION SLIPS ─────────────────────────────────────────────────────────
 // A gate in front of two kinds of money/stock movement that used to happen
@@ -3327,6 +2978,9 @@ const RevolvingFundTx = mongoose.model('RevolvingFundTx', RevolvingFundTxSchema)
 // once set - is the "Approved By" line beneath it.
 const REQ_SLIP_STATUSES = ['Pending', 'Approved', 'Rejected'];
 const RequisitionSlipSchema = new mongoose.Schema({
+  // Procurement slips: paid on delivery, carried onto the PO it becomes.
+  payOnDelivery: { type: Boolean, default: false },
+  payOnDeliveryAccount: { type: String, default: '' },
   businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
   slipNumber: { type: String, index: true },              // REQ-2026-000001
@@ -3352,12 +3006,23 @@ const RequisitionSlipSchema = new mongoose.Schema({
   amount: { type: Number, default: 0 },
   description: { type: String, default: '' },
   categoryCode: { type: String, default: '' },
+  // petty-cash only: carried onto the fund spend for the liquidation report.
+  payee: { type: String, default: '' },
+  refNo: { type: String, default: '' },
 
   // procurement fields
   supplier: { type: String, default: '' },
   supplierId: { type: mongoose.Schema.Types.ObjectId, ref: 'Supplier', default: null },
   expectedDate: { type: Date, default: null },
   lines: [{
+    // What the line buys, carried all the way from the requisition to the PO it
+    // becomes. Dropped here, every approved slip produced a stock line - so
+    // equipment requisitioned as equipment arrived as inventory.
+    purchaseType: { type: String, enum: ['inventory', 'fixedAsset', 'expense'], default: 'inventory' },
+    assetAccountCode: { type: String, default: '' },
+    expenseAccountCode: { type: String, default: '' },
+    usefulLifeMonths: { type: Number, default: null },
+    salvageValue: { type: Number, default: 0 },
     invId: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
     itemName: { type: String, default: '' },
     itemCode: { type: String, default: '' },
@@ -3377,6 +3042,15 @@ const RequisitionSlipSchema = new mongoose.Schema({
     creditAccount: { type: String, default: null },
   }],
   estTotal: { type: Number, default: 0 },
+  // The budget check made when the slip was filed (features/budgets.js): what
+  // each account it charges had budgeted, spent and already asked for that
+  // month. An over-budget slip is approved only with an explicit reason.
+  budgetCheck: [{
+    accountCode: String, accountName: String, hasBudget: Boolean,
+    budget: Number, spent: Number, committed: Number, requested: Number, available: Number, over: Boolean,
+  }],
+  overBudgetAcceptedBy: { type: String, default: '' },
+  overBudgetReason:     { type: String, default: '' },
 
   notes: { type: String, default: '' },
   preparedBy: { type: String, default: '' },               // requester's name - the slip's "Prepared By" line
@@ -3423,11 +3097,18 @@ const ProductionOrderSchema = new mongoose.Schema({
   batchNumber: { type: String, default: '' },
 
   materials: [{
-    invId: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', required: true },
+    // Null for a line that is not stock - the water in a cold brew. It is part
+    // of how the batch is made, so it is recorded with it, but there is
+    // nothing to take it from and nothing it costs.
+    invId: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
     itemName: { type: String, default: '' },
-    qty: { type: Number, default: 0 },                     // base units (g/ml/pcs)
+    qty: { type: Number, default: 0 },                     // base units (g/ml/pcs); as written for a non-stock line
     unit: { type: String, default: '' },
+    nonStock: { type: Boolean, default: false },
   }],
+  // For an order that creates a new item: save these materials as that
+  // item's recipe once it exists, which is not until the yield is confirmed.
+  saveRecipe: { type: Boolean, default: false },
 
   // 'existing' adds outputQty onto an already-tracked item (outputInvId set
   // at filing time); 'new' creates a brand-new Inventory item on approval -
@@ -3435,8 +3116,19 @@ const ProductionOrderSchema = new mongoose.Schema({
   outputType: { type: String, enum: ['new', 'existing'], required: true },
   outputInvId: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventory', default: null },
   outputName: { type: String, default: '' },
-  outputQty: { type: Number, default: 0 },                  // base units produced
+  // The EXPECTED output, base units - optional. The real figure is only known
+  // after the batch is made (roasting and drying lose moisture), so it is
+  // entered at reconcile as actualOutputQty. null = no expectation given.
+  outputQty: { type: Number, default: null },
   outputUnit: { type: String, default: '' },
+  // The unit the person actually TYPED the quantity in - "ml", "L", "pcs".
+  // outputQty is always base units, but reconciling asks for the same figure
+  // again, and it has to be asked for in the same unit it was planned in.
+  // Without this the reconcile step picked its own unit (pieces, from the pack
+  // size in the item's name): a batch planned as 1700 ml came back as "1.7
+  // pcs", the operator retyped the 1700 they had in mind, and it was multiplied
+  // by the pack size into 1700 L of stock.
+  outputEnteredUnit: { type: String, default: '' },
   // 'new' only - base units per ONE piece (e.g. 377 for "...377G"), carried
   // onto the created Inventory item's own packSize so later production runs
   // against it can be counted in pieces too, same as every packed item.
@@ -3474,6 +3166,10 @@ const ProductionOrderSchema = new mongoose.Schema({
   // actualOutputQty above.
   moistureLoss: { type: Number, default: null },            // base units: outputQty - actualOutputQty
   moistureLossPercent: { type: Number, default: null },     // moistureLoss / outputQty * 100
+  // What the loss was measured against: 'expected' (the expected output) or
+  // 'input' (the materials in the output's own unit, when no expectation was
+  // given). null when neither was available.
+  moistureBasis: { type: String, default: null },
 }, { timestamps: true });
 ProductionOrderSchema.index({ businessType: 1, status: 1, createdAt: -1 });
 const ProductionOrder = mongoose.model('ProductionOrder', ProductionOrderSchema);
@@ -3494,6 +3190,13 @@ const ProductionOrder = mongoose.model('ProductionOrder', ProductionOrderSchema)
 // model/helper/middleware they use is passed via this ctx object. Registration
 // order preserves the original in-file route order per feature.
 const ctx = {
+  Budget,
+  LeaveRequest,
+  OvertimeRequest,
+  ManualJournal,
+  MANUAL_JOURNAL_STATUSES,
+  Attachment,
+  ATTACHMENT_ENTITIES,
   app,
   io,
   server,
@@ -3580,9 +3283,11 @@ const ctx = {
   currentBranchCode,
   invalidateBranchCodeCache,
   loginLimiter,
+  pinLimiter,
   orderLimiter,
   generalApiLimiter,
   runStartupTasks,
+  migrateHubClearingAccount,
   CategorySchema,
   Category,
   ModifierGroupSchema,
@@ -3652,6 +3357,7 @@ const ctx = {
   DEFAULT_PAYMENT_ACCOUNT_MAP,
   refreshPaymentMap,
   accountForPaymentMethod,
+  issueCheckVoucher,
   ClosedPeriodSchema,
   ClosedPeriod,
   periodLockFor,
@@ -3707,6 +3413,8 @@ const ctx = {
   ADVANCE_ACCOUNTS,
   AdvanceSchema,
   Advance,
+  Reservation,
+  RESERVATION_STATUSES,
   emitToOps,
   emitToAll,
   emitToMgr,
@@ -3738,6 +3446,9 @@ const ctx = {
   requireSuperOrAdmin,
   verifyOrderAuth,
   requirePermission,
+  requireAnyPermission,
+  requireUserAdmin,
+  guardStaffEscalation,
   resolvePermissions,
   hasPermission,
   PERMISSIONS,
@@ -3757,6 +3468,18 @@ registerProducts(ctx);
 registerQrSessions(ctx);
 registerOrders(ctx);
 registerFinance(ctx);
+registerAttachments(ctx);
+registerBudgets(ctx);
+registerExceptions(ctx);
+registerClosing(ctx);
+registerInsights(ctx);
+registerCafeExtras(ctx);
+registerOpsExtras(ctx);
+registerNotify(ctx);
+registerStockMovement(ctx);
+registerCosting(ctx);
+registerStockControl(ctx);
+registerTimeOff(ctx);
 registerReports(ctx);
 registerShifts(ctx);
 registerScheduling(ctx);
@@ -3767,8 +3490,11 @@ registerAudit(ctx);
 registerSettings(ctx);
 registerPurchaseOrders(ctx);
 registerBills(ctx);
+registerSetupImport(ctx);
 registerCheckVouchers(ctx);
 registerAdvances(ctx);
+registerReservations(ctx);
+registerBackup(ctx);
 registerDataExport(ctx);
 registerFixedAssets(ctx);
 registerBankReconciliation(ctx);
@@ -3781,6 +3507,7 @@ registerChangeRequests(ctx);
 registerNotifications(ctx);
 registerClients(ctx);
 registerHub(ctx);
+registerInventorySheet(ctx);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Not found.' });
@@ -3791,6 +3518,12 @@ app.use((req, res) => {
 // In production it never leaks stack traces, query strings, or internal messages.
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
+  // The answer has already gone out (the error came after it): there is
+  // nothing left to send, and trying to would throw a second error.
+  if (res.headersSent) { log.error({ err, url: req.url, method: req.method }, 'Error after the response was sent'); return; }
+  // An id in the address that is not an id (a mistyped or cut-off link) is
+  // "not found", not a server fault - and should not page anyone as one.
+  if (err?.name === 'CastError') return res.status(404).json({ success: false, error: 'Not found.' });
   const status = err.status || (/^CORS blocked/.test(err.message || '') ? 403 : 500);
   log.error({ err, url: req.url, method: req.method }, 'Unhandled request error');
   if (SENTRY_ON && status >= 500) Sentry.captureException(err);
@@ -3813,7 +3546,7 @@ if (!IS_TEST) {
 // Exported for in-process integration tests (supertest + socket.io-client). Importing
 // the module still connects to MONGO_URI; tests point that at an in-memory MongoDB.
 // `server` (the http.Server) is exported so socket tests can listen on an ephemeral port.
-export { app, server, runStartupTasks };
+export { app, server, runStartupTasks, scheduleMidnightArchive, migrateHubClearingAccount, repairPackRecipes };
 
 const shutdown = async (signal, exitCode = 0) => {
   log.info({ signal }, 'Shutting down gracefully');

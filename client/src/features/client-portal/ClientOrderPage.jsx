@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react';
+import QtyInput from '../../shared/ui/QtyInput';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { usePaymentMethods } from '../../shared/usePaymentMethods';
@@ -6,6 +7,7 @@ import * as ui from '../../shared/ui';
 import { loadSession, clearSession, saveSession, loadDraft, saveDraft } from './clientSession';
 import { CLIENT_THEMES, applyClientTheme, cachedClientTheme, clearClientTheme } from './clientTheme';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
+import PortalGuide from './PortalGuide';
 import {
   Package, ShoppingCart, Plus, Minus, X, LogOut, CheckCircle,
   CreditCard, Loader2, ChevronLeft, Search, Download, FileText, Menu, Megaphone,
@@ -20,9 +22,15 @@ const loadPdfLib = () => {
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
+import { API_URL } from '../../shared/apiBase.js';
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Semivra').toUpperCase();
-const socket = io(API_URL, { transports: ['websocket'], upgrade: false });
+// transports: WebSocket first, then long-polling as a fallback. It used to be
+// websocket-only with upgrade:false, which meant that if anything between the
+// browser and the server declined to forward the upgrade - a proxy, a CDN, a
+// captive network - realtime did not degrade, it simply died, silently: no new
+// orders appearing, no stock updates, and nothing on screen saying so. Polling
+// is heavier, so it is the fallback rather than the default.
+const socket = io(API_URL, { transports: ['websocket', 'polling'] });
 // See AdminDashboard.jsx for why: an open socket blocks bfcache, so
 // disconnect before the page would be frozen and reconnect if restored from it.
 if (typeof window !== 'undefined') {
@@ -129,7 +137,7 @@ const TONE_CLS = {
   amber: 'bg-amber-500 border-amber-500 text-white',
   blue:  'bg-blue-500 border-blue-500 text-white',
   green: 'bg-emerald-500 border-emerald-500 text-white',
-  red:   'bg-red-500 border-red-500/30 text-white',
+  red:   'bg-red-700 border-red-500/30 text-white',
   gray:  'bg-white border-white text-black',
 };
 
@@ -138,9 +146,12 @@ const ProductCard = memo(({ product, onAdd, onPreview, showPrices }) => {
   const unavailable = product.isAvailable === false || product.stockAvailable === false;
   const discount = (product.effectiveDiscountPercent ?? product.discountPercent) || 0;
   const base = Number(product.basePrice || 0);
-  // Sale price from active sales takes priority over client discount percent
+  // What the server charges (lib/salePricing.js + lib/discounts.js): the sale
+  // price replaces the list price, and the client's own discount still applies
+  // on top - the same as at the POS. Showing the sale price alone quoted a
+  // different number from the one charged.
   const hasSale = product.activeSalePrice != null;
-  const net = hasSale ? Number(product.activeSalePrice) : base * (1 - discount / 100);
+  const net = (hasSale ? Number(product.activeSalePrice) : base) * (1 - discount / 100);
   return (
   <div
     // Tapping the card previews the product (its image, full-size) - it no
@@ -463,7 +474,10 @@ export default function ClientOrderPage() {
       ]);
       const prodData = await prodRes.json();
       const catData = await catRes.json();
-      setProducts((prodData.products || []).filter(p => !p.isArchived));
+      // A price tier above list is this client's price for the product - show
+      // and send it as the product's own price (the server charges the same).
+      setProducts((prodData.products || []).filter(p => !p.isArchived)
+        .map(p => (p.buyerUnitPrice != null ? { ...p, basePrice: p.buyerUnitPrice } : p)));
       setCategories(catData.categories || []);
     } catch { /* silently retry on socket event */ }
     finally { setLoadingProducts(false); }
@@ -485,12 +499,18 @@ export default function ClientOrderPage() {
   }, [fetchProducts]);
 
   // Client's own orders → status queue sidebar
+  const [myDeposits, setMyDeposits] = useState(null); // { balance, items }
   const fetchMyOrders = useCallback(async () => {
     if (!token) return;
     try {
       const res = await fetch(`${API_URL}/api/client/orders`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       if (data.success) setMyOrders(data.orders || []);
+      // Deposits ride on the profile; refreshed with the orders so a deposit
+      // staff just applied disappears from the balance at the same moment.
+      const pr = await fetch(`${API_URL}/api/client/profile`, { headers: { Authorization: `Bearer ${token}` } });
+      const pd = await pr.json();
+      if (pd.success) setMyDeposits(pd.profile.deposits || null);
     } catch { /* ignore */ }
   }, [token]);
 
@@ -532,6 +552,8 @@ export default function ClientOrderPage() {
       // ordinary one the client already knows.
       setCart((data.items || []).map(i => ({
         productId: i.productId, name: i.name, price: i.price, quantity: i.quantity,
+        // Carried to the order so the server charges the agreed price.
+        quotationId: i.quotationId,
       })));
       setCartOpen(true);
       fetchMyQuotes();
@@ -648,6 +670,8 @@ export default function ClientOrderPage() {
         subFields: [
           { label: 'Status', value: STATUS_VIEW(order.status).label },
           ...(order.billingNumber ? [{ label: 'Billing No.', value: order.billingNumber }] : []),
+          ...(order.orNumber ? [{ label: 'OR No.', value: order.orNumber }] : []),
+          ...((order.deliveryReceipts || []).length || order.drNumber ? [{ label: 'DR No.', value: (order.deliveryReceipts || []).map(d => d.drNumber).join(', ') || order.drNumber }] : []),
           ...(order.paymentMethod ? [{ label: 'Payment', value: order.paymentMethod }] : []),
         ],
         schedRows: order.orderNotes ? [{ label: 'Notes:', value: order.orderNotes }] : [],
@@ -675,7 +699,8 @@ export default function ClientOrderPage() {
         productId: String(product._id),
         name: product.name,
         productCode: product.productCode,
-        price: product.basePrice,
+        // Display only - the server re-prices every line from the records.
+        price: product.activeSalePrice ?? product.basePrice,
         // effectiveDiscountPercent reflects the per-client override (when applicable);
         // falls back to the product default if there's no override.
         discountPercent: (product.effectiveDiscountPercent ?? product.discountPercent) || 0,
@@ -687,6 +712,35 @@ export default function ClientOrderPage() {
     // tapping several different products after that has no other feedback.
     ui.toast(`${product.name} added to cart`, { tone: 'success', duration: 1600 });
   }, []);
+
+  // Order again: put a past order's items back in the cart, at today's prices
+  // (the server prices every line from the records when it is placed). What is
+  // no longer sold or is out of stock is left out, and the client is told.
+  const orderAgain = useCallback((order) => {
+    const found = [], missing = [];
+    for (const item of order.items || []) {
+      const prod = products.find(p => (item.productCode && p.productCode === item.productCode) || (item.productId && String(p._id) === String(item.productId)));
+      if (!prod || prod.isAvailable === false || prod.stockAvailable === false) { missing.push(item.name); continue; }
+      found.push({ prod, quantity: Math.max(1, Math.round(Number(item.quantity) || 1)) });
+    }
+    if (!found.length) { ui.alert('None of the items on that order can be ordered right now.'); return; }
+    setCart(prev => {
+      const next = [...prev];
+      for (const { prod, quantity } of found) {
+        const idx = next.findIndex(i => i.productId === String(prod._id));
+        if (idx >= 0) next[idx] = { ...next[idx], quantity: next[idx].quantity + quantity };
+        else next.push({
+          productId: String(prod._id), name: prod.name, productCode: prod.productCode,
+          price: prod.activeSalePrice ?? prod.basePrice,
+          discountPercent: (prod.effectiveDiscountPercent ?? prod.discountPercent) || 0,
+          quantity, selectedAddOns: [],
+        });
+      }
+      return next;
+    });
+    ui.toast(`${found.length} item(s) added to your cart${missing.length ? ` - ${missing.length} not available now` : ''}.`, { tone: 'success', duration: 2600 });
+    if (missing.length) ui.alert(`Not added, because they are not available right now: ${missing.join(', ')}.`);
+  }, [products]);
 
   const changeQty = useCallback((productId, delta) => {
     setCart(prev => prev
@@ -904,7 +958,7 @@ export default function ClientOrderPage() {
     return (
       <div className="min-h-screen bg-page-bg flex flex-col items-center justify-center p-4 sm:p-6 text-center">
         <div className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center mb-4">
-          <CheckCircle size={32} className="text-emerald-400" />
+          <CheckCircle size={32} className="text-success" />
         </div>
         <h2 className="text-2xl font-black text-fg mb-1">Sent to Logistics!</h2>
         <p className="text-fg/75 text-sm mb-3">Your order has been received.</p>
@@ -918,7 +972,7 @@ export default function ClientOrderPage() {
         </div>
 
         {/* First queue state: ask for payment proof */}
-        <div className="bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-2xl px-4 py-3 w-full max-w-sm mb-5 text-left">
+        <div className="bg-amber-500/10 border border-amber-500/30 text-warning rounded-2xl px-4 py-3 w-full max-w-sm mb-5 text-left">
           <p className="text-xs font-black uppercase tracking-wider mb-1">Next step - Payment proof</p>
           <p className="text-[12px] leading-snug opacity-90">
             {paymentInstructions || 'Please send your payment proof so we can start preparing your order.'}
@@ -999,7 +1053,7 @@ export default function ClientOrderPage() {
               <div className="px-5 pt-5 pb-4 border-b-2 border-neutral-900">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h2 className="font-black text-lg leading-tight truncate">{companyName}</h2>
+                    <h2 className="font-black text-lg leading-tight truncate" title={String((companyName) ?? '')}>{companyName}</h2>
                     {contact.map((c, i) => (
                       <p key={i} className="text-[10.5px] text-neutral-500 leading-snug">{c}</p>
                     ))}
@@ -1065,7 +1119,7 @@ export default function ClientOrderPage() {
                             <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${done ? 'bg-neutral-900' : 'bg-neutral-300'}`} />
                             <span className={`h-0.5 flex-1 ${i === SLIP_STEPS.length - 1 ? 'bg-transparent' : track(i < stepIdx)}`} />
                           </div>
-                          <p className={`text-[8.5px] leading-tight mt-1.5 px-0.5 text-center ${done ? 'text-neutral-900 font-bold' : 'text-neutral-400'}`}>{s}</p>
+                          <p className={`text-[8.5px] leading-tight mt-1.5 px-0.5 text-center ${done ? 'text-neutral-900 font-bold' : 'text-neutral-600'}`}>{s}</p>
                         </li>
                       );
                     })}
@@ -1128,7 +1182,7 @@ export default function ClientOrderPage() {
                         {slipOrder.status === 'Partially Fulfilled' && (item.fulfilledQty || 0) > 0 && (item.fulfilledQty || 0) < (item.quantity || 0) && (
                           <span className="text-[10px] font-black block mt-0.5">
                             <span className="text-emerald-600">Fulfilled: {item.fulfilledQty}</span>
-                            <span className="text-neutral-400"> | </span>
+                            <span className="text-neutral-600"> | </span>
                             <span className="text-amber-600">Remaining: {Math.max(0, (item.quantity || 0) - (item.fulfilledQty || 0))}</span>
                           </span>
                         )}
@@ -1136,7 +1190,7 @@ export default function ClientOrderPage() {
                           <span className="text-[10px] font-black block mt-0.5 text-emerald-600">✓ Fulfilled: {item.quantity}</span>
                         )}
                       </span>
-                      <span className="text-right tabular-nums text-accent/80">{sizeLabel || '-'}</span>
+                      <span className="text-right tabular-nums text-brand-text">{sizeLabel || '-'}</span>
                       <span className="text-right tabular-nums">{peso(unit)}</span>
                       <span className="text-right tabular-nums font-semibold">{item.quantity}</span>
                       <span className="text-right tabular-nums font-semibold">{peso(unit * Number(item.quantity || 0))}</span>
@@ -1156,10 +1210,20 @@ export default function ClientOrderPage() {
                 </div>
               </div>
 
+              {(slipOrder.amendments || []).length > 0 && (
+                <div className="px-5 pb-3">
+                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-neutral-600 mb-1">Changes to this order</p>
+                  {slipOrder.amendments.map(a => (
+                    <p key={a.revision} className="text-[11px] text-neutral-600 leading-snug">
+                      {new Date(a.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {(a.changes || []).map(c => c.to === 0 ? `${c.name} removed` : `${c.name} ${c.from} → ${c.to}`).join(', ')} · {a.reason}
+                    </p>
+                  ))}
+                </div>
+              )}
               {/* Notes & terms */}
               {slipOrder.orderNotes && (
                 <div className="px-5 pb-3">
-                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-neutral-400 mb-1">Notes</p>
+                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-neutral-600 mb-1">Notes</p>
                   <p className="text-[11.5px] text-neutral-600 leading-snug whitespace-pre-line">{slipOrder.orderNotes}</p>
                 </div>
               )}
@@ -1181,14 +1245,20 @@ export default function ClientOrderPage() {
               )}
               {slipOrder.status === 'Pending' && (
                 <button onClick={() => cancelOrder(slipOrder._id)}
-                  className="w-full border border-red-500/30 text-red-300 hover:bg-red-500/10 transition rounded-xl px-3 py-2.5 text-[11px] font-black uppercase tracking-wider">
+                  className="w-full border border-red-500/30 text-danger hover:bg-red-500/10 transition rounded-xl px-3 py-2.5 text-[11px] font-black uppercase tracking-wider">
                   Cancel order
                 </button>
               )}
             </div>
           </div>
 
-          <div className="p-3 sm:p-4 border-t border-white/10 flex-shrink-0">
+          <div className="p-3 sm:p-4 border-t border-white/10 flex-shrink-0 space-y-2">
+            {(slipOrder.items || []).length > 0 && (
+              <button onClick={() => { orderAgain(slipOrder); setSlipOrder(null); }}
+                className="w-full border border-white/15 text-fg hover:bg-white/5 font-black py-3 rounded-xl transition uppercase tracking-widest text-xs">
+                Order these again
+              </button>
+            )}
             <button onClick={() => downloadOrderSlip(slipOrder)} disabled={slipDownloading}
               className="w-full flex items-center justify-center gap-2 bg-brand hover:bg-brand-dark disabled:opacity-60 text-on-brand font-black py-3 rounded-xl transition uppercase tracking-widest text-xs">
               {slipDownloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
@@ -1207,11 +1277,11 @@ export default function ClientOrderPage() {
       {/* QR Payment modal */}
       {showQr && portal.paymentQrImage && (
         <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-4"
+          className="fixed inset-0 z-[200] flex justify-center overflow-y-auto bg-black/80 p-4"
           onClick={closeQr}
         >
           <div
-            className="bg-sidebar-bg border border-white/10 rounded-2xl p-5 flex flex-col items-center gap-4 max-w-xs w-full"
+            className="bg-sidebar-bg border border-white/10 rounded-2xl p-5 flex flex-col items-center gap-4 max-w-xs w-full my-auto"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center justify-between w-full">
@@ -1254,7 +1324,7 @@ export default function ClientOrderPage() {
           {portal.businessLogo
             ? <img src={portal.businessLogo} alt="" className="w-7 h-7 rounded-lg object-cover shrink-0" />
             : <Package size={18} className="text-brand-text shrink-0" />}
-          <span className="font-black text-fg text-xs sm:text-sm uppercase tracking-widest truncate">{companyName}</span>
+          <span className="font-black text-fg text-xs sm:text-sm uppercase tracking-widest truncate" title={String((companyName) ?? '')}>{companyName}</span>
         </div>
 
         {/* Desktop / tablet actions */}
@@ -1266,7 +1336,7 @@ export default function ClientOrderPage() {
           )}
           <button
             onClick={() => { setQueueOpen(true); fetchMyOrders(); }}
-            className="relative p-2 rounded-xl text-fg/60 hover:text-fg hover:bg-white/10 transition"
+            className="relative p-2 rounded-xl text-fg/65 hover:text-fg hover:bg-white/10 transition"
             aria-label="My orders"
             title="My orders"
           >
@@ -1279,7 +1349,7 @@ export default function ClientOrderPage() {
           </button>
           <button
             onClick={() => setSettingsOpen(true)}
-            className="p-2 rounded-xl text-fg/60 hover:text-fg hover:bg-white/10 transition"
+            className="p-2 rounded-xl text-fg/65 hover:text-fg hover:bg-white/10 transition"
             aria-label="My settings"
             title="My settings"
           >
@@ -1314,10 +1384,10 @@ export default function ClientOrderPage() {
       {menuOpen && (
         <div className="fixed inset-0 z-50 sm:hidden flex justify-end" role="dialog" aria-modal="true" aria-label="Menu">
           <div className="flex-1 bg-black/60 backdrop-blur-sm" onClick={() => setMenuOpen(false)} />
-          <nav className="w-64 max-w-[80vw] h-full bg-sidebar-bg border-l border-white/10 flex flex-col">
+          <nav className="w-64 max-w-[80vw] h-full bg-sidebar-bg border-l border-white/10 flex flex-col overflow-y-auto">
             <div className="flex items-center justify-between px-4 h-14 border-b border-white/5">
               <div className="min-w-0">
-                <p className="text-fg font-black text-xs uppercase tracking-widest truncate">{clientInfo?.name || clientInfo?.username || 'Client'}</p>
+                <p className="text-fg font-black text-xs uppercase tracking-widest truncate" title={String((clientInfo?.name || clientInfo?.username || 'Client') ?? '')}>{clientInfo?.name || clientInfo?.username || 'Client'}</p>
                 {clientInfo?.clientCode && <p className="text-fg/65 text-[10px] font-mono truncate">{clientInfo.clientCode}</p>}
               </div>
               <button onClick={() => setMenuOpen(false)} className="p-2 -mr-2 rounded-xl text-fg/70 hover:text-fg hover:bg-white/10 transition" aria-label="Close menu">
@@ -1364,7 +1434,7 @@ export default function ClientOrderPage() {
             <div className="mt-auto p-3 border-t border-white/5">
               <button
                 onClick={() => { setMenuOpen(false); handleLogout(); }}
-                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-red-300 hover:bg-red-500/10 transition"
+                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-danger hover:bg-red-500/10 transition"
               >
                 <LogOut size={16} /> Sign out
               </button>
@@ -1386,6 +1456,15 @@ export default function ClientOrderPage() {
                 <X size={16} />
               </button>
             </div>
+            {myDeposits?.balance > 0 && (
+              <div className="mx-4 mt-3 rounded-xl border border-green-500/25 bg-green-500/10 px-3 py-2.5">
+                <div className="flex justify-between items-baseline text-xs">
+                  <span className="text-fg/75 font-bold">Deposit on file</span>
+                  <span className="text-success font-black tabular-nums">{peso(myDeposits.balance)}</span>
+                </div>
+                <p className="text-[10px] text-fg/65 mt-0.5">Paid ahead of your orders. Our team applies it to your next invoice.</p>
+              </div>
+            )}
             {/* Filter chips - group the many granular statuses into what a client
                 actually asks about: still moving, partial, cancelled, or done. */}
             <div className="flex gap-1.5 px-4 py-2.5 overflow-x-auto scrollbar-hide custom-scrollbar border-b border-white/5 flex-shrink-0">
@@ -1477,6 +1556,9 @@ export default function ClientOrderPage() {
 
                     <div className="p-4 cursor-pointer" onClick={() => setSlipOrder(o)}>
                       {v.msg && <p className="text-fg/75 text-[11px] leading-snug mb-2.5">{v.msg}</p>}
+                      {o.revision > 0 && (
+                        <p className="text-info text-[11px] leading-snug mb-2.5 font-bold">Updated by our team{o.amendments?.length ? `: ${o.amendments[o.amendments.length - 1].reason}` : ''}</p>
+                      )}
 
                       {/* Item summary */}
                       <div className="space-y-1.5">
@@ -1515,7 +1597,7 @@ export default function ClientOrderPage() {
                         {v.needsProof && <SupportLink className="" />}
                         {v.canConfirm && (
                           o.clientReceived ? (
-                            <p className="text-[11px] font-black inline-flex items-center gap-1.5 text-emerald-400"><CheckCircle size={13} /> Received - thank you!</p>
+                            <p className="text-[11px] font-black inline-flex items-center gap-1.5 text-success"><CheckCircle size={13} /> Received - thank you!</p>
                           ) : (
                             <button onClick={e => { e.stopPropagation(); confirmReceived(o._id); }}
                               className="bg-emerald-500 hover:bg-emerald-400 transition rounded-full px-4 py-1.5 text-[11px] font-black text-fg uppercase tracking-wider">
@@ -1525,12 +1607,12 @@ export default function ClientOrderPage() {
                         )}
                         {o.status === 'Pending' && (
                           <button onClick={e => { e.stopPropagation(); cancelOrder(o._id); }}
-                            className="border border-red-500/30 text-red-300 hover:bg-red-500/10 transition rounded-full px-4 py-1.5 text-[11px] font-black uppercase tracking-wider">
+                            className="border border-red-500/30 text-danger hover:bg-red-500/10 transition rounded-full px-4 py-1.5 text-[11px] font-black uppercase tracking-wider">
                             Cancel order
                           </button>
                         )}
                         <button onClick={() => setSlipOrder(o)}
-                          className="border border-white/10 text-fg/60 hover:text-fg hover:border-white/20 transition rounded-full px-4 py-1.5 text-[11px] font-black uppercase tracking-wider">
+                          className="border border-white/10 text-fg/65 hover:text-fg hover:border-white/20 transition rounded-full px-4 py-1.5 text-[11px] font-black uppercase tracking-wider">
                           View slip
                         </button>
                       </div>
@@ -1555,7 +1637,7 @@ export default function ClientOrderPage() {
         const discount = (p.effectiveDiscountPercent ?? p.discountPercent) || 0;
         const base = Number(p.basePrice || 0);
         const hasSale = p.activeSalePrice != null;
-        const net = hasSale ? Number(p.activeSalePrice) : base * (1 - discount / 100);
+        const net = (hasSale ? Number(p.activeSalePrice) : base) * (1 - discount / 100);
         return (
           <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm"
             onClick={() => setPreviewProduct(null)} role="dialog" aria-modal="true" aria-label={p.name}>
@@ -1616,8 +1698,8 @@ export default function ClientOrderPage() {
             <div className="flex-1 overflow-y-auto p-5 space-y-6">
               {settingsMsg && (
                 <p className={`text-xs font-bold rounded-xl px-3 py-2.5 ${settingsMsg.tone === 'ok'
-                  ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300'
-                  : 'bg-red-500/10 border border-red-500/30 text-red-300'}`}>
+                  ? 'bg-emerald-500/10 border border-emerald-500/30 text-success'
+                  : 'bg-red-500/10 border border-red-500/30 text-danger'}`}>
                   {settingsMsg.text}
                 </p>
               )}
@@ -1636,6 +1718,12 @@ export default function ClientOrderPage() {
                     <div className="flex justify-between text-xs">
                       <span className="text-fg/70">Client code</span>
                       <span className="text-fg font-mono">{clientInfo.clientCode}</span>
+                    </div>
+                  )}
+                  {myDeposits?.balance > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-fg/70">Deposit on file</span>
+                      <span className="text-success font-bold tabular-nums">{peso(myDeposits.balance)}</span>
                     </div>
                   )}
                   <div>
@@ -1706,7 +1794,7 @@ export default function ClientOrderPage() {
                         className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition text-left ${
                           theme === t.value
                             ? 'bg-brand text-on-brand border-brand'
-                            : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'}`}>
+                            : 'bg-white/5 text-fg/65 border-white/10 hover:text-fg hover:bg-white/10'}`}>
                         {t.label}
                       </button>
                     ))}
@@ -1740,14 +1828,19 @@ export default function ClientOrderPage() {
       )}
       {portal.portalAnnouncement && announcementOpen && (
         <div className="px-3 sm:px-4 pt-3">
-          <div className="flex items-start gap-2.5 bg-amber-500/10 border border-amber-500/30 text-amber-200 rounded-2xl px-4 py-3">
+          <div className="flex items-start gap-2.5 bg-amber-500/10 border border-amber-500/30 text-warning rounded-2xl px-4 py-3">
             <Megaphone size={15} className="shrink-0 mt-0.5" />
             <p className="text-xs leading-snug flex-1">{portal.portalAnnouncement}</p>
-            <button onClick={() => setAnnouncementOpen(false)} className="shrink-0 text-amber-200/60 hover:text-amber-100 transition" aria-label="Dismiss announcement">
+            <button onClick={() => setAnnouncementOpen(false)} className="shrink-0 text-warning hover:text-amber-100 transition" aria-label="Dismiss announcement">
               <X size={14} />
             </button>
           </div>
         </div>
+      )}
+
+      {/* The tutorial - only while the order is still empty. */}
+      {cart.length === 0 && !loadingProducts && visibleProducts.length > 0 && (
+        <PortalGuide quoteOnly={quoteOnly} showPrices={showPrices} hasQr={!!portal.paymentQrImage} />
       )}
 
       {/* Search + category filter - sticky right under the header, so both
@@ -1763,7 +1856,7 @@ export default function ClientOrderPage() {
               value={productSearch}
               onChange={e => setProductSearch(e.target.value)}
               placeholder="Search products by name or code…"
-              className="w-full bg-white/5 border border-white/10 focus:border-brand rounded-xl pl-9 pr-9 py-2.5 text-sm text-fg placeholder-fg/30 outline-none transition"
+              className="w-full bg-white/5 border border-white/10 focus:border-brand rounded-xl pl-9 pr-9 py-2.5 text-sm text-fg placeholder-fg/70 outline-none transition"
             />
             {productSearch && (
               <button onClick={() => setProductSearch('')} aria-label="Clear search"
@@ -1842,7 +1935,7 @@ export default function ClientOrderPage() {
             </button>
             <div className="flex-1 min-w-0">
               <h2 className="font-black text-fg text-sm uppercase tracking-widest">Your Order</h2>
-              <p className="text-fg/70 text-xs truncate">{clientInfo?.name || clientInfo?.username}</p>
+              <p className="text-fg/70 text-xs truncate" title={String((clientInfo?.name || clientInfo?.username) ?? '')}>{clientInfo?.name || clientInfo?.username}</p>
             </div>
           </div>
 
@@ -1852,6 +1945,13 @@ export default function ClientOrderPage() {
               <div className="flex flex-col items-center py-16 text-center">
                 <ShoppingCart size={36} className="text-fg/10 mb-3" />
                 <p className="text-fg/70 text-sm font-bold">Your order is empty.</p>
+                <p className="text-fg/70 text-xs mt-1 max-w-xs leading-snug">
+                  Go back and tap <span className="font-black text-brand-text">+</span> on a product to add it. It will appear here, where you choose how to pay and send it.
+                </p>
+                <button onClick={() => setCartOpen(false)}
+                  className="mt-4 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider bg-brand text-on-brand hover:bg-brand-dark transition">
+                  Browse products
+                </button>
               </div>
             )}
             {cart.map(item => (
@@ -1860,7 +1960,7 @@ export default function ClientOrderPage() {
                   {item.productCode && (
                     <p className="text-fg/65 text-[10px] font-mono uppercase tracking-widest truncate">{item.productCode}</p>
                   )}
-                  <p className="font-bold text-fg text-sm truncate">{item.name}</p>
+                  <p className="font-bold text-fg text-sm truncate" title={String((item.name) ?? '')}>{item.name}</p>
                   {showPrices
                     ? <p className="text-fg/75 text-[11px] tabular-nums">{peso(netPrice(item))} each</p>
                     : <p className="text-fg/65 text-[10px] italic">Price confirmed by our team</p>}
@@ -1873,7 +1973,8 @@ export default function ClientOrderPage() {
                   >
                     <Minus size={13} />
                   </button>
-                  <span className="text-fg font-black text-sm w-6 text-center tabular-nums">{item.quantity}</span>
+                  <QtyInput value={item.quantity} label={`Quantity of ${item.name}`}
+                    onChange={q => setCart(prev => prev.map(i => i.productId === item.productId ? { ...i, quantity: q } : i))} />
                   <button
                     onClick={() => changeQty(item.productId, 1)}
                     className="w-8 h-8 rounded-lg bg-brand/20 hover:bg-brand/30 text-brand-text flex items-center justify-center transition"
@@ -1914,7 +2015,7 @@ export default function ClientOrderPage() {
                         className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
                           paymentMethod === m.name
                             ? 'bg-brand text-on-brand border-brand'
-                            : 'bg-white/5 text-fg/60 border-white/10 hover:border-white/30 hover:text-fg'
+                            : 'bg-white/5 text-fg/65 border-white/10 hover:border-white/30 hover:text-fg'
                         }`}
                       >
                         {METHOD_LABELS[m.name] || m.name}
@@ -1956,7 +2057,7 @@ export default function ClientOrderPage() {
                     placeholder={isCheckPayment ? 'e.g. 0012345' : 'e.g. 0012 3456 7890'}
                     inputMode="text"
                     autoComplete="off"
-                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-3 py-2.5 rounded-xl outline-none transition text-sm font-bold tabular-nums"
+                    className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-3 py-2.5 rounded-xl outline-none transition text-sm font-bold tabular-nums"
                   />
                   {isCheckPayment && (
                     <div>
@@ -1994,7 +2095,7 @@ export default function ClientOrderPage() {
                   onChange={e => setOrderNotes(e.target.value)}
                   placeholder="Special instructions, delivery notes…"
                   rows={2}
-                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-3 py-2 rounded-xl outline-none transition text-sm resize-none"
+                  className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-3 py-2 rounded-xl outline-none transition text-sm resize-none"
                 />
               </div>
             )}
@@ -2008,7 +2109,7 @@ export default function ClientOrderPage() {
                 <span className="text-fg font-black text-lg tabular-nums">{peso(cartTotal)}</span>
               </div>
             )}
-            <div className="bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-xl px-3 py-2.5 text-[11px] leading-snug">
+            <div className="bg-amber-500/10 border border-amber-500/30 text-warning rounded-xl px-3 py-2.5 text-[11px] leading-snug">
               <p className="font-black uppercase tracking-wider mb-0.5">Pricing &amp; Payment</p>
               <p className="opacity-90">
                 {paymentInstructions

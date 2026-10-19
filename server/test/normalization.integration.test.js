@@ -22,13 +22,13 @@ afterAll(async () => { await stop(); });
 const auth = (t) => ({ Authorization: `Bearer ${t}` });
 
 describe('supplier name canonicalization', () => {
-  it('stores a canonical Title Case name', async () => {
+  it('stores the name in capitals', async () => {
     const res = await request(app).post('/api/suppliers').set(auth(superToken))
       .send({ name: '  kasa   lokal  trading ', email: 'SALES@Kasa.TEST', contactPerson: 'juan dela cruz' });
     expect(res.status).toBe(201);
-    expect(res.body.supplier.name).toBe('Kasa Lokal Trading');
+    expect(res.body.supplier.name).toBe('KASA LOKAL TRADING');
     expect(res.body.supplier.email).toBe('sales@kasa.test');
-    expect(res.body.supplier.contactPerson).toBe('Juan Dela Cruz');
+    expect(res.body.supplier.contactPerson).toBe('JUAN DELA CRUZ');
   });
 
   it('rejects the same supplier typed in a different case as a duplicate', async () => {
@@ -44,28 +44,28 @@ describe('supplier name canonicalization', () => {
   });
 
   it('blocks a rename that collides with another supplier', async () => {
-    const other = await request(app).post('/api/suppliers').set(auth(superToken)).send({ name: 'Other Supplier' });
+    const other = await request(app).post('/api/suppliers').set(auth(superToken)).send({ name: 'OTHER SUPPLIER' });
     const res = await request(app).patch(`/api/suppliers/${other.body.supplier._id}`).set(auth(superToken))
       .send({ name: 'kasa lokal trading' });
     expect(res.status).toBe(409);
   });
 
   it('allows renaming a supplier to its own canonical form (no self-collision)', async () => {
-    const made = await request(app).post('/api/suppliers').set(auth(superToken)).send({ name: 'Self Rename Co' });
+    const made = await request(app).post('/api/suppliers').set(auth(superToken)).send({ name: 'SELF RENAME CO' });
     const res = await request(app).patch(`/api/suppliers/${made.body.supplier._id}`).set(auth(superToken))
       .send({ name: 'SELF RENAME CO' });
     expect(res.status).toBe(200);
-    expect(res.body.supplier.name).toBe('Self Rename Co');
+    expect(res.body.supplier.name).toBe('SELF RENAME CO');
   });
 });
 
 describe('client account username canonicalization', () => {
-  it('lowercases the username and title-cases the business name', async () => {
+  it('lowercases the username and keeps the business name in capitals', async () => {
     const res = await request(app).post('/api/client-accounts').set(auth(superToken))
       .send({ username: '  KasaLokal ', password: 'pw1234', name: 'kasa lokal inc' });
     expect(res.status).toBe(200);
     expect(res.body.client.username).toBe('kasalokal');
-    expect(res.body.client.name).toBe('Kasa Lokal Inc');
+    expect(res.body.client.name).toBe('KASA LOKAL INC');
   });
 
   it('treats a differently-cased username as already taken', async () => {
@@ -86,7 +86,7 @@ describe('client account username canonicalization', () => {
     const ClientAccount = mongoose.model('ClientAccount');
     await ClientAccount.create({
       clientCode: 'CUS-1000-A9999', username: 'LegacyMixedCase',
-      password: await bcrypt.hash('pw1234', 4), name: 'Legacy Co', paymentMethod: 'Cash',
+      password: await bcrypt.hash('pw1234', 4), name: 'LEGACY CO', paymentMethod: 'Cash',
     });
     const res = await request(app).post('/api/client-auth/login').send({ username: 'legacymixedcase', password: 'pw1234' });
     expect(res.status).toBe(200);
@@ -121,7 +121,7 @@ describe('order customer names', () => {
       items: [{ productId: prod.body.product._id, name: 'DR Test Item', price: 100, quantity: 1 }],
     });
     expect(res.status).toBeLessThan(300);
-    expect(res.body.order.customerName).toBe('Acme Trading Corp');
+    expect(res.body.order.customerName).toBe('ACME TRADING CORP');
   });
 
   it('leaves an absent customer name alone', async () => {

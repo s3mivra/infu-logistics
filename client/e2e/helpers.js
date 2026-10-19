@@ -37,3 +37,12 @@ export async function login(page) {
     );
   }
 }
+
+// Settings sits in the sidebar only in the Negotium view; in Operations it is
+// in the account menu at the foot of the sidebar. Use whichever is showing.
+export async function openSettings(page) {
+  const inSidebar = page.getByRole('button', { name: /^Settings/ });
+  if (await inSidebar.count() && await inSidebar.first().isVisible()) return inSidebar.first().click();
+  await page.locator('button[aria-haspopup="menu"]').last().click();
+  await page.getByRole('menuitem', { name: /^Settings/ }).click();
+}

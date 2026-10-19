@@ -65,3 +65,22 @@ describe('delivery fee is persisted and folded into total', () => {
     expect(res.body.order.total).toBe(res.body.order.subtotal - res.body.order.discount);
   });
 });
+
+describe('delivery fee survives the order lifecycle', () => {
+  it('keeps the fee in the total when the order moves to Preparing and Completed', async () => {
+    const created = await request(app).post('/api/orders').set(auth(superToken)).send({
+      items: [{ name: 'Widget', price: 100, quantity: 1, productDiscountPercent: 0 }],
+      table: 'Manual Delivery', deliveryFee: 50, deliveryAddress: '1 Lane', customerPhone: '0917',
+    });
+    const id = created.body.order._id;
+    expect(created.body.order.total).toBe(150);
+
+    const prep = await request(app).put(`/api/orders/${id}`).set(auth(superToken)).send({ status: 'Preparing' });
+    expect(prep.body.success).toBe(true);
+    const done = await request(app).put(`/api/orders/${id}`).set(auth(superToken)).send({ status: 'Completed' });
+    expect(done.body.success).toBe(true);
+
+    const fresh = await mongoose.model('Order').findById(id).lean();
+    expect(fresh.total).toBe(150);
+  });
+});

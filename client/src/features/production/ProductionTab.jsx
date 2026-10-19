@@ -1,7 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Factory, Plus, Trash2, Check, X, Package, Clock, ClipboardCheck } from 'lucide-react';
 import * as ui from '../../shared/ui';
+import { reconcileUnitOptions as reconcileUnitsFor, plannedUnitChoice as plannedUnitFor, toBaseQty, inUnit, restateQty } from '../../shared/productionUnits';
 
+import { todayStr } from '../../shared/businessDay.js';
+import { PACK_UNIT } from '../../shared/packUnit.js';
+import SearchSelect from '../../shared/ui/SearchSelect';
+import { useRefreshTick } from '../../shared/refreshBus';
+
+import { BUSINESS_TYPE } from '../../shared/businessType.js';
 // Approval decision - Pending -> Approved/Rejected.
 const STATUS_CLS = {
   Pending:  'bg-yellow-500/15 text-warning',
@@ -24,7 +31,7 @@ const FULFILLMENT_CLS = {
 // shape already used for petty-cash and procurement, just for stock instead
 // of money. See server/features/production.js for the approval-time logic.
 export default function ProductionTab({ ctx }) {
-  const { apiFetch, inventory = [], stockCategories = [], stockLocations = [], can, fetchERPData, itemDisplay, exportProductionOrdersPDF } = ctx;
+  const { apiFetch, inventory = [], products = [], stockCategories = [], stockLocations = [], can, fetchERPData, itemDisplay, exportProductionOrdersPDF } = ctx;
   const canApprove = can('production.approve');
 
   // Quantities throughout this tab are entered in PIECES, same convention as
@@ -33,33 +40,48 @@ export default function ProductionTab({ ctx }) {
   // pack size just falls back to its plain display unit (perPiece = 1), so
   // nothing changes for unpacked items. See itemDisplay()/packInfo() in
   // AdminDashboard.jsx.
+  // What a production run may be counted in, per item. Forcing everything into
+  // "pieces" is wrong the moment a batch uses 1.7 L of milk: the person making
+  // it thinks in litres, and a packed 1L carton counted as "1.7 pcs" is a
+  // quantity nobody would write down that way. Each option carries how many
+  // BASE units (g/ml/pcs) one of it is worth, which is what the server stores.
+  const unitOptions = (item) => {
+    if (!item) return [{ label: 'units', factor: 1 }];
+    const d = itemDisplay ? itemDisplay(item) : null;
+    const baseUnit = item.unit || 'units';
+    const displayUnit = item.displayUnit || baseUnit;
+    const perDisplay = Number(item.unitMultiplier) || 1;   // e.g. 1000 ml per L
+    const out = [];
+    // A packed item keeps pieces as its first option - that is how a carton or
+    // a sack is counted - but no longer as its only one.
+    if (d?.isPacked && Number(d.packBase) > 0) out.push({ label: 'pcs', factor: Number(d.packBase) });
+    if (perDisplay > 1) out.push({ label: displayUnit, factor: perDisplay });
+    out.push({ label: baseUnit, factor: 1 });
+    // Dedupe by label, keeping the first (most natural) reading.
+    return out.filter((o, i) => out.findIndex(x => x.label === o.label) === i);
+  };
+  // How much is on hand, expressed in a chosen unit.
+  const onHandIn = (item, factor) => +(((item?.stockQty || 0) / (factor || 1)).toFixed(4));
+
   const pieceInfo = (item) => {
     const d = item && itemDisplay ? itemDisplay(item) : null;
-    const perPiece = Number(d?.isPacked ? d.packBase : 1) || 1;
-    const label = d?.isPacked ? 'pcs' : (d?.unit || item?.unit || 'units');
+    // The Hub's counted unit - see StockTransferPanel for why 1 was wrong.
+    const perPiece = Number(d?.packBase) || 1;
+    const label = d?.isPacked ? PACK_UNIT : (d?.unit || item?.unit || 'units');
     const onHandPieces = item ? +(((item.stockQty || 0) / perPiece).toFixed(4)) : 0;
     return { perPiece, label, onHandPieces };
   };
 
-  // Same convention applied to the RECONCILE step - "how many actually came
-  // out" should be counted in pieces too, not raw grams/ml, whenever a piece
-  // is actually defined for this output:
-  //  - 'existing' output: the item already exists in Inventory, so its own
-  //    pack size (via pieceInfo/itemDisplay) applies, same as everywhere else.
-  //  - 'new' output: the item doesn't exist until reconcile creates it, but
-  //    if a pack size was given at filing time (outputPackSize), that IS the
-  //    piece definition it'll be created with - use it the same way.
-  //  - no pack size known either way: there's genuinely no "piece" to count
-  //    (a bulk/loose-weight output), so this correctly falls back to raw units.
-  const reconcilePieceInfo = (order) => {
-    if (!order) return { perPiece: 1, label: '' };
-    if (order.outputType === 'existing') {
-      const item = inventory.find(i => i._id === order.outputInvId);
-      return pieceInfo(item);
-    }
-    if (order.outputPackSize > 0) return { perPiece: order.outputPackSize, label: 'pcs' };
-    return { perPiece: 1, label: order.outputUnit || 'units' };
+  // What the RECONCILE step may count the yield in, and which of those the
+  // batch was planned in. The arithmetic lives in shared/productionUnits.js
+  // with its own tests - this file only supplies the item's own unit list.
+  const itemUnitsFor = (order) => {
+    if (order?.outputType !== 'existing') return null;
+    const item = inventory.find(i => i._id === order.outputInvId);
+    return item ? unitOptions(item) : null;
   };
+  const reconcileUnitOptions = (order) => reconcileUnitsFor(order, itemUnitsFor(order));
+  const plannedUnitChoice = (order) => plannedUnitFor(order, itemUnitsFor(order));
 
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -69,12 +91,20 @@ export default function ProductionTab({ ctx }) {
   const [busy, setBusy] = useState(false);
   const [reconciling, setReconciling] = useState(null); // order being reconciled
   const [actualQty, setActualQty] = useState('');
+  // Which unit the actual yield is being typed in. Defaults to the unit the
+  // batch was planned in; changing it is the operator's own decision.
+  const [reconcileUnit, setReconcileUnit] = useState('');
 
   // ── Filing form ────────────────────────────────────────────────────────────
   const [formOpen, setFormOpen] = useState(false);
   const [materials, setMaterials] = useState([]); // [{invId, name, pieceLabel, pieces, baseQty}]
   const [matPick, setMatPick] = useState('');
-  const [matQty, setMatQty] = useState(''); // pieces
+  const [matQty, setMatQty] = useState('');
+  // Which unit that quantity is in - blank means the item's most natural one
+  // (pieces for a packed carton, litres for milk, kilos for beans).
+  const [matUnit, setMatUnit] = useState('');
+  // Same idea for the output quantity; blank means that item's natural unit.
+  const [outputQtyUnit, setOutputQtyUnit] = useState('');
   const [outputType, setOutputType] = useState('existing'); // 'existing' | 'new'
   const [outputInvId, setOutputInvId] = useState('');
   const [outputName, setOutputName] = useState('');
@@ -84,12 +114,162 @@ export default function ProductionTab({ ctx }) {
   const [outputStockCategory, setOutputStockCategory] = useState('');
   const [outputStockLocation, setOutputStockLocation] = useState('');
   const [outputExpiryDate, setOutputExpiryDate] = useState('');
-  const [productionDate, setProductionDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [productionDate, setProductionDate] = useState(() => todayStr());
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // ── BUILD FROM RECIPE ──────────────────────────────────────────────────────
+  // A cafe makes Spanish Milk, Breve Milk and cold brew from bought-in stock,
+  // and the recipe for each is already on file - it is what the POS deducts
+  // when one is sold. Filing the batch that PRODUCES them, though, meant
+  // re-picking every ingredient and re-typing every quantity, every time. The
+  // two drift apart the moment a recipe is edited, and nothing warns you.
+  //
+  // So: pick the thing you are making, say how many, and the materials are the
+  // recipe scaled by that number. Still fully editable afterwards - a real
+  // batch is not always exactly the book quantity.
+  const [recipeProductId, setRecipeProductId] = useState('');
+  const [recipeBatchQty, setRecipeBatchQty] = useState('');
+
+  // An ingredient that is not stock - the water in a cold brew. Written down
+  // with the batch so the recipe is whole, never taken from anywhere.
+  const [nsName, setNsName] = useState('');
+  const [nsQty, setNsQty] = useState('');
+  const [nsUnit, setNsUnit] = useState('ml');
+
+  // Save this batch's materials as the output item's own recipe, so the next
+  // batch is "pick it, say how much". On by default for an item that has no
+  // recipe yet; off for one that has, so filing an odd batch does not quietly
+  // replace a good recipe.
+  const [saveRecipe, setSaveRecipe] = useState(true);
+
+  // Finished goods: inventory items that carry a recipe of their own.
+  const recipeItems = useMemo(
+    () => (inventory || [])
+      .filter(i => (i.productionRecipe || []).length > 0 && Number(i.recipeYield) > 0)
+      .sort((a, b) => String(a.itemName || '').localeCompare(String(b.itemName || ''))),
+    [inventory],
+  );
+  const pickedRecipeItem = recipeProductId.startsWith('inv:')
+    ? recipeItems.find(i => String(i._id) === recipeProductId.slice(4)) : null;
+
+  // Only products whose recipe actually points at stock are offerable: a
+  // recipe line with no invId names an ingredient the system cannot deduct,
+  // so it could not drive a production order.
+  const recipeProducts = useMemo(
+    () => (products || [])
+      .filter(p => (p.baseRecipe || []).some(r => r.invId && Number(r.qty) > 0))
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))),
+    [products],
+  );
+
+  // Make more of a finished good from its own recipe: the batch, in that
+  // item's natural unit, over the yield the recipe was written for.
+  const applyItemRecipe = (item, batch) => {
+    const [outNatural] = unitOptions(item);
+    const batchBase = batch * outNatural.factor;
+    const scale = batchBase / Number(item.recipeYield);
+    const lines = [];
+    const missing = [];
+    const short = [];
+    for (const r of item.productionRecipe || []) {
+      const qty = +(Number(r.qty) * scale).toFixed(6);
+      if (!(qty > 0)) continue;
+      if (r.nonStock || !r.invId) {
+        lines.push({ nonStock: true, invId: null, name: r.itemName, pieceLabel: r.unit || '', pieces: +qty.toFixed(4), baseQty: qty });
+        continue;
+      }
+      const mat = inventory.find(i => String(i._id) === String(r.invId));
+      if (!mat) { missing.push(r.itemName || 'an unnamed ingredient'); continue; }
+      const [natural] = unitOptions(mat);
+      const shown = +(qty / natural.factor).toFixed(4);
+      const available = onHandIn(mat, natural.factor);
+      if (shown > available + 1e-6) short.push(`${mat.itemName} (need ${shown} ${natural.label}, have ${available})`);
+      lines.push({ invId: mat._id, name: mat.itemName, pieceLabel: natural.label, pieces: shown, baseQty: qty });
+    }
+    if (lines.length === 0) return ui.alert(`${item.itemName}'s recipe has nothing left that can be used.`);
+    setMaterials(lines);
+    setOutputType('existing');
+    setOutputInvId(item._id);
+    setOutputQtyUnit(outNatural.label);
+    setOutputQty(String(batch));
+    // Already its recipe; filing this batch should not rewrite it unless asked.
+    setSaveRecipe(false);
+    const notes = [];
+    if (missing.length) notes.push(`Skipped ${missing.length} ingredient(s) no longer in stock records: ${missing.join(', ')}.`);
+    if (short.length) notes.push(`Not enough on hand for: ${short.join('; ')}. You can still file this - stock is checked again at approval.`);
+    if (notes.length) ui.alert(notes.join(String.fromCharCode(10, 10)));
+  };
+
+  const applyRecipe = () => {
+    const batch = parseFloat(recipeBatchQty);
+    if (pickedRecipeItem) {
+      if (!batch || batch <= 0) return ui.alert('Enter how much you are making.');
+      return applyItemRecipe(pickedRecipeItem, batch);
+    }
+    const product = recipeProducts.find(p => p._id === recipeProductId);
+    if (!product) return ui.alert('Choose what you are making.');
+    if (!batch || batch <= 0) return ui.alert('Enter how many you are making.');
+
+    const lines = [];
+    const missing = [];
+    const short = [];
+    for (const r of product.baseRecipe || []) {
+      if (!r.invId || !(Number(r.qty) > 0)) continue;
+      const item = inventory.find(i => String(i._id) === String(r.invId));
+      // A recipe can outlive the stock item it names - say so rather than
+      // silently filing a batch that is missing an ingredient.
+      if (!item) { missing.push(r.name || 'an unnamed ingredient'); continue; }
+      // Recipe qty is base units per ONE unit of the product, so the batch
+      // multiplies it directly. It is then shown in whichever unit reads most
+      // naturally for that ingredient - litres of milk, not 1700 ml.
+      const baseQty = +(Number(r.qty) * batch).toFixed(6);
+      const [natural] = unitOptions(item);
+      const shown = +(baseQty / natural.factor).toFixed(4);
+      const available = onHandIn(item, natural.factor);
+      if (shown > available + 1e-6) short.push(`${item.itemName} (need ${shown} ${natural.label}, have ${available})`);
+      lines.push({ invId: item._id, name: item.itemName, pieceLabel: natural.label, pieces: shown, baseQty });
+    }
+
+    if (lines.length === 0) return ui.alert(`No usable recipe lines on ${product.name}. Check that its ingredients are linked to stock items.`);
+
+    setMaterials(lines);
+
+    // Point the output at the matching stock item where one exists, so the
+    // batch adds to it rather than creating a duplicate under the same name.
+    const outItem = inventory.find(i => String(i.itemName || '').trim().toUpperCase() === String(product.name || '').trim().toUpperCase());
+    if (outItem) {
+      setOutputType('existing');
+      setOutputInvId(outItem._id);
+    } else {
+      setOutputType('new');
+      setOutputName(product.name || '');
+    }
+    setOutputQty(String(batch));
+
+    // Shortages warn but do not block. Filing is a REQUEST - approval is what
+    // actually consumes stock, and the server re-checks availability then. A
+    // batch is often planned before the delivery it depends on lands.
+    const notes = [];
+    if (missing.length) notes.push(`Skipped ${missing.length} ingredient(s) no longer in stock records: ${missing.join(', ')}.`);
+    if (short.length) notes.push(`Not enough on hand for: ${short.join('; ')}. You can still file this - stock is checked again at approval.`);
+    if (notes.length) ui.alert(notes.join(String.fromCharCode(10, 10)));
+  };
+
+
+
   const outputItem = outputType === 'existing' ? inventory.find(i => i._id === outputInvId) : null;
+  useEffect(() => {
+    if (outputType === 'new') { setSaveRecipe(true); return; }
+    const it = inventory.find(i => i._id === outputInvId);
+    setSaveRecipe(!it || !(it.productionRecipe || []).length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outputType, outputInvId]);
   const outputPieceInfo = pieceInfo(outputItem);
+  // The same choice the materials get: a batch that yields 12 L of cold brew is
+  // entered as 12 L, whatever pack size the item happens to carry.
+  const outputUnitOptions = unitOptions(outputItem);
+  const outputUnitChoice = outputUnitOptions.find(o => o.label === outputQtyUnit) || outputUnitOptions[0];
 
   const fetchOrders = useCallback(async (status) => {
     setLoading(true);
@@ -102,51 +282,82 @@ export default function ProductionTab({ ctx }) {
     finally { setLoading(false); }
   }, [apiFetch]);
 
-  useEffect(() => { fetchOrders(statusFilter); }, [fetchOrders, statusFilter]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { fetchOrders(statusFilter); }, [fetchOrders, statusFilter, refreshTick]);
 
   const resetForm = () => {
-    setMaterials([]); setMatPick(''); setMatQty('');
+    setMaterials([]); setMatPick(''); setMatQty(''); setMatUnit(''); setOutputQtyUnit('');
     setOutputType('existing'); setOutputInvId(''); setOutputName(''); setOutputUnit('pcs'); setOutputPackSize(''); setOutputQty('');
     setOutputStockCategory(''); setOutputStockLocation(''); setOutputExpiryDate('');
-    setProductionDate(new Date().toISOString().slice(0, 10)); setNotes('');
+    setProductionDate(todayStr()); setNotes('');
+    setRecipeProductId(''); setRecipeBatchQty('');
+    setNsName(''); setNsQty(''); setNsUnit('ml'); setSaveRecipe(true);
   };
 
   const addMaterial = () => {
     const item = inventory.find(i => i._id === matPick);
-    const pieces = parseFloat(matQty);
+    const entered = parseFloat(matQty);
     if (!item) return ui.alert('Pick a material.');
-    if (!pieces || pieces <= 0) return ui.alert('Enter a positive quantity.');
+    if (!entered || entered <= 0) return ui.alert('Enter a positive quantity.');
     if (materials.some(m => m.invId === item._id)) return ui.alert(`${item.itemName} is already in this order - remove it first to change the quantity.`);
-    const { perPiece, label, onHandPieces } = pieceInfo(item);
-    if (pieces > onHandPieces + 1e-6) return ui.alert(`Only ${onHandPieces} ${label} of ${item.itemName} on hand.`);
-    setMaterials(m => [...m, { invId: item._id, name: item.itemName, pieceLabel: label, pieces, baseQty: +(pieces * perPiece).toFixed(6) }]);
-    setMatPick(''); setMatQty('');
+    // Whatever unit was chosen, the server is sent base units.
+    const opts = unitOptions(item);
+    const chosen = opts.find(o => o.label === matUnit) || opts[0];
+    const available = onHandIn(item, chosen.factor);
+    if (entered > available + 1e-6) return ui.alert(`Only ${available} ${chosen.label} of ${item.itemName} on hand.`);
+    setMaterials(m => [...m, {
+      invId: item._id, name: item.itemName,
+      pieceLabel: chosen.label, pieces: entered,
+      baseQty: +(entered * chosen.factor).toFixed(6),
+    }]);
+    setMatPick(''); setMatQty(''); setMatUnit('');
   };
-  const removeMaterial = (invId) => setMaterials(m => m.filter(x => x.invId !== invId));
+  const lineKey = (m) => m.nonStock ? `ns:${m.name}` : String(m.invId);
+  const removeMaterial = (key) => setMaterials(m => m.filter(x => lineKey(x) !== key));
+  const addNonStock = () => {
+    const name = nsName.trim();
+    const qty = parseFloat(nsQty);
+    if (!name) return ui.alert('Name the ingredient, e.g. Filtered Water.');
+    if (!qty || qty <= 0) return ui.alert('Enter a positive quantity.');
+    if (materials.some(m => m.nonStock && m.name.toLowerCase() === name.toLowerCase())) return ui.alert(`${name} is already in this order.`);
+    setMaterials(m => [...m, { nonStock: true, invId: null, name, pieceLabel: nsUnit, pieces: qty, baseQty: qty }]);
+    setNsName(''); setNsQty('');
+  };
 
   const submitOrder = async () => {
     if (materials.length === 0) return ui.alert('Add at least one material.');
     if (outputType === 'existing' && !outputInvId) return ui.alert('Choose the item this production adds to.');
     if (outputType === 'new' && !outputName.trim()) return ui.alert('Name the new product.');
+    // The expected output is optional: the real figure is entered after
+    // approval, once the batch is made (roasting and drying lose moisture).
+    const blank = String(outputQty).trim() === '';
     const qtyEntered = parseFloat(outputQty);
-    if (!qtyEntered || qtyEntered <= 0) return ui.alert('Enter a positive output quantity.');
-    // 'existing' output is also counted in pieces (of that item's own pack
-    // size); 'new' output has no item yet to derive a pack size from, so it's
-    // entered directly in outputUnit's base units.
-    const outputBaseQty = outputType === 'existing' ? +(qtyEntered * outputPieceInfo.perPiece).toFixed(6) : qtyEntered;
+    if (!blank && !(qtyEntered > 0)) return ui.alert('The expected output must be a positive number, or left blank.');
+    // 'existing' output is counted in whichever of that item's units was
+    // chosen; 'new' output has no item yet to derive units from, so it is
+    // entered directly in the unit typed beside its name.
+    const outputBaseQty = blank ? null : outputType === 'existing'
+      ? +(qtyEntered * (outputUnitChoice?.factor || 1)).toFixed(6)
+      : qtyEntered;
 
     setSubmitting(true);
     try {
       const res = await apiFetch('/api/production-orders', {
         method: 'POST',
         body: JSON.stringify({
-          materials: materials.map(m => ({ invId: m.invId, qty: m.baseQty })),
+          materials: materials.map(m => (m.nonStock
+            ? { nonStock: true, name: m.name, qty: m.pieces, unit: m.pieceLabel }
+            : { invId: m.invId, qty: m.baseQty })),
+          saveRecipe,
           outputType,
           outputInvId: outputType === 'existing' ? outputInvId : undefined,
           outputName: outputType === 'new' ? outputName.trim() : undefined,
           outputUnit: outputType === 'new' ? outputUnit : undefined,
           outputPackSize: outputType === 'new' ? (outputPackSize || undefined) : undefined,
           outputQty: outputBaseQty,
+          // The unit the figure above was typed in, so reconciling can ask for
+          // the yield the same way round.
+          outputEnteredUnit: outputType === 'existing' ? (outputUnitChoice?.label || '') : (outputUnit || ''),
           outputStockCategory: outputType === 'new' ? outputStockCategory : undefined,
           outputStockLocation: outputType === 'new' ? outputStockLocation : undefined,
           outputExpiryDate: outputExpiryDate || undefined,
@@ -192,10 +403,11 @@ export default function ProductionTab({ ctx }) {
   const submitReconcile = async () => {
     const enteredQty = parseFloat(actualQty);
     if (!enteredQty || enteredQty <= 0) return ui.alert('Enter the actual quantity produced.');
-    // `actualQty` is entered in pieces (see reconcilePieceInfo) - convert to
-    // base units before sending, same as every other qty input in this tab.
-    const { perPiece } = reconcilePieceInfo(reconciling);
-    const qty = +(enteredQty * perPiece).toFixed(6);
+    // Converted from whichever unit is showing beside the box - never from a
+    // unit the operator was not looking at.
+    const opts = reconcileUnitOptions(reconciling);
+    const chosen = opts.find(o => o.label === reconcileUnit) || opts[0];
+    const qty = toBaseQty(enteredQty, chosen);
     setBusy(true);
     try {
       const res = await apiFetch(`/api/production-orders/${reconciling._id}/reconcile`, { method: 'POST', body: JSON.stringify({ actualOutputQty: qty }) });
@@ -259,30 +471,110 @@ export default function ProductionTab({ ctx }) {
       {formOpen && (
         <div className="bg-surface border border-white/10 rounded-xl p-5 mb-6 space-y-5">
           {/* Materials */}
+          {/* Build from a recipe - the fast path. The recipe is already on
+              file (it is what the POS deducts on a sale); this fills the
+              materials from it instead of re-typing them each batch. */}
+          {(recipeItems.length > 0 || recipeProducts.length > 0) && (
+            <div className="bg-page-bg border border-white/10 rounded-lg p-3">
+              <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-2">Build from a recipe</p>
+              <div className="flex flex-wrap gap-2">
+                <select value={recipeProductId} onChange={e => setRecipeProductId(e.target.value)}
+                  className="flex-1 min-w-[200px] bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent">
+                  <option value="">What are you making?</option>
+                  {/* Finished goods first: stock made here, with its own recipe. */}
+                  {recipeItems.length > 0 && (
+                    <optgroup label="Made here (from inventory)">
+                      {recipeItems.map(i => {
+                        const [natural] = unitOptions(i);
+                        return (
+                          <option key={i._id} value={`inv:${i._id}`}>
+                            {i.itemName} - makes {+(Number(i.recipeYield) / natural.factor).toFixed(3)} {natural.label} per recipe
+                          </option>
+                        );
+                      })}
+                    </optgroup>
+                  )}
+                  {recipeProducts.length > 0 && (
+                    <optgroup label="Menu recipes">
+                      {recipeProducts.map(p => (
+                        <option key={p._id} value={p._id}>
+                          {p.name} ({(p.baseRecipe || []).filter(r => r.invId).length} ingredients)
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+                <input type="number" min="0" step="any"
+                  placeholder={pickedRecipeItem ? `How many ${unitOptions(pickedRecipeItem)[0].label}` : 'How many'}
+                  value={recipeBatchQty} onChange={e => setRecipeBatchQty(e.target.value)}
+                  className="w-32 bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
+                <button onClick={applyRecipe}
+                  className="bg-accent text-on-brand px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-accent/90 transition">
+                  Fill materials
+                </button>
+              </div>
+              <p className="text-[10px] text-fg/70 mt-2">
+                Replaces the material list below with the recipe multiplied by the batch size, and points the output at the matching stock item. Edit anything afterwards - a real batch is not always the book quantity.
+              </p>
+            </div>
+          )}
+
           <div>
             <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-2">Materials consumed</p>
             <div className="flex flex-wrap gap-2 mb-2">
-              <select value={matPick} onChange={e => setMatPick(e.target.value)}
-                className="flex-1 min-w-[200px] bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent">
-                <option value="">Choose an item…</option>
-                {inventory.map(i => {
-                  const { label, onHandPieces } = pieceInfo(i);
-                  return <option key={i._id} value={i._id}>{i.itemName} ({onHandPieces} {label} on hand)</option>;
-                })}
-              </select>
-              <input type="number" min="0" step="0.01" placeholder={matPick ? pieceInfo(inventory.find(i => i._id === matPick)).label : 'Qty'}
+              <SearchSelect value={matPick} onChange={e => { setMatPick(e.target.value); setMatUnit(''); }}
+                className="flex-1 min-w-[200px] bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent"
+                placeholder="Type to find a material"
+                options={inventory.map(i => {
+                  const [natural] = unitOptions(i);
+                  return { value: i._id, label: i.itemName, hint: `${onHandIn(i, natural.factor)} ${natural.label} on hand` };
+                })} />
+              <input type="number" min="0" step="any" placeholder="Qty" aria-label="Quantity"
                 value={matQty} onChange={e => setMatQty(e.target.value)}
                 className="w-24 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
+              {/* The unit this quantity is in. A batch that uses 1.7 L of milk
+                  is entered as 1.7 L, not as a fraction of a carton. */}
+              {(() => {
+                const item = inventory.find(i => i._id === matPick);
+                const opts = unitOptions(item);
+                return (
+                  <select value={matUnit || opts[0].label} onChange={e => setMatUnit(e.target.value)}
+                    aria-label="Unit" disabled={!matPick}
+                    className="w-24 bg-page-bg border border-white/10 rounded-lg px-2 py-2 text-sm text-fg outline-none focus:border-accent disabled:opacity-50">
+                    {opts.map(o => <option key={o.label} value={o.label}>{o.label}</option>)}
+                  </select>
+                );
+              })()}
               <button onClick={addMaterial} className="bg-accent/15 text-brand-text px-3 py-2 rounded-lg font-bold text-xs uppercase hover:bg-accent/25 transition">Add</button>
             </div>
-            {/* Quantities are counted in pieces - for a packed item ("...377G")
-                1 piece = 377g, not the raw gram figure. */}
+            {/* Not from stock - filtered water, ice made on site. Recorded
+                with the batch and its recipe; never deducted, never costed. */}
+            {BUSINESS_TYPE !== 'log' && (
+              <div className="flex flex-wrap gap-2 mb-2">
+                <input type="text" placeholder="Not from stock, e.g. Filtered Water" value={nsName} onChange={e => setNsName(e.target.value)}
+                  className="flex-1 min-w-[200px] bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
+                <input type="number" min="0" step="any" placeholder="Qty" aria-label="Quantity not from stock"
+                  value={nsQty} onChange={e => setNsQty(e.target.value)}
+                  className="w-24 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
+                <select value={nsUnit} onChange={e => setNsUnit(e.target.value)} aria-label="Unit, not from stock"
+                  className="w-24 bg-page-bg border border-white/10 rounded-lg px-2 py-2 text-sm text-fg outline-none focus:border-accent">
+                  {['ml', 'L', 'g', 'kg', 'pcs'].map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+                <button onClick={addNonStock} className="bg-white/5 text-fg/80 px-3 py-2 rounded-lg font-bold text-xs uppercase hover:bg-white/10 transition">Add</button>
+              </div>
+            )}
+            {/* Each line carries the unit it was entered in; the server is sent
+                base units either way, so a line reads the way the person making
+                the batch would say it out loud. */}
             {materials.length > 0 && (
               <ul className="space-y-1.5">
                 {materials.map(m => (
-                  <li key={m.invId} className="flex items-center justify-between bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm">
-                    <span className="text-fg/80">{m.name} <span className="text-fg/70 font-mono">× {m.pieces} {m.pieceLabel}</span></span>
-                    <button onClick={() => removeMaterial(m.invId)} className="text-red-400/70 hover:text-danger"><Trash2 size={13} /></button>
+                  <li key={lineKey(m)} className="flex items-center justify-between bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm">
+                    <span className="text-fg/80">
+                      {m.name} <span className="text-fg/70 font-mono">× {m.pieces} {m.pieceLabel}</span>
+                      {m.nonStock && <span className="ml-2 text-[9px] font-black uppercase tracking-wider text-fg/65">not stock</span>}
+                    </span>
+                    <button onClick={() => removeMaterial(lineKey(m))} className="text-danger"><Trash2 size={13} /></button>
                   </li>
                 ))}
               </ul>
@@ -304,14 +596,13 @@ export default function ProductionTab({ ctx }) {
             </div>
 
             {outputType === 'existing' ? (
-              <select value={outputInvId} onChange={e => setOutputInvId(e.target.value)}
-                className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent mb-2">
-                <option value="">Choose the item to add to…</option>
-                {inventory.map(i => {
-                  const { label, onHandPieces } = pieceInfo(i);
-                  return <option key={i._id} value={i._id}>{i.itemName} ({onHandPieces} {label} on hand)</option>;
-                })}
-              </select>
+              <SearchSelect value={outputInvId} onChange={e => { setOutputInvId(e.target.value); setOutputQtyUnit(''); }}
+                className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent mb-2"
+                placeholder="Type to find the item to add to"
+                options={inventory.map(i => {
+                  const [natural] = unitOptions(i);
+                  return { value: i._id, label: i.itemName, hint: `${onHandIn(i, natural.factor)} ${natural.label} on hand` };
+                })} />
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
                 <input type="text" placeholder="New product name" value={outputName} onChange={e => setOutputName(e.target.value)}
@@ -340,10 +631,31 @@ export default function ProductionTab({ ctx }) {
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <input type="number" min="0" step="0.01"
-                placeholder={outputType === 'existing' ? `Output quantity (${outputPieceInfo.label})` : `Output quantity (${outputUnit || 'units'})`}
-                value={outputQty} onChange={e => setOutputQty(e.target.value)}
-                className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
+              {/* Counted in whichever unit the output is naturally measured
+                  in - litres of cold brew, kilos of ground coffee, pieces of a
+                  packed item. */}
+              <div>
+              <label htmlFor="prod-expected" className="text-[9px] text-fg/70 uppercase tracking-wider block mb-1">Expected output (optional)</label>
+              <div className="flex gap-2">
+                <input id="prod-expected" type="number" min="0" step="any"
+                  placeholder="Leave blank if unsure"
+                  value={outputQty} onChange={e => setOutputQty(e.target.value)}
+                  className="flex-1 min-w-0 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
+                {outputType === 'existing' ? (
+                  <select value={outputQtyUnit || outputUnitOptions[0].label} onChange={e => setOutputQtyUnit(e.target.value)}
+                    aria-label="Output unit" disabled={!outputInvId}
+                    className="w-24 bg-page-bg border border-white/10 rounded-lg px-2 py-2 text-sm text-fg outline-none focus:border-accent disabled:opacity-50">
+                    {outputUnitOptions.map(o => <option key={o.label} value={o.label}>{o.label}</option>)}
+                  </select>
+                ) : (
+                  <span className="w-24 flex items-center justify-center text-xs text-fg/65 border border-white/10 rounded-lg">{outputUnit || 'units'}</span>
+                )}
+              </div>
+              </div>
+              <p className="sm:col-span-3 -mt-1 text-[10px] text-fg/65 leading-snug order-last">
+                Leave the output blank if you don't know it yet. After approval, enter what actually came out under
+                <b> Record actual output</b>. Only that amount is added to stock, so moisture lost in roasting or drying is accounted for.
+              </p>
               <div>
                 <label className="text-[9px] text-fg/70 uppercase tracking-wider block mb-1">Production date</label>
                 <input type="date" value={productionDate} onChange={e => setProductionDate(e.target.value)}
@@ -356,6 +668,21 @@ export default function ProductionTab({ ctx }) {
               </div>
             </div>
           </div>
+
+          {/* Remember how this is made. The next batch is then "pick it from
+              the list above, say how much" instead of entering every
+              material again. */}
+          {(outputType === 'new' ? outputName.trim() : outputItem) && materials.length > 0 && (
+            <label className="flex items-start gap-2 text-xs text-fg/80 cursor-pointer">
+              <input type="checkbox" checked={saveRecipe} onChange={e => setSaveRecipe(e.target.checked)} className="mt-0.5" />
+              <span>
+                Remember these materials as how <b>{outputType === 'new' ? outputName.trim().toUpperCase() : outputItem.itemName}</b> is made
+                {outputItem && (outputItem.productionRecipe || []).length > 0
+                  ? <span className="text-warning"> - replaces the recipe it already has, once this batch is confirmed</span>
+                  : <span className="text-fg/65"> - next time, pick it under "Build from a recipe"</span>}
+              </span>
+            </label>
+          )}
 
           <textarea placeholder="Notes (optional)" value={notes} onChange={e => setNotes(e.target.value)} rows={2}
             className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent resize-none" />
@@ -392,7 +719,12 @@ export default function ProductionTab({ ctx }) {
                 <div>
                   <p className="font-bold text-fg text-sm">
                     {o.outputName} <span className="text-fg/70 font-normal">
-                      × {(() => { const { perPiece, label } = reconcilePieceInfo(o); return `${+(o.outputQty / perPiece).toFixed(4)} ${label}`; })()}
+                      {(() => {
+                        const u = plannedUnitChoice(o);
+                        if (o.actualOutputQty != null) return `× ${inUnit(o.actualOutputQty, u)} ${u.label}`;
+                        if (o.outputQty != null) return `× expected ${inUnit(o.outputQty, u)} ${u.label}`;
+                        return '· output entered after approval';
+                      })()}
                     </span>
                   </p>
                   <p className="text-[10px] text-fg/70 mt-0.5">
@@ -408,9 +740,12 @@ export default function ProductionTab({ ctx }) {
                 </div>
               </div>
 
-              <div className="text-xs text-fg/60 space-y-0.5 mb-2">
-                {(o.materials || []).map(m => (
-                  <p key={m.invId}>{m.itemName} <span className="text-fg/65 font-mono">× {m.qty}{m.unit}</span></p>
+              <div className="text-xs text-fg/65 space-y-0.5 mb-2">
+                {(o.materials || []).map((m, i) => (
+                  <p key={m._id || `${m.invId || 'ns'}:${m.itemName}:${i}`}>
+                    {m.itemName} <span className="text-fg/65 font-mono">× {m.qty}{m.unit}</span>
+                    {m.nonStock && <span className="ml-1.5 text-[9px] font-black uppercase tracking-wider text-fg/65">not stock</span>}
+                  </p>
                 ))}
               </div>
 
@@ -418,13 +753,15 @@ export default function ProductionTab({ ctx }) {
                   this step is that yield isn't guaranteed, so the gap (if
                   any) should be visible, not just the final number. */}
               {o.actualOutputQty != null && (() => {
-                const { perPiece, label } = reconcilePieceInfo(o);
+                const choice = plannedUnitChoice(o);
                 return (
                 <p className="text-xs mb-1 flex items-center gap-2 flex-wrap">
                   <span>
-                    <span className="text-fg/70">Planned {+(o.outputQty / perPiece).toFixed(4)} {label} → Actual</span>{' '}
+                    {o.outputQty != null
+                      ? <span className="text-fg/70">Expected {inUnit(o.outputQty, choice)} {choice.label} → Actual</span>
+                      : <span className="text-fg/70">Actual output</span>}{' '}
                     <span className={o.fulfillmentStatus === 'Partial' ? 'text-warning font-bold' : 'text-success font-bold'}>
-                      {+(o.actualOutputQty / perPiece).toFixed(4)} {label}
+                      {inUnit(o.actualOutputQty, choice)} {choice.label}
                     </span>
                   </span>
                   {/* Moisture/variance - the gap between planned and actual,
@@ -434,8 +771,8 @@ export default function ProductionTab({ ctx }) {
                   {o.moistureLossPercent != null && o.moistureLossPercent !== 0 && (
                     <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${o.moistureLossPercent > 0 ? 'bg-orange-500/15 text-warning' : 'bg-blue-500/15 text-info'}`}>
                       {o.moistureLossPercent > 0
-                        ? `Moisture loss ${o.moistureLossPercent}%`
-                        : `Over plan +${Math.abs(o.moistureLossPercent)}%`}
+                        ? `Moisture loss ${o.moistureLossPercent}%${o.moistureBasis === 'input' ? ' of materials' : ''}`
+                        : `Over ${o.moistureBasis === 'input' ? 'materials' : 'expected'} +${Math.abs(o.moistureLossPercent)}%`}
                     </span>
                   )}
                 </p>
@@ -459,7 +796,7 @@ export default function ProductionTab({ ctx }) {
                         <Check size={13} /> Approve
                       </button>
                       <button onClick={() => setRejecting(o)} disabled={busy}
-                        className="flex items-center gap-1.5 border border-red-500/30 text-red-300 hover:bg-red-500/10 font-bold text-xs px-3 py-1.5 rounded-lg transition">
+                        className="flex items-center gap-1.5 border border-red-500/30 text-danger hover:bg-red-500/10 font-bold text-xs px-3 py-1.5 rounded-lg transition">
                         <X size={13} /> Reject
                       </button>
                     </>
@@ -473,10 +810,11 @@ export default function ProductionTab({ ctx }) {
 
               {o.status === 'Approved' && o.fulfillmentStatus === 'Processing' && canApprove && (
                 <div className="flex items-center mt-3 pt-3 border-t border-white/5">
-                  <button onClick={() => { setReconciling(o); const { perPiece } = reconcilePieceInfo(o); setActualQty(String(+(o.outputQty / perPiece).toFixed(4))); }} disabled={busy}
+                  <button onClick={() => { setReconciling(o); const u = plannedUnitChoice(o); setReconcileUnit(u.label); setActualQty(o.outputQty != null ? String(inUnit(o.outputQty, u)) : ''); }} disabled={busy}
                     className="flex items-center gap-1.5 bg-accent hover:bg-accent/90 disabled:opacity-50 text-on-brand font-bold text-xs px-3 py-1.5 rounded-lg transition">
-                    <ClipboardCheck size={13} /> Reconcile - confirm actual output
+                    <ClipboardCheck size={13} /> Record actual output
                   </button>
+                  <span className="ml-3 text-[10px] text-fg/65">Materials are out of stock. Weigh or count what came out, then record it.</span>
                 </div>
               )}
             </li>
@@ -486,16 +824,16 @@ export default function ProductionTab({ ctx }) {
 
       {/* Reject reason modal */}
       {rejecting && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setRejecting(null)}>
-          <div className="bg-surface border border-white/10 rounded-xl p-5 w-full max-w-sm" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto" onClick={() => setRejecting(null)}>
+          <div className="bg-surface border border-white/10 rounded-xl p-5 w-full max-w-sm my-auto" onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-fg mb-2">Reject production order</h3>
-            <p className="text-fg/75 text-xs mb-3">{rejecting.outputName} × {rejecting.outputQty}{rejecting.outputUnit}</p>
+            <p className="text-fg/75 text-xs mb-3">{rejecting.outputName}{rejecting.outputQty != null ? ` × ${rejecting.outputQty}${rejecting.outputUnit}` : ''}</p>
             <textarea autoFocus value={rejectReason} onChange={e => setRejectReason(e.target.value)} rows={3}
               placeholder="Reason for rejecting…"
               className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent resize-none mb-3" />
             <div className="flex gap-2">
-              <button onClick={() => setRejecting(null)} className="flex-1 border border-white/10 text-fg/60 hover:text-fg py-2 rounded-lg text-xs font-bold uppercase transition">Cancel</button>
-              <button onClick={submitReject} disabled={busy} className="flex-1 bg-red-500 hover:bg-red-400 disabled:opacity-50 text-white py-2 rounded-lg text-xs font-bold uppercase transition">Reject</button>
+              <button onClick={() => setRejecting(null)} className="flex-1 border border-white/10 text-fg/65 hover:text-fg py-2 rounded-lg text-xs font-bold uppercase transition">Cancel</button>
+              <button onClick={submitReject} disabled={busy} className="flex-1 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white py-2 rounded-lg text-xs font-bold uppercase transition">Reject</button>
             </div>
           </div>
         </div>
@@ -503,22 +841,38 @@ export default function ProductionTab({ ctx }) {
       {/* Reconcile modal - the manual "actual output qty" input, like typing
           a Purchase Order's received quantity. */}
       {reconciling && (() => {
-        const { perPiece, label } = reconcilePieceInfo(reconciling);
-        const plannedPieces = +(reconciling.outputQty / perPiece).toFixed(4);
+        const opts = reconcileUnitOptions(reconciling);
+        const chosen = opts.find(o => o.label === reconcileUnit) || opts[0];
+        const label = chosen?.label || '';
+        const plannedPieces = reconciling.outputQty != null ? inUnit(reconciling.outputQty, chosen) : null;
         return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setReconciling(null)}>
-          <div className="bg-surface border border-white/10 rounded-xl p-5 w-full max-w-sm" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto" onClick={() => setReconciling(null)}>
+          <div className="bg-surface border border-white/10 rounded-xl p-5 w-full max-w-sm my-auto" onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-fg mb-1 flex items-center gap-1.5"><ClipboardCheck size={16} className="text-brand-text" /> Confirm actual output</h3>
-            <p className="text-fg/75 text-xs mb-3">{reconciling.outputName} - planned {plannedPieces} {label}</p>
-            <label className="text-[9px] text-fg/70 uppercase tracking-wider block mb-1">Actual quantity produced ({label})</label>
-            <input type="number" min="0" step="0.01" autoFocus value={actualQty} onChange={e => setActualQty(e.target.value)}
-              className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent mb-1" />
+            <p className="text-fg/75 text-xs mb-3">{reconciling.outputName}{plannedPieces != null ? ` - expected ${plannedPieces} ${label}` : ' - no expected output was given'}</p>
+            <label className="text-[9px] text-fg/70 uppercase tracking-wider block mb-1">Actual quantity produced</label>
+            <div className="flex gap-2 mb-1">
+              <input type="number" min="0" step="0.01" autoFocus value={actualQty} onChange={e => setActualQty(e.target.value)}
+                className="flex-1 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-accent" />
+              {/* Switching unit re-states the number that is already there, so
+                  the figure on screen always means what the label says. */}
+              <select value={label} onChange={e => {
+                  const next = opts.find(o => o.label === e.target.value) || opts[0];
+                  setActualQty(restateQty(actualQty, chosen, next));
+                  setReconcileUnit(next.label);
+                }}
+                className="w-24 bg-page-bg border border-white/10 rounded-lg px-2 py-2 text-sm text-fg outline-none focus:border-accent">
+                {opts.map(o => <option key={o.label} value={o.label}>{o.label}</option>)}
+              </select>
+            </div>
             <p className="text-[10px] text-fg/65 mb-3">
-              Meets or beats {plannedPieces} {label} → marked <span className="text-success font-bold">Complete</span>.
-              Falls short → marked <span className="text-warning font-bold">Partial</span>. This is what actually gets added to stock.
+              {plannedPieces != null
+                ? <>Meets or beats {plannedPieces} {label} → marked <span className="text-success font-bold">Complete</span>. Falls short → marked <span className="text-warning font-bold">Partial</span>. </>
+                : <>Any moisture lost is measured against the materials that went in, where they're in the same unit. </>}
+              This is what actually gets added to stock, and it sets the cost per unit.
             </p>
             <div className="flex gap-2">
-              <button onClick={() => { setReconciling(null); setActualQty(''); }} className="flex-1 border border-white/10 text-fg/60 hover:text-fg py-2 rounded-lg text-xs font-bold uppercase transition">Cancel</button>
+              <button onClick={() => { setReconciling(null); setActualQty(''); }} className="flex-1 border border-white/10 text-fg/65 hover:text-fg py-2 rounded-lg text-xs font-bold uppercase transition">Cancel</button>
               <button onClick={submitReconcile} disabled={busy} className="flex-1 bg-accent hover:bg-accent/90 disabled:opacity-50 text-on-brand py-2 rounded-lg text-xs font-bold uppercase transition">Confirm</button>
             </div>
           </div>

@@ -34,7 +34,9 @@ describe('client self-service onboarding', () => {
     // Public GET - no auth header at all.
     const getRes = await request(app).get(`/api/client-onboard/${token}`);
     expect(getRes.body.success).toBe(true);
-    expect(getRes.body.client.name).toBe('Auto Promoted Client');
+    // Any case: a start-up task writes client names in capitals, and on a slow
+    // machine it can run between creating this client and reading it back.
+    expect(getRes.body.client.name.toLowerCase()).toBe('auto promoted client');
 
     // Public POST - sets their own login.
     const postRes = await request(app).post(`/api/client-onboard/${token}`).send({

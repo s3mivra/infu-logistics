@@ -64,7 +64,8 @@ describe('order completion variants', () => {
 
   it('complimentary completion books Complimentary Expense (540000)', async () => {
     const o = await mkOrder(line('productId'));
-    await req('put', `/api/orders/${o.body.order._id}/complimentary`, T.staff).send({ reasonType: 'EMPLOYEE_MEAL', approvedBy: 'ec_super' });
+    // Marking an order complimentary needs orders.manage.
+    await req('put', `/api/orders/${o.body.order._id}/complimentary`, T.super).send({ reasonType: 'EMPLOYEE_MEAL', approvedBy: 'ec_super' });
     const done = await complete(o.body.order._id);
     expect(done.status).toBe(200);
     // The comp entry's description carries the COMP- ref (not the ORD- number), so match the account.
@@ -74,6 +75,8 @@ describe('order completion variants', () => {
   });
 
   it('insufficient stock blocks completion (400)', async () => {
+    // Selling below zero set to block (the default warns; test/stock-control.integration.test.js).
+    await mongoose.model('Settings').findOneAndUpdate({ key: 'negativeStockMode' }, { value: 'block' }, { upsert: true });
     const o = await mkOrder({ items: [{ productId: ids.scarceProductId, name: 'EC Scarce Brew', price: 50, quantity: 1 }], table: 'Takeout', paymentMethod: 'Cash' });
     const done = await complete(o.body.order._id);
     expect(done.status).toBe(400);

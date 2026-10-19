@@ -6,6 +6,8 @@ import {
 import { useDashboard } from '../dashboard/DashboardContext';
 import * as ui from '../../shared/ui';
 
+import { todayStr } from '../../shared/businessDay.js';
+import { useRefreshTick } from '../../shared/refreshBus';
 // Fixed assets - what the business owns, what it has worn off, what it is
 // still worth.
 //
@@ -17,7 +19,7 @@ import * as ui from '../../shared/ui';
 
 const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-');
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayStr();
 
 const STATUS_TONE = {
   Active: 'text-success bg-green-400/10',
@@ -71,7 +73,8 @@ export default function FixedAssetsTab() {
     finally { setLoading(false); }
   }, [apiFetch, status, classFilter]);
 
-  useEffect(() => { load(); }, [load]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { load(); }, [load, refreshTick]);
 
   useEffect(() => {
     (async () => {
@@ -307,10 +310,10 @@ function FragmentRow({ a, expanded, rows, busy, onToggle, onDepreciate, onDispos
             {a.assetCode}{a.serialNumber ? ` · ${a.serialNumber}` : ''}{a.location ? ` · ${a.location}` : ''}
           </p>
         </td>
-        <td className="px-3 py-2.5 text-fg/60">{a.className}</td>
-        <td className="px-3 py-2.5 text-fg/60">{shortDate(a.acquisitionDate)}</td>
+        <td className="px-3 py-2.5 text-fg/65">{a.className}</td>
+        <td className="px-3 py-2.5 text-fg/65">{shortDate(a.acquisitionDate)}</td>
         <td className="px-3 py-2.5 text-right tabular-nums text-fg">{peso(a.acquisitionCost)}</td>
-        <td className="px-3 py-2.5 text-right tabular-nums text-amber-400/80">{peso(a.accumulatedDepreciation)}</td>
+        <td className="px-3 py-2.5 text-right tabular-nums text-warning">{peso(a.accumulatedDepreciation)}</td>
         <td className="px-3 py-2.5 text-right tabular-nums font-bold text-fg">{peso(a.netBookValue)}</td>
         <td className="px-3 py-2.5 text-right tabular-nums">
           {a.due?.amount > 0
@@ -366,7 +369,7 @@ function FragmentRow({ a, expanded, rows, busy, onToggle, onDepreciate, onDispos
                       <tr key={r.period} className="border-t border-white/5">
                         <td className="px-3 py-1.5 text-fg/75">+{r.period}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-fg/80">{peso(r.charge)}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums text-amber-400/70">{peso(r.accumulated)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-warning">{peso(r.accumulated)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-fg">{peso(r.netBookValue)}</td>
                       </tr>
                     ))}

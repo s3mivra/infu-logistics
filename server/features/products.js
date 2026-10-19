@@ -1,12 +1,24 @@
 ﻿// products routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { MONEY_MAX } from '../lib/normalize.js';
+import { resolveTierUnitPrice } from '../lib/priceTiers.js';
 import { captureError } from '../lib/errorLog.js';
 import { parseBulkRecipes, parseDrinkSheet, collectMaterials, buildProductDraft } from '../lib/recipeImport.js';
+import { parseMenuSheet, toImportRows } from '../lib/menuSheet.js';
 import { splitUpdate } from '../lib/changeApproval.js';
 import { hasPermission } from '../lib/authz.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
+import { buildSalePriceMap, saleUnitPrice, activeSalesQuery, cleanSaleHours } from '../lib/salePricing.js';
+// Action permissions. Each route below changes data, and was guarded only by
+// "is staff" - so a plain staff account could, through the API, do what the
+// permission catalogue reserves for a role that holds the matching
+// .manage key (see lib/authz.js PERMISSIONS). `permit` is the same
+// requirePermission the context hands out, imported under a short name so
+// it reads the same in every file.
+import { requirePermission as permit, requireAnyPermission as permitAny } from '../lib/authz.js';
 
+import { atomic } from '../lib/atomicRoute.js';
 export default function registerProducts(ctx) {
   const {
     app,
@@ -211,15 +223,21 @@ function validDepartment(dept) {
   return dept;
 }
 
-app.post('/api/categories', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/categories', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
   try {
     const department = validDepartment(req.body.department);
     // Stamp businessType/tenant so the row survives the scoped GET filter above -
     // without this a new category is saved untagged and vanishes from the list.
     // Let the schema default set the department (Logistics for log, Kitchen for fb)
     // when none is supplied, instead of forcing 'Kitchen' onto log deployments.
+    const name = String(req.body.name || '').trim();
+    if (!name) return res.status(400).json({ success: false, error: 'A category name is required.' });
+    // Orders are routed to Kitchen / Bar / Logistics BY CATEGORY NAME, so two
+    // categories with the same name made routing depend on which loaded last.
+    const clash = await Category.findOne({ businessType: BUSINESS_TYPE, ...tenantScope(req), name: { $regex: new RegExp(`^${escapeRegex(name)}$`, 'i') } }).lean();
+    if (clash) return res.status(409).json({ success: false, error: `A category called "${clash.name}" already exists.` });
     const newCat = await Category.create({
-      name: req.body.name,
+      name,
       ...(department ? { department } : {}),
       businessType: BUSINESS_TYPE,
       ...tenantScope(req),
@@ -232,26 +250,44 @@ app.post('/api/categories', verifyToken, requireStaff, async (req, res) => {
 });
 
 // --- NEW: UPDATE CATEGORY ROUTE ---
-app.put('/api/categories/:id', verifyToken, requireStaff, async (req, res) => {
+app.put('/api/categories/:id', verifyToken, requireStaff, permit('products.manage'), atomic(mongoose, async (req, res) => {
   try {
     const department = validDepartment(req.body.department);
+    const current = await Category.findById(req.params.id).lean();
+    if (!current) return res.status(404).json({ success: false, error: 'Category not found.' });
     // Only overwrite department when one was supplied; otherwise leave the stored
     // value untouched (a bare rename shouldn't blank the routing).
-    const update = { name: req.body.name };
+    const update = {};
+    const name = req.body.name === undefined ? current.name : String(req.body.name || '').trim();
+    if (!name) return res.status(400).json({ success: false, error: 'A category name is required.' });
+    if (name.toLowerCase() !== String(current.name).toLowerCase()) {
+      const clash = await Category.findOne({ _id: { $ne: current._id }, businessType: BUSINESS_TYPE, ...tenantScope(req), name: { $regex: new RegExp(`^${escapeRegex(name)}$`, 'i') } }).lean();
+      if (clash) return res.status(409).json({ success: false, error: `A category called "${clash.name}" already exists.` });
+    }
+    update.name = name;
     if (department) update.department = department;
     const updated = await Category.findByIdAndUpdate(
       req.params.id,
       update,
       { returnDocument: 'after' }
     );
+    // Products point at their category BY NAME. A rename used to leave every
+    // product under the old name - out of the category filter and without
+    // its Kitchen/Bar/Logistics routing. They move with it, in the same
+    // transaction.
+    let productsMoved = 0;
+    if (name !== current.name) {
+      const r = await Product.updateMany({ category: current.name }, { $set: { category: name } });
+      productsMoved = r.modifiedCount || 0;
+    }
     emitToAll('menuUpdated');
-    res.json({ success: true, category: updated });
+    res.json({ success: true, category: updated, productsMoved });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
-app.delete('/api/categories/:id', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/categories/:id', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
   try {
     await Category.findByIdAndDelete(req.params.id);
     emitToAll('menuUpdated');
@@ -311,6 +347,9 @@ app.get('/api/products', async (req, res) => {
     // they can find it and give it a real price), customer-facing menu/portal never do.
     const productQuery = { isArchived: { $ne: true }, businessType: BUSINESS_TYPE };
     if (!isAdminCaller) { productQuery.isAvailable = { $ne: false }; productQuery.basePrice = { $gt: 0 }; }
+    // Café: nobody signed in is the table QR menu, which never lists a
+    // counter-only product. Staff still see everything for the POS.
+    if (BUSINESS_TYPE === 'fb' && !isAdminCaller && !buyerClientId) productQuery.showOnQr = { $ne: false };
     const products = await Product.find(productQuery).populate('modifierGroups').lean();
     // Product images can be globally disabled via the superadmin "Product Images" setting.
     // Customers then receive no image (the menu shows a placeholder); staff/admin keep the
@@ -329,6 +368,10 @@ app.get('/api/products', async (req, res) => {
       p.effectiveDiscountPercent = resolveEffectiveDiscountPercent(p, {
         buyerClientId, buyerSegments, tierDefaultPct, perProductTiers,
       });
+      // A tier's set price is this buyer's exact unit price, with no percent
+      // off it (see priceTiers.js) - the same price the order is charged.
+      const tierUnit = resolveTierUnitPrice(p, perProductTiers, { buyerClientId });
+      if (tierUnit != null) { p.buyerUnitPrice = tierUnit; p.effectiveDiscountPercent = 0; }
       // Only strip raw overrides from non-admin responses. Admin / staff need
       // them to power the edit form and the on-behalf client picker in POS;
       // stripping made the form silently lose overrides on save (the form
@@ -357,36 +400,15 @@ app.get('/api/products', async (req, res) => {
     // Overlay active sale pricing (fixed_price / percent_off rules).
     // Threshold rules are returned as activeSaleThresholds alongside products
     // so the POS can apply them when the order subtotal is known client-side.
-    const now = new Date();
-    const activeSales = await Sale.find({ isActive: true, startsAt: { $lte: now }, endsAt: { $gte: now } }).lean();
-    const thresholdRules = [];
-    const salePriceMap = {};   // productId → { salePrice, saleName, salePercent }
-    for (const sale of activeSales) {
-      for (const rule of (sale.rules || [])) {
-        if (rule.ruleType === 'threshold') {
-          thresholdRules.push({ saleName: sale.name, productId: rule.productId, productName: rule.productName, thresholdAmount: rule.thresholdAmount, discountPercent: rule.discountPercent });
-        } else if (rule.productId) {
-          const pid = String(rule.productId);
-          const existing = salePriceMap[pid];
-          // Last sale wins if multiple overlap; could extend to "lowest price" if needed
-          if (rule.ruleType === 'fixed_price') {
-            salePriceMap[pid] = { salePrice: rule.salePrice, saleName: sale.name, salePercent: null };
-          } else if (rule.ruleType === 'percent_off' && !existing?.salePrice) {
-            salePriceMap[pid] = { salePercent: rule.discountPercent, saleName: sale.name, salePrice: null };
-          }
-        }
-      }
-    }
+    // Same rules the order route charges by - see lib/salePricing.js.
+    const activeSales = await Sale.find(activeSalesQuery()).lean();
+    const { map: salePriceMap, thresholdRules } = buildSalePriceMap(activeSales);
     products.forEach(p => {
       const overlay = salePriceMap[String(p._id)];
       if (overlay) {
         p.saleName = overlay.saleName;
-        if (overlay.salePrice != null) {
-          p.activeSalePrice = overlay.salePrice;
-        } else if (overlay.salePercent != null) {
-          p.activeSalePrice = +(p.basePrice * (1 - overlay.salePercent / 100)).toFixed(2);
-          p.activeSalePercent = overlay.salePercent;
-        }
+        p.activeSalePrice = saleUnitPrice(p, overlay);
+        if (overlay.salePrice == null && overlay.salePercent != null) p.activeSalePercent = overlay.salePercent;
       }
     });
 
@@ -400,7 +422,9 @@ app.get('/api/products', async (req, res) => {
     invItems.forEach(i => {
       invById[i._id.toString()] = i;
       if (i.itemCode) invByCode[i.itemCode] = i;
-      if (i.itemName) invByName[i.itemName] = i;
+      // Keyed lowercase: inventory names are stored UPPERCASE and product names
+      // are not, so an exact-case key never matched (see resolveLinkedInventory).
+      if (i.itemName) invByName[String(i.itemName).trim().toLowerCase()] = i;
     });
     // A pack under one whole kg/L reads better in the sub-unit: 0.377kg → 377g,
     // 0.5L → 500ml. Mirrors the dashboard's fmtPackLabel so the slip and the
@@ -434,7 +458,7 @@ app.get('/api/products', async (req, res) => {
       // Resolve the linked stock item: FB recipe products link via invId; log 1:1
       // goods match by code then name. Used for both stock and the unit label.
       const linkedInv = recipe.find(r => r.invId) ? invById[recipe.find(r => r.invId).invId]
-        : (invByCode[p.productCode] || invByName[p.name]);
+        : (invByCode[p.productCode] || invByName[String(p.name || '').trim().toLowerCase()]);
       p.unitLabel = unitLabelOf(linkedInv);
 
       // Why a product is unavailable, so staff are not left guessing when the
@@ -451,7 +475,7 @@ app.get('/api/products', async (req, res) => {
           // matching by ing.name (the ingredient's own recipe-time snapshot),
           // mirroring the 1:1 logistics-good lookup a few lines below - a stale
           // ID must never permanently strand an otherwise-in-stock product.
-          const inv = invById[ing.invId] || (ing.name ? invByName[ing.name] : null);
+          const inv = invById[ing.invId] || (ing.name ? invByName[String(ing.name).trim().toLowerCase()] : null);
           const need = Number(ing.qty) || 0;
           if (!inv) {
             p.stockReason = `Ingredient "${ing.name || ing.invId}" is not in inventory (its stock record was deleted or renamed).`;
@@ -479,7 +503,7 @@ app.get('/api/products', async (req, res) => {
         // An FB product can still be a plain resold good (bottled water), so a
         // genuine stock match by code/name is honoured either way - that is the
         // only route by which a recipe-less product is sellable.
-        const inv = invByCode[p.productCode] || invByName[p.name];
+        const inv = invByCode[p.productCode] || invByName[String(p.name || '').trim().toLowerCase()];
         p.stockAvailable = !!inv && inv.stockQty >= baseUnitsPerSale(p, inv);
         if (!p.stockAvailable) {
           if (inv) {
@@ -535,7 +559,7 @@ app.get('/api/products/by-barcode/:code', verifyToken, requireStaff, async (req,
   }
 });
 
-app.post('/api/products', verifyToken, requireStaff, validate(productSchema), async (req, res) => {
+app.post('/api/products', verifyToken, requireStaff, permit('products.manage'), validate(productSchema), async (req, res) => {
   try {
   // Generate base product code (e.g., DRS-A0001)
   const catPrefix = getCategoryPrefix(req.body.category);
@@ -621,6 +645,14 @@ app.get('/api/products/menu-backup', verifyToken, requireStaff, requirePermissio
     const exportRecipe = (recipe) => (recipe || []).map(r => ({
       itemCode: codeByInvId.get(String(r.invId)) || codeByName.get(String(r.name || '').toLowerCase().trim()) || '',
       name: r.name, qty: r.qty, unit: r.unit, cost: r.cost, invId: r.invId,
+      // A measured ingredient that is not stock (filtered water, ice) has no
+      // item to match on, so without this flag the restore had nothing to tell
+      // it apart from an ingredient whose stock had gone missing - and dropped
+      // it. A backup that quietly loses the water from every drink is not a
+      // backup. packBase travels for the same reason: it is half of the pair
+      // that says what the quantity means.
+      nonStock: r.nonStock === true,
+      ...(Number(r.packBase) > 0 ? { packBase: Number(r.packBase) } : {}),
     }));
 
     res.json({
@@ -663,6 +695,7 @@ app.get('/api/products/menu-backup', verifyToken, requireStaff, requirePermissio
         bulkBreaks: p.bulkBreaks, clientBulkBreaks: p.clientBulkBreaks,
         clientDiscounts: p.clientDiscounts, segmentDiscounts: p.segmentDiscounts,
         image: p.image, isAvailable: p.isAvailable, isOutOfStock: p.isOutOfStock,
+        showOnQr: p.showOnQr !== false,
         isArchived: p.isArchived,
         baseRecipe: exportRecipe(p.baseRecipe),
         sizes: (p.sizes || []).map(s => ({
@@ -710,6 +743,21 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, require
     // A cross-dimension match is refused outright so a "ml" line can never
     // land on a pcs-tracked item and silently corrupt the cost.
     const resolveLine = (line) => {
+      // Not stock, and never was. Either the backup says so, or the line was
+      // written with neither an id nor a code - and a line that came from
+      // stock always carries at least one of those, because the export reads
+      // them straight off the live item. Trying to match it against inventory
+      // and dropping it when that failed is what emptied the water out of
+      // every recipe on the way back in.
+      if (line?.nonStock === true || (!line?.invId && !line?.itemCode)) {
+        const qty = Number(line?.qty) || 0;
+        if (!(qty > 0)) return null;
+        return {
+          name: String(line?.name || '').trim(), qty, cost: 0,
+          unit: String(line?.unit || '').trim() || 'ml',
+          nonStock: true, packBase: 1,
+        };
+      }
       let item = byId.get(String(line.invId || ''));
       if (item) matchedBy.invId++;
       if (!item && line.itemCode) {
@@ -727,7 +775,11 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, require
         invId: String(item._id), name: item.itemName,
         qty: Number(line.qty) || 0,
         cost: item.unitCost || 0,          // always re-priced from CURRENT stock
-        unit: line.unit || effectiveDisplay(item).displayUnit,
+        // `qty` is in base units, so the label has to be the unit stock is
+        // counted in and one unit has to be one base unit. Falling back to the
+        // item's promoted display unit read 260ml of milk as "260 L".
+        unit: String(line.unit || '').trim() || item.unit || effectiveDisplay(item).displayUnit,
+        ...(Number(line.packBase) > 0 ? { packBase: Number(line.packBase) } : {}),
       };
     };
     const resolveRecipe = (recipe) => (recipe || []).map(resolveLine).filter(Boolean);
@@ -829,7 +881,7 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, require
 
     for (const p of products) {
       const name = String(p?.name || '').trim();
-      if (!name || !(Number(p.basePrice) >= 0)) {
+      if (!name || !(Number(p.basePrice) >= 0) || !(Number(p.basePrice) <= MONEY_MAX)) {
         results.push({ name: name || '(missing)', ok: false, error: 'Missing product name or base price.' });
         continue;
       }
@@ -853,6 +905,7 @@ app.post('/api/products/menu-backup/restore', verifyToken, requireStaff, require
           clientDiscounts: p.clientDiscounts || [], segmentDiscounts: p.segmentDiscounts || [],
           image: p.image || '',
           isAvailable: p.isAvailable !== false, isOutOfStock: !!p.isOutOfStock,
+          showOnQr: p.showOnQr !== false,
           baseRecipe: resolveRecipe(p.baseRecipe),
           sizes: (p.sizes || []).map(s => ({
             sizeCode: s.sizeCode, name: s.name, price: s.price,
@@ -1026,21 +1079,92 @@ app.post('/api/products/recipe-sheet/parse', verifyToken, requireStaff, requireP
   }
 });
 
-app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res) => {
+
+// ── CODED MENU SHEET: PARSE ──────────────────────────────────────────────────
+// The stricter sheet (see lib/menuSheet.js): one row per size, ingredients
+// named by stock code in paired columns. Reads it and reports what it found,
+// WITHOUT writing anything, so the whole menu can be reviewed before it lands.
+//
+// Every identifier is resolved against live stock here, which is what decides
+// whether a line is a tracked ingredient or a measured non-stock one - the
+// sheet's own rule is "a code is stock, a word is not", and only the server
+// knows which codes exist.
+app.post('/api/products/menu-sheet/parse', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+    if (!rows) return res.status(400).json({ success: false, error: 'Send { rows: [[...]] } - the sheet as rows of cells.' });
+
+    const invItems = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) },
+      { itemCode: 1, itemName: 1, unit: 1, unitCost: 1 }).lean();
+    const codeIndex = new Map(invItems.filter(i => i.itemCode).map(i => [String(i.itemCode).toLowerCase().trim(), i]));
+
+    const parsed = parseMenuSheet(rows);
+    const products = toImportRows(parsed, codeIndex);
+
+    // What the reviewer needs to decide with: which lines found stock, which
+    // will be recorded as non-stock, and everything the sheet got wrong.
+    const nonStock = new Set();
+    let stockLines = 0, nonStockLines = 0;
+    for (const p of products) {
+      // The base recipe is the sheet's first row for that drink, so it has to
+      // be counted with the rest - leaving it out understated every product by
+      // one whole size.
+      for (const ing of [...p.ingredients, ...p.sizes.flatMap(sz => sz.ingredients)]) {
+        if (ing.stock) stockLines++;
+        else { nonStockLines++; nonStock.add(ing.name); }
+      }
+    }
+    const withProblems = products.filter(p => p.problems.length > 0);
+
+    res.json({
+      success: true,
+      products,
+      counts: {
+        products: products.length,
+        // Every row in the sheet is a size. The first one becomes the base
+        // size rather than an extra, so it is counted here too - the reviewer
+        // is checking this against the rows in front of them.
+        sizes: products.reduce((n, p) => n + p.sizes.length + (p.baseSize ? 1 : 0), 0),
+        categories: [...new Set(products.map(p => p.category).filter(Boolean))].length,
+        stockLines, nonStockLines,
+        needingReview: withProblems.length,
+      },
+      categories: [...new Set(products.map(p => p.category).filter(Boolean))],
+      // Named so a code that should have matched can be spotted: anything here
+      // that looks like a code is a stock item that does not exist yet.
+      nonStockNames: [...nonStock].sort(),
+      problems: withProblems.map(p => ({ product: p.name, problems: p.problems })),
+    });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.post('/api/products/import-menu', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
   try {
     const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
     if (rows.length === 0) return res.status(400).json({ success: false, error: 'No rows to import.' });
+    // Whether the sheet is the whole truth about sizes.
+    //
+    // The coded menu sheet is: every row in it IS a size, so a drink it lists
+    // once has exactly one size and no extras. A hand-built spreadsheet with no
+    // size column is not, and wiping sizes an operator set up by hand because
+    // their file does not mention them would be destructive.
+    const replaceSizes = req.body?.replaceSizes === true;
 
     const invItems = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }).lean();
     // Exact case-insensitive name → item, for the common case; a normalized
     // (spaces/punctuation stripped) index backs the fallback "contains" match.
     const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const byExactName = new Map(invItems.map(i => [String(i.itemName || '').toLowerCase().trim(), i]));
+    // A stock code is an exact identity, so it is tried first and never
+    // guessed at. The coded menu sheet names every tracked ingredient this way.
+    const byCode = new Map(invItems.filter(i => i.itemCode).map(i => [String(i.itemCode).toLowerCase().trim(), i]));
 
     const matchIngredient = (ingName, unit) => {
       const key = String(ingName || '').toLowerCase().trim();
       if (!key) return null;
-      let item = byExactName.get(key);
+      let item = byCode.get(key) || byExactName.get(key);
       if (!item) {
         const nk = norm(key);
         item = invItems.find(i => norm(i.itemName).includes(nk) || nk.includes(norm(i.itemName)));
@@ -1075,18 +1199,35 @@ app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res
           for (const ing of (Array.isArray(list) ? list : [])) {
             const ingName = String(ing?.name || '').trim();
             if (!ingName) continue;
+            // A non-stock ingredient (filtered water) is recorded, never matched
+            // to stock and never costed - see the zRecipe note in server.js.
+            // Treating it as an ordinary line made it "unmatched" and silently
+            // dropped it, so a menu re-imported from its own export lost water
+            // from every drink that used it.
+            if (ing?.nonStock) {
+              const q = Number(ing.qty) || 0;
+              if (q > 0) out.push({ name: ingName, qty: q, cost: 0, unit: String(ing.unit || '').trim() || 'ml', nonStock: true, packBase: 1 });
+              continue;
+            }
             const item = matchIngredient(ingName, ing.unit);
             if (!item) { unmatched.push(ingName); continue; }
             const baseQty = displayToBase(Number(ing.qty) || 0, ing.unit || item.unit);
             if (!(baseQty > 0)) continue;
-            // The unit has to be the item's DISPLAY unit. The editor divides
-            // the stored base quantity by the item's pack size and labels it
-            // with this unit, so importing a raw "ml" against a litre-tracked
-            // item made 150ml of milk read as "150 L".
-            const eff = effectiveDisplay(item);
+            // A recipe line is a pair: `qty` in base units, and `packBase`
+            // saying how many base units one of whatever `unit` names holds.
+            // The two have to agree.
+            //
+            // The sheet is written in stock units - 20g of beans, one cup - so
+            // the line is labelled in stock units and one unit is one base
+            // unit. Labelling it with the item's promoted DISPLAY unit instead
+            // read 20g as "20 kg", and left the editor free to pair that "kg"
+            // with the item's pack size, which turned one cup out of a sleeve
+            // of fifty into "0.02 pcs".
             out.push({
               invId: String(item._id), name: item.itemName, qty: baseQty,
-              cost: item.unitCost || 0, unit: eff.displayUnit,
+              cost: item.unitCost || 0,
+              unit: String(item.unit || '').trim() || effectiveDisplay(item).displayUnit,
+              packBase: 1,
             });
           }
           return out;
@@ -1136,7 +1277,14 @@ app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res
           // Only overwrite sizes when the import actually carries some -
           // otherwise re-importing a sheet without a size column would wipe
           // sizes an operator had set up by hand.
-          if (sizes.length) existing.sizes = sizes;
+          //
+          // Unless the sheet is authoritative, in which case an EMPTY list is
+          // itself the instruction. Without this a drink that used to have a
+          // second size kept it forever: the sheet said one size, the importer
+          // read "no sizes to write" as "leave them alone", and the register
+          // went on offering a size the shop had stopped selling. Re-importing
+          // the corrected sheet could never fix it, which is the worst part.
+          if (sizes.length || replaceSizes) existing.sizes = sizes;
           await existing.save();
           updated++;
           results.push({ name, ok: true, action: 'updated', matched: recipe.length + sizeLines, sizes: sizes.length, unmatched });
@@ -1164,7 +1312,7 @@ app.post('/api/products/import-menu', verifyToken, requireStaff, async (req, res
   }
 });
 
-app.put('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
+app.put('/api/products/:id', verifyToken, requireStaff, permit('products.manage'), atomic(mongoose, async (req, res) => {
   try {
     const existing = await Product.findById(req.params.id).lean();
     if (!existing) return res.status(404).json({ success: false, error: 'Product not found.' });
@@ -1274,7 +1422,7 @@ app.put('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // ── PRICE HISTORY ─────────────────────────────────────────────────────────────
 // Every base-price and recipe-cost change already gets logged to AuditLog
@@ -1339,12 +1487,14 @@ app.get('/api/products/:id/price-history', verifyToken, requireStaff, async (req
 
 // PATCH /api/products/:id/availability - superadmin toggle. Permanently REMOVES
 // the product from menu + POS. Reporting still surfaces it while stock remains.
-app.patch('/api/products/:id/availability', verifyToken, requireSuperAdmin, async (req, res) => {
+app.patch('/api/products/:id/availability', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const { isAvailable } = req.body;
     if (typeof isAvailable !== 'boolean')
       return res.status(400).json({ success: false, error: 'isAvailable must be true or false.' });
-    const product = await Product.findByIdAndUpdate(req.params.id, { isAvailable }, { returnDocument: 'after' });
+    // A person's decision either way ends any automatic removal: a product
+    // removed by hand is never brought back by a restock.
+    const product = await Product.findByIdAndUpdate(req.params.id, { isAvailable, autoUnavailable: false }, { returnDocument: 'after' });
     if (!product) return res.status(404).json({ success: false, error: 'Product not found.' });
     await AuditLog.create({
       userId: req.user?.name || 'System',
@@ -1360,10 +1510,33 @@ app.patch('/api/products/:id/availability', verifyToken, requireSuperAdmin, asyn
   }
 });
 
+// PATCH /api/products/:id/qr - show on / hide from the table QR menu (café).
+// Hidden products are counter-only: still sold at the POS.
+app.patch('/api/products/:id/qr', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
+  try {
+    const { showOnQr } = req.body;
+    if (typeof showOnQr !== 'boolean')
+      return res.status(400).json({ success: false, error: 'showOnQr must be true or false.' });
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Product not found.' });
+    const product = await Product.findOneAndUpdate({ _id: req.params.id, businessType: BUSINESS_TYPE }, { showOnQr }, { returnDocument: 'after' });
+    if (!product) return res.status(404).json({ success: false, error: 'Product not found.' });
+    await AuditLog.create({
+      userId: req.user?.name || 'System',
+      action: showOnQr ? 'PRODUCT_SHOWN_ON_QR' : 'PRODUCT_HIDDEN_FROM_QR',
+      targetReference: product.productCode || req.params.id,
+      details: { name: product.name, showOnQr, changedBy: req.user?.name },
+    });
+    emitToAll('menuUpdated');
+    res.json({ success: true, product });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 // PATCH /api/products/:id/oos - toggle "Out of Stock". Distinct from Removed -
 // OOS products still appear in menu (with a badge) and in all reports. Use this
 // for a temporary stockout; use /availability for permanent removal.
-app.patch('/api/products/:id/oos', verifyToken, requireSuperAdmin, async (req, res) => {
+app.patch('/api/products/:id/oos', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const { isOutOfStock } = req.body;
     if (typeof isOutOfStock !== 'boolean')
@@ -1385,7 +1558,7 @@ app.patch('/api/products/:id/oos', verifyToken, requireSuperAdmin, async (req, r
 });
 
 // Change to PUT or handle inside DELETE for archiving
-app.delete('/api/products/:id', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/products/:id', verifyToken, requireStaff, permit('products.manage'), async (req, res) => {
   try {
     const product = await Product.findByIdAndUpdate(
       req.params.id, 
@@ -1461,17 +1634,17 @@ app.get('/api/modifier-groups', verifyToken, requireStaff, async (req, res) => {
   catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.post('/api/modifier-groups', verifyToken, requireSuperAdmin, validate(modifierGroupSchema), async (req, res) => {
+app.post('/api/modifier-groups', verifyToken, requireStaff, requirePermission('products.manage'), validate(modifierGroupSchema), async (req, res) => {
   try { const group = await ModifierGroup.create(req.body); emitToAll('menuUpdated'); res.json({ success: true, group }); }
   catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.put('/api/modifier-groups/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/modifier-groups/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try { const group = await ModifierGroup.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after', runValidators: true }); emitToAll('menuUpdated'); res.json({ success: true, group }); }
   catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.delete('/api/modifier-groups/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/modifier-groups/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try { await ModifierGroup.findByIdAndDelete(req.params.id); emitToAll('menuUpdated'); res.json({ success: true }); }
   catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
@@ -1484,7 +1657,7 @@ app.get('/api/combos', async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.post('/api/combos', verifyToken, requireSuperAdmin, validate(comboSchema), async (req, res) => {
+app.post('/api/combos', verifyToken, requireStaff, requirePermission('products.manage'), validate(comboSchema), async (req, res) => {
   try {
     if (!req.body.name || !(req.body.price > 0)) return res.status(400).json({ success: false, error: 'Name and a positive price are required.' });
     if (!Array.isArray(req.body.items) || req.body.items.length === 0) return res.status(400).json({ success: false, error: 'A combo needs at least one component product.' });
@@ -1503,12 +1676,12 @@ app.post('/api/combos', verifyToken, requireSuperAdmin, validate(comboSchema), a
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.put('/api/combos/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/combos/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try { const combo = await Combo.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' }); emitToAll('menuUpdated'); res.json({ success: true, combo }); }
   catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.delete('/api/combos/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/combos/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try { await Combo.findByIdAndDelete(req.params.id); emitToAll('menuUpdated'); res.json({ success: true }); }
   catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
@@ -1521,25 +1694,32 @@ app.get('/api/sales', verifyToken, requireStaff, async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.post('/api/sales', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/sales', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const { name, description, startsAt, endsAt, rules } = req.body;
     if (!name?.trim()) return res.status(400).json({ success: false, error: 'Sale name is required.' });
     if (!startsAt || !endsAt) return res.status(400).json({ success: false, error: 'Start and end dates are required.' });
     if (new Date(startsAt) >= new Date(endsAt)) return res.status(400).json({ success: false, error: 'End date must be after start date.' });
-    const sale = await Sale.create({ name: name.trim(), description, startsAt: new Date(startsAt), endsAt: new Date(endsAt), rules: rules || [] });
+    // Optional hours inside those dates: some weekdays, some times of day.
+    const hours = cleanSaleHours(req.body);
+    if (hours.error) return res.status(400).json({ success: false, error: hours.error });
+    const sale = await Sale.create({ name: name.trim(), description, startsAt: new Date(startsAt), endsAt: new Date(endsAt), rules: rules || [], ...hours });
     emitToAll('menuUpdated');
     res.json({ success: true, sale });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.put('/api/sales/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/sales/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     const { name, description, startsAt, endsAt, isActive, rules } = req.body;
     if (startsAt && endsAt && new Date(startsAt) >= new Date(endsAt))
       return res.status(400).json({ success: false, error: 'End date must be after start date.' });
+    // The hours change only when the form sends them; a switch on/off alone leaves them be.
+    const sentHours = ['daysOfWeek', 'dailyFrom', 'dailyTo'].some(k => req.body[k] !== undefined);
+    const hours = sentHours ? cleanSaleHours(req.body) : {};
+    if (hours.error) return res.status(400).json({ success: false, error: hours.error });
     const sale = await Sale.findByIdAndUpdate(req.params.id,
-      { name, description, startsAt: startsAt ? new Date(startsAt) : undefined, endsAt: endsAt ? new Date(endsAt) : undefined, isActive, rules },
+      { name, description, startsAt: startsAt ? new Date(startsAt) : undefined, endsAt: endsAt ? new Date(endsAt) : undefined, isActive, rules, ...hours },
       { returnDocument: 'after', runValidators: true }
     );
     if (!sale) return res.status(404).json({ success: false, error: 'Sale not found.' });
@@ -1548,7 +1728,7 @@ app.put('/api/sales/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.delete('/api/sales/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/sales/:id', verifyToken, requireStaff, requirePermission('products.manage'), async (req, res) => {
   try {
     await Sale.findByIdAndDelete(req.params.id);
     emitToAll('menuUpdated');

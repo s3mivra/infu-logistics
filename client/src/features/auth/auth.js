@@ -29,9 +29,17 @@ const USER_KEY = 'semivra_user';
 export const getUser = () => { try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null'); } catch { return null; } };
 export const setUser = (u) => { try { u ? localStorage.setItem(USER_KEY, JSON.stringify(u)) : localStorage.removeItem(USER_KEY); } catch { /* ignore */ } };
 
+// A JWT's payload is base64URL (- and _ where base64 has + and /, no padding),
+// and UTF-8. atob() takes neither: a name with an accented letter, or a "?" or
+// "~" in the wrong place, produced a payload it threw on - and a token that
+// cannot be read has no permissions, so the screen showed nothing.
 export const decodeToken = (t = accessToken) => {
   if (!t) return null;
-  try { return JSON.parse(atob(t.split('.')[1])); } catch { return null; }
+  try {
+    const b64 = t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (ch) => ch.charCodeAt(0))));
+  } catch { return null; }
 };
 
 // ── Granular RBAC (client-side UI gating) ────────────────────────────────────
@@ -43,10 +51,28 @@ export const getPermissions = (t = accessToken) => {
   if (String(d.role || '').toLowerCase() === 'superadmin') return ['*'];
   return Array.isArray(d.perms) ? d.perms : [];
 };
+// The tab each family of page permissions narrows. Mirrors SCREENS in
+// server/lib/authz.js; test/permissions-screens.unit.test.js keeps them equal.
+export const SCREEN_PARENT = {
+  inventory: 'inventory.view', hub: 'inventory.view', procurement: 'procurement.view',
+  ledger: 'accounting.view', reports: 'reports.view',
+};
+
 // can('accounting.view') → boolean. '*' (superadmin) satisfies everything.
+// A page key - screen.<tab>.<page> - follows the server's two rules: never
+// without its tab's permission, and every page of a tab when none of that
+// tab's pages is named (a token from before pages existed, or a role that was
+// never narrowed).
 export const can = (perm, t = accessToken) => {
   const perms = getPermissions(t);
-  return perms.includes('*') || perms.includes(perm);
+  if (perms.includes('*')) return true;
+  const m = /^screen\.([a-z]+)\.[a-z]+$/.exec(perm);
+  if (m) {
+    const parent = SCREEN_PARENT[m[1]];
+    if (!parent || !perms.includes(parent)) return false;
+    return perms.includes(perm) || !perms.some((k) => k.startsWith(`screen.${m[1]}.`));
+  }
+  return perms.includes(perm);
 };
 
 // De-duplicate concurrent refreshes: many in-flight requests share one refresh call.
@@ -70,6 +96,23 @@ export async function logout(API_URL) {
   finally { accessToken = null; setUser(null); }
 }
 
+// The access token lives fifteen minutes. A request sent with one that has
+// already run out comes back 401, is retried after a refresh, and works - but
+// every one of them prints a red "Failed to load resource: 401" first, which
+// after a tablet wakes from sleep is a dozen at once. Asking for a new token
+// just before the old one runs out, and waiting for a refresh already under
+// way instead of racing it, means those requests are simply sent right.
+const EXPIRY_MARGIN_MS = 20 * 1000;
+export const tokenExpiresSoon = (t = accessToken) => {
+  const d = decodeToken(t);
+  return !d || !d.exp || d.exp * 1000 - Date.now() < EXPIRY_MARGIN_MS;
+};
+export async function freshToken(API_URL) {
+  if (refreshing) await refreshing;
+  else if (accessToken && tokenExpiresSoon(accessToken)) await refreshSession(API_URL);
+  return accessToken;
+}
+
 // Drop-in replacement for the old per-page apiFetch. Attaches the in-memory token,
 // auto-injects JSON content-type, and silently refreshes + retries once on 401.
 // On a persistent 401 it returns the response so callers can run their logout flow.
@@ -84,6 +127,8 @@ export async function apiFetch(API_URL, endpoint, options = {}) {
     return fetch(`${API_URL}${clean}`, { ...options, headers, credentials: 'include' });
   };
 
+  // The auth routes themselves must not wait on a refresh - one of them IS it.
+  if (!/\/api\/(auth|users\/login)/.test(endpoint)) await freshToken(API_URL);
   let response = await build();
   if (response.status === 401) {
     const refreshed = await refreshSession(API_URL);

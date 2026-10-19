@@ -2,9 +2,13 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { captureError } from '../lib/errorLog.js';
+import { loadSeriesPrefixes, invalidateSeriesCache, normalizePrefix, describeSeries, isSeriesKey, seriesForKey } from '../lib/docSeries.js';
 import { isValidBranchCode } from '../lib/branchCode.js';
+import { isValidTimeZone, setBusinessTimeZone, businessTimeZone } from '../lib/businessTime.js';
 import { moduleStates, MODULE_KEYS, truthy } from '../lib/optionalModules.js';
+import { cleanPrivacyContact } from '../lib/privacyContact.js';
 
+import { lineBases } from '../lib/orderLines.js';
 export default function registerSettings(ctx) {
   const {
     app,
@@ -183,11 +187,24 @@ export default function registerSettings(ctx) {
     requirePermission,
   } = ctx;
 
+// A settings change goes to every connected device only when a logged-out
+// page (client portal, QR menu) uses it; everything else - TIN, OR series,
+// thresholds, bank details - reaches signed-in staff only. It used to be
+// broadcast to all, anonymous QR screens included.
+const PUBLIC_LIVE_KEYS = new Set(['paymentQrImage', 'businessLogo', 'logoColor', 'logoRadius', 'isAcceptingQROrders', 'currency']);
+const emitSetting = (payload) => {
+  const key = String(payload?.key || '');
+  if (key.startsWith('portal') || PUBLIC_LIVE_KEYS.has(key)) emitToAll('settingsUpdated', payload);
+  else io.to('cashier').emit('settingsUpdated', payload);
+};
+
 // Client-portal branding/copy. These are the ONLY settings readable without a
 // staff token - the portal is served to logged-out clients, so anything listed
 // here is effectively public. Never add operational settings (credit limits,
 // auto-close, ...) to this list.
 const PUBLIC_PORTAL_KEYS = [
+  // The customer's QR menu asks "dine in or take out?" when this is on.
+  'serviceModeEnabled',
   'portalWelcomeTitle',
   'portalWelcomeMessage',
   'portalAnnouncement',
@@ -225,10 +242,34 @@ app.get('/api/public/portal-settings', async (req, res) => {
 // general escape hatch for reading settings without a token.
 app.get('/api/settings/public', async (req, res) => {
   try {
-    const row = await Settings.findOne({ key: 'requireCashShift' }).lean();
+    const [row, sharedRow] = await Promise.all([
+      Settings.findOne({ key: 'requireCashShift' }).lean(),
+      Settings.findOne({ key: 'sharedDrawer' }).lean(),
+    ]);
+    const sharedDrawer = sharedRow?.value === true;
+    // Whether the shop's one drawer is already open. The login screen needs it
+    // BEFORE anyone authenticates: on a shared drawer the float is declared
+    // once by whoever opens up, and asking the second and third person of the
+    // morning for a starting cash amount invites them to type the same figure
+    // again - which is the exact double-count the shared drawer exists to
+    // prevent. Discloses only that the till is open, which anyone standing at
+    // the counter can already see.
+    const drawerOpen = sharedDrawer
+      ? Boolean(await mongoose.model('Shift').exists({ scope: 'drawer', status: 'Open' }))
+      : false;
     // Unset means the historical behaviour: required. Preserves every existing
     // deployment's current login flow until someone explicitly turns it off.
-    res.json({ success: true, requireCashShift: row?.value !== false });
+    res.json({ success: true, requireCashShift: row?.value !== false, sharedDrawer, drawerOpen });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// PUBLIC, no session - the Privacy Notice and Terms must be readable by the
+// customer scanning a table QR, before any account exists. Only the contact
+// block the business chose to publish is returned.
+app.get('/api/settings/privacy', async (req, res) => {
+  try {
+    const row = await Settings.findOne({ key: 'privacyContact' }).lean();
+    res.json({ success: true, privacy: cleanPrivacyContact(row?.value).value || {} });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
@@ -238,6 +279,85 @@ app.get('/api/settings/public', async (req, res) => {
 app.get('/api/settings/modules', verifyToken, requireStaff, async (req, res) => {
   try {
     res.json({ success: true, modules: await moduleStates(Settings) });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+
+// ── WHAT STILL HAS TO BE SET BEFORE TRADING ─────────────────────────────────
+// Some settings can be put right at any time. One cannot: the receipt serial
+// start number locks the moment the first receipt is issued, because moving it
+// afterwards would renumber receipts already in customers' hands. Nothing
+// stopped a business ringing up its first sale before setting it, and by the
+// time anyone noticed it was permanent.
+//
+// So this says what is outstanding AND how long it can still be put right,
+// which is the part that actually matters.
+app.get('/api/settings/readiness', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const [rows, receiptsIssued] = await Promise.all([
+      Settings.find({ key: { $in: ['businessTimeZone', 'orStartNumber', 'orPrefix', 'birPermitNo', 'birMachineId', 'businessTin', 'vatEnabled'] } }).lean(),
+      mongoose.model('Order').countDocuments({ orNumber: { $nin: [null, ''] } }),
+    ]);
+    const val = Object.fromEntries(rows.map(r => [r.key, r.value]));
+    const isSet = (k) => val[k] !== undefined && String(val[k]).trim() !== '';
+    const serialLocked = receiptsIssued > 0;
+
+    const items = [];
+
+    // The one with a deadline.
+    if (!serialLocked) {
+      items.push({
+        key: 'orStartNumber',
+        label: 'Receipt serial start number',
+        set: isSet('orStartNumber'),
+        severity: 'locks',
+        note: isSet('orStartNumber')
+          ? `Set to ${val.orStartNumber}. Still changeable - it locks permanently once the first receipt is issued.`
+          : 'Set this to the number your registered booklet is already up to, BEFORE your first sale. It locks permanently once the first receipt is issued.',
+      });
+    }
+
+    items.push({
+      key: 'businessTimeZone',
+      label: 'Business time zone',
+      set: isSet('businessTimeZone'),
+      severity: 'important',
+      note: 'Decides which day a sale belongs to, when the day locks, and what a daily report covers. Change it between trading days, not mid-service.',
+    });
+
+    // Printed on every receipt. Fixable later, but every receipt issued before
+    // then goes out without them.
+    for (const [key, label] of [
+      ['businessTin', 'Business TIN'],
+      ['birPermitNo', 'ATP / Permit number'],
+      ['birMachineId', 'Machine ID / serial'],
+    ]) {
+      items.push({
+        key, label, set: isSet(key), severity: 'receipts',
+        note: 'Printed on every receipt and invoice. Receipts issued before it is filled in go out without it.',
+      });
+    }
+
+    const outstanding = items.filter(i => !i.set);
+    res.json({
+      success: true,
+      ready: outstanding.length === 0,
+      receiptsIssued,
+      serialLocked,
+      items,
+      outstanding: outstanding.length,
+      // The single thing worth interrupting someone for.
+      urgent: outstanding.find(i => i.severity === 'locks') || null,
+    });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// What every document a person actually holds is called. The screen needs the
+// labels, the notes and a worked sample per series - building that list in the
+// client would mean the two ends disagreeing the moment one changes.
+app.get('/api/settings/document-series', verifyToken, requireStaff, async (req, res) => {
+  try {
+    res.json({ success: true, series: describeSeries(await loadSeriesPrefixes(Settings)) });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
@@ -277,21 +397,7 @@ async function restampOpenOrdersVat() {
 
   let updated = 0;
   for (const order of open) {
-    let baseAfterLineDisc = 0;
-    let discountableBase = 0;
-    let exemptBase = 0;
-    let lineDiscTotal = 0;
-
-    for (const item of order.items || []) {
-      const addOnTotal = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
-      const itemBase = ((item.price || 0) + addOnTotal) * (item.quantity || 1);
-      const linePct = Math.max(Number(item.productDiscountPercent || 0), Number(item.discountPercent || 0));
-      const lineDisc = +(itemBase * linePct / 100).toFixed(2);
-      lineDiscTotal += lineDisc;
-      baseAfterLineDisc += itemBase - lineDisc;
-      if (linePct === 0 && item.hasDiscount !== false) discountableBase += itemBase;
-      if (item.vatExempt === true) exemptBase += itemBase - lineDisc;
-    }
+    const { baseAfterLineDisc, discountableBase, exemptBase, lineDiscTotal } = lineBases(order.items || []);
 
     // Derive the exemption from the discount actually applied, not from the
     // stored boolean: every order written before VAT went live inherited
@@ -357,7 +463,7 @@ app.patch('/api/settings/currency', verifyToken, requireStaff, requirePermission
     if (!/^[A-Z]{3}$/.test(code)) return res.status(400).json({ success: false, error: 'code must be a 3-letter ISO currency code (e.g. PHP, USD).' });
     const value = { symbol, code };
     await Settings.findOneAndUpdate({ key: 'currency' }, { value }, { upsert: true });
-    emitToAll('settingsUpdated', { key: 'currency', value });
+    emitSetting({ key: 'currency', value });
     res.json({ success: true, currency: value });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
@@ -381,7 +487,113 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
       }
       const saved = await Settings.findOneAndUpdate({ key: 'branchCode' }, { value: code }, { upsert: true, returnDocument: 'after' });
       invalidateBranchCodeCache();
-      emitToAll('settingsUpdated', { key: 'branchCode', value: code });
+      emitSetting({ key: 'branchCode', value: code });
+      return res.json({ success: true, setting: saved });
+    }
+
+    // Who customers and staff contact about their personal information. Printed
+    // on the public Privacy Notice and Terms, so every field is plain text,
+    // trimmed and capped - nothing here is ever rendered as markup.
+    if (req.params.key === 'privacyContact') {
+      const clean = cleanPrivacyContact(value);
+      if (clean.error) return res.status(400).json({ success: false, error: clean.error });
+      const saved = await Settings.findOneAndUpdate({ key: 'privacyContact' }, { value: clean.value }, { upsert: true, returnDocument: 'after' });
+      try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: 'privacyContact', after: clean.value }); } catch { /* audit is best-effort */ }
+      emitSetting({ key: 'privacyContact', value: clean.value });
+      return res.json({ success: true, setting: saved, privacy: clean.value });
+    }
+
+    // The business's clock. Every day boundary hangs off it - report ranges,
+    // the EOD lock, the midnight close - so it is validated before it is stored
+    // and applied to the running server at once: a shop that has just told the
+    // system where it is should not have to wait for a restart to get its own
+    // day back.
+    if (req.params.key === 'businessTimeZone') {
+      const zone = String(value || '').trim();
+      if (!isValidTimeZone(zone)) {
+        return res.status(400).json({ success: false, error: 'That is not a timezone this system knows. Pick one from the list.' });
+      }
+      const saved = await Settings.findOneAndUpdate({ key: 'businessTimeZone' }, { value: zone }, { upsert: true, returnDocument: 'after' });
+      setBusinessTimeZone(zone);
+      try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: 'businessTimeZone', after: { timeZone: zone } }); } catch { /* audit is best-effort */ }
+      emitSetting({ key: 'businessTimeZone', value: zone });
+      return res.json({ success: true, setting: saved, timeZone: businessTimeZone() });
+    }
+
+    // A document prefix is a label, not an identity: the counter behind each
+    // series is keyed on its own canonical code, so renaming one here changes
+    // what future documents are CALLED without restarting the sequence or
+    // colliding with the numbers already issued.
+    if (isSeriesKey(req.params.key)) {
+      const series = seriesForKey(req.params.key);
+      const prefix = normalizePrefix(value, series.defaultPrefix);
+      const saved = await Settings.findOneAndUpdate({ key: req.params.key }, { value: prefix }, { upsert: true, returnDocument: 'after' });
+      invalidateSeriesCache();
+      try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: req.params.key, after: { prefix } }); } catch { /* audit is best-effort */ }
+      emitSetting({ key: req.params.key, value: prefix });
+      return res.json({ success: true, setting: saved, series: describeSeries(await loadSeriesPrefixes(Settings)) });
+    }
+
+    // The receipt series is a registered, gapless sequence. Where it STARTS can
+    // be declared once, before the first receipt is issued - after that, moving
+    // it would renumber receipts already in a customer's hands or skip numbers
+    // nobody can account for. The prefix and permit details stay editable; the
+    // starting number does not.
+    if (req.params.key === 'orStartNumber') {
+      const n = Math.floor(Number(value));
+      if (!Number.isFinite(n) || n < 0) {
+        return res.status(400).json({ success: false, error: 'The starting receipt number must be zero or a positive whole number.' });
+      }
+      if (await mongoose.model('Order').exists({ orNumber: { $nin: [null, ''] } })) {
+        return res.status(409).json({
+          success: false,
+          error: 'Receipts have already been issued from this series, so its starting number can no longer be changed.',
+        });
+      }
+      const saved = await Settings.findOneAndUpdate({ key: 'orStartNumber' }, { value: n }, { upsert: true, returnDocument: 'after' });
+      try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: 'orStartNumber', after: { start: n } }); } catch { /* audit is best-effort */ }
+      emitSetting({ key: 'orStartNumber', value: n });
+      return res.json({ success: true, setting: saved });
+    }
+
+    // Cash-drawer controls, coerced on the way in for the same reason module
+    // switches are: a form posting the string "false" is truthy in JavaScript,
+    // and a shared drawer that silently stays on because of it would have every
+    // cashier ringing into one float they never agreed to.
+    // Lock the register after each sale, so the next one cannot be rung under
+    // the last person's name. Coerced for the same reason as the drawer flags.
+    if (req.params.key === 'askOperatorEachSale') {
+      const flag = truthy(value, false);
+      const saved = await Settings.findOneAndUpdate({ key: 'askOperatorEachSale' }, { value: flag }, { upsert: true, returnDocument: 'after' });
+      try { await logAudit(req, { action: 'update', entity: 'Settings', entityId: 'askOperatorEachSale', after: { value: flag } }); } catch { /* audit is best-effort */ }
+      emitSetting({ key: 'askOperatorEachSale', value: flag });
+      return res.json({ success: true, setting: saved });
+    }
+    if (req.params.key === 'sharedDrawer' || req.params.key === 'blindClose') {
+      const flag = truthy(value, false);
+      const saved = await Settings.findOneAndUpdate({ key: req.params.key }, { value: flag }, { upsert: true, returnDocument: 'after' });
+      emitSetting({ key: req.params.key, value: flag });
+      return res.json({ success: true, setting: saved });
+    }
+    // Maximum hours a drawer session may stay open; 0 disables the boundary.
+    // A duration rather than a clock time, because a 24/7 counter is busiest at
+    // the hour a midnight cut-off would fire.
+    if (req.params.key === 'drawerMaxHours') {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0 || n > 168) {
+        return res.status(400).json({ success: false, error: 'Session limit must be between 0 hours (off) and 168 (one week).' });
+      }
+      const saved = await Settings.findOneAndUpdate({ key: 'drawerMaxHours' }, { value: n }, { upsert: true, returnDocument: 'after' });
+      emitSetting({ key: 'drawerMaxHours', value: n });
+      return res.json({ success: true, setting: saved });
+    }
+    if (req.params.key === 'varianceThreshold') {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0) {
+        return res.status(400).json({ success: false, error: 'The variance threshold must be zero or a positive amount.' });
+      }
+      const saved = await Settings.findOneAndUpdate({ key: 'varianceThreshold' }, { value: n }, { upsert: true, returnDocument: 'after' });
+      emitSetting({ key: 'varianceThreshold', value: n });
       return res.json({ success: true, setting: saved });
     }
 
@@ -390,7 +602,7 @@ app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('se
     // "false" means.
     const stored = MODULE_KEYS.has(req.params.key) ? truthy(value, false) : value;
     const setting = await Settings.findOneAndUpdate({ key: req.params.key }, { value: stored }, { upsert: true, returnDocument: 'after' });
-    emitToAll('settingsUpdated', { key: req.params.key, value: stored });
+    emitSetting({ key: req.params.key, value: stored });
 
     if (MODULE_KEYS.has(req.params.key)) {
       await logAudit(req, { action: 'update', entity: 'Settings', entityId: req.params.key, after: { enabled: stored } });

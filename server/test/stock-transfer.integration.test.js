@@ -13,7 +13,8 @@ beforeAll(async () => {
   ctx = await bootApp({ businessType: 'log' });
   app = ctx.app;
   await makeUser({ name: 'xSuper', role: 'superadmin' });
-  await makeUser({ name: 'xStaff', role: 'staff' });
+  // Moving stock needs inventory.manage; still not a superadmin.
+  await makeUser({ name: 'xStaff', role: 'staff', permissions: ['pos.use', 'orders.view', 'inventory.view', 'products.view', 'inventory.manage'] });
   superTok = await loginStaff(app, 'xSuper');
   staffTok = await loginStaff(app, 'xStaff');
 

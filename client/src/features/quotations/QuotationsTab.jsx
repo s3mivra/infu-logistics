@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { useDashboard } from '../dashboard/DashboardContext';
 import * as ui from '../../shared/ui';
+import { useRefreshTick } from '../../shared/refreshBus';
 
 // Quotations - prices asked for, not sales made.
 //
@@ -43,7 +44,8 @@ export default function QuotationsTab() {
     finally { setLoading(false); }
   }, [apiFetch, status]);
 
-  useEffect(() => { load(); }, [load]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { load(); }, [load, refreshTick]);
 
   if (open) {
     return <QuoteSheet id={open} apiFetch={apiFetch} onBack={() => { setOpen(null); load(); }} />;
@@ -163,7 +165,8 @@ function QuoteSheet({ id, apiFetch, onBack }) {
     } catch { ui.alert('Network error.'); }
   }, [apiFetch, id]);
 
-  useEffect(() => { load(); }, [load]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { load(); }, [load, refreshTick]);
 
   const send = async () => {
     setBusy(true);
@@ -277,7 +280,7 @@ function QuoteSheet({ id, apiFetch, onBack }) {
       )}
 
       {q.status === 'Accepted' && !q.orderNumber && (
-        <p className="flex items-start gap-2 text-[11px] text-amber-400/90 bg-amber-400/5 border border-amber-400/20 rounded-xl px-4 py-3">
+        <p className="flex items-start gap-2 text-[11px] text-warning bg-amber-400/5 border border-amber-400/20 rounded-xl px-4 py-3">
           <AlertCircle size={13} className="shrink-0 mt-0.5" />
           <span>Accepted, but no order has been placed against it yet. Ring it up at the quoted prices.</span>
         </p>

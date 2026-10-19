@@ -13,6 +13,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+// Fixture resets may clear journal entries, which are otherwise append-only.
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const auth = (p) => request(app).get(p).set('Authorization', `Bearer ${tok}`);
@@ -34,7 +36,7 @@ const DAY = '2026-09-03';
 const localAt = (h, m = 0) => new Date(2026, 8, 3, h, m, 0, 0);
 
 beforeEach(async () => {
-  for (const n of ['StockCard', 'CheckVoucher', 'Advance']) await M(n).deleteMany({});
+  for (const n of ['StockCard', 'CheckVoucher', 'Advance']) await withLedgerMaintenance(() => M(n).deleteMany({}));
 });
 
 describe('stock card history covers the whole local day', () => {

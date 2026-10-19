@@ -11,17 +11,49 @@ services:
     # refund, order completion, PO receiving) runs in a multi-document
     # transaction, and MongoDB only permits those on a replica set.
     # --wiredTigerCacheSizeGB caps RAM so Mongo can't crowd out Node on an 8 GB box.
-    command: ["--replSet", "rs0", "--bind_ip_all", "--wiredTigerCacheSizeGB", "2"]
+    # Starts mongod exactly as before unless MONGO_AUTH=on (login required,
+    # replica-set keyfile). Same scripts as the platform deployment - see
+    # platform/MONGO_AUTH.md, "Single-business deployment".
+    entrypoint: ["/bin/bash", "/mongo-entrypoint.sh"]
+    environment:
+      MONGO_AUTH: ${MONGO_AUTH:-off}
+      MONGO_ROOT_USER: ${MONGO_ROOT_USER:-root}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-}
+      MONGO_KEYFILE_CONTENT: ${MONGO_KEYFILE_CONTENT:-}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-}
     volumes:
       - mongo-data:/data/db
       - ./backups:/backups
+      - ./platform/mongo-entrypoint.sh:/mongo-entrypoint.sh:ro
+      - ./platform/mongo-health.sh:/mongo-health.sh:ro
     healthcheck:
       # Initiates the replica set on first boot, then just reports status.
-      test: ["CMD", "mongosh", "--quiet", "--eval", "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok }"]
+      test: ["CMD", "bash", "/mongo-health.sh"]
       interval: 10s
       timeout: 10s
       start_period: 40s
       retries: 12
+
+  # Scheduled, self-verifying backups (same job as the platform deployment:
+  # dump, read it back with a dry-run restore, then keep it). Offsite copies:
+  # see platform/docker-compose.yml backup-offsite, or set BACKUP_S3_* and
+  # run scripts/backup-mongo.sh from host cron.
+  backup:
+    image: mongo:7
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "/backup-loop.sh"]
+    environment:
+      MONGO_BACKUP_URI: ${MONGO_BACKUP_URI:-mongodb://mongo:27017/?replicaSet=rs0}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      TZ: Asia/Manila
+    volumes:
+      - ./backups:/backups
+      - ./platform/backup-loop.sh:/backup-loop.sh:ro
+    depends_on:
+      mongo:
+        condition: service_healthy
 
   api:
     build: ./server

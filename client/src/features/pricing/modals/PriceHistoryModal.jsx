@@ -80,7 +80,7 @@ export default function PriceHistoryModal() {
                     <span className="text-fg/65">→</span>
                     <span className={`text-lg font-black ${Number(h.newValue) > Number(h.oldValue) ? 'text-danger' : 'text-success'}`}>{money(h.newValue)}</span>
                   </div>
-                  {h.reason && <p className="text-fg/60 text-xs mt-1.5 italic">"{h.reason}"</p>}
+                  {h.reason && <p className="text-fg/65 text-xs mt-1.5 italic">"{h.reason}"</p>}
                   {/* A change made through the queue names both people: who
                       asked for it and who allowed it. One made directly by an
                       approver just names them. */}

@@ -18,16 +18,19 @@ const SEVERITY = {
 
 // How often to refresh while the tab is open. Deliberately slow - none of these
 // signals change second-to-second, and the POS tablet has better things to do.
-const POLL_MS = 120000;
 
 // `align` controls which way the dropdown opens. The default 'right' suits a
 // top bar (panel hangs left from the button); 'left' is for the desktop
 // sidebar, where a right-anchored panel would run off the left of the screen.
 export default function NotificationBell({ align = 'right', full = false }) {
-  const { apiFetch, setActiveTab, setLedgerSubTab } = useDashboard();
+  // The feed lives on the dashboard and is shared with the Inventory badge.
+  // The bell used to fetch its own copy every two minutes while the badge
+  // recounted instantly in the browser, so the two could show different
+  // numbers for the same stock. One feed, read in both places, cannot.
+  const { setActiveTab, setLedgerSubTab, setInvSubTab, notifData, notifLoading, loadNotifications } = useDashboard();
   const [open, setOpen] = useState(false);
-  const [data, setData] = useState({ items: [], count: 0, criticalCount: 0 });
-  const [loading, setLoading] = useState(false);
+  const data = notifData || { items: [], count: 0, criticalCount: 0 };
+  const loading = !!notifLoading;
   const panelRef = useRef(null);
   const btnRef = useRef(null);
   // Screen position for the panel. It is rendered through a portal (see below),
@@ -60,27 +63,8 @@ export default function NotificationBell({ align = 'right', full = false }) {
   // 401 handling clears auth state asynchronously - there's a window where
   // this component is still mounted and the interval is still armed. Once a
   // poll comes back 401, stop scheduling more instead of retrying blind.
-  const deadSessionRef = useRef(false);
-  const load = useCallback(async () => {
-    if (deadSessionRef.current) return;
-    setLoading(true);
-    try {
-      const res = await apiFetch('/api/notifications');
-      if (res.status === 401) { deadSessionRef.current = true; return; }
-      const d = await res.json();
-      if (d?.success) setData({ items: d.items || [], count: d.count || 0, criticalCount: d.criticalCount || 0 });
-    } catch {
-      // A failed poll is not worth a toast - the bell simply keeps its last
-      // known state and tries again on the next tick.
-    } finally { setLoading(false); }
-  }, [apiFetch]);
-
-  useEffect(() => {
-    deadSessionRef.current = false; // a fresh mount means a fresh (or renewed) session
-    load();
-    const t = setInterval(load, POLL_MS);
-    return () => clearInterval(t);
-  }, [load]);
+  // Refresh button: refetch the shared feed on demand.
+  const load = useCallback(() => { loadNotifications?.(); }, [loadNotifications]);
 
   // Close on outside click and on Esc.
   useEffect(() => {
@@ -97,7 +81,10 @@ export default function NotificationBell({ align = 'right', full = false }) {
 
   const go = (item) => {
     setOpen(false);
-    if (item.sub && setLedgerSubTab) setLedgerSubTab(item.sub);
+    // A page inside the tab: the Inventory tab's own sub-nav (below zero ->
+    // Stock control), otherwise the Ledger's.
+    if (item.sub && item.tab === 'inventory') setInvSubTab?.(item.sub);
+    else if (item.sub && setLedgerSubTab) setLedgerSubTab(item.sub);
     if (item.tab) setActiveTab(item.tab);
     // Let the target tab mount before asking the browser to scroll to the row.
     if (item.focusId) {
@@ -124,7 +111,7 @@ export default function NotificationBell({ align = 'right', full = false }) {
         aria-expanded={open}
         className={`relative flex items-center gap-1.5 px-2 py-2 rounded-xl font-bold text-xs border transition ${full ? 'w-full' : ''} ${
           data.criticalCount > 0
-            ? 'bg-red-500 text-white border-red-500 hover:bg-red-500/60'
+            ? 'bg-red-700 text-white border-red-700 hover:bg-red-500/60'
             : count > 0
               ? 'bg-amber-400 text-black border-amber-400 hover:bg-amber-300'
               : 'bg-white/5 text-fg/75 border-white/10 hover:bg-white/10 hover:text-fg'
@@ -173,7 +160,7 @@ export default function NotificationBell({ align = 'right', full = false }) {
             {count === 0 ? (
               <div className="px-4 py-10 text-center">
                 <p className="text-fg/70 text-sm font-bold">Nothing needs attention</p>
-                <p className="text-fg/60 text-xs mt-1">Stock, expiry, A/R and POs all look fine.</p>
+                <p className="text-fg/65 text-xs mt-1">Stock, expiry, A/R and POs all look fine.</p>
               </div>
             ) : (
               data.items.map((item) => {
@@ -191,7 +178,7 @@ export default function NotificationBell({ align = 'right', full = false }) {
                         <span className="block text-fg/70 text-xs mt-0.5 break-words">{item.detail}</span>
                       )}
                     </span>
-                    <span className="text-fg/60 group-hover:text-fg/75 text-xs font-black shrink-0 mt-0.5">›</span>
+                    <span className="text-fg/65 group-hover:text-fg/75 text-xs font-black shrink-0 mt-0.5">›</span>
                   </button>
                 );
               })

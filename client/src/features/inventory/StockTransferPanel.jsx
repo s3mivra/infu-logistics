@@ -1,6 +1,8 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
 import * as ui from '../../shared/ui';
 
+import { PACK_UNIT } from '../../shared/packUnit.js';
+import SearchSelect from '../../shared/ui/SearchSelect';
 // #8 - multi-location stock transfers. Request a move between two inventory items
 // (each tagged to a location), route it through approve → release, and see on-hand
 // value grouped by location. Quantity is entered in the source item's base unit.
@@ -16,7 +18,7 @@ import * as ui from '../../shared/ui';
 // doesn't fit this panel's one-line request form.
 export default function StockTransferPanel({
   inventory = [], stockTransfers = [], locationAnalytics = [],
-  requestStockTransfer, actOnStockTransfer, isSuperAdmin, peso, apiFetch,
+  requestStockTransfer, actOnStockTransfer, isSuperAdmin, canApprove, peso, apiFetch,
   exportStockTransfersPDF, itemDisplay,
 }) {
   const [fromItemId, setFromItemId] = useState('');
@@ -38,8 +40,12 @@ export default function StockTransferPanel({
   // nothing changes. Guarded so an item with no descriptors can never produce
   // a 0 or NaN factor and silently transfer nothing.
   const disp = fromItem && itemDisplay ? itemDisplay(fromItem) : null;
-  const perPiece = Number(disp?.isPacked ? disp.packBase : 1) || 1;
-  const pieceLabel = disp?.isPacked ? 'pcs' : (disp?.unit || fromItem?.unit || 'units');
+  // One counted unit, in base units - the same factor the Hub counts with.
+  // It used to be 1 for anything not counted in packs, which is right for
+  // pieces and wrong for weight and volume: an item kept in grams and shown
+  // in kg took "transfer 2" as two GRAMS.
+  const perPiece = Number(disp?.packBase) || 1;
+  const pieceLabel = disp?.isPacked ? PACK_UNIT : (disp?.unit || fromItem?.unit || 'units');
   const qtyPieces = parseFloat(qty);
   const qtyInBase = Number.isFinite(qtyPieces) ? +(qtyPieces * perPiece).toFixed(6) : 0;
   // What is actually on hand, in the same unit the user is typing in.
@@ -125,8 +131,8 @@ export default function StockTransferPanel({
   const showQty = (t, itemId) => {
     const it = inventory.find(i => String(i._id) === String(itemId ?? t.fromItemId ?? t.itemId));
     const d = it && itemDisplay ? itemDisplay(it) : null;
-    if (!d?.isPacked || !d.packBase) return `${t.qtyBase} ${t.unit || it?.unit || ''}`.trim();
-    return `${+(t.qtyBase / d.packBase).toFixed(2)} pcs`;
+    if (!d?.packBase) return `${t.qtyBase} ${t.unit || it?.unit || ''}`.trim();
+    return `${+(t.qtyBase / d.packBase).toFixed(3)} ${d.isPacked ? PACK_UNIT : d.unit}`;
   };
 
   return (
@@ -158,16 +164,17 @@ export default function StockTransferPanel({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
           <div>
             <label className="text-[10px] text-white uppercase font-bold block mb-1">From (source)</label>
-            <select value={fromItemId} onChange={e => setFromItemId(e.target.value)} className={input}>
-              <option value="">- Select item -</option>
-              {inventory.map(i => {
-                // Show on-hand in the same unit the quantity box accepts, so
-                // "120 pcs available" and "transfer 5 pcs" agree.
+            <SearchSelect value={fromItemId} onChange={e => setFromItemId(e.target.value)} className={input}
+              placeholder="Type to find the item"
+              options={inventory.map(i => {
+                // On-hand in the same unit the quantity box accepts, so
+                // "120 pcs available" and "transfer 5 pcs" agree. Stock is kept
+                // in grams and millilitres; printing it raw beside a "kg" label
+                // read 2,000 g as "2000 kg".
                 const d = itemDisplay ? itemDisplay(i) : null;
-                const onHand = d?.isPacked ? `${+d.packQty.toFixed(2)} pcs` : `${i.stockQty} ${d?.unit || i.unit}`;
-                return <option key={i._id} value={i._id}>{label(i)} ({onHand})</option>;
-              })}
-            </select>
+                const onHand = d ? `${+d.packQty.toFixed(3)} ${d.isPacked ? PACK_UNIT : d.unit}` : `${i.stockQty} ${i.unit}`;
+                return { value: i._id, label: label(i), hint: onHand };
+              })} />
             {fromBatches.length > 0 && (
               <div className="mt-1.5">
                 <label className="text-[10px] text-white uppercase font-bold block mb-1">Batch / Expiry</label>
@@ -187,19 +194,14 @@ export default function StockTransferPanel({
           </div>
           <div>
             <label className="text-[10px] text-white uppercase font-bold block mb-1">To (destination)</label>
-            <select value={toValue} onChange={e => setToValue(e.target.value)} className={input}>
-              <option value="">- Select item -</option>
-              <optgroup label="My Locations">
-                {inventory.filter(i => i._id !== fromItemId).map(i => <option key={i._id} value={i._id}>{label(i)}</option>)}
-              </optgroup>
-              {hubLinks.length > 0 && (
-                <optgroup label="Hub Partners">
-                  {hubLinks.map(l => <option key={l.partnerSlug} value={`hub:${l.partnerSlug}`}>{l.partnerName || l.partnerSlug} (connected business)</option>)}
-                </optgroup>
-              )}
-            </select>
+            <SearchSelect value={toValue} onChange={e => setToValue(e.target.value)} className={input}
+              placeholder="Type to find the destination"
+              options={[
+                ...inventory.filter(i => i._id !== fromItemId).map(i => ({ value: i._id, label: label(i), group: 'My Locations' })),
+                ...hubLinks.map(l => ({ value: `hub:${l.partnerSlug}`, label: `${l.partnerName || l.partnerSlug}`, hint: 'connected business', group: 'Hub Partners' })),
+              ]} />
             {isHubTarget && (
-              <p className="text-[10px] text-accent/70 mt-1">
+              <p className="text-[10px] text-brand-text mt-1">
                 Ships {fromItem ? fromItem.itemName : 'this item'} OUT of your inventory to {hubLinks.find(l => `hub:${l.partnerSlug}` === toValue)?.partnerName || 'this partner'} - they must accept it on their end before it's released from yours.
               </p>
             )}
@@ -275,7 +277,7 @@ export default function StockTransferPanel({
                     <td className="py-2 pl-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${statusColor[t.status] || 'bg-white/10 text-white/50'}`}>{t.status}</span></td>
                     <td className="py-2 text-right">
                       <div className="flex gap-1.5 justify-end">
-                        {t.status === 'Requested' && isSuperAdmin && (
+                        {t.status === 'Requested' && (canApprove ?? isSuperAdmin) && (
                           <button onClick={() => actOnStockTransfer(t._id, 'approve')} className="text-[10px] font-bold uppercase px-2.5 py-1.5 rounded bg-blue-500/15 text-info hover:bg-blue-500/25 min-h-[32px]">Approve</button>
                         )}
                         {t.status === 'Approved' && (

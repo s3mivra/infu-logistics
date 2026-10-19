@@ -4,7 +4,8 @@ FROM node:20-alpine
 # the mounted socket. openssl generates each tenant's JWT secret. git is used by
 # the "Update all apps" flow to pull the latest code before rebuilding (skipped
 # gracefully when STACK_ROOT isn't a git checkout, e.g. local rehearsal).
-RUN apk add --no-cache docker-cli docker-cli-compose openssl curl git
+# bash runs platform/restore-drill.sh for the panel's monthly restore drill.
+RUN apk add --no-cache docker-cli docker-cli-compose openssl curl git bash
 
 WORKDIR /app
 COPY package*.json ./

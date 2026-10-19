@@ -1,0 +1,639 @@
+// Moving onto the system with books already kept elsewhere.
+//
+// The setup workbook carries a business's existing accounts in, in five sheets:
+//
+//   Chart of Accounts   their own account codes and names, each placed under
+//                       one of ours, so their sheets can keep using their codes
+//   P&L History         this year's income statement, month by month, so the
+//                       monthly reports start with real figures
+//   Opening Balances    the balance sheet on the day they switch over
+//   Open Receivables    each customer invoice still unpaid on that day
+//   Open Payables       each supplier bill still unpaid on that day
+//
+// The balance sheet is the only thing that posts balances. The open invoices
+// and bills are the detail BEHIND the Accounts Receivable and Payable figures
+// on it - they are registered so they can be collected and paid, but they do
+// not post again, or those balances would double. Books Health then compares
+// each register with its account.
+//
+// How the P&L and the balance sheet meet: each P&L month posts its accounts
+// against Owner's Capital. The balance sheet, carried in without its "net
+// income" line (the P&L months now produce that figure), is short by exactly
+// the year's profit, and that shortfall is plugged back to Owner's Capital.
+// When the two statements agree, Owner's Capital nets to nothing - so what is
+// left there is the difference between them, and the response says how much.
+import { linkImportedBill } from '../lib/billPoLink.js';
+import { sheetDay, SHEET_DATE_HELP } from '../lib/sheetDate.js';
+import { businessDateStr } from '../lib/businessTime.js';
+import { atomic } from '../lib/atomicRoute.js';
+import { captureError } from '../lib/errorLog.js';
+import { dayStart, dayEnd } from '../lib/reportRange.js';
+import {
+  parseAmount, isPnlType, buildOpeningEntry, buildPnlMonthEntry, monthEnd, readMonths,
+} from '../lib/setupBooks.js';
+import { OPENING_AR_STATUS } from '../lib/credit.js';
+import { OPEN_DEPOSIT_KINDS, openDepositKind } from '../lib/dataSets.js';
+
+const OPEN_DEPOSIT_REFS_KEY = 'openDepositRefs';   // Settings: rows already carried in
+
+const PAYMENT_PARENTS = new Set(['111000', '112000', '113000', '115000', '120000', '220000']);
+// Accounts the system itself posts through: sales on account and collections
+// (120000), stock (130000), supplier bills (220000). A balance carried into a
+// sub-account of one of these would never move - a collection credits 120000,
+// not the sub-account - so an old account mapped here IS the control account.
+const CONTROL_CODES = new Set(['120000', '130000', '220000']);
+const ALIAS_KEY = 'accountAliases';        // Settings: [{ from: their code, to: our code }]
+const EARNINGS_CODE = '340000';            // Current Year Earnings
+const MAX_ROWS = 2000;
+
+export default function registerSetupImport(ctx) {
+  const {
+    app, mongoose, IS_PROD, BUSINESS_TYPE, tenantScope, logAudit, emitToMgr, emitToAll,
+    ACCOUNTS, Account, JournalEntry, Order, Bill, Supplier, ClientAccount, Settings,
+    acctMeta, refreshCustomMeta, normalBalanceForCode, assertBalanced, mkSeqRef, periodLockFor,
+    verifyToken, requireStaff, requirePermission,
+    Advance, ADVANCE_ACCOUNTS, currentBranchCode,
+  } = ctx;
+
+  const canPost = [requireStaff, requirePermission('accounting.manage')];
+  const fail = (req, res, err) => (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  const text = (v) => String(v ?? '').trim();
+  const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const rowsOf = (req, res) => {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    if (!rows.length) { res.status(400).json({ success: false, error: 'No rows to import.' }); return null; }
+    if (rows.length > MAX_ROWS) { res.status(400).json({ success: false, error: `Too many rows (${rows.length}) - at most ${MAX_ROWS} at a time.` }); return null; }
+    return rows;
+  };
+  const closed = async (date) => {
+    const lock = await periodLockFor(date);
+    return lock ? `${lock.year}-${String(lock.month).padStart(2, '0')} is a closed period. Reopen it first.` : null;
+  };
+  // A date cell -> the start of that day, null when blank, undefined when it
+  // is not a date. Read the same way by every importer (lib/sheetDate.js).
+  const dateOf = (v) => {
+    const day = sheetDay(v);
+    if (day === '') return null;
+    if (day === null) return undefined;
+    const d = day.length === 10 ? dayStart(day) : new Date(day);
+    return Number.isNaN(d.getTime()) ? undefined : d;
+  };
+
+  // Their code, or ours -> our code. Theirs are matched without regard to case
+  // or surrounding spaces, the way a person retyping one would expect.
+  const loadAliases = async () => (await Settings.findOne({ key: ALIAS_KEY }).lean())?.value || [];
+  const codeResolver = async () => {
+    const external = await Account.find({ externalCode: { $ne: null } }, { code: 1, externalCode: 1 }).lean();
+    const byExternal = new Map(external.map(a => [String(a.externalCode).trim().toLowerCase(), a.code]));
+    for (const a of await loadAliases()) byExternal.set(String(a.from).trim().toLowerCase(), a.to);
+    return (raw) => {
+      const c = text(raw);
+      if (!c) return null;
+      if (acctMeta(c)) return c;
+      return byExternal.get(c.toLowerCase()) || null;
+    };
+  };
+  const rollsUpTo = (code, target) => {
+    for (let c = code, guard = 0; c && guard < 10; guard++) {
+      if (c === target) return true;
+      c = acctMeta(c)?.parent;
+    }
+    return false;
+  };
+
+  // ── CHART OF ACCOUNTS ──────────────────────────────────────────────────────
+  // Each of their accounts becomes a sub-account of ours, named as they name it
+  // and remembering their code. Re-importing the same sheet is harmless: an
+  // account already carried in is left as it is.
+  app.post('/api/setup/accounts/import', verifyToken, ...canPost, async (req, res) => {
+    try {
+      const rows = rowsOf(req, res); if (!rows) return;
+      const canonicalByName = new Map(Object.entries(ACCOUNTS).map(([code, a]) => [a.name.toLowerCase(), code]));
+      const existing = await Account.find({ externalCode: { $ne: null } }).lean();
+      const byExternal = new Map(existing.map(a => [String(a.externalCode).trim().toLowerCase(), a]));
+      const aliases = await loadAliases();
+      const aliasOf = new Map(aliases.map(a => [String(a.from).trim().toLowerCase(), a.to]));
+      const forcedSame = [];
+      const taken = new Set([...Object.keys(ACCOUNTS), ...(await Account.find({}, { code: 1 }).lean()).map(a => a.code)]);
+      const nextFree = (parent) => {
+        const base = String(parent).slice(0, 3);
+        for (let i = 1; i <= 999; i++) {
+          const cand = base + String(i).padStart(3, '0');
+          if (!taken.has(cand)) return cand;
+        }
+        return null;
+      };
+
+      const created = [], kept = [], skipped = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i] || {};
+        try {
+          const yourCode = text(r.code);
+          const name = text(r.name);
+          const under = text(r.goesUnder);
+          if (!yourCode) throw new Error('Your account code is required.');
+          if (!name) throw new Error('The account name is required.');
+          if (acctMeta(yourCode)) throw new Error(`${yourCode} is already one of the system's own codes - use it directly, no row needed.`);
+          const parent = ACCOUNTS[under] ? under : canonicalByName.get(under.toLowerCase());
+          if (!parent) throw new Error(`"${under || '(blank)'}" is not one of the system's accounts. Give its code or name from the Accounts sheet.`);
+          const already = byExternal.get(yourCode.toLowerCase()) || (aliasOf.has(yourCode.toLowerCase()) && { code: aliasOf.get(yourCode.toLowerCase()) });
+          if (already) { kept.push({ row: i + 1, yourCode, code: already.code }); continue; }
+
+          // "No" to keeping it separate: their code simply names our account.
+          const wantsSeparate = !/^(no|n|false|0|same)$/i.test(text(r.keepSeparate));
+          if (!wantsSeparate || CONTROL_CODES.has(parent)) {
+            if (ACCOUNTS[parent].isParent) throw new Error(`${ACCOUNTS[parent].name} is a heading, not an account - it can only hold sub-accounts. Set keepSeparate to Yes, or pick an account under it.`);
+            if (wantsSeparate) forcedSame.push(`${yourCode} → ${parent} ${ACCOUNTS[parent].name}`);
+            aliases.push({ from: yourCode, to: parent });
+            aliasOf.set(yourCode.toLowerCase(), parent);
+            created.push({ row: i + 1, yourCode, code: parent, name: ACCOUNTS[parent].name, parent, parentName: ACCOUNTS[parent].name, same: true });
+            continue;
+          }
+          let code = nextFree(parent);
+          if (!code) throw new Error(`No free code left under ${parent}.`);
+          let acct;
+          // The startup seeding (payment-method sub-accounts) can take a code
+          // between choosing it and creating it: re-read what is taken, choose
+          // again, rather than lose the row to a duplicate-key error.
+          for (let attempt = 1; ; attempt++) {
+            try {
+              acct = await Account.create({
+                code, name, type: ACCOUNTS[parent].type, parent, custom: true,
+                normalBalance: normalBalanceForCode(code), externalCode: yourCode,
+                // Under cash, bank, receivable or payable an account would otherwise
+                // appear as a way to pay at the till. A bank account carried in from
+                // the old books is not a tender until someone decides it is.
+                isActive: !PAYMENT_PARENTS.has(parent),
+              });
+              break;
+            } catch (err) {
+              if (!(err?.code === 11000 && (err?.keyPattern?.code || /code_1/.test(String(err?.message)))) || attempt >= 5) throw err;
+              taken.add(code);
+              for (const a of await Account.find({}, { code: 1 }).lean()) taken.add(a.code);
+              code = nextFree(parent);
+              if (!code) throw err;
+            }
+          }
+          taken.add(code);
+          byExternal.set(yourCode.toLowerCase(), acct);
+          created.push({ row: i + 1, yourCode, code, name, parent, parentName: ACCOUNTS[parent].name });
+        } catch (e) {
+          skipped.push({ row: i + 1, error: e.message });
+        }
+      }
+      await Settings.findOneAndUpdate({ key: ALIAS_KEY }, { key: ALIAS_KEY, value: aliases }, { upsert: true });
+      await refreshCustomMeta();
+      emitToAll('paymentMethodsUpdated');
+      await logAudit(req, { action: 'import', entity: 'Account', entityId: 'setup', after: { created: created.length, kept: kept.length, skipped: skipped.length } });
+      const notes = [];
+      if (kept.length) notes.push(`${kept.length} account(s) were already carried in and left as they are.`);
+      if (forcedSame.length) notes.push(`Posted straight to the system's own account, because the system's sales, collections, stock and bills run through it: ${forcedSame.join('; ')}.`);
+      res.json({ success: true, created: created.length, accounts: created, skipped, note: notes.join(' ') });
+    } catch (err) { fail(req, res, err); }
+  });
+
+  // ── P&L HISTORY ────────────────────────────────────────────────────────────
+  // One entry per month, dated its last day. All or nothing: a sheet with one
+  // unknown account posts no month at all, so a fixed sheet can simply be
+  // imported again.
+  app.post('/api/setup/pnl-history/import', verifyToken, ...canPost, async (req, res) => {
+    try {
+      const rows = rowsOf(req, res); if (!rows) return;
+      const resolve = await codeResolver();
+      const problems = [];
+      const byMonth = new Map();           // 'YYYY-MM' -> Map(code -> amount)
+      rows.forEach((r, i) => {
+        const raw = text(r.code);
+        const { months, bad } = readMonths(r);
+        if (!raw && !Object.keys(months).length) return;       // an empty or heading row
+        const code = resolve(raw);
+        const meta = code && acctMeta(code);
+        if (!meta) { problems.push(`Row ${i + 1}: "${raw || '(no code)'}" is not an account - add it to the Chart of Accounts sheet.`); return; }
+        if (!isPnlType(meta.type)) { problems.push(`Row ${i + 1}: ${raw} ${meta.name} is a ${meta.type} account - it belongs on the Opening Balances sheet.`); return; }
+        bad.forEach(b => problems.push(`Row ${i + 1}: ${b} is not an amount.`));
+        // Every line goes in as the positive figure the statement shows. An
+        // income line printed in brackets under expenses - "Misc. non-operating
+        // income (200,752)" - copied as a negative was posted as a loss: net
+        // income came out short by twice the amount, with nothing to say why.
+        const negative = Object.entries(months).filter(([, amount]) => amount < 0);
+        if (negative.length) {
+          problems.push(`Row ${i + 1}: ${raw} ${meta.name} has negative amounts (${negative.map(([m, a]) => `month ${m}: ${a}`).join(', ')}). Enter every amount as a positive number - an income line shown in brackets on the statement is still entered positive, on its income account.`);
+          return;
+        }
+        const year = parseInt(text(r.year), 10);
+        if (!(year >= 1990 && year <= 2100)) { problems.push(`Row ${i + 1}: give the year the figures are for (e.g. 2026).`); return; }
+        for (const [m, amount] of Object.entries(months)) {
+          const ym = `${year}-${String(m).padStart(2, '0')}`;
+          if (!byMonth.has(ym)) byMonth.set(ym, new Map());
+          const acc = byMonth.get(ym);
+          acc.set(code, r2((acc.get(code) || 0) + amount));
+        }
+      });
+      if (problems.length) return res.status(400).json({ success: false, error: `Nothing was posted. ${problems.length} problem(s) to fix first.`, problems: problems.slice(0, 50) });
+      if (!byMonth.size) return res.status(400).json({ success: false, error: 'Every amount was blank or zero - nothing to carry in.' });
+
+      const months = [...byMonth.keys()].sort();
+      const force = req.body?.force === true;
+      for (const ym of months) {
+        const [y, m] = ym.split('-').map(Number);
+        const lock = await closed(dayEnd(monthEnd(y, m)));
+        if (lock) return res.status(423).json({ success: false, error: `Nothing was posted. ${lock}` });
+        const posted = await JournalEntry.exists({ reference: /^PNLH-/, description: new RegExp(`^P&L history ${ym}\\b`) });
+        if (posted && !force) {
+          return res.status(409).json({ success: false, error: `Nothing was posted. The P&L for ${ym} was already carried in - importing it again would double that month.`, alreadyPosted: ym });
+        }
+      }
+
+      const result = [];
+      const session = await mongoose.startSession();
+      try {
+        await session.withTransaction(async () => {
+          result.length = 0;
+          for (const ym of months) {
+            const [y, m] = ym.split('-').map(Number);
+            const entry = buildPnlMonthEntry([...byMonth.get(ym)].map(([accountCode, amount]) => ({ accountCode, amount })), acctMeta);
+            if (!entry) continue;
+            const reference = await mkSeqRef('PNLH');
+            assertBalanced(entry.jeLines, reference);
+            await JournalEntry.create([{
+              date: dayEnd(monthEnd(y, m)), reference,
+              description: `P&L history ${ym} - carried in from the previous books`,
+              lines: entry.jeLines, totalDebit: entry.totalDebit, totalCredit: entry.totalCredit,
+            }], { session });
+            result.push({ month: ym, reference, netRevenue: entry.revenue, expenses: entry.expenses, netIncome: entry.netIncome });
+          }
+        });
+      } finally { session.endSession(); }
+
+      const netIncome = r2(result.reduce((s, x) => s + x.netIncome, 0));
+      await logAudit(req, { action: 'import', entity: 'JournalEntry', entityId: 'pnl-history', after: { months: result.length, netIncome } });
+      emitToMgr('erpUpdated');
+      res.json({
+        success: true, created: result.length, months: result, netIncome,
+        note: `${result.length} month(s) posted. Net income carried in: ₱${netIncome.toLocaleString('en-PH', { minimumFractionDigits: 2 })}.`,
+      });
+    } catch (err) { fail(req, res, err); }
+  });
+
+  // ── OPENING BALANCES ───────────────────────────────────────────────────────
+  // The balance sheet on the switch-over day, as one entry. With the P&L
+  // history carried in too (`pnlHistory: true`), a "net income" line - any
+  // account under Current Year Earnings - is left out, because the P&L months
+  // already produce it; the response compares the two.
+  app.post('/api/setup/opening-balances/import', verifyToken, ...canPost, atomic(mongoose, async (req, res) => {
+    try {
+      const rows = rowsOf(req, res); if (!rows) return;
+      const resolve = await codeResolver();
+      const problems = [];
+      const lines = [];
+      let asOf = null, earningsLeftOut = 0;
+      rows.forEach((r, i) => {
+        const raw = text(r.code);
+        const amount = parseAmount(r.balance);
+        if (!raw && !amount) return;
+        if (Number.isNaN(amount)) { problems.push(`Row ${i + 1}: "${r.balance}" is not an amount.`); return; }
+        if (!amount) return;
+        const code = resolve(raw);
+        if (!code) { problems.push(`Row ${i + 1}: "${raw || '(no code)'}" is not an account - add it to the Chart of Accounts sheet.`); return; }
+        const d = dateOf(r.asOf);
+        if (d === undefined) { problems.push(`Row ${i + 1}: "${r.asOf}" is not a date. ${SHEET_DATE_HELP}`); return; }
+        if (d) {
+          if (asOf && asOf.getTime() !== d.getTime()) { problems.push(`Row ${i + 1}: every row must be as of the same date.`); return; }
+          asOf = d;
+        }
+        if (req.body?.pnlHistory === true && rollsUpTo(code, EARNINGS_CODE)) { earningsLeftOut = r2(earningsLeftOut + amount); return; }
+        lines.push({ accountCode: code, amount });
+      });
+      if (problems.length) return res.status(400).json({ success: false, error: `Nothing was posted. ${problems.length} problem(s) to fix first.`, problems: problems.slice(0, 50) });
+      if (!asOf) return res.status(400).json({ success: false, error: 'Nothing was posted. Give the date these balances are as of (the As Of column) - usually the last day before you switch over.' });
+
+      const built = buildOpeningEntry(lines, acctMeta);
+      if (built.error) return res.status(400).json({ success: false, error: `Nothing was posted. ${built.error}` });
+      const existing = await JournalEntry.findOne({ reference: /^OPEN-/ }).lean();
+      if (existing && req.body?.force !== true) {
+        return res.status(409).json({ success: false, error: `Nothing was posted. Opening balances were already carried in (${existing.reference}) - importing them again would double every balance.` });
+      }
+      const lock = await closed(dayEnd(businessDateStr(asOf)));
+      if (lock) return res.status(423).json({ success: false, error: `Nothing was posted. ${lock}` });
+
+      const reference = await mkSeqRef('OPEN');
+      assertBalanced(built.jeLines, reference);
+      await JournalEntry.create({
+        date: asOf, reference,
+        description: 'Opening balances - carried in from the previous books (setup workbook)',
+        lines: built.jeLines, totalDebit: built.totalDebit, totalCredit: built.totalCredit,
+      });
+      await logAudit(req, { action: 'create', entity: 'JournalEntry', entityId: reference, after: { openingBalance: true, lines: built.jeLines.length, plug: built.plug } });
+      emitToMgr('erpUpdated');
+      res.json({
+        success: true, created: built.jeLines.length, reference,
+        asOf: businessDateStr(asOf),
+        // The balance sheet's own view of the year's profit, and what was
+        // plugged to make the entry balance. With P&L history these two should
+        // be the same number; the client says so, or says by how much not.
+        earningsOnBalanceSheet: earningsLeftOut,
+        balancingToCapital: built.plug,
+        // The control balances the open-item sheets must add up to.
+        controls: Object.fromEntries([
+          ['receivables', '120000', 'debit'], ['payables', '220000', 'credit'], ['inventory', '130000', 'debit'],
+          // What the Open Deposits & Advances sheet must add up to, kind by kind.
+          ...OPEN_DEPOSIT_KINDS.map(k => [k.key, k.account, k.side]),
+        ].map(([k, code, side]) => {
+          const l = built.jeLines.find(x => x.accountCode === code);
+          return [k, l ? r2(side === 'credit' ? l.credit - l.debit : l.debit - l.credit) : 0];
+        })),
+      });
+    } catch (err) { fail(req, res, err); }
+  }));
+
+  // ── OPEN RECEIVABLES ───────────────────────────────────────────────────────
+  // Each unpaid customer invoice becomes a receivable that AR & AP lists, ages
+  // and collects - with no posting, since Accounts Receivable on the opening
+  // balance sheet already holds it. Kept apart from sales by its status.
+  app.post('/api/setup/open-receivables/import', verifyToken, ...canPost, async (req, res) => {
+    try {
+      const rows = rowsOf(req, res); if (!rows) return;
+      const clients = await ClientAccount.find(tenantScope(req), { name: 1 }).lean();
+      const clientByName = new Map(clients.map(c => [String(c.name || '').trim().toLowerCase(), c]));
+      const created = [], skipped = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i] || {};
+        try {
+          const customer = text(r.customer);
+          const invoiceNo = text(r.invoiceNo);
+          const amount = r2(parseAmount(r.amountOwed));
+          if (!customer) throw new Error('Customer is required.');
+          if (!invoiceNo) throw new Error('The invoice number is required - it is how the payment will be matched to it.');
+          if (!(amount > 0)) throw new Error('Amount still owed must be more than zero.');
+          const invoiceDate = dateOf(r.invoiceDate);
+          if (invoiceDate === undefined) throw new Error(`"${r.invoiceDate}" is not a date. ${SHEET_DATE_HELP}`);
+          if (!invoiceDate) throw new Error('Invoice date is required (YYYY-MM-DD) - it is what ages the debt.');
+          const dueDate = dateOf(r.dueDate);
+          if (dueDate === undefined) throw new Error(`"${r.dueDate}" is not a date. ${SHEET_DATE_HELP}`);
+          if (await Order.exists({ orderNumber: invoiceNo })) throw new Error(`${invoiceNo} is already in the system - it was carried in before, or an order has that number.`);
+          const client = clientByName.get(customer.toLowerCase());
+          await Order.create({
+            businessType: BUSINESS_TYPE, ...tenantScope(req),
+            orderNumber: invoiceNo, table: 'Opening balance', customerName: client?.name || customer,
+            ...(client ? { clientAccountId: String(client._id) } : {}),
+            items: [], subtotal: amount, total: amount,
+            status: OPENING_AR_STATUS, paymentMethod: 'Credit',
+            isArchived: true, arSettled: false, arDueDate: dueDate || null,
+            cashier: req.user?.name || 'Setup import',
+            createdAt: invoiceDate,
+          });
+          created.push({ row: i + 1, invoiceNo, customer: client?.name || customer, amount, matchedClient: !!client });
+        } catch (e) {
+          skipped.push({ row: i + 1, error: e.message });
+        }
+      }
+      const total = r2(created.reduce((s, x) => s + x.amount, 0));
+      await logAudit(req, { action: 'import', entity: 'Order', entityId: 'open-receivables', after: { created: created.length, skipped: skipped.length, total } });
+      emitToMgr('erpUpdated');
+      const unmatched = created.filter(x => !x.matchedClient).length;
+      res.json({
+        success: true, created: created.length, receivables: created, skipped, total,
+        note: `₱${total.toLocaleString('en-PH', { minimumFractionDigits: 2 })} owed by customers, ready to collect in AR & AP. Nothing posted - the opening Accounts Receivable already holds it.`
+          + (unmatched ? ` ${unmatched} invoice(s) are for a name with no client account.` : ''),
+      });
+    } catch (err) { fail(req, res, err); }
+  });
+
+  // ── OPEN DEPOSITS & ADVANCES ───────────────────────────────────────────────
+  // Money paid ahead and still unused on switch-over day. The opening balance
+  // sheet already carries each TOTAL (Customer Deposits, Advances to
+  // Suppliers, ...); without the detail behind it there was nothing to apply
+  // to a customer's next order or a supplier's next bill, and Books Health
+  // showed every one of those accounts as unexplained. Each row is registered
+  // where the app keeps that kind - the Advances screen, or the client's /
+  // supplier's credit balance - with NO posting, like open invoices and bills.
+  //
+  // One transaction: a row that fails validation is skipped, but a server
+  // error rolls the whole sheet back rather than leaving half of it in.
+  // Each row's (kind, name, reference) is remembered, so carrying the same
+  // sheet in twice cannot double a credit balance.
+  app.post('/api/setup/open-deposits/import', verifyToken, ...canPost, atomic(mongoose, async (req, res) => {
+    try {
+      const rows = rowsOf(req, res); if (!rows) return;
+      const [clients, suppliers, doneRow] = await Promise.all([
+        ClientAccount.find(tenantScope(req), { name: 1 }).lean(),
+        Supplier.find(tenantScope(req), { name: 1 }).lean(),
+        Settings.findOne({ key: OPEN_DEPOSIT_REFS_KEY }).lean(),
+      ]);
+      const clientByName = new Map(clients.map(c => [String(c.name || '').trim().toLowerCase(), c]));
+      const supplierByName = new Map(suppliers.map(s => [String(s.name || '').trim().toLowerCase(), s]));
+      const done = new Set(Array.isArray(doneRow?.value) ? doneRow.value : []);
+      const branchCode = await currentBranchCode();
+      const created = [], skipped = [], newKeys = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i] || {};
+        try {
+          const kind = openDepositKind(r.kind);
+          if (!kind) throw new Error(`"${text(r.kind) || '(blank)'}" is not a kind - use one of: ${OPEN_DEPOSIT_KINDS.map(k => k.label).join(', ')}.`);
+          const name = text(r.name);
+          if (!name) throw new Error('Name is required.');
+          const reference = text(r.reference);
+          if (!reference) throw new Error('A reference (receipt, OR or voucher number) is required - it is what stops the row being carried in twice.');
+          const amount = r2(parseAmount(r.amountRemaining));
+          if (!(amount > 0)) throw new Error('Amount remaining must be more than zero.');
+          if (amount > 999_999_999.99) throw new Error('Amount remaining is too large.');
+          const date = dateOf(r.date);
+          if (date === undefined) throw new Error(`"${r.date}" is not a date. ${SHEET_DATE_HELP}`);
+          const key = `${kind.key}|${name.toLowerCase()}|${reference.toLowerCase()}`;
+          if (done.has(key)) throw new Error(`${kind.label} ${reference} for ${name} was already carried in.`);
+
+          const client = clientByName.get(name.toLowerCase());
+          const supplier = supplierByName.get(name.toLowerCase());
+          const note = text(r.note);
+          let registeredAs = '';
+          if (kind.key === 'customerCredit') {
+            if (!client) throw new Error(`No client account named "${name}" - a credit balance lives on the client, so add them on the Clients sheet first.`);
+            await ClientAccount.updateOne({ _id: client._id }, { $inc: { creditBalance: amount } });
+            registeredAs = `credit balance of ${client.name}`;
+          } else if (kind.key === 'supplierCredit') {
+            if (!supplier) throw new Error(`No supplier named "${name}" - add them on the Suppliers sheet first.`);
+            await Supplier.updateOne({ _id: supplier._id }, { $inc: { creditBalance: amount } });
+            registeredAs = `credit balance with ${supplier.name}`;
+          } else {
+            const type = { customerDeposit: 'customer', supplierAdvance: 'supplier', employeeAdvance: 'employee' }[kind.key];
+            if (type === 'supplier' && !supplier) throw new Error(`No supplier named "${name}" - add them on the Suppliers sheet first.`);
+            const ctl = ADVANCE_ACCOUNTS[type];
+            const advanceNumber = await mkSeqRef('ADV');
+            await Advance.create({
+              businessType: BUSINESS_TYPE, ...tenantScope(req), branchCode,
+              advanceNumber, type,
+              payeeName: type === 'customer' && client ? client.name : (type === 'supplier' ? supplier.name : name),
+              payeeId: type === 'supplier' ? String(supplier._id) : '',
+              clientId: type === 'customer' && client ? String(client._id) : '',
+              amount, purpose: note || 'Carried in at switch-over',
+              account: ctl.code, sourceAccount: '', sourceAccountName: 'Opening balance',
+              referenceNumber: reference, journalEntryRef: '',
+              issuedBy: req.user?.name || 'Setup import',
+              date: date || new Date(),
+            });
+            registeredAs = advanceNumber;
+          }
+          done.add(key); newKeys.push(key);
+          created.push({
+            row: i + 1, kind: kind.key, kindLabel: kind.label, name, reference, amount, registeredAs,
+            matched: kind.key === 'customerDeposit' ? !!client : true,
+          });
+        } catch (e) {
+          skipped.push({ row: i + 1, error: e.message });
+        }
+      }
+      if (newKeys.length) {
+        await Settings.findOneAndUpdate({ key: OPEN_DEPOSIT_REFS_KEY }, { $push: { value: { $each: newKeys } } }, { upsert: true });
+      }
+      const totals = Object.fromEntries(OPEN_DEPOSIT_KINDS.map(k => [k.key, r2(created.filter(c => c.kind === k.key).reduce((s, c) => s + c.amount, 0))]));
+      const total = r2(created.reduce((s, x) => s + x.amount, 0));
+      await logAudit(req, { action: 'import', entity: 'Advance', entityId: 'open-deposits', after: { created: created.length, skipped: skipped.length, totals } });
+      emitToMgr('erpUpdated');
+      const walkIns = created.filter(c => !c.matched).length;
+      const peso = (n) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+      res.json({
+        success: true, created: created.length, deposits: created, skipped, total, totals,
+        note: (OPEN_DEPOSIT_KINDS.filter(k => totals[k.key] > 0).map(k => `${k.label}s ${peso(totals[k.key])}`).join(' · ') || 'Nothing carried in')
+          + '. Nothing posted - the opening balance already holds them.'
+          + (walkIns ? ` ${walkIns} customer deposit(s) are for a name with no client account and were kept as walk-in deposits.` : ''),
+      });
+    } catch (err) { fail(req, res, err); }
+  }));
+
+  // ── OPEN PAYABLES ──────────────────────────────────────────────────────────
+  // Each unpaid supplier bill, Approved and ready to pay - with no posting,
+  // since Accounts Payable on the opening balance sheet already holds it.
+  // ── PURCHASE ORDERS ALREADY PLACED ───────────────────────────────────────────
+  // One row per item; rows sharing a poNumber are one order. Registered as open
+  // orders - no entry, no stock - so the payables and bills that follow can
+  // name them, and the ones still to be delivered can be received as usual.
+  app.post('/api/setup/purchase-orders/import', verifyToken, ...canPost, requirePermission('procurement.manage'), async (req, res) => {
+    try {
+      const rows = rowsOf(req, res); if (!rows) return;
+      const PurchaseOrder = mongoose.model('PurchaseOrder');
+      const [suppliers, inventory] = await Promise.all([
+        Supplier.find(tenantScope(req), { name: 1 }).lean(),
+        mongoose.model('Inventory').find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }, { itemName: 1, itemCode: 1, unit: 1, displayUnit: 1, packSize: 1 }).lean(),
+      ]);
+      const supByName = new Map(suppliers.map(s => [String(s.name || '').trim().toLowerCase(), s]));
+      const invByCode = new Map(inventory.filter(i => i.itemCode).map(i => [String(i.itemCode).trim().toLowerCase(), i]));
+      const invByName = new Map(inventory.map(i => [String(i.itemName || '').trim().toLowerCase(), i]));
+
+      const skipped = [], problems = [], groups = new Map();
+      rows.forEach((r, i) => {
+        const no = text(r.poNumber ?? r['PO No']);
+        if (!no && !text(r.itemName) && !text(r.supplier)) return;          // an empty row
+        if (!no) { skipped.push({ row: i + 1, error: 'A PO number is required.' }); return; }
+        const key = no.toLowerCase();
+        if (!groups.has(key)) groups.set(key, { no, rows: [] });
+        groups.get(key).rows.push({ r: r || {}, row: i + 1 });
+      });
+
+      const created = [];
+      for (const g of groups.values()) {
+        const first = g.rows[0];
+        try {
+          const supplierName = text(g.rows.map(x => x.r.supplier).find(v => text(v)));
+          if (!supplierName) throw new Error('Supplier is required.');
+          const supplier = supByName.get(supplierName.toLowerCase());
+          if (!supplier) throw new Error(`No supplier named "${supplierName}" - add them on the Suppliers sheet.`);
+          const esc = g.no.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          if (await PurchaseOrder.exists({ poNumber: { $regex: `^${esc}$`, $options: 'i' }, ...tenantScope(req) })) throw new Error(`${g.no} is already in the app.`);
+          const orderDate = dateOf(g.rows.map(x => x.r.orderDate).find(v => text(v)));
+          if (orderDate === undefined) throw new Error(`The order date is not a date. ${SHEET_DATE_HELP}`);
+          const expectedDate = dateOf(g.rows.map(x => x.r.expectedDate).find(v => text(v)));
+          if (expectedDate === undefined) throw new Error(`The expected date is not a date. ${SHEET_DATE_HELP}`);
+
+          const lines = [];
+          for (const { r, row } of g.rows) {
+            const itemName = text(r.itemName);
+            const qty = parseAmount(r.qty), unitCost = parseAmount(r.unitCost);
+            if (!itemName) throw new Error(`Row ${row}: what was ordered (itemName) is required.`);
+            if (!(qty > 0)) throw new Error(`Row ${row}: the quantity must be more than zero.`);
+            if (Number.isNaN(unitCost) || unitCost < 0) throw new Error(`Row ${row}: "${r.unitCost}" is not a price.`);
+            const code = text(r.itemCode);
+            const item = (code && invByCode.get(code.toLowerCase())) || invByName.get(itemName.toLowerCase()) || null;
+            lines.push({
+              purchaseType: 'inventory', invId: item?._id || null,
+              itemName: item?.itemName || itemName, itemCode: item?.itemCode || code,
+              unit: item?.displayUnit || item?.unit || '', packSize: item?.packSize || null,
+              orderedQty: qty, unitCost: r2(unitCost),
+            });
+          }
+          const estTotal = r2(lines.reduce((sum, l) => sum + l.orderedQty * l.unitCost, 0));
+          const unlinked = lines.filter(l => !l.invId).length;
+          await PurchaseOrder.create({
+            ...tenantScope(req), poNumber: g.no, supplier: supplier.name, supplierId: supplier._id, status: 'Ordered',
+            expectedDate: expectedDate || undefined, lines, estTotal,
+            notes: text(g.rows.map(x => x.r.notes).find(v => text(v))).slice(0, 1000),
+            createdBy: req.user?.name || '',
+            ...(orderDate ? { createdAt: orderDate } : {}),
+          });
+          created.push({ row: first.row, poNumber: g.no, supplier: supplier.name, total: estTotal, lines: lines.length });
+          if (unlinked) problems.push(`${g.no}: ${unlinked} item(s) match no stock item yet. Stock from this workbook lands after its preview; once it is confirmed, each line finds its item by code or name when the order is received. A line that still matches nothing then will not add stock.`);
+        } catch (e) {
+          skipped.push({ row: first.row, error: e.message });
+        }
+      }
+      const total = r2(created.reduce((sum, x) => sum + x.total, 0));
+      await logAudit(req, { action: 'import', entity: 'PurchaseOrder', entityId: 'setup-purchase-orders', after: { created: created.length, skipped: skipped.length, total } });
+      emitToMgr('erpUpdated');
+      res.json({
+        success: true, created: created.length, orders: created, skipped, problems, total,
+        note: `${created.length} purchase order(s), ₱${total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}, registered as open orders. Nothing posted and no stock moved.`,
+      });
+    } catch (err) { fail(req, res, err); }
+  });
+
+  app.post('/api/setup/open-payables/import', verifyToken, ...canPost, async (req, res) => {
+    try {
+      const rows = rowsOf(req, res); if (!rows) return;
+      const suppliers = await Supplier.find(tenantScope(req), { name: 1 }).lean();
+      const byName = new Map(suppliers.map(s => [String(s.name || '').trim().toLowerCase(), s]));
+      const created = [], skipped = [], poNotes = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i] || {};
+        try {
+          const supplierName = text(r.supplier);
+          const invoiceNo = text(r.invoiceNo);
+          const amount = r2(parseAmount(r.amountOwed));
+          if (!supplierName) throw new Error('Supplier is required.');
+          const supplier = byName.get(supplierName.toLowerCase());
+          if (!supplier) throw new Error(`No supplier named "${supplierName}" - add them on the Suppliers sheet.`);
+          if (!invoiceNo) throw new Error("The supplier's invoice number is required - it is what they will quote when chasing it.");
+          if (!(amount > 0)) throw new Error('Amount still owed must be more than zero.');
+          const billDate = dateOf(r.invoiceDate);
+          if (billDate === undefined) throw new Error(`"${r.invoiceDate}" is not a date. ${SHEET_DATE_HELP}`);
+          const dueDate = dateOf(r.dueDate);
+          if (dueDate === undefined) throw new Error(`"${r.dueDate}" is not a date. ${SHEET_DATE_HELP}`);
+          if (await Bill.exists({ supplierId: supplier._id, supplierInvoiceNo: invoiceNo })) throw new Error(`${supplier.name}'s ${invoiceNo} was already carried in.`);
+          const billNumber = await mkSeqRef('BILL');
+          const made = await Bill.create({
+            businessType: BUSINESS_TYPE, ...tenantScope(req),
+            billNumber, supplierId: supplier._id, supplierName: supplier.name,
+            source: 'Opening', supplierInvoiceNo: invoiceNo, imported: true,
+            poNumber: text(r.poNumber ?? r['PO No'] ?? r.po).slice(0, 60),
+            description: text(r.description) || `Unpaid at switch-over - invoice ${invoiceNo}`,
+            amount, status: 'Approved', dueDate: dueDate || null,
+            approvedBy: req.user?.name || '', approvedAt: new Date(),
+            createdBy: req.user?.name || '',
+            ...(billDate ? { createdAt: billDate } : {}),
+          });
+          // A PO number that is an order here links for real, and closes it.
+          const poNote = await linkImportedBill(mongoose, made, tenantScope(req));
+          if (poNote) poNotes.push(poNote);
+          created.push({ row: i + 1, billNumber, supplier: supplier.name, invoiceNo, amount });
+        } catch (e) {
+          skipped.push({ row: i + 1, error: e.message });
+        }
+      }
+      const total = r2(created.reduce((s, x) => s + x.amount, 0));
+      await logAudit(req, { action: 'import', entity: 'Bill', entityId: 'open-payables', after: { created: created.length, skipped: skipped.length, total } });
+      emitToMgr('erpUpdated');
+      res.json({
+        success: true, created: created.length, bills: created, skipped, total, problems: poNotes,
+        note: `₱${total.toLocaleString('en-PH', { minimumFractionDigits: 2 })} owed to suppliers, Approved and ready to pay in Bills (AP). Nothing posted - the opening Accounts Payable already holds it.`,
+      });
+    } catch (err) { fail(req, res, err); }
+  });
+}

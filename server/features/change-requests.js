@@ -29,6 +29,7 @@ export default function registerChangeRequests(ctx) {
     Product,
     Inventory,
     ClientAccount,
+    Supplier,
     ChangeRequest,
     CHANGE_REQUEST_STATUSES,
   } = ctx;
@@ -37,7 +38,7 @@ export default function registerChangeRequests(ctx) {
 
   // The model each entity name maps to. Kept here rather than passed around so
   // there is exactly one place that decides what a request can touch.
-  const MODELS = { Product, Inventory, ClientAccount };
+  const MODELS = { Product, Inventory, ClientAccount, Supplier };
 
   // Audit actions per field, chosen so an approved change lands in the SAME
   // trail the direct-edit path writes to - otherwise price history would show
@@ -49,6 +50,10 @@ export default function registerChangeRequests(ctx) {
     'Inventory.srp':              'INVENTORY_SRP_CHANGED',
     'ClientAccount.creditLimit':  'CLIENT_CREDIT_LIMIT_CHANGED',
     'ClientAccount.creditTermsDays': 'CLIENT_CREDIT_TERMS_CHANGED',
+    'Supplier.name':              'SUPPLIER_NAME_CHANGED',
+    'Supplier.tin':               'SUPPLIER_TIN_CHANGED',
+    'Supplier.registeredName':    'SUPPLIER_REGISTERED_NAME_CHANGED',
+    'Supplier.isVatRegistered':   'SUPPLIER_VAT_STATUS_CHANGED',
   };
 
   // ── LIST ──────────────────────────────────────────────────────────────────
@@ -130,7 +135,7 @@ export default function registerChangeRequests(ctx) {
         await AuditLog.create({
           userId: req.user?.name || 'System',
           action,
-          targetReference: doc.productCode || doc.itemCode || doc.clientCode || String(doc._id),
+          targetReference: doc.productCode || doc.itemCode || doc.clientCode || doc.supplierCode || String(doc._id),
           details: {
             name: doc.name || doc.itemName || '',
             oldPrice: change.oldValue, newPrice: change.newValue,   // price-shaped readers

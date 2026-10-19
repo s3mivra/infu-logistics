@@ -23,9 +23,32 @@ export const PERMISSIONS = [
   { key: 'orders.view',        group: 'Sales',       label: 'View orders' },
   { key: 'orders.manage',      group: 'Sales',       label: 'Manage orders (edit/status)' },
   { key: 'orders.delete',      group: 'Sales',       label: 'Void / delete orders' },
+  { key: 'orders.comp',        group: 'Sales',       label: 'Make an order complimentary (with an approver named)' },
+  // Were "superadmin or the admin role" by name; now given like anything else.
+  { key: 'orders.refund',      group: 'Sales',       label: 'Refund, partly refund or exchange a completed order' },
+  // Were superadmin-only: entering past sales, and bringing an Orders export back.
+  { key: 'sales.backdate',     group: 'Sales',       label: 'Enter backdated sales and import past orders' },
+  // Copy only: the sign-in link, and an onboarding link an admin already
+  // issued. Issuing one stays superadmin-only - it sets a client's login.
+  { key: 'clients.links',      group: 'Sales',       label: 'Copy client links (portal sign-in and issued onboarding links)' },
+  // A brand-new client from a name only; the client picks their own login on
+  // the link. Cannot re-issue a link for an existing client.
+  { key: 'clients.create',     group: 'Sales',       label: 'Add clients (details only; the client sets their own login on a link)' },
+  { key: 'clients.delete',     group: 'Sales',       label: 'Delete clients that have no orders, deposits, quotes or balance' },
+  { key: 'clients.invite',     group: 'Sales',       label: 'Create client links (new client from a name, they fill in the rest)' },
+  // Was superadmin-only: a client's details, price tier, payment terms. A change
+  // to a credit limit still waits for pricing.approve (lib/changeApproval.js).
+  { key: 'clients.edit',       group: 'Sales',       label: "Edit a client's details, price tier and payment terms" },
   { key: 'inventory.view',     group: 'Inventory',   label: 'View inventory' },
   { key: 'inventory.manage',   group: 'Inventory',   label: 'Manage inventory (count/restock)' },
   { key: 'inventory.delete',   group: 'Inventory',   label: 'Delete inventory items' },
+  // Were superadmin-only.
+  { key: 'inventory.setup',    group: 'Inventory',   label: "Set up stock: edit an item's details and batches, import stock, manage locations and categories" },
+  { key: 'inventory.approve',  group: 'Inventory',   label: 'Approve stock transfers between locations' },
+  // Floor actions, split out of "any staff" so a role can be narrowed: every
+  // built-in role that did these before still does by default.
+  { key: 'inventory.waste',    group: 'Inventory',   label: 'Log waste / spoilage' },
+  { key: 'inventory.count',    group: 'Inventory',   label: 'Do the end-of-day stock count' },
   { key: 'products.view',      group: 'Menu',        label: 'View menu / products' },
   { key: 'products.manage',    group: 'Menu',        label: 'Manage menu / products' },
   { key: 'procurement.view',   group: 'Procurement', label: 'View purchase orders' },
@@ -33,6 +56,13 @@ export const PERMISSIONS = [
   { key: 'procurement.delete', group: 'Procurement', label: 'Delete POs & suppliers' },
   { key: 'accounting.view',    group: 'Accounting',  label: 'View accounting / ledger' },
   { key: 'accounting.manage',  group: 'Accounting',  label: 'Post journal entries / manage books' },
+  // Paying something straight out of a revolving fund. It was open to every
+  // signed-in staff member; now it is given by name. Anyone without it files a
+  // petty-cash requisition slip instead, which waits for approval.
+  // Was superadmin-only: recording what a customer paid on an unpaid sale, and
+  // spending or refunding a client's credit balance.
+  { key: 'ar.collect',         group: 'Accounting',  label: "Record customers' payments on unpaid sales, and use or refund their credit" },
+  { key: 'funds.spend',        group: 'Accounting',  label: 'Spend from a revolving fund (without it: file a slip for approval)' },
   // Split out from accounting.* on purpose: accounting.view unlocks the whole
   // Ledger tab (trial balance, journal, bills, ...), which is far more than
   // "can this person see the Approvals queue". Someone reviewing requisition
@@ -52,14 +82,108 @@ export const PERMISSIONS = [
   // line - are held for sign-off unless the editor holds this. See
   // lib/changeApproval.js for exactly which fields are gated and why.
   { key: 'pricing.approve',    group: 'Accounting', label: 'Approve price, cost & credit-limit changes' },
+  // Was superadmin-only (and only in the Admin Panel): a new tier, or removing one.
+  { key: 'pricing.tiers',      group: 'Accounting', label: 'Create and remove price tiers' },
+  // A journal entry typed by hand posts only with an approver's sign-off.
+  // Holding this, a person's own entries post directly (and are recorded as
+  // approved by them); without it, they wait for someone who does.
+  { key: 'journal.approve',    group: 'Accounting', label: 'Approve manual journal entries' },
+  // A sale on account beyond the client's credit limit goes through only with
+  // this person's approval (their PIN at the till, or their own sale).
+  { key: 'credit.approve',     group: 'Accounting', label: "Approve sales over a client's credit limit" },
+  // Screens that used to ride on accounting.view / accounting.manage, split so
+  // each can be given on its own. Everyone who had the accounting permission
+  // gets these once on upgrade (withSplitScreens), so nobody loses a screen.
+  { key: 'payroll.view',       group: 'Payroll',     label: 'View payroll runs & payslips' },
+  { key: 'payroll.manage',     group: 'Payroll',     label: 'Run, approve & pay payroll' },
+  { key: 'assets.view',        group: 'Accounting',  label: 'View fixed assets' },
+  { key: 'assets.manage',      group: 'Accounting',  label: 'Add, depreciate & dispose fixed assets' },
+  { key: 'bankrec.view',       group: 'Accounting',  label: 'View bank reconciliations' },
+  { key: 'bankrec.manage',     group: 'Accounting',  label: 'Reconcile bank statements' },
+  { key: 'shifts.view',        group: 'Reports',     label: 'View shift history & staff time-clock records' },
   { key: 'reports.view',       group: 'Reports',     label: 'View reports' },
   { key: 'analytics.view',     group: 'Reports',     label: 'View analytics dashboard' },
+  // The owner's one-page summary: sales, the month's profit, cash, what is
+  // owed either way, stock value, and what is waiting for a decision.
+  { key: 'owner.view',         group: 'Reports',     label: 'See the Owner Overview (sales, profit, cash, debts, stock at a glance)' },
   { key: 'audit.view',         group: 'Reports',     label: 'View audit report' },
   { key: 'scheduling.manage',  group: 'Admin',       label: 'Build & publish staff rosters' },
   { key: 'users.manage',       group: 'Admin',       label: 'Manage staff & permissions' },
   { key: 'settings.manage',    group: 'Admin',       label: 'Change system settings' },
 ];
+
+// ── SCREENS: one permission per page inside a tab ────────────────────────────
+// A domain permission opens a whole tab - accounting.view is every page of the
+// Ledger, from the journal to the trial balance to backdating a sale. That is
+// too coarse to say "this bookkeeper sees Expenses and Bills, not the P&L", so
+// each page inside a tab has a key of its own: `screen.<tab>.<page>`.
+//
+// A screen key never works on its own. It only narrows the tab its parent
+// permission already opens - without the parent it is dropped - so granting
+// one can never widen what someone can reach. And a person or role that has
+// not been given any page of a tab gets every page of it (see withScreens), so
+// every account that existed before this list keeps exactly what it had.
+//
+// The ids MUST match the client's page ids (navRegistry.js, the Inventory /
+// Hub / Procurement sub-navs); test/permissions-screens.unit.test.js reads the
+// client source and fails when the two drift apart.
+export const SCREENS = [
+  { tab: 'inventory', label: 'Inventory', parent: 'inventory.view', pages: [
+    ['live', 'Live stock'], ['transfers', 'Transfers'], ['reserved', 'Reserved stock'],
+    ['places', 'Categories & locations'], ['eod', 'End-of-day count'], ['control', 'Stock control'],
+  ] },
+  { tab: 'hub', label: 'Hub', parent: 'inventory.view', pages: [
+    ['inventory', 'Network inventory'], ['compare', 'Compare branches'],
+    ['switch', 'Switch branch'], ['books', 'Network books'],
+  ] },
+  { tab: 'procurement', label: 'Procurement', parent: 'procurement.view', pages: [
+    ['orders', 'Purchase orders'], ['receiving', 'Receiving'], ['suppliers', 'Suppliers'],
+  ] },
+  { tab: 'ledger', label: 'Ledger', parent: 'accounting.view', pages: [
+    ['journal', 'General Ledger'], ['trial', 'Trial Balance'], ['pnl', 'P&L'], ['balance', 'Balance Sheet'],
+    ['araap', 'AR & AP'], ['bills', 'Bills (AP)'],
+    ['revolving', 'Revolving Funds'], ['expenses', 'Expenses'],
+    ['accperiods', 'Accounts & Periods'], ['closing', 'Month-End Close'], ['backdate', 'Backdate Sale'],
+    ['tenancy', 'Tenancy Health'], ['bookshealth', 'Books Health'], ['exportall', 'Export All'],
+  ] },
+  { tab: 'reports', label: 'Reports', parent: 'reports.view', pages: [
+    ['salessummary', 'Sales'], ['saleschannel', 'Sales by Channel'], ['salescustomer', 'Sales by Customer'], ['payments', 'By Payment'],
+    ['profitcat', 'By Category'], ['menueng', 'Menu Engineering'],
+    ['arreport', 'A/R Report'], ['collections', 'Collections'],
+    ['apreport', 'A/P Report'], ['supplierpay', 'Supplier Payments'], ['checkvouchers', 'Check Vouchers'], ['advances', 'Advances'],
+    ['pnlmonthly', 'Monthly P&L'], ['bsmonthly', 'Monthly Balance Sheet'], ['cashflow', 'Cash Flow'], ['budget', 'Budget vs Actual'], ['percentagetax', 'Percentage Tax'], ['vatreturn', 'VAT Return'],
+    ['pricelog', 'Price Changes'], ['variance', 'Cashier Variance'], ['commissions', 'Commissions'], ['exceptions', 'Exceptions'],
+    ['waste', 'Waste Log'], ['saleshours', 'Sales by Hour'], ['cashierperf', 'Cashier Performance'],
+    ['cashforecast', 'Cash Forecast'], ['supplierprices', 'Supplier Prices'],
+    ['salestargets', 'Sales Targets'], ['deliverysheet', 'Delivery Sheet'],
+    ['preplist', 'Prep List'], ['feedback', 'Customer Feedback'], ['supplierstatement', 'Supplier Statement'],
+  ] },
+];
+export const screenKey = (tab, page) => `screen.${tab}.${page}`;
+const SCREEN_FAMILIES = SCREENS.map((f) => ({
+  tab: f.tab, parent: f.parent, keys: f.pages.map(([page]) => screenKey(f.tab, page)),
+}));
+for (const f of SCREENS) {
+  for (const [page, label] of f.pages) {
+    PERMISSIONS.push({ key: screenKey(f.tab, page), group: `Pages · ${f.label}`, label, parent: f.parent });
+  }
+}
 export const PERMISSION_KEYS = new Set(PERMISSIONS.map((p) => p.key));
+
+// Apply the two screen rules to a resolved permission list:
+//   - a page whose tab is not open is removed (no parent, no page);
+//   - a tab that is open but has no page chosen gets all of its pages.
+// The second rule is what keeps every role, custom role and per-person
+// override written before pages existed working exactly as before - none of
+// them name a page, so each of their tabs opens in full.
+export function withScreens(list) {
+  const set = new Set(list);
+  for (const fam of SCREEN_FAMILIES) {
+    if (!set.has(fam.parent)) { for (const k of fam.keys) set.delete(k); continue; }
+    if (!fam.keys.some((k) => set.has(k))) for (const k of fam.keys) set.add(k);
+  }
+  return [...set];
+}
 
 // Default permissions per role, applied when a user has NO explicit override.
 // Superadmin bypasses this (full access). Posture is DEFAULT-DENY for the most
@@ -70,24 +194,56 @@ export const PERMISSION_KEYS = new Set(PERMISSIONS.map((p) => p.key));
 export const ROLE_DEFAULT_PERMISSIONS = {
   // Shop administrator: runs operations & config and can VIEW the books, but
   // cannot post journal entries (that's finance/superadmin) or manage staff.
-  admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete',
-            'inventory.view', 'inventory.manage', 'inventory.delete', 'production.view', 'production.approve',
+  admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'orders.refund', 'clients.links', 'clients.invite', 'clients.create', 'clients.delete', 'clients.edit',
+            'inventory.setup', 'inventory.approve',
+            'inventory.view', 'inventory.manage', 'inventory.delete', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage', 'procurement.delete',
-            'accounting.view', 'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'],
+            'accounting.view', 'funds.spend', 'payroll.view', 'assets.view', 'bankrec.view',
+            'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'],
   // Operations lead: full ops (incl. building rosters), no books/settings/staff.
-  manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete',
-            'inventory.view', 'inventory.manage', 'production.view', 'production.approve',
+  manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'clients.links', 'clients.invite', 'clients.create',
+            'inventory.view', 'inventory.manage', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
-            'procurement.view', 'procurement.manage',
+            'procurement.view', 'procurement.manage', 'funds.spend',
             'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage'],
   // The books role: view + post accounting, plus read-only ops context.
   finance: ['orders.view', 'inventory.view', 'procurement.view', 'production.view',
-            'accounting.view', 'accounting.manage', 'pricing.approve',
+            'accounting.view', 'accounting.manage', 'funds.spend', 'sales.backdate', 'ar.collect', 'clients.edit', 'pricing.tiers',
+            'payroll.view', 'payroll.manage', 'assets.view', 'assets.manage', 'bankrec.view', 'bankrec.manage', 'pricing.approve', 'credit.approve',
             'reports.view', 'analytics.view', 'audit.view'],
-  cashier: ['pos.use', 'orders.view', 'orders.manage', 'inventory.view', 'products.view', 'procurement.view'],
-  staff:   ['pos.use', 'orders.view', 'inventory.view', 'products.view'],
+  cashier: ['pos.use', 'orders.view', 'orders.manage', 'orders.comp', 'inventory.view', 'inventory.waste', 'inventory.count', 'products.view', 'procurement.view'],
+  staff:   ['pos.use', 'orders.view', 'orders.comp', 'inventory.view', 'inventory.waste', 'inventory.count', 'products.view'],
 };
+
+// Lists saved before the floor permissions existed could already do these
+// (the routes only asked "is staff"). Applied once to every stored role and
+// per-person list by the startup migration, so nobody loses a floor action on
+// upgrade; after that an admin can take each one away.
+// The Owner role: sees everything a business owner needs and signs off what
+// waits for a decision, but does not key in day-to-day work. Seeded once as an
+// ordinary role, so the superadmin can adjust it like any other.
+export const OWNER_ROLE_NAME = 'Owner';
+export const OWNER_ROLE_PERMISSIONS = [
+  'owner.view', 'reports.view', 'analytics.view', 'audit.view', 'shifts.view',
+  'orders.view', 'inventory.view', 'products.view', 'procurement.view', 'production.view',
+  'accounting.view', 'payroll.view', 'assets.view', 'bankrec.view', 'requisitions.view',
+  'requisitions.approve', 'production.approve', 'pricing.approve', 'journal.approve', 'credit.approve', 'inventory.approve',
+];
+
+export function withSplitScreens(list = []) {
+  const set = new Set(list);
+  if (set.has('accounting.view')) { set.add('payroll.view'); set.add('assets.view'); set.add('bankrec.view'); }
+  if (set.has('accounting.manage')) { set.add('payroll.manage'); set.add('assets.manage'); set.add('bankrec.manage'); }
+  return [...set];
+}
+
+export function withFloorActions(list = []) {
+  const set = new Set(list);
+  if (set.has('inventory.view')) { set.add('inventory.waste'); set.add('inventory.count'); }
+  if (set.has('pos.use')) set.add('orders.comp');
+  return [...set];
+}
 
 // Permissions for CUSTOM roles (created in the UI role-maker), keyed by the
 // normalized role name. Populated from the DB at boot and refreshed on every
@@ -119,9 +275,9 @@ export function resolvePermissions(user) {
   const role = norm(user && user.role);
   if (role === 'superadmin') return PERMISSIONS.map((p) => p.key);
   const explicit = Array.isArray(user && user.permissions) ? user.permissions.filter((k) => PERMISSION_KEYS.has(k)) : [];
-  if (explicit.length) return explicit;
-  if (_customRolePerms.has(role)) return _customRolePerms.get(role);
-  return ROLE_DEFAULT_PERMISSIONS[role] || [];
+  if (explicit.length) return withScreens(explicit);
+  if (_customRolePerms.has(role)) return withScreens(_customRolePerms.get(role));
+  return withScreens(ROLE_DEFAULT_PERMISSIONS[role] || []);
 }
 
 // Does this (decoded token OR user doc) hold a given permission?
@@ -130,7 +286,10 @@ export function resolvePermissions(user) {
 export function hasPermission(user, perm) {
   if (!user) return false;
   if (norm(user.role) === 'superadmin') return true;
-  const perms = Array.isArray(user.perms) ? user.perms : resolvePermissions(user);
+  // A token minted before pages existed names none of them; the same rule
+  // resolvePermissions applies opens its tabs in full rather than shutting
+  // every page for the rest of that token's life.
+  const perms = Array.isArray(user.perms) ? withScreens(user.perms) : resolvePermissions(user);
   return perms.includes(perm);
 }
 
@@ -179,6 +338,15 @@ export function requireStaff(req, res, next) {
   return res.status(403).json({ success: false, error: 'Forbidden: staff access required.' });
 }
 
+// Middleware factory: pass when the user holds ANY of these permissions. For
+// an endpoint that more than one page reads from.
+export function requireAnyPermission(...perms) {
+  return (req, res, next) => {
+    if (perms.some((p) => hasPermission(req.user, p))) return next();
+    return res.status(403).json({ success: false, error: `Forbidden: needs one of ${perms.map((p) => `"${p}"`).join(', ')}.` });
+  };
+}
+
 // Middleware factory: require a specific granular permission. Mount AFTER
 // verifyToken + requireStaff. Superadmin always passes; everyone else must hold
 // the permission (via token `perms` or resolved role defaults).
@@ -187,4 +355,78 @@ export function requirePermission(perm) {
     if (hasPermission(req.user, perm)) return next();
     return res.status(403).json({ success: false, error: `Forbidden: missing permission "${perm}".` });
   };
+}
+
+// ── Staff administration ─────────────────────────────────────────────────────
+// `users.manage` was in the catalogue - so the permissions UI offered it as a
+// tick box - while every /api/users mutation was guarded by requireSuperAdmin
+// alone. Granting it therefore did nothing, silently: the checkbox promised an
+// ability the routes would never honour.
+//
+// It is honoured now, but managing staff is the one permission that can be
+// used to grant every OTHER permission, so it comes with escalation limits
+// that superadmin does not need (see guardStaffEscalation below). A delegate
+// can run the roster; they cannot promote themselves.
+export function requireUserAdmin(req, res, next) {
+  if (norm(req.user?.role) === 'superadmin') return next();
+  if (hasPermission(req.user, 'users.manage')) return next();
+  return res.status(403).json({ success: false, error: 'Forbidden: missing permission "users.manage".' });
+}
+
+// Applied to create/update/delete of a staff account by a NON-superadmin.
+// Returns an error string to refuse with, or null to allow.
+//
+// Three rules, each closing a way to turn users.manage into full control:
+//   1. No touching a superadmin account - otherwise the delegate reassigns the
+//      owner's password and takes the deployment.
+//   2. No minting or promoting to superadmin.
+//   3. No granting a permission the grantor does not hold, which is how a
+//      narrow delegate would otherwise widen themselves one account at a time
+//      (make a new user with accounting.manage, log in as them).
+export function guardStaffEscalation(actor, { targetUser = null, role, permissions } = {}) {
+  if (norm(actor?.role) === 'superadmin') return null;
+
+  if (targetUser && norm(targetUser.role) === 'superadmin') {
+    return 'Only a superadmin can modify a superadmin account.';
+  }
+  if (role !== undefined && norm(role) === 'superadmin') {
+    return 'Only a superadmin can grant the superadmin role.';
+  }
+  // Judge the account's EFFECTIVE permissions afterwards, not just the boxes
+  // ticked. A role with no explicit permissions inherits the role's defaults,
+  // so checking only the ticked list let a delegate create an "Admin" whose
+  // defaults (accounting.view, settings.manage, ...) they do not hold
+  // themselves.
+  // Same source hasPermission() uses: the resolved set minted into the
+  // token. resolvePermissions(actor) fell back to the ROLE's defaults,
+  // because a token carries `perms`, not `permissions`.
+  const mine = new Set(Array.isArray(actor?.perms) ? actor.perms : resolvePermissions(actor));
+  // The account as it stands must also be within the delegate's reach. Only
+  // role/permission changes were checked, so a delegate could reset the
+  // password of an Admin holding more than they do, sign in as that Admin,
+  // and have everything the Admin had. Same for renaming or deleting them.
+  if (targetUser && String(targetUser._id) !== String(actor?.id || actor?._id)) {
+    const current = resolvePermissions({ role: targetUser.role || 'Staff', permissions: targetUser.permissions || [] });
+    const beyond = current.filter((k) => !mine.has(k));
+    if (beyond.length) {
+      return `This account holds permissions you do not hold yourself (${beyond.join(', ')}). Ask a superadmin.`;
+    }
+  }
+  const changesAccess = !targetUser || role !== undefined || Array.isArray(permissions);
+  if (changesAccess) {
+    const nextRole = role !== undefined ? role : (targetUser?.role || 'Staff');
+    const nextPerms = (Array.isArray(permissions) ? permissions : (targetUser?.permissions || []))
+      .filter((k) => PERMISSION_KEYS.has(k));
+    const effective = resolvePermissions({ role: nextRole, permissions: nextPerms });
+    const over = effective.filter((k) => !mine.has(k));
+    if (over.length) {
+      return `This would give the account permissions you do not hold yourself: ${over.join(', ')}.`;
+    }
+  }
+  // Editing your own role or permission set is self-escalation by definition.
+  if (targetUser && String(targetUser._id) === String(actor?.id || actor?._id)
+      && (role !== undefined || Array.isArray(permissions))) {
+    return 'You cannot change your own role or permissions.';
+  }
+  return null;
 }

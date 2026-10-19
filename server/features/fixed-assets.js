@@ -11,6 +11,7 @@
 // Cost and accumulated depreciation are deliberately kept in separate accounts.
 // Netting them loses the difference between "a P60,000 machine that is half
 // worn out" and "a P30,000 machine", which are not the same fact.
+import { sheetDay, SHEET_DATE_HELP } from '../lib/sheetDate.js';
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import {
@@ -18,6 +19,7 @@ import {
   disposalResult, schedule, monthlyDepreciation,
 } from '../lib/depreciation.js';
 
+import { atomic } from '../lib/atomicRoute.js';
 export default function registerFixedAssets(ctx) {
   const {
     app, mongoose, IS_PROD, log, BUSINESS_TYPE, tenantScope, logAudit,
@@ -33,8 +35,8 @@ export default function registerFixedAssets(ctx) {
     return lock ? `Period ${lock.year}-${String(lock.month).padStart(2, '0')} is closed. Reopen the period first.` : null;
   };
 
-  const canView = [requireStaff, requirePermission('accounting.view')];
-  const canPost = [requireStaff, requirePermission('accounting.manage')];
+  const canView = [requireStaff, requirePermission('assets.view')];
+  const canPost = [requireStaff, requirePermission('assets.manage')];
 
   const money = (n) => Math.round((Number(n) || 0) * 100) / 100;
   const isCashLike = (c) => /^(111|112|113|114)/.test(String(c || ''));
@@ -103,7 +105,7 @@ export default function registerFixedAssets(ctx) {
   });
 
   // ── ACQUIRE ───────────────────────────────────────────────────────────────
-  app.post('/api/fixed-assets', verifyToken, ...canPost, async (req, res) => {
+  app.post('/api/fixed-assets', verifyToken, ...canPost, atomic(mongoose, async (req, res) => {
     try {
       const {
         name, accountCode, acquisitionCost, acquisitionDate, salvageValue,
@@ -159,7 +161,7 @@ export default function registerFixedAssets(ctx) {
       log.error?.({ err }, 'POST /api/fixed-assets failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 
   // ── DEPRECIATE ────────────────────────────────────────────────────────────
   // Posts whatever whole months are owed, capped at the remaining depreciable
@@ -250,7 +252,7 @@ export default function registerFixedAssets(ctx) {
   // Removes the asset AND its accumulated depreciation from the books, and
   // books the difference against proceeds as a gain or a loss. Leaving the
   // contra behind would understate assets forever.
-  app.post('/api/fixed-assets/:id/dispose', verifyToken, ...canPost, async (req, res) => {
+  app.post('/api/fixed-assets/:id/dispose', verifyToken, ...canPost, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const asset = await FixedAsset.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) }).lean();
@@ -295,18 +297,23 @@ export default function registerFixedAssets(ctx) {
       log.error?.({ err }, 'POST /api/fixed-assets/:id/dispose failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 
   // ── IMPORT ────────────────────────────────────────────────────────────────
   // Bulk onboarding from the downloaded template. Each row posts its own
   // acquisition entry, and a row that fails is reported rather than aborting
   // the batch - a hundred-row sheet with one bad date should import ninety-nine.
-  app.post('/api/fixed-assets/import', verifyToken, ...canPost, async (req, res) => {
+  app.post('/api/fixed-assets/import', verifyToken, ...canPost, atomic(mongoose, async (req, res) => {
     try {
       const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
       if (rows.length === 0) return res.status(400).json({ success: false, error: 'No rows to import.' });
 
       const byName = new Map(Object.entries(FIXED_ASSET_CLASSES).map(([code, c]) => [c.name.toLowerCase(), code]));
+      // Carried in by the setup workbook with an opening balance sheet: the
+      // assets are registered (so they depreciate from here on) but their cost
+      // and wear are already on that balance sheet - posting them against cash
+      // again would count them twice and take the cash with it.
+      const opening = req.body?.opening === true;
       const created = [];
       const skipped = [];
 
@@ -328,9 +335,12 @@ export default function registerFixedAssets(ctx) {
           if (salvage > cost) throw new Error('Salvage value cannot exceed cost.');
           if (!String(r.name || '').trim()) throw new Error('Name is required.');
 
-          const acqDate = r.acquisitionDate ? dayStart(r.acquisitionDate) : new Date();
+          const acqDay = sheetDay(r.acquisitionDate);
+          if (acqDay === null) throw new Error(`"${r.acquisitionDate}" is not an acquisition date. ${SHEET_DATE_HELP}`);
+          const acqDate = acqDay ? dayStart(acqDay) : new Date();
           if (Number.isNaN(acqDate.getTime())) throw new Error('Invalid acquisition date.');
-          const rowLocked = await closedPeriod(acqDate);
+          // Nothing posts in opening mode, so an old acquisition date is fine.
+          const rowLocked = opening ? null : await closedPeriod(acqDate);
           if (rowLocked) throw new Error(rowLocked);
 
           const assetCode = await mkSeqRef('FA');
@@ -341,11 +351,13 @@ export default function registerFixedAssets(ctx) {
             { accountCode: credCode, accountName: nameOf(credCode), debit: 0, credit: cost },
           ];
           assertBalanced(lines, reference);
-          await JournalEntry.create({
-            date: acqDate, reference,
-            description: `Acquired fixed asset ${assetCode} - ${String(r.name).trim()} (imported)`,
-            lines, totalDebit: cost, totalCredit: cost,
-          });
+          if (!opening) {
+            await JournalEntry.create({
+              date: acqDate, reference,
+              description: `Acquired fixed asset ${assetCode} - ${String(r.name).trim()} (imported)`,
+              lines, totalDebit: cost, totalCredit: cost,
+            });
+          }
 
           const asset = await FixedAsset.create({
             businessType: BUSINESS_TYPE, ...tenantScope(req),
@@ -359,7 +371,7 @@ export default function registerFixedAssets(ctx) {
             accumulatedDepreciation: Math.min(money(r.accumulatedDepreciation ?? 0), Math.max(0, cost - salvage)),
             serialNumber: r.serialNumber || '', location: r.location || '',
             supplierName: r.supplierName || '', referenceNumber: r.referenceNumber || '',
-            journalEntryRef: reference, createdBy: req.user?.name || '',
+            journalEntryRef: opening ? '' : reference, createdBy: req.user?.name || '',
           });
           created.push({ row: i + 1, assetCode, name: asset.name });
         } catch (e) {
@@ -373,5 +385,5 @@ export default function registerFixedAssets(ctx) {
       log.error?.({ err }, 'POST /api/fixed-assets/import failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 }

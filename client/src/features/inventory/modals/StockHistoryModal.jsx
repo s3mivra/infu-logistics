@@ -1,6 +1,8 @@
 ﻿import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useDashboard } from '../../dashboard/DashboardContext';
+import { PACK_UNIT } from '../../../shared/packUnit.js';
 
+import { BUSINESS_TYPE } from '../../../shared/businessType.js';
 
 // Extracted from AdminDashboard; reads shared state via useDashboard().
 export default function StockHistoryModal() {
@@ -9,16 +11,33 @@ export default function StockHistoryModal() {
   if (!(historyModalOpen)) return null;
 const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
       const pagedHistory = stockHistory.slice((historyPage - 1) * HIST_PAGE_SIZE, historyPage * HIST_PAGE_SIZE);
-      // Movements are stored in base units; the card reports them in the same
-      // units as the Inventory Hub table - packs when the item has a pack size,
-      // otherwise its display unit (packInfo falls back to exactly that).
+      // What the card counts in.
+      //
+      // A stock card is a record of what was deducted, so in a cafe it shows
+      // exactly that: the quantity that left the shelf, in the unit the recipe
+      // uses - one cup is "-1 pcs", a shot is "-20 g". Movements are stored in
+      // those base units already, so nothing is converted.
+      //
+      // It used to divide every figure by the pack size, which put a single
+      // cup down as "-0.02" (a fiftieth of a sleeve) under a PCS header and
+      // read as though the till were deducting a fraction of a cup. Nothing
+      // else is shown beside it: a pack equivalent under each line, even in
+      // small print, still put a "0.02" next to a sale of one cup.
+      //
+      // Logistics keeps counting in packages: there a "piece" IS the package,
+      // and a can leaving as "-377 g" would be the unreadable one.
       const hPack = historyItem ? packInfo(historyItem) : null;
-      const hBase = hPack?.packBase || 1;
-      const hUnit = historyItem
-        ? (itemDisplay(historyItem).isPacked ? 'pcs' : itemDisplay(historyItem).unit)
-        : 'units';
-      const fmtQty = (n) => +(n / hBase).toFixed(4);
-      const fmtCost = (c) => (c || 0) * hBase;
+      const packed = historyItem ? itemDisplay(historyItem).isPacked : false;
+      const asDeducted = BUSINESS_TYPE !== 'log';
+      const hBase = asDeducted ? 1 : (hPack?.packBase || 1);
+      const hUnit = !historyItem ? 'units'
+        : asDeducted ? (historyItem.unit || 'units')
+        : (packed ? PACK_UNIT : itemDisplay(historyItem).unit);
+      const fmtQty = (n) => +(Number(n || 0) / hBase).toFixed(4);
+      // Cost is quoted per pack whichever way quantities are shown: a pack is
+      // what is bought and what an invoice prices.
+      const fmtCost = (c) => (c || 0) * (hPack?.packBase || 1);
+
       return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-surface p-6 rounded-xl border border-gray-700 shadow-2xl flex flex-col max-w-5xl w-full max-h-[85vh]">

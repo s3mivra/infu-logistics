@@ -24,9 +24,9 @@ export default function BounceCheckModal() {
   const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   return (
-    <div className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in"
+    <div className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-sm flex justify-center p-0 sm:p-4 animate-fade-in overflow-y-auto"
       onClick={e => { if (e.target === e.currentTarget) setBounceTarget(null); }} role="dialog" aria-modal="true" aria-label="Mark check bounced">
-      <div className="bg-surface border border-red-500/25 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col animate-scale-in">
+      <div className="bg-surface border border-red-500/25 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col animate-scale-in mt-auto sm:my-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-red-500/15 text-danger flex items-center justify-center shrink-0"><AlertTriangle size={17}/></div>
@@ -63,7 +63,7 @@ export default function BounceCheckModal() {
             <div>
               <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Describe</label>
               <input type="text" autoFocus value={bounceForm.otherReason || ''} onChange={e => setBounceForm({ ...bounceForm, otherReason: e.target.value })}
-                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-white/25 outline-none focus:border-red-500/60"
+                className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold placeholder-fg/70 outline-none focus:border-red-500/60"
                 placeholder="What did the bank say?" />
             </div>
           )}
@@ -83,7 +83,7 @@ export default function BounceCheckModal() {
           </button>
           <button onClick={submitBounceCheck}
             disabled={bounceSubmitting || !bounceForm.reason || (bounceForm.reason === '__other' && !String(bounceForm.otherReason || '').trim())}
-            className="flex-1 py-3.5 bg-red-500 text-white font-black rounded-xl uppercase tracking-widest text-xs hover:bg-red-500/90 active-press transition shadow-elev-2 disabled:opacity-40 min-h-[52px]">
+            className="flex-1 py-3.5 bg-red-700 text-white font-black rounded-xl uppercase tracking-widest text-xs hover:bg-red-500/90 active-press transition shadow-elev-2 disabled:opacity-40 min-h-[52px]">
             {bounceSubmitting ? 'Reversing…' : 'Bounce & Reverse'}
           </button>
         </div>

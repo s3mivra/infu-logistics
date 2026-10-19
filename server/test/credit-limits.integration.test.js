@@ -24,10 +24,12 @@ const setClientLimit = (limit) =>
   request(app).patch(`/api/client-accounts/${clientId}`).set(auth(superToken)).send({ creditLimit: limit });
 
 // Places an order as the logged-in client. GCash = on account (non-cash).
+// A client cannot choose the price - the server charges the catalogue's ₱100 -
+// so the wanted total is reached through the quantity instead.
 const placeOrder = (total, method = 'GCash') =>
   request(app).post('/api/orders')
     .set({ Authorization: `Bearer ${clientToken}` })
-    .send({ items: [{ productId, name: 'Credit Widget', price: total, quantity: 1 }], paymentMethod: method });
+    .send({ items: [{ productId, name: 'Credit Widget', price: 100, quantity: total / 100 }], paymentMethod: method });
 
 // Seeds an already-owed, unsettled receivable for the client.
 const owe = async (amount, ageDays = 1) => {
@@ -77,7 +79,7 @@ beforeEach(async () => {
 describe('mode: off', () => {
   it('lets a client buy on account with no limit at all', async () => {
     await owe(50000);
-    const res = await placeOrder(9999);
+    const res = await placeOrder(10000);
     expect(res.status).toBeLessThan(300);
   });
 });
@@ -148,7 +150,7 @@ describe('mode: both', () => {
     // ₱500 limit to a client deliberately set to zero credit.
     await setMode('both', 500);
     await setClientLimit(0);
-    expect((await placeOrder(1)).status).toBe(409);
+    expect((await placeOrder(100)).status).toBe(409);
   });
 });
 
@@ -265,7 +267,7 @@ describe('A/R ageing report', () => {
     await setClientLimit(500);
     await owe(700, 10);
     const res = await request(app).get('/api/finance/ar-ageing').set(auth(superToken));
-    const row = res.body.clients.find(c => c.client === 'Credit Client');
+    const row = res.body.clients.find(c => String(c.client).toUpperCase() === 'CREDIT CLIENT');
     expect(row.creditLimit).toBe(500);
     expect(row.total).toBe(700);
     expect(row.available).toBe(0);
@@ -278,7 +280,7 @@ describe('A/R ageing report', () => {
     await setClientLimit(1000);
     await placeOrder(600);                       // Pending - not yet a book receivable
     const res = await request(app).get('/api/finance/ar-ageing').set(auth(superToken));
-    const row = res.body.clients.find(c => c.client === 'Credit Client');
+    const row = res.body.clients.find(c => String(c.client).toUpperCase() === 'CREDIT CLIENT');
     expect(row).toBeTruthy();
     expect(row.total).toBe(0);                   // nothing aged yet
     expect(row.exposure).toBe(600);              // but credit IS committed

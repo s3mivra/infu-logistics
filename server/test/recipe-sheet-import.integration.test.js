@@ -10,6 +10,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+// Fixture resets may clear journal entries, which are otherwise append-only.
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -26,7 +28,7 @@ afterAll(async () => { await ctx.stop(); });
 const M = (n) => mongoose.model(n);
 
 beforeEach(async () => {
-  for (const n of ['Inventory', 'Product', 'Category']) await M(n).deleteMany({});
+  for (const n of ['Inventory', 'Product', 'Category']) await withLedgerMaintenance(() => M(n).deleteMany({}));
   await M('Inventory').create([
     { itemCode: 'RM-MILK', itemName: 'Full Milk', unit: 'ml', stockQty: 50000, unitCost: 0.08, unitMultiplier: 1000 },
     { itemCode: 'RM-ESP', itemName: 'Espresso', unit: 'ml', stockQty: 5000, unitCost: 1, unitMultiplier: 1 },
@@ -124,8 +126,13 @@ describe('importing that draft', () => {
     const p = await M('Product').findOne({ name: 'LATTE' }).lean();
     const milk = p.baseRecipe.find(r => /milk/i.test(r.name));
     expect(milk.qty).toBe(260);          // base units, not "1 kg"
-    expect(milk.unit).toBe('L');         // the item's display unit, so the
-                                         // editor reads 260 ml and not 260 L
+    // `qty` and `unit` are a pair, and `packBase` says how many base units one
+    // of those units holds. A base-unit quantity under the item's promoted
+    // DISPLAY unit broke the pair: the editor showed 260ml of milk as "260 L",
+    // or as "0.26 L" once it filled the missing packBase from the carton size.
+    // The sheet is written in stock units, so the line is stored that way.
+    expect(milk.unit).toBe('ml');
+    expect(milk.packBase).toBe(1);
     expect(milk.invId).toBeTruthy();     // linked to live stock
   }, 30000);
 

@@ -197,3 +197,324 @@ describe('backdated sale', () => {
     expect(Math.abs(debits - credits)).toBeLessThanOrEqual(0.01);
   });
 });
+
+describe('a backdated sale paid by check', () => {
+  it('needs the check number', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({ date: LAST_MONTH, amount: 500, paymentMethod: 'Check' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/check number/i);
+  });
+
+  it('keeps the check number and date on the order', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({
+      date: LAST_MONTH, amount: 750, paymentMethod: 'Check', paymentReference: ' 0012345 ', paymentCheckDate: LAST_MONTH,
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const o = await mongoose.model('Order').findById(res.body.order._id).lean();
+    expect(o.paymentMethod).toBe('Check');
+    expect(o.paymentReference).toBe('0012345');
+    expect(o.paymentCheckDate.toISOString().slice(0, 10)).toBe(LAST_MONTH);
+  });
+});
+
+describe('an imported billing statement lands on its own grand total', () => {
+  it('the sheet discount comes off in pesos, exactly', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({
+      date: LAST_MONTH, paymentMethod: 'Cash', importRef: 'GT-1',
+      items: [{ name: 'Beans A', price: 11070.5, quantity: 2 }], discountAmount: 442.82,
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.order.total).toBe(21698.18);
+    expect(res.body.order.discount).toBe(442.82);
+  });
+
+  it('a queued sale keeps the discount and the sheet reference', async () => {
+    const q = await auth('post', '/api/admin/backdate-sale/queue', superTok).send({ items: [{
+      transNo: 'GT-2', client: 'Queued Co', date: LAST_MONTH,
+      items: [{ name: 'Beans B', price: 1000, quantity: 3 }], deliveryFee: 150, discountAmount: 200,
+    }] });
+    expect(q.body.queued).toBe(1);
+    const row = await mongoose.model('BackdateQueueItem').findOne({ transNo: 'GT-2' }).lean();
+    const saved = await auth('post', `/api/admin/backdate-sale/queue/${row._id}/save`, superTok).send({ paymentMethod: 'Cash' });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    expect(saved.body.order.total).toBe(2950);   // 3000 + 150 delivery - 200 discount
+    expect(saved.body.order.importRef).toBe('GT-2');
+  });
+});
+
+describe('a split payment with a part paid by check', () => {
+  const post = (body) => auth('post', '/api/admin/backdate-sale', superTok).send(body);
+  it('needs the check number, and keeps it on that part and on the sale', async () => {
+    const base = { date: LAST_MONTH, amount: 1000, customerName: 'Split Check Buyer' };
+    const none = await post({ ...base, payments: [{ method: 'Cash', amount: 400 }, { method: 'Check', amount: 600 }] });
+    expect(none.status).toBe(400);
+    expect(none.body.error).toMatch(/check number/i);
+    const ok = await post({ ...base, payments: [{ method: 'Cash', amount: 400 }, { method: 'Check', amount: 600, reference: 'CHK-7781', checkDate: LAST_MONTH }] });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const o = await mongoose.model('Order').findById(ok.body.order._id).lean();
+    expect(o.paymentMethod).toBe('Split');
+    expect(o.paymentReference).toBe('CHK-7781');
+    expect(o.payments.map(p => [p.method, p.amount, p.reference || ''])).toEqual([['Cash', 400, ''], ['Check', 600, 'CHK-7781']]);
+  });
+});
+
+describe('importing an Orders export back', () => {
+  const imp = (body) => auth('post', '/api/orders/import', superTok).send(body);
+
+  it('a summary row comes back on its date, with its number, total and client', async () => {
+    const client = await mongoose.model('ClientAccount').create({ name: 'IMPORT CLIENT', clientCode: 'IMP-1', username: 'impclient', password: 'x' });
+    const r = await imp({ rows: [{ 'Order No': 'ORD-2026-A9001', Date: LAST_MONTH, Customer: 'Import Client', Status: 'Completed', Payment: 'On Account', Subtotal: 1000, Discount: 50, Total: 950 }] });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.created).toBe(1);
+    const o = await mongoose.model('Order').findOne({ orderNumber: 'ORD-2026-A9001' }).lean();
+    expect(o).toBeTruthy();
+    expect(o.total).toBe(950);
+    expect(o.discount).toBe(50);
+    expect(o.paymentMethod).toBe('On Account');
+    expect(o.clientId).toBe(String(client._id));
+    expect(o.createdAt.toISOString().slice(0, 10)).toBe(LAST_MONTH);
+  });
+
+  it('importing the same file again adds nothing', async () => {
+    const r = await imp({ rows: [{ 'Order No': 'ORD-2026-A9001', Date: LAST_MONTH, Status: 'Completed', Total: 950 }] });
+    expect(r.body.created).toBe(0);
+    expect(await mongoose.model('Order').countDocuments({ orderNumber: 'ORD-2026-A9001' })).toBe(1);
+  });
+
+  it('a total above its subtotal (a delivery fee) comes back at the total', async () => {
+    const r = await imp({ rows: [{ 'Order No': 'ORD-2026-A9010', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 75961, Discount: 0, Total: 77912 }] });
+    expect(r.body.created, JSON.stringify(r.body)).toBe(1);
+    const o = await mongoose.model('Order').findOne({ orderNumber: 'ORD-2026-A9010' }).lean();
+    expect(o.total).toBe(77912);
+    expect(o.deliveryFee).toBe(1951);
+  });
+
+  it('a discount and a delivery fee together still land on the total', async () => {
+    const r = await imp({ rows: [{ 'Order No': 'ORD-2026-A9011', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 100, Discount: 10, Total: 95 }] });
+    expect(r.body.created, JSON.stringify(r.body)).toBe(1);
+    const o = await mongoose.model('Order').findOne({ orderNumber: 'ORD-2026-A9011' }).lean();
+    expect([o.subtotal, o.discount, o.deliveryFee, o.total]).toEqual([100, 10, 5, 95]);
+  });
+
+  it('one that came in at the wrong total is replaced on the next import, keeping its number', async () => {
+    const Order = mongoose.model('Order');
+    // As the earlier import left it: at the subtotal.
+    await Order.updateOne({ orderNumber: 'ORD-2026-A9010' }, { $set: { total: 75961, deliveryFee: 0 } });
+    const r = await imp({ rows: [{ 'Order No': 'ORD-2026-A9010', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 75961, Discount: 0, Total: 77912 }] });
+    expect(r.body.created, JSON.stringify(r.body)).toBe(1);
+    const live = await Order.find({ orderNumber: 'ORD-2026-A9010' }).lean();
+    expect(live).toHaveLength(1);
+    expect(live[0].status).toBe('Completed');
+    expect(live[0].total).toBe(77912);
+    expect((await Order.findOne({ orderNumber: 'ORD-2026-A9010-R' }).lean()).status).toBe('Voided');
+    // and a third time changes nothing
+    const again = await imp({ rows: [{ 'Order No': 'ORD-2026-A9010', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 75961, Discount: 0, Total: 77912 }] });
+    expect(again.body.created).toBe(0);
+  });
+
+  it('a Cost figure books cost of goods sold, and the stock count that follows does not book it again', async () => {
+    const JE = mongoose.model('JournalEntry');
+    const bal = async (code) => {
+      const [r] = await JE.aggregate([{ $unwind: '$lines' }, { $match: { 'lines.accountCode': code } }, { $group: { _id: null, n: { $sum: { $subtract: ['$lines.debit', '$lines.credit'] } } } }]);
+      return +(r?.n || 0).toFixed(2);
+    };
+    const cogsBefore = await bal('510000');
+    const waitingBefore = await bal('139000');
+    // a summary order already imported without cost, then the same sheet with a Cost column
+    await imp({ rows: [{ 'Order No': 'ORD-2026-A9020', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 1000, Discount: 0, Total: 1000 }] });
+    const again = await imp({ rows: [{ 'Order No': 'ORD-2026-A9020', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 1000, Discount: 0, Total: 1000, Cost: 700 }] });
+    expect(again.body.costed, JSON.stringify(again.body)).toBe(1);
+    expect(await bal('510000')).toBe(+(cogsBefore + 700).toFixed(2));
+    expect(+((await bal('139000')) - waitingBefore).toFixed(2)).toBe(-700);
+    // a third time books nothing more
+    expect((await imp({ rows: [{ 'Order No': 'ORD-2026-A9020', Date: LAST_MONTH, Status: 'Completed', Total: 1000, Cost: 700 }] })).body.costed).toBe(0);
+    const o = await mongoose.model('Order').findOne({ orderNumber: 'ORD-2026-A9020' }).lean();
+    expect(o.costPosted).toBe(700);
+
+    // The count finds goods gone worth everything waiting plus ₱300: the waiting part is
+    // sold goods already costed, the ₱300 is real shrinkage.
+    const waiting = -(await bal('139000'));
+    const item = await mongoose.model('Inventory').create({ itemName: 'COUNT ME', unit: 'pcs', stockQty: waiting + 300, unitCost: 1 });
+    const before535 = await bal('535000');
+    const c = await auth('post', '/api/inventory/count', superTok).send({ counts: { [item._id]: 0 }, reasons: {}, adminName: 'x' });
+    expect(c.status, JSON.stringify(c.body)).toBe(200);
+    expect(await bal('139000')).toBe(0);
+    expect(+((await bal('535000')) - before535).toFixed(2)).toBe(300);
+  });
+
+  it('backdated sales that have their products are costed from the stock items, once', async () => {
+    const JE = mongoose.model('JournalEntry');
+    const cogs = async () => { const [r] = await JE.aggregate([{ $unwind: '$lines' }, { $match: { 'lines.accountCode': '510000' } }, { $group: { _id: null, n: { $sum: { $subtract: ['$lines.debit', '$lines.credit'] } } } }]); return +(r?.n || 0).toFixed(2); };
+    const item = await mongoose.model('Inventory').create({ itemName: 'COSTED POWDER', itemCode: 'P-COST-1', unit: 'pcs', stockQty: 50, unitCost: 400 });
+    await mongoose.model('Product').create({ name: 'COSTED POWDER', productCode: 'P-COST-1', category: 'Any', basePrice: 600, baseRecipe: [] });
+    const before = await cogs();
+    const r = await imp({
+      rows: [{ 'Order No': 'ORD-2026-A9030', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 1800, Discount: 0, Total: 1800 }],
+      lines: [{ 'Order No': 'ORD-2026-A9030', Code: 'P-COST-1', Product: 'COSTED POWDER', Qty: 3, 'Unit Price': 600 }],
+    });
+    expect(r.body.created, JSON.stringify(r.body)).toBe(1);
+    expect(r.body.costed).toBe(1);
+    expect(+((await cogs()) - before).toFixed(2)).toBe(1200);                       // 3 x 400
+    expect((await mongoose.model('Inventory').findById(item._id).lean()).stockQty).toBe(50);   // the count is left alone
+    // the catch-up finds nothing more to cost for it
+    const again = await auth('post', '/api/admin/backdate-sale/book-costs', superTok).send({});
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(+((await cogs()) - before).toFixed(2)).toBe(1200 + again.body.total);
+    const third = await auth('post', '/api/admin/backdate-sale/book-costs', superTok).send({});
+    expect(third.body.booked).toBe(0);
+  });
+
+  it('a backdated sale entered with its products is costed on its own, and a replacement is not costed twice', async () => {
+    const JE = mongoose.model('JournalEntry');
+    const cogs = async () => { const [r] = await JE.aggregate([{ $unwind: '$lines' }, { $match: { 'lines.accountCode': '510000' } }, { $group: { _id: null, n: { $sum: { $subtract: ['$lines.debit', '$lines.credit'] } } } }]); return +(r?.n || 0).toFixed(2); };
+    await mongoose.model('Inventory').create({ itemName: 'AUTO COST SYRUP', itemCode: 'P-AUTO-1', unit: 'pcs', stockQty: 50, unitCost: 100 });
+    const prod = await mongoose.model('Product').create({ name: 'AUTO COST SYRUP', productCode: 'P-AUTO-1', category: 'Any', basePrice: 250, baseRecipe: [] });
+    const before = await cogs();
+    const body = { date: LAST_MONTH, paymentMethod: 'Cash', customerName: 'Auto Cost', importRef: 'AUTO-REF-1', items: [{ productId: String(prod._id), name: 'AUTO COST SYRUP', price: 250, quantity: 4 }] };
+    const first = await auth('post', '/api/admin/backdate-sale', superTok).send(body);
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    expect(+((await cogs()) - before).toFixed(2)).toBe(400);                         // 4 x 100, no button pressed
+    const again = await auth('post', '/api/admin/backdate-sale', superTok).send({ ...body, replaceExisting: true, items: [{ ...body.items[0], quantity: 5 }] });
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(+((await cogs()) - before).toFixed(2)).toBe(500);                         // the old 400 came back off
+    // voiding it gives the cost back too
+    const v = await auth('post', `/api/orders/${again.body.order._id}/void`, superTok).send({ reason: 'Entered twice' });
+    expect(v.status, JSON.stringify(v.body)).toBe(200);
+    expect(+((await cogs()) - before).toFixed(2)).toBe(0);
+  });
+
+  it('the cost follows the item code even when the product is gone or its recipe points at stock that was re-imported', async () => {
+    const JE = mongoose.model('JournalEntry');
+    const cogs = async () => { const [r] = await JE.aggregate([{ $unwind: '$lines' }, { $match: { 'lines.accountCode': '510000' } }, { $group: { _id: null, n: { $sum: { $subtract: ['$lines.debit', '$lines.credit'] } } } }]); return +(r?.n || 0).toFixed(2); };
+    const Inventory = mongoose.model('Inventory');
+    // (a) stock item only, no product at all; (b) a product whose recipe names a stock row that no longer exists
+    await Inventory.create({ itemName: 'CODE ONLY SYRUP', itemCode: 'P-CODE-1', unit: 'pcs', stockQty: 10, unitCost: 80 });
+    await Inventory.create({ itemName: 'STALE LINK POWDER', itemCode: 'P-CODE-2', unit: 'pcs', stockQty: 10, unitCost: 50 });
+    await mongoose.model('Product').create({ name: 'STALE LINK POWDER', productCode: 'P-CODE-2', category: 'Any', basePrice: 120,
+      baseRecipe: [{ invId: String(new mongoose.Types.ObjectId()), name: 'STALE LINK POWDER', qty: 1, unit: 'pcs', packBase: 1 }] });
+    const before = await cogs();
+    const r = await imp({
+      rows: [{ 'Order No': 'ORD-2026-A9040', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 640, Discount: 0, Total: 640 }],
+      lines: [
+        { 'Order No': 'ORD-2026-A9040', Code: 'p-code-1', Product: 'CODE ONLY SYRUP', Qty: 2, 'Unit Price': 200 },
+        { 'Order No': 'ORD-2026-A9040', Code: 'P-CODE-2', Product: 'STALE LINK POWDER', Qty: 2, 'Unit Price': 120 },
+      ],
+    });
+    expect(r.body.created, JSON.stringify(r.body)).toBe(1);
+    expect(+((await cogs()) - before).toFixed(2)).toBe(260);                         // 2 x 80 + 2 x 50
+  });
+
+  it('only completed orders come back', async () => {
+    const r = await imp({ rows: [{ 'Order No': 'ORD-2026-A9002', Date: LAST_MONTH, Status: 'Cancelled', Total: 500 }] });
+    expect(r.body.created).toBe(0);
+    expect(r.body.skipped[0].error).toMatch(/only completed/i);
+  });
+
+  it('with its lines, the products come back too', async () => {
+    const r = await imp({
+      rows: [{ 'Order No': 'ORD-2026-A9003', Date: LAST_MONTH, Status: 'Completed', Payment: 'Cash', Subtotal: 600, Discount: 0, Total: 600 }],
+      lines: [
+        { 'Order No': 'ORD-2026-A9003', Product: 'Line A', Qty: 2, 'Unit Price': 200 },
+        { 'Order No': 'ORD-2026-A9003', Product: 'Line B', Qty: 1, 'Unit Price': 200 },
+      ],
+    });
+    expect(r.body.created).toBe(1);
+    const o = await mongoose.model('Order').findOne({ orderNumber: 'ORD-2026-A9003' }).lean();
+    expect(o.items.map(i => i.name)).toEqual(['Line A', 'Line B']);
+    expect(o.total).toBe(600);
+  });
+
+  it('a new order after the import never reuses an imported number', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({ date: LAST_MONTH, amount: 10 });
+    const n = Number(/-A(\d+)$/.exec(res.body.order.orderNumber)[1]);
+    expect(n).toBeGreaterThan(9003);
+  });
+});
+
+describe('the money side of a backdated sale', () => {
+  const jeOf = async (res) => mongoose.model('JournalEntry').findOne({ reference: res.body.journalReference }).lean();
+  const linesOf = (je) => je.lines.map(l => `${l.accountCode}:${l.debit}/${l.credit}`).sort();
+
+  it('a sale On Account is owed by the customer - Accounts Receivable, never Payable', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({ date: LAST_MONTH, amount: 1000, paymentMethod: 'On Account' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const lines = linesOf(await jeOf(res));
+    expect(lines).toContain('120000:1000/0');
+    expect(lines.some(l => l.startsWith('220000'))).toBe(false);
+  });
+
+  it('a split - half cash, half on account - books each part, and only the credit part is owed', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({
+      date: LAST_MONTH, amount: 1000, payments: [{ method: 'Cash', amount: 500 }, { method: 'On Account', amount: 500 }],
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.order.paymentMethod).toBe('Split');
+    const lines = linesOf(await jeOf(res));
+    expect(lines).toEqual(expect.arrayContaining(['111000:500/0', '120000:500/0']));
+    const o = await mongoose.model('Order').findById(res.body.order._id).lean();
+    expect(o.payments.map(p => [p.method, p.amount])).toEqual([['Cash', 500], ['On Account', 500]]);
+    expect(o.total - o.arPaidAmount).toBe(500);   // what the client still owes
+  });
+
+  it('a split that does not add up to the sale is refused', async () => {
+    const res = await auth('post', '/api/admin/backdate-sale', superTok).send({
+      date: LAST_MONTH, amount: 1000, payments: [{ method: 'Cash', amount: 500 }, { method: 'On Account', amount: 400 }],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/add up/);
+  });
+
+  it('an On Account sale already booked to Accounts Payable is corrected once', async () => {
+    const { repairBackdatedSalesOnPayables } = await import('../lib/saleAccounts.js');
+    const JE = mongoose.model('JournalEntry');
+    await JE.create({ date: new Date(LAST_MONTH), reference: 'BACKDATE-OLD1', description: 'Backdated sale: ORD-OLD-1',
+      lines: [{ accountCode: '220000', accountName: 'Accounts Payable', debit: 750, credit: 0 }, { accountCode: '410000', accountName: 'Sales Revenue', debit: 0, credit: 750 }] });
+    const first = await repairBackdatedSalesOnPayables(mongoose);
+    expect(first.find(f => f.reference === 'BACKDATE-OLD1')?.amount).toBe(750);
+    const fix = await JE.findOne({ description: /\[fixes BACKDATE-OLD1\]/ }).lean();
+    expect(fix.lines.map(l => `${l.accountCode}:${l.debit}/${l.credit}`).sort()).toEqual(['120000:750/0', '220000:0/750']);
+    expect((await repairBackdatedSalesOnPayables(mongoose)).find(f => f.reference === 'BACKDATE-OLD1')).toBeUndefined();
+  });
+});
+
+describe('replacing a sale already imported', () => {
+  const post = (body) => auth('post', '/api/admin/backdate-sale', superTok).send({ date: LAST_MONTH, paymentMethod: 'Cash', ...body });
+  const netOf = async (code) => {
+    const rows = await mongoose.model('JournalEntry').aggregate([{ $unwind: '$lines' }, { $match: { 'lines.accountCode': code } },
+      { $group: { _id: null, d: { $sum: '$lines.debit' }, c: { $sum: '$lines.credit' } } }]);
+    return rows[0] ? Math.round((rows[0].d - rows[0].c) * 100) / 100 : 0;
+  };
+
+  it('a sheet first imported at its subtotal is reversed and recorded at its real total', async () => {
+    const cashBefore = await netOf('111000');
+    const first = await post({ importRef: 'RP-1', items: [{ name: 'Widget', price: 100, quantity: 10 }] });   // 1000 - the wrong figure
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    // Without the option it is still a duplicate.
+    expect((await post({ importRef: 'RP-1', items: [{ name: 'Widget', price: 100, quantity: 10 }], discountAmount: 50 })).status).toBe(409);
+    const again = await post({ importRef: 'RP-1', items: [{ name: 'Widget', price: 100, quantity: 10 }], discountAmount: 50, replaceExisting: true });
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(again.body.order.total).toBe(950);
+
+    const old = await mongoose.model('Order').findById(first.body.order._id).lean();
+    expect(old.status).toBe('Voided');
+    expect(old.importRef).not.toBe('RP-1');
+    // The books carry the sale once, at 950 - not 1000 + 950.
+    expect(Math.round((await netOf('111000') - cashBefore) * 100) / 100).toBe(950);
+  });
+
+  it('gives back the stock the old sale took', async () => {
+    const before = (await mongoose.model('Inventory').findById(inv._id).lean()).stockQty;
+    await post({ importRef: 'RP-2', affectInventory: true, items: [{ name: 'Widget', price: 100, quantity: 4, productId: String(prod._id), productCode: String(inv._id) }] });
+    await post({ importRef: 'RP-2', affectInventory: true, replaceExisting: true, items: [{ name: 'Widget', price: 100, quantity: 3, productId: String(prod._id), productCode: String(inv._id) }] });
+    expect((await mongoose.model('Inventory').findById(inv._id).lean()).stockQty).toBe(before - 3);
+  });
+
+  it('will not replace a sale that already has a collection against it', async () => {
+    const first = await post({ importRef: 'RP-3', paymentMethod: 'On Account', amount: 500 });
+    await mongoose.model('Order').updateOne({ _id: first.body.order._id }, { $push: { arPayments: { amount: 100 } } });
+    const r = await post({ importRef: 'RP-3', paymentMethod: 'On Account', amount: 400, replaceExisting: true });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/collection or refund/);
+    expect((await mongoose.model('Order').findById(first.body.order._id).lean()).status).toBe('Completed');
+  });
+});

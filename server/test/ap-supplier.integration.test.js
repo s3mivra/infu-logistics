@@ -45,9 +45,9 @@ const receiveFrom = async (supplierId, supplierName, qty, unitCost) => {
 
 describe('receiving on credit builds a per-supplier payable', () => {
   it('attributes the payable to the supplier that shipped it', async () => {
-    await receiveFrom(supplierAId, 'Best Beans Co', 10, 80);   // ₱800
+    await receiveFrom(supplierAId, 'BEST BEANS CO', 10, 80);   // ₱800
     const body = await ap();
-    const row = rowFor(body, 'Best Beans Co');
+    const row = rowFor(body, 'BEST BEANS CO');
     expect(row).toBeTruthy();
     expect(row.incurred).toBeCloseTo(800, 2);
     expect(row.paid).toBe(0);
@@ -55,16 +55,16 @@ describe('receiving on credit builds a per-supplier payable', () => {
   });
 
   it('keeps two suppliers on separate balances', async () => {
-    await receiveFrom(supplierBId, 'Milk Masters', 5, 100);    // ₱500
+    await receiveFrom(supplierBId, 'MILK MASTERS', 5, 100);    // ₱500
     const body = await ap();
-    expect(rowFor(body, 'Best Beans Co').balance).toBeCloseTo(800, 2);
-    expect(rowFor(body, 'Milk Masters').balance).toBeCloseTo(500, 2);
+    expect(rowFor(body, 'BEST BEANS CO').balance).toBeCloseTo(800, 2);
+    expect(rowFor(body, 'MILK MASTERS').balance).toBeCloseTo(500, 2);
     expect(body.outstandingBalance).toBeCloseTo(1300, 2);
   });
 
   it('names the supplier in the journal history', async () => {
     const body = await ap();
-    const entry = body.recent.find(r => /Best Beans Co/.test(r.supplierName || ''));
+    const entry = body.recent.find(r => /BEST BEANS CO/.test(r.supplierName || ''));
     expect(entry).toBeTruthy();
     expect(entry.credit).toBeGreaterThan(0);      // a payable was incurred
   });
@@ -77,9 +77,9 @@ describe('paying a supplier draws down their balance', () => {
     expect(res.status).toBe(200);
 
     const body = await ap();
-    expect(rowFor(body, 'Best Beans Co').paid).toBeCloseTo(300, 2);
-    expect(rowFor(body, 'Best Beans Co').balance).toBeCloseTo(500, 2);
-    expect(rowFor(body, 'Milk Masters').balance).toBeCloseTo(500, 2);  // untouched
+    expect(rowFor(body, 'BEST BEANS CO').paid).toBeCloseTo(300, 2);
+    expect(rowFor(body, 'BEST BEANS CO').balance).toBeCloseTo(500, 2);
+    expect(rowFor(body, 'MILK MASTERS').balance).toBeCloseTo(500, 2);  // untouched
     expect(body.outstandingBalance).toBeCloseTo(1000, 2);
   });
 
@@ -87,7 +87,7 @@ describe('paying a supplier draws down their balance', () => {
     const body = await ap();
     const pay = body.recent.find(r => /^AP-PAY/.test(r.reference || ''));
     expect(pay).toBeTruthy();
-    expect(pay.supplierName).toBe('Best Beans Co');
+    expect(pay.supplierName).toBe('BEST BEANS CO');
     expect(pay.debit).toBeCloseTo(300, 2);        // debit = payable settled
   });
 
@@ -95,7 +95,7 @@ describe('paying a supplier draws down their balance', () => {
     await request(app).post('/api/finance/ap-payment').set(auth(superToken))
       .send({ amount: 1, payFromAccount: '111000', supplierId: supplierBId, vendorName: 'TYPO NAME' });
     const body = await ap();
-    const pay = body.recent.find(r => r.supplierName === 'Milk Masters' && r.debit === 1);
+    const pay = body.recent.find(r => r.supplierName === 'MILK MASTERS' && r.debit === 1);
     expect(pay).toBeTruthy();
   });
 
@@ -123,11 +123,11 @@ describe('paying a supplier draws down their balance', () => {
 
   it('drops fully-settled suppliers from the payables list', async () => {
     const before = await ap();
-    const owed = rowFor(before, 'Best Beans Co').balance;
+    const owed = rowFor(before, 'BEST BEANS CO').balance;
     await request(app).post('/api/finance/ap-payment').set(auth(superToken))
       .send({ amount: owed, payFromAccount: '111000', supplierId: supplierAId });
     const after = await ap();
-    expect(rowFor(after, 'Best Beans Co')).toBeUndefined();
+    expect(rowFor(after, 'BEST BEANS CO')).toBeUndefined();
   });
 });
 

@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Package, Eye, EyeOff, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
+import LegalLinks from '../../shared/LegalLinks';
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
+import { API_URL } from '../../shared/apiBase.js';
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Semivra').toUpperCase();
 
 // Self-service onboarding (#10) - reached via a one-time link the superadmin
@@ -17,6 +18,8 @@ export default function ClientOnboarding() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [form, setForm] = useState({ name: '', phone: '', email: '', username: '', password: '', confirm: '', showPassword: false });
+  // The shop sent a link with no name on it: the client supplies their own.
+  const [nameRequired, setNameRequired] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
@@ -28,6 +31,7 @@ export default function ClientOnboarding() {
         const data = await res.json();
         if (!data.success) { setLoadError(data.error || 'This link is invalid or has expired.'); return; }
         setForm(f => ({ ...f, name: data.client.name || '', phone: data.client.phone || '', email: data.client.email || '' }));
+        setNameRequired(!!data.client.nameRequired);
       } catch {
         setLoadError('Network error. Please try again.');
       } finally {
@@ -39,8 +43,9 @@ export default function ClientOnboarding() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    if (nameRequired && !form.name.trim()) { setError('Please enter your name or business name.'); return; }
     if (!form.username.trim() || !form.password) { setError('Choose a username and password.'); return; }
-    if (form.password.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    if (form.password.length < 8) { setError('Password must be at least 8 characters.'); return; }
     if (form.password !== form.confirm) { setError('Passwords do not match.'); return; }
     setSubmitting(true);
     try {
@@ -62,7 +67,7 @@ export default function ClientOnboarding() {
     }
   };
 
-  const input = 'w-full bg-page-bg border border-white/10 rounded-xl px-4 py-3 text-fg font-bold outline-none focus:border-brand/60 transition placeholder-fg/25';
+  const input = 'w-full bg-page-bg border border-white/10 rounded-xl px-4 py-3 text-fg font-bold outline-none focus:border-brand/60 transition placeholder-fg/70';
   const label = 'text-xs text-fg/75 font-bold uppercase tracking-wider block mb-1.5';
 
   return (
@@ -98,7 +103,8 @@ export default function ClientOnboarding() {
             )}
             <div>
               <label className={label}>Full Name</label>
-              <input className={input} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+              <input className={input} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                placeholder={nameRequired ? 'Your name or business name (required)' : ''} aria-required={nameRequired} />
               <p className="text-fg/65 text-[11px] mt-1">Just how your name shows up - not what you sign in with.</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -118,7 +124,7 @@ export default function ClientOnboarding() {
               <p className="text-fg/65 text-[11px] mt-1">This is what you'll type to sign in - not your name.</p>
             </div>
             <div>
-              <label className={label}>Choose a Password * (min 6 characters)</label>
+              <label className={label}>Choose a Password * (min 8 characters)</label>
               <div className="relative">
                 <input type={form.showPassword ? 'text' : 'password'} autoComplete="new-password" className={`${input} pr-11`} value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
                 <button type="button" onClick={() => setForm(f => ({ ...f, showPassword: !f.showPassword }))} className="absolute right-3 top-1/2 -translate-y-1/2 text-fg/70 hover:text-fg">
@@ -133,6 +139,7 @@ export default function ClientOnboarding() {
             <button type="submit" disabled={submitting} className="w-full bg-brand hover:bg-brand/90 disabled:opacity-50 text-on-brand font-bold py-3 rounded-xl transition flex items-center justify-center gap-2 mt-2">
               {submitting ? <Loader2 size={16} className="animate-spin" /> : null} Finish Setup
             </button>
+            <LegalLinks lead="By finishing setup you agree to our" />
           </form>
         )}
       </div>

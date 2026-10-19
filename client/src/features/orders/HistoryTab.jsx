@@ -2,9 +2,14 @@
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
+import RangePresets from '../../shared/RangePresets';
+import DailyClosingCheck from './DailyClosingCheck';
+import { TipsPanel } from '../cafe/CafeExtras';
+import { StoreChecklist } from '../ops/OpsExtras';
 import * as ui from '../../shared/ui';
 
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { todayStr } from '../../shared/businessDay.js';
+import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
 // ── HistoryTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
@@ -29,7 +34,7 @@ export default function HistoryTab({ ctx }) {
     currentInventory, currentOrders, currentPage, currentPricingProducts, currentProducts,
     dailyMovement, deleteAddOn, deleteCategory, deleteInventory, deleteProduct,
     departmentFilter, discountForm, discountInputs, discountList, discounts,
-    displayOrders, downloadImportTemplate, downloadJournalCsv, editInvForm, editInvModal,
+    displayOrders, downloadImportTemplate, editInvForm, editInvModal,
     editInvSubmitting, editPriceId, editPriceVal, editingCategory, editingProduct,
     effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
@@ -109,7 +114,7 @@ export default function HistoryTab({ ctx }) {
       foot: [[{ content: 'Total', colSpan: 3 }, pdfMoney(total)]],
       styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], fontStyle: 'bold', textColor: 255 }, columnStyles: { 3: { halign: 'right' } },
     });
-    doc.save(`Bank-Deposits-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Bank-Deposits-${todayStr()}.pdf`);
   };
 
   const sssPage = usePagination(sssRows, 15);
@@ -141,7 +146,7 @@ export default function HistoryTab({ ctx }) {
 
   const histSubTabUI = (
     <div className="flex items-center gap-2 mb-6 flex-wrap">
-      {[['daily','Current Shift'],['shifts','Shift History'],['hours','Timesheets'],['deposits','Bank Deposits']].map(([id, label]) => (
+      {[['daily','Current Shift'],['closing','Daily Closing Check'],['shifts','Shift History'],['hours','Timesheets'],['deposits','Bank Deposits'], ['checklist','Store Checklist'], ...(BUSINESS_TYPE === 'fb' ? [['tips','Tips']] : [])].map(([id, label]) => (
         <button key={id}
           onClick={() => { setHistorySubTab(id); if (id === 'shifts') fetchShiftHistory(1); if (id === 'hours') fetchClockEntries(1); }}
           className={`px-5 py-2.5 rounded-xl font-black text-sm uppercase tracking-wider transition ${historySubTab === id ? 'bg-brand text-on-brand shadow-md' : 'bg-surface-2 text-fg/75 hover:text-fg'}`}
@@ -160,11 +165,11 @@ export default function HistoryTab({ ctx }) {
               <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                 <div>
                   <h3 className="text-lg font-black text-fg">Bank Deposits</h3>
-                  <p className="text-fg/60 text-xs">Cash-to-bank deposits (posted when a shift is closed &amp; reconciled).</p>
+                  <p className="text-fg/65 text-xs">Cash-to-bank deposits (posted when a shift is closed &amp; reconciled).</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={exportBankDepositsPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition">Export PDF</button>
-                  <button onClick={loadDeposits} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Refresh</button>
+                  <button onClick={exportBankDepositsPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition">Export PDF</button>
+                  <button onClick={loadDeposits} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Refresh</button>
                 </div>
               </div>
               {deposits === null ? (
@@ -201,78 +206,10 @@ export default function HistoryTab({ ctx }) {
             </div>
           )}
 
-          {/* ===== SUMMARY SALES (channel breakdown) ===== */}
-          {historySubTab === 'sales' && (
-            <div className="space-y-4 animate-fade-in">
-              <div className="flex flex-wrap gap-3 items-center">
-                <input type="date" value={sssRange.start} onChange={e => setSssRange(p => ({ ...p, start: e.target.value }))}
-                  className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
-                <span className="text-fg/65 font-bold text-sm">→</span>
-                <input type="date" value={sssRange.end} onChange={e => setSssRange(p => ({ ...p, end: e.target.value }))}
-                  className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
-                <button onClick={fetchSalesSummary} className="px-5 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition">Load</button>
-                <div className="flex rounded-xl overflow-hidden border border-white/10">
-                  {[['order', 'Per Order'], ['day', 'Per Day']].map(([g, lbl]) => (
-                    <button key={g} onClick={() => setSssGroup(g)}
-                      className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition ${sssGroup === g ? 'bg-brand text-on-brand' : 'bg-surface text-fg/75 hover:text-fg'}`}>{lbl}</button>
-                  ))}
-                </div>
-                {salesSummary && <button onClick={exportSalesSummaryPDF} className="ml-auto bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition flex items-center gap-1.5"><Download size={13} /> PDF</button>}
-              </div>
-
-              {!salesSummary ? (
-                <p className="text-fg/65 text-sm text-center p-6 font-bold">Pick a range and click Load.</p>
-              ) : sssRows.length === 0 ? (
-                <p className="text-fg/65 text-sm text-center p-6 font-bold">No completed sales in this range.</p>
-              ) : (
-                <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs whitespace-nowrap">
-                      <thead className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
-                        <tr>
-                          <th className="px-3 py-2.5">Date</th>
-                          <th className="px-3 py-2.5">Customer ID</th>
-                          <th className="px-3 py-2.5">Customer Name</th>
-                          <th className="px-3 py-2.5">{sssGroup === 'day' ? 'Orders' : 'Order ID'}</th>
-                          {SSS_COLS.map(([label]) => (
-                            <th key={label} className="px-3 py-2.5 text-right">{label}</th>
-                          ))}
-                          <th className="px-3 py-2.5 text-right">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sssPage.pageItems.map((r, i) => (
-                          <tr key={i} className={`border-b border-white/5 ${i % 2 ? 'bg-white/[0.015]' : ''}`}>
-                            <td className="px-3 py-2.5 text-fg/70">{new Date(r.date).toLocaleDateString()}</td>
-                            <td className="px-3 py-2.5 text-fg/70">{sssGroup === 'day' ? '-' : (r.customerId || '-')}</td>
-                            <td className="px-3 py-2.5 text-fg/70">{sssGroup === 'day' ? '-' : (r.customerName || 'Guest')}</td>
-                            <td className="px-3 py-2.5 font-bold text-fg">{sssGroup === 'day' ? r.count : r.orderNumber}</td>
-                            {SSS_COLS.map(([label, methods]) => { const v = sssColVal(r, methods); return (
-                              <td key={label} className="px-3 py-2.5 text-right tabular-nums text-fg/80">{v ? `₱${v.toFixed(2)}` : '-'}</td>
-                            ); })}
-                            <td className="px-3 py-2.5 text-right tabular-nums font-black text-brand-text">₱{r.total.toFixed(2)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot>
-                        <tr className="border-t-2 border-white/10 bg-brand/5 font-black text-fg">
-                          <td className="px-3 py-3 uppercase text-[10px] tracking-wider">Totals</td>
-                          <td className="px-3 py-3"></td>
-                          <td className="px-3 py-3"></td>
-                          <td className="px-3 py-3"></td>
-                          {SSS_COLS.map(([label, methods]) => (
-                            <td key={label} className="px-3 py-3 text-right tabular-nums">₱{sssColTotal(methods).toFixed(2)}</td>
-                          ))}
-                          <td className="px-3 py-3 text-right tabular-nums text-brand-text">₱{(salesSummary.totals?.total || 0).toFixed(2)}</td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                  <div className="px-3"><Pager {...sssPage} label="rows" /></div>
-                </div>
-              )}
-            </div>
-          )}
+          {/* ===== DAILY CLOSING CHECK ===== */}
+          {historySubTab === 'closing' && <DailyClosingCheck apiFetch={apiFetch} />}
+          {historySubTab === 'tips' && BUSINESS_TYPE === 'fb' && <TipsPanel apiFetch={apiFetch} can={ctx.can} />}
+          {historySubTab === 'checklist' && <StoreChecklist apiFetch={apiFetch} can={ctx.can} />}
 
           {historySubTab === 'hours' && (
             <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
@@ -285,7 +222,7 @@ export default function HistoryTab({ ctx }) {
                 </button>
               </div>
               {clockEntries.length === 0 ? (
-                <p className="text-fg/60 text-sm p-6 text-center font-bold">Click Load to view staff clock-in/out records.</p>
+                <p className="text-fg/65 text-sm p-6 text-center font-bold">Click Load to view staff clock-in/out records.</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[480px]">
@@ -306,10 +243,10 @@ export default function HistoryTab({ ctx }) {
                           <td className="px-5 py-2.5 text-fg font-bold">{e.staffName}</td>
                           <td className="px-5 py-2.5 text-fg/75 capitalize">{e.staffRole || '-'}</td>
                           <td className="px-5 py-2.5 text-fg/70">{e.clockIn ? new Date(e.clockIn).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}) : '-'}</td>
-                          <td className={`px-5 py-2.5 ${e.clockOut ? 'text-fg/70' : 'text-yellow-400/70 italic'}`}>
+                          <td className={`px-5 py-2.5 ${e.clockOut ? 'text-fg/70' : 'text-warning italic'}`}>
                             {e.clockOut ? new Date(e.clockOut).toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}) : 'Still in'}
                           </td>
-                          <td className="px-5 py-2.5 text-right font-bold text-brand/80 tabular-nums">
+                          <td className="px-5 py-2.5 text-right font-bold text-brand-text tabular-nums">
                             {e.durationMinutes != null ? `${Math.floor(e.durationMinutes/60)}h ${e.durationMinutes%60}m` : '-'}
                           </td>
                         </tr>
@@ -382,7 +319,7 @@ export default function HistoryTab({ ctx }) {
           {historySubTab === 'daily' && (<>
           <div className="bg-accent border border-accentShadow rounded-xl p-6 shadow-xl shadow-accent/5">
             <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
-              <h3 className="text-white font-black tracking-widest uppercase text-sm flex items-center gap-2">
+              <h3 className="text-on-brand font-black tracking-widest uppercase text-sm flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-page-bg animate-pulse"></span> Active Register
               </h3>
               <div className="flex flex-wrap items-center gap-2">
@@ -401,22 +338,22 @@ export default function HistoryTab({ ctx }) {
             
             <div className="space-y-4 mb-6">
               <div>
-                <p className="text-white text-xs font-bold uppercase tracking-wider mb-1">Net Sales</p>
-                <p className="text-4xl font-black text-white">P{shiftRevenue.toFixed(2)}</p>
-                <p className="text-white text-[10px] font-semibold mt-1">Gross P{shiftGross.toFixed(2)} &minus; Discounts P{shiftDisc.toFixed(2)}</p>
+                <p className="text-on-brand text-xs font-bold uppercase tracking-wider mb-1">Net Sales</p>
+                <p className="text-4xl font-black text-on-brand">P{shiftRevenue.toFixed(2)}</p>
+                <p className="text-on-brand text-[10px] font-semibold mt-1">Gross P{shiftGross.toFixed(2)} &minus; Discounts P{shiftDisc.toFixed(2)}</p>
                 {shiftCompAmount > 0 && (
-                  <p className="text-gray-300 text-[10px] font-bold mt-0.5">+P{shiftCompAmount.toFixed(2)} complimentary (not collected)</p>
+                  <p className="text-on-brand/80 text-[10px] font-bold mt-0.5">+P{shiftCompAmount.toFixed(2)} complimentary (not collected)</p>
                 )}
               </div>
               <div className="flex justify-between border-t border-white/10 pt-4">
                 <div>
-                  <p className="text-white text-[10px] font-bold uppercase tracking-wider">Completed Orders</p>
-                  <p className="text-lg font-bold text-white">{todayShiftOrders.length}</p>
-                  {shiftComp.length > 0 && <p className="text-[9px] text-gray-300 font-bold">{shiftComp.length} complimentary</p>}
+                  <p className="text-on-brand text-[10px] font-bold uppercase tracking-wider">Completed Orders</p>
+                  <p className="text-lg font-bold text-on-brand">{todayShiftOrders.length}</p>
+                  {shiftComp.length > 0 && <p className="text-[9px] text-on-brand/80 font-bold">{shiftComp.length} complimentary</p>}
                 </div>
                 <div className="text-right">
-                  <p className="text-white text-[10px] font-bold uppercase tracking-wider">Avg Ticket</p>
-                  <p className="text-lg font-bold text-white">P{todayShiftOrders.length > 0 ? (shiftRevenue / todayShiftOrders.length).toFixed(2) : '0.00'}</p>
+                  <p className="text-on-brand text-[10px] font-bold uppercase tracking-wider">Avg Ticket</p>
+                  <p className="text-lg font-bold text-on-brand">P{todayShiftOrders.length > 0 ? (shiftRevenue / todayShiftOrders.length).toFixed(2) : '0.00'}</p>
                 </div>
               </div>
             </div>
@@ -441,9 +378,10 @@ export default function HistoryTab({ ctx }) {
                   value={archiveSearch}
                   onChange={e => { setArchiveSearch(e.target.value); }}
                   onKeyDown={e => { if (e.key === 'Enter') fetchOrders(); }}
-                  className="w-full pl-8 pr-3 py-2 bg-page-bg border border-white/10 rounded-xl text-fg text-xs font-bold placeholder-white/20 outline-none focus:border-brand/50"
+                  className="w-full pl-8 pr-3 py-2 bg-page-bg border border-white/10 rounded-xl text-fg text-xs font-bold placeholder-fg/70 outline-none focus:border-brand/50"
                 />
               </div>
+              <RangePresets value={archiveDateRange} onChange={setArchiveDateRange} onRun={fetchOrders} />
               <input type="date" value={archiveDateRange.start}
                 onChange={e => setArchiveDateRange(p => ({...p, start: e.target.value}))}
                 className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg text-xs font-bold outline-none focus:border-brand/50"
@@ -462,7 +400,7 @@ export default function HistoryTab({ ctx }) {
                   Clear
                 </button>
               )}
-              {archiveTotal > 0 && <span className="text-[10px] text-fg/60 font-bold self-center">{archiveTotal} results</span>}
+              {archiveTotal > 0 && <span className="text-[10px] text-fg/65 font-bold self-center">{archiveTotal} results</span>}
             </div>
 
             <div className="max-h-[600px] overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
@@ -489,11 +427,11 @@ export default function HistoryTab({ ctx }) {
 
                         <div className="border-t border-white/10 pt-3 mt-1">
                           <div className="flex justify-between items-center">
-                            <button onClick={() => toggleOrderList(date)} className="flex items-center gap-2 text-xs font-bold text-fg hover:text-fg transition">
+                            <button onClick={() => toggleOrderList(date)} className="flex items-center gap-2 text-xs font-bold text-fg transition">
                               <span>{expandedOrderLists[date] ? 'Hide Orders' : 'View All Orders'}</span>
                               {expandedOrderLists[date] ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                             </button>
-                            <button onClick={() => exportDayToPDF(date, data.orders)} className="text-[10px] bg-surface-2 border border-white/10 text-fg/60 px-2 py-1 rounded hover:bg-white/10 hover:text-fg transition font-bold uppercase tracking-wider">
+                            <button onClick={() => exportDayToPDF(date, data.orders)} className="text-[10px] bg-surface-2 border border-white/10 text-fg/65 px-2 py-1 rounded hover:bg-white/10 hover:text-fg transition font-bold uppercase tracking-wider">
                               Export Day
                             </button>
                           </div>

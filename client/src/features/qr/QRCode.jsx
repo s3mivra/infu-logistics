@@ -1,19 +1,16 @@
 import React from 'react';
+import { QRCode as QR } from 'react-qr-code';
 
+// Drawn in the browser - the link is never sent to a third-party QR service.
 export default function QRCode({ url, size = 200 }) {
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(url)}`;
-  
+  const value = url || new URLSearchParams(window.location.search).get('url') || window.location.origin;
+
   return (
     <div className="flex flex-col items-center justify-center p-6">
       <div className="bg-white p-4 rounded-lg shadow-lg">
-        <img 
-          src={qrUrl} 
-          alt="Menu QR Code" 
-          /* Use pure inline styles for dynamic sizes, remove the invalid Tailwind class */
-          style={{ width: `${size}px`, height: `${size}px` }}
-        />
+        <QR value={value} size={size} aria-label="Menu QR Code" />
       </div>
-      <p className="text-fg/70 text-sm mt-4 text-center break-all max-w-xs">{url}</p>
+      <p className="text-fg/70 text-sm mt-4 text-center break-all max-w-xs">{value}</p>
     </div>
   );
 }

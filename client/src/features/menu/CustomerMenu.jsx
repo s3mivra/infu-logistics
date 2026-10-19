@@ -4,22 +4,29 @@ import { io } from 'socket.io-client';
 import { Coffee, ShoppingCart, Plus, Minus, X, Clock, CheckCircle, Package, AlertCircle, Users, Lock, RefreshCw, ChevronLeft, Search } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { loadDraft, saveDraft, clearDraft } from '../../shared/draft';
+import LegalLinks from '../../shared/LegalLinks';
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { API_URL } from '../../shared/apiBase.js';
+import { RateOrder } from '../cafe/CafeExtras';
+import { BUSINESS_TYPE, DEFAULT_DEPARTMENT, IS_FB } from '../../shared/businessType.js';
 // Order routing station. Every other order-entry surface (AdminDashboard,
 // OrdersTab, ProductsTab) resolves this per BUSINESS_TYPE - this QR-scanned
 // customer menu was the one place still hardcoded to 'Kitchen', so every
 // order placed via QR in a logistics deployment silently routed to a
 // "Kitchen" station that doesn't exist there instead of Logistics/Warehouse.
-const DEFAULT_DEPARTMENT = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
 // What the customer-facing copy calls the station an order is sent to. A
 // logistics business has no kitchen, so "Send to Kitchen" on its QR menu was
 // naming a station that doesn't exist. Mirrors SEND_TARGET in OrdersTab.
-const SEND_TARGET = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
-const socket = io(API_URL, { transports: ['websocket'], upgrade: false });
+const SEND_TARGET = DEFAULT_DEPARTMENT;
+// transports: WebSocket first, then long-polling as a fallback. It used to be
+// websocket-only with upgrade:false, which meant that if anything between the
+// browser and the server declined to forward the upgrade - a proxy, a CDN, a
+// captive network - realtime did not degrade, it simply died, silently: no new
+// orders appearing, no stock updates, and nothing on screen saying so. Polling
+// is heavier, so it is the fallback rather than the default.
+const socket = io(API_URL, { transports: ['websocket', 'polling'] });
 // See AdminDashboard.jsx for why: an open socket blocks bfcache, so
 // disconnect before the page would be frozen and reconnect if restored from it.
 if (typeof window !== 'undefined') {
@@ -66,7 +73,7 @@ const MenuItemCard = memo(({ product, onAdd }) => {
         <span className="absolute top-2 left-2 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-lg bg-orange-500 text-white">SALE</span>
       )}
       {outOfStock ? (
-        <span className="absolute top-2 left-2 text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg bg-red-900/80 text-red-300 border border-red-700/40">
+        <span className="absolute top-2 left-2 text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg bg-red-900/80 text-danger border border-red-700/40">
           Not available
         </span>
       ) : (
@@ -80,7 +87,7 @@ const MenuItemCard = memo(({ product, onAdd }) => {
       )}
     </div>
     <div className="p-3">
-      <h3 className="font-bold text-fg text-sm leading-tight truncate">{product.name}</h3>
+      <h3 className="font-bold text-fg text-sm leading-tight truncate" title={String((product.name) ?? '')}>{product.name}</h3>
       {product.description && <p className="text-fg/70 text-xs mt-0.5 line-clamp-1">{product.description}</p>}
       {product.activeSalePrice != null ? (
         <div className="flex items-baseline gap-1.5 mt-2">
@@ -105,7 +112,7 @@ MenuItemCard.displayName = 'MenuItemCard';
 // (stockAvailable === false - missing/zero recipe ingredient) still shows the
 // card, just disabled with a "Not available" badge (see MenuItemCard), so
 // customers see it exists but can't order it right now.
-const isProductVisible = (p) => p.isAvailable !== false && (p.basePrice || 0) > 0;
+const isProductVisible = (p) => p.isAvailable !== false && p.showOnQr !== false && (p.basePrice || 0) > 0;
 
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Kasa Lokal').toUpperCase();
 
@@ -128,6 +135,9 @@ export default function CustomerMenu() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderNotes, setOrderNotes] = useState('');
+  // Asked only when the shop has switched Dine-in / Take-out on (Menu Setup).
+  const [askServiceMode, setAskServiceMode] = useState(false);
+  const [serviceMode, setServiceMode] = useState('');   // 'dine-in' | 'take-out'
 
   const [activeCategory, setActiveCategory] = useState('All');
   // Large catalogues (logistics especially) are slow to browse by category
@@ -142,6 +152,8 @@ export default function CustomerMenu() {
   const [tableNum, setTableNum] = useState(null);
   const [successMessage, setSuccessMessage] = useState(false);
   const [lockedOrder, setLockedOrder] = useState(null);
+  // Kept after the order is cleared from the screen, so it can still be rated.
+  const [finishedOrderId, setFinishedOrderId] = useState('');
 
   const [isVibrating, setIsVibrating] = useState(false);
   const vibrationInterval = useRef(null);
@@ -189,7 +201,10 @@ export default function CustomerMenu() {
     fetchProducts();
     fetch(`${API_URL}/api/public/portal-settings`)
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.success && d.settings?.businessLogo) setBusinessLogo(d.settings.businessLogo); })
+      .then(d => {
+        if (d?.success && d.settings?.businessLogo) setBusinessLogo(d.settings.businessLogo);
+        if (d?.success && d.settings?.serviceModeEnabled === true) setAskServiceMode(true);
+      })
       .catch(() => {});
 
     const validateSessionAndCheckMemory = async () => {
@@ -217,7 +232,13 @@ export default function CustomerMenu() {
         }
 
         // --- IF NO ACTIVE ORDER, CHECK THE SESSION NORMALLY ---
-        const heartbeatRes = await fetch(`${API_URL}/api/sessions/${session}/heartbeat`, { method: 'POST' });
+        // /claim rather than /heartbeat: it validates and extends the session
+        // exactly the same way, and additionally tells the server this code has
+        // now been opened - which is the only way a scan becomes visible to it.
+        // The counter swaps in a fresh code on the back of that, so the next
+        // customer never scans a code someone else is already ordering on.
+        // Reloading this page claims nothing twice, so staff are notified once.
+        const heartbeatRes = await fetch(`${API_URL}/api/sessions/${session}/claim`, { method: 'POST' });
         const heartbeatData = await heartbeatRes.json();
 
         if (heartbeatData.success) {
@@ -400,6 +421,7 @@ export default function CustomerMenu() {
 
     if (lockedOrder) {
       localStorage.setItem(`received_${lockedOrder._id}`, 'true');
+      setFinishedOrderId(String(lockedOrder._id));
     }
 
     localStorage.removeItem('semivra_active_order');
@@ -548,6 +570,7 @@ export default function CustomerMenu() {
           customerName: customerName.trim(),
           sessionId: sessionToken,
           orderNotes: orderNotes.trim(),
+          ...(askServiceMode && serviceMode ? { serviceMode } : {}),
         })
       });
 
@@ -612,7 +635,7 @@ export default function CustomerMenu() {
           <Coffee size={28} className="text-brand-text" />
         </div>
         <div className="w-10 h-10 border-2 border-brand border-t-transparent rounded-full animate-spin mb-6" />
-        <p className="text-brand-text/85 text-xs font-bold tracking-widest uppercase animate-pulse">Securing Session…</p>
+        <p className="text-brand-text text-xs font-bold tracking-widest uppercase animate-pulse">Securing Session…</p>
       </div>
     );
   }
@@ -640,8 +663,10 @@ export default function CustomerMenu() {
           </div>
           <h2 className="text-3xl font-black text-fg mb-3 uppercase tracking-widest">Thank You!</h2>
           <p className="text-fg/75 font-medium mb-8">We hope you enjoy your order. Come back soon!</p>
+          {/* A cafe asks how it was; one rating per order, no account needed. */}
+          {IS_FB && <RateOrder apiUrl={API_URL} orderId={lockedOrder?._id || finishedOrderId} />}
           <div className="border-t border-white/5 pt-6">
-            <p className="text-fg/60 text-xs uppercase font-bold tracking-widest">You may now close this page.</p>
+            <p className="text-fg/65 text-xs uppercase font-bold tracking-widest">You may now close this page.</p>
           </div>
         </div>
       </div>
@@ -695,7 +720,7 @@ export default function CustomerMenu() {
                       const done = item.itemStatus === 'Delivered';
                       return (
                         <div key={i} className={`flex items-center gap-2 text-xs font-semibold transition-all ${done ? 'text-fg/65 line-through' : 'text-fg/70'}`}>
-                          <span className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 text-[9px] font-black ${done ? 'bg-green-500/20 text-success' : 'bg-white/10 text-fg/60'}`}>
+                          <span className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 text-[9px] font-black ${done ? 'bg-green-500/20 text-success' : 'bg-white/10 text-fg/65'}`}>
                             {done ? '✓' : '·'}
                           </span>
                           {item.quantity}x {item.name}
@@ -713,7 +738,7 @@ export default function CustomerMenu() {
               <>
                 <div className="text-7xl mb-6 animate-bounce">✨</div>
                 <h1 className="text-3xl font-black text-fg mb-3 uppercase tracking-widest">Order Ready!</h1>
-                <p className="text-emerald-300 font-bold mb-8">Please collect your items at the counter.</p>
+                <p className="text-success font-bold mb-8">Please collect your items at the counter.</p>
                 <button onClick={handleReceived} className="w-full bg-white text-emerald-900 font-black py-4 rounded-2xl hover:bg-emerald-50 transition shadow-xl active:scale-95 uppercase tracking-widest">
                   I Got My Order ✓
                 </button>
@@ -752,7 +777,7 @@ export default function CustomerMenu() {
           >
             Start Order
           </button>
-          <p className="text-fg/60 text-xs mt-5 font-medium">Scan QR at your table to order</p>
+          <p className="text-fg/65 text-xs mt-5 font-medium">Scan QR at your table to order</p>
         </div>
       </div>
     );
@@ -776,7 +801,7 @@ export default function CustomerMenu() {
             aria-label="Your name"
             value={customerName}
             onChange={e => setCustomerName(e.target.value)}
-            className="w-full bg-white/5 border-2 border-white/10 focus:border-brand text-fg text-center py-5 rounded-2xl outline-none mb-5 font-bold text-xl transition placeholder-white/20"
+            className="w-full bg-white/5 border-2 border-white/10 focus:border-brand text-fg text-center py-5 rounded-2xl outline-none mb-5 font-bold text-xl transition placeholder-fg/70"
             autoFocus
             onKeyDown={e => e.key === 'Enter' && customerName.trim().length > 0 && setFlowState('menu')}
           />
@@ -784,10 +809,11 @@ export default function CustomerMenu() {
             onClick={() => setFlowState('menu')}
             disabled={customerName.trim().length === 0}
             className={`w-full font-black py-5 rounded-2xl text-lg transition shadow-2xl uppercase tracking-widest
-              ${customerName.trim().length === 0 ? 'bg-white/5 text-fg/60 cursor-not-allowed' : 'bg-brand text-on-brand hover:bg-brand-dark shadow-brand/30 active:scale-95'}`}
+              ${customerName.trim().length === 0 ? 'bg-white/5 text-fg/65 cursor-not-allowed' : 'bg-brand text-on-brand hover:bg-brand-dark shadow-brand/30 active:scale-95'}`}
           >
             Browse Menu →
           </button>
+          <LegalLinks lead="By ordering you agree to our" className="mt-5" />
         </div>
       </div>
     );
@@ -799,8 +825,8 @@ export default function CustomerMenu() {
 
       {/* SUCCESS FLASH */}
       {successMessage && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-sidebar-bg border border-brand/30 p-10 rounded-3xl text-center max-w-xs w-full mx-4">
+        <div className="fixed inset-0 z-[60] flex justify-center bg-black/80 backdrop-blur-sm animate-fade-in overflow-y-auto">
+          <div className="bg-sidebar-bg border border-brand/30 p-10 rounded-3xl text-center max-w-xs w-full mx-4 my-auto">
             <div className="w-16 h-16 rounded-full bg-brand/20 flex items-center justify-center mx-auto mb-5">
               <CheckCircle size={32} className="text-brand-text" />
             </div>
@@ -842,7 +868,7 @@ export default function CustomerMenu() {
               value={menuSearch}
               onChange={e => setMenuSearch(e.target.value)}
               placeholder="Search products by name or code…"
-              className="w-full bg-white/5 border border-white/10 focus:border-brand rounded-xl pl-9 pr-9 py-2.5 text-sm text-fg placeholder-fg/30 outline-none transition"
+              className="w-full bg-white/5 border border-white/10 focus:border-brand rounded-xl pl-9 pr-9 py-2.5 text-sm text-fg placeholder-fg/70 outline-none transition"
             />
             {menuSearch && (
               <button onClick={() => setMenuSearch('')} aria-label="Clear search"
@@ -899,7 +925,7 @@ export default function CustomerMenu() {
               return (
                 <div key={category} className="mb-10">
                   {activeCategory === 'All' && (
-                    <h2 className="text-base font-black text-fg/60 mb-4 uppercase tracking-widest px-0.5">{category}</h2>
+                    <h2 className="text-base font-black text-fg/65 mb-4 uppercase tracking-widest px-0.5">{category}</h2>
                   )}
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                     {catProducts.map(p => (
@@ -962,17 +988,17 @@ export default function CustomerMenu() {
                       {item.selectedAddOns && item.selectedAddOns.length > 0 && (
                         <div className="space-y-0.5 mb-2">
                           {item.selectedAddOns.map((a,i) => (
-                            <p key={i} className="text-brand/70 text-xs">+ {a.name} <span className="text-fg/65">(+₱{a.price.toFixed(2)})</span></p>
+                            <p key={i} className="text-brand-text text-xs">+ {a.name} <span className="text-fg/65">(+₱{a.price.toFixed(2)})</span></p>
                           ))}
                         </div>
                       )}
                       <div className="flex items-center justify-between mt-2">
                         <div className="flex items-center gap-0.5 bg-black/30 rounded-xl p-1">
-                          <button onClick={() => updateQuantity(item.cartItemId, -1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-fg/60 hover:text-danger hover:bg-white/10 transition">
+                          <button onClick={() => updateQuantity(item.cartItemId, -1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-fg/65 hover:text-danger hover:bg-white/10 transition">
                             <Minus size={13} />
                           </button>
                           <span className="text-fg font-bold w-6 text-center text-sm">{item.quantity}</span>
-                          <button onClick={() => updateQuantity(item.cartItemId, 1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-fg/60 hover:text-brand-text hover:bg-white/10 transition">
+                          <button onClick={() => updateQuantity(item.cartItemId, 1)} className="w-7 h-7 flex items-center justify-center rounded-lg text-fg/65 hover:text-brand-text hover:bg-white/10 transition">
                             <Plus size={13} />
                           </button>
                         </div>
@@ -986,7 +1012,7 @@ export default function CustomerMenu() {
             {/* Footer */}
             <div className="px-5 py-4 border-t border-white/5 space-y-3">
               <div className="flex justify-between items-center">
-                <span className="text-fg/60 font-bold text-sm">Total</span>
+                <span className="text-fg/65 font-bold text-sm">Total</span>
                 <span className="text-fg font-black text-2xl">₱{total.toFixed(2)}</span>
               </div>
               {/* Special instructions */}
@@ -998,19 +1024,32 @@ export default function CustomerMenu() {
                   value={orderNotes}
                   onChange={e => setOrderNotes(e.target.value)}
                   placeholder="e.g. No sugar, extra ice, allergy note…"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm outline-none focus:border-brand/50 resize-none placeholder-white/20 transition"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm outline-none focus:border-brand/50 resize-none placeholder-fg/70 transition"
                   aria-label="Special instructions for your order"
                 />
                 {orderNotes.length > 0 && (
-                  <p className="text-[10px] text-fg/60 text-right mt-0.5">{orderNotes.length}/300</p>
+                  <p className="text-[10px] text-fg/65 text-right mt-0.5">{orderNotes.length}/300</p>
                 )}
               </div>
+              {askServiceMode && (
+                <div>
+                  <p className="text-[11px] text-fg/70 font-bold uppercase tracking-wider mb-1.5">Dine in or take out? *</p>
+                  <div role="radiogroup" aria-label="Dine in or take out" className="grid grid-cols-2 gap-2">
+                    {[['dine-in', 'Dine in'], ['take-out', 'Take out']].map(([v, label]) => (
+                      <button key={v} type="button" role="radio" aria-checked={serviceMode === v} onClick={() => setServiceMode(v)}
+                        className={`py-3 rounded-xl border font-black text-sm uppercase tracking-wider transition ${serviceMode === v ? 'bg-brand text-on-brand border-brand' : 'bg-white/5 text-fg border-white/10'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <button
                 onClick={async () => { await confirmOrder(); setCartOpen(false); }}
-                disabled={isSubmitting}
-                className="w-full bg-brand hover:bg-brand-dark text-fg font-black py-4 rounded-2xl text-lg transition shadow-2xl shadow-brand/30 uppercase tracking-widest active:scale-95 disabled:opacity-60"
+                disabled={isSubmitting || (askServiceMode && !serviceMode)}
+                className="w-full bg-brand hover:bg-brand-dark text-on-brand font-black py-4 rounded-2xl text-lg transition shadow-2xl shadow-brand/30 uppercase tracking-widest active:scale-95 disabled:opacity-60"
               >
-                {isSubmitting ? 'Sending…' : `Send to ${SEND_TARGET}`}
+                {isSubmitting ? 'Sending…' : (askServiceMode && !serviceMode) ? 'Choose dine in or take out' : `Send to ${SEND_TARGET}`}
               </button>
             </div>
           </div>
@@ -1129,7 +1168,7 @@ export default function CustomerMenu() {
 
               {selectedProduct.addOns && selectedProduct.addOns.length > 0 && (
                 <div className="border-t border-white/5 pt-4">
-                  <p className="text-fg/60 text-xs font-black uppercase tracking-widest mb-3">Optional Add-Ons</p>
+                  <p className="text-fg/65 text-xs font-black uppercase tracking-widest mb-3">Optional Add-Ons</p>
                   <div className="space-y-2">
                     {selectedProduct.addOns.map((addOn, idx) => (
                       <label key={`addon-${idx}`} className={`flex items-center justify-between p-3.5 rounded-xl border cursor-pointer transition ${selectedAddOns.some(a => a.name === addOn.name) ? 'border-brand bg-brand/10' : 'border-white/10 hover:border-white/20 bg-white/5'}`}>
@@ -1146,7 +1185,7 @@ export default function CustomerMenu() {
             </div>
             {/* Modal footer - always visible, never scrolled away */}
             <div className="flex gap-3 p-5 border-t border-white/5 flex-shrink-0">
-              <button onClick={() => setSelectedProduct(null)} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold py-3.5 rounded-2xl transition text-sm">
+              <button onClick={() => setSelectedProduct(null)} className="flex-1 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg font-bold py-3.5 rounded-2xl transition text-sm">
                 Cancel
               </button>
               <button
@@ -1160,7 +1199,7 @@ export default function CustomerMenu() {
                   if (unmet.length > 0) { ui.alert(`Please choose: ${unmet.map(mg=>mg.name).join(', ')}`); return; }
                   addToCart(selectedProduct, selectedSize, selectedAddOns);
                 }}
-                className="flex-2 flex-1 bg-brand hover:bg-brand-dark text-fg font-black py-3.5 rounded-2xl transition shadow-lg shadow-brand/20 text-sm">
+                className="flex-2 flex-1 bg-brand hover:bg-brand-dark text-on-brand font-black py-3.5 rounded-2xl transition shadow-lg shadow-brand/20 text-sm">
                 Add to Cart
               </button>
             </div>

@@ -98,3 +98,24 @@ describe('QR payment reference', () => {
     expect(o.paymentReference).toBe('BNK-9911');
   });
 });
+
+describe('a refused payment leaves nothing open', () => {
+  // Paying through "Pay & send" runs inside a transaction. The reference-number
+  // refusals used to return without closing it, so every refused tap left a
+  // session holding a pooled connection until the server timed it out.
+  const openSessions = () => mongoose.connection.getClient().s.activeSessions.size;
+
+  it('closes the transaction when a QR or check payment is refused', async () => {
+    const order = (await place({ paymentMethod: 'Cash' })).body.order;
+    const before = openSessions();
+    const noRef = await auth('put', `/api/orders/${order._id}`, staffTok).send({ status: 'Preparing', paymentMethod: 'QR' });
+    expect(noRef.status).toBe(400);
+    const badDate = await auth('put', `/api/orders/${order._id}`, staffTok)
+      .send({ status: 'Preparing', paymentMethod: 'Check', paymentReference: '000123', paymentCheckDate: 'not-a-date' });
+    expect(badDate.status).toBe(400);
+    expect(openSessions()).toBe(before);
+    // And the order is untouched, ready to be paid properly.
+    const ok = await auth('put', `/api/orders/${order._id}`, staffTok).send({ status: 'Preparing', paymentMethod: 'QR', paymentReference: 'REF-777' });
+    expect(ok.body.success).toBe(true);
+  });
+});

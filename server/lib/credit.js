@@ -11,6 +11,15 @@
 //   'per_client' - only clients with their own creditLimit are restricted
 //   'global'     - one limit applies to every client; per-client values ignored
 //   'both'       - global default, overridden by a client's own value when set
+// What a receivable can be. A sale on account becomes one when it is Completed.
+// An invoice carried in from the books the business kept before (the setup
+// workbook's Open Receivables sheet) is one from the start - it was never a
+// sale in this system, so it must not show in sales reports, which read
+// 'Completed'; only the receivable views read this list.
+export const OPENING_AR_STATUS = 'Opening Balance';
+export const RECEIVABLE_STATUSES = ['Completed', OPENING_AR_STATUS];
+export const isReceivableStatus = (status) => RECEIVABLE_STATUSES.includes(status);
+
 export const CREDIT_MODES = ['off', 'per_client', 'global', 'both'];
 export const DEFAULT_CREDIT_MODE = 'off';
 
@@ -75,7 +84,21 @@ export function checkCreditAvailable({ limit, outstanding = 0, orderTotal = 0 })
 export function arBalance(order = {}) {
   const total = Number(order.total) || 0;
   const paid = Number(order.arPaidAmount) || 0;
-  return Math.max(0, Math.round((total - paid) * 100) / 100);
+  // Money credited back is not money owed. The ledger already reduced A/R when
+  // the refund posted; netting it here is what keeps every view of the debt
+  // agreeing with the books.
+  const refunded = Number(order.refundedAmount) || 0;
+  return Math.max(0, Math.round((total - refunded - paid) * 100) / 100);
+}
+
+/**
+ * Is there nothing left to collect on this order? Measured against what is
+ * actually owed - the face value less anything refunded - so a client who pays
+ * the reduced amount after a partial refund has their invoice marked settled
+ * rather than left open for money nobody is owed.
+ */
+export function isFullySettled(order = {}) {
+  return arBalance(order) <= 0.01;
 }
 
 /**
@@ -88,6 +111,7 @@ export function withArBalance(rows = []) {
     ...r,
     faceTotal: Number(r.total) || 0,
     arPaidAmount: Number(r.arPaidAmount) || 0,
+    refundedAmount: Number(r.refundedAmount) || 0,
     total: arBalance(r),
   }));
 }

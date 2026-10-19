@@ -1,12 +1,49 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
+import { roundMoney } from '../../shared/money.js';
+import SplitPayEditor, { newSplit, splitReady, splitPayload } from './SplitPayEditor';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, Upload, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Receipt, History, HandCoins, Wallet } from 'lucide-react';
 import { isCancelledRow, isCancelledSheet, partitionCancelledGroups } from '../../shared/backdateCancelled';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
 import ExpensesPage from './ExpensesPage';
 import * as ui from '../../shared/ui';
+import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
+import { LEDGER_TAB_GROUPS, REPORT_TAB_GROUPS } from '../dashboard/navRegistry';
+import * as auth from '../auth/auth';
 
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { dateStr, monthStartStr, todayStr } from '../../shared/businessDay.js';
+import SearchSelect from '../../shared/ui/SearchSelect';
+import TemplatesCard from './TemplatesCard';
+import ManualJournalApprovals from './ManualJournalApprovals';
+import { CashFlowReport, SalesByChannelReport, SalesByCustomerReport, BudgetReport, ExceptionsReport, ClosingChecklist } from './ProcessReports';
+import Attachments from '../../shared/Attachments';
+import RangePresets from '../../shared/RangePresets';
+import RevolvingFundLiquidation from './RevolvingFundLiquidation';
+import FundSpendsToCheck from './FundSpendsToCheck';
+import ManualVoucherForm from './ManualVoucherForm';
+import RecurringBills from './RecurringBills';
+import { PrepListReport, FeedbackReport } from '../cafe/CafeExtras';
+import { SupplierStatementReport } from '../ops/OpsExtras';
+import { WasteReport, SalesByHourReport, CashForecastReport, CashierPerformanceReport, SupplierPricesReport, SalesTargetsReport, DeliverySheetReport } from './InsightReports';
+import CollectFromClient from './CollectFromClient';
+import AdvancesTab from './AdvancesTab';
+import CollectionsTab from './CollectionsTab';
+import ReceivablesTab from './ReceivablesTab';
+import PayablesTab from './PayablesTab';
+import PaymentRoutingTab from './PaymentRoutingTab';
+import RevolvingFundTab from './RevolvingFundTab';
+import PriceLogTab from './PriceLogTab';
+import ChartOfAccountsTab from './ChartOfAccountsTab';
+import CheckVouchersTab from './CheckVouchersTab';
+import ExportAllTab from './ExportAllTab';
+import PayablesReportTab from './PayablesReportTab';
+import ProfitAndLossTab from './ProfitAndLossTab';
+import ReceivablesReportTab from './ReceivablesReportTab';
+import SupplierPaymentsTab from './SupplierPaymentsTab';
+import BalanceSheetTab from './BalanceSheetTab';
+import SalesDocsTab from './SalesDocsTab';
+import SalesByOrderTab from './SalesByOrderTab';
+import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
 // ── LedgerTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
@@ -40,7 +77,7 @@ export default function LedgerTab({ ctx }) {
     currentInventory, currentOrders, currentPage, currentPricingProducts, currentProducts,
     dailyMovement, deleteAddOn, deleteCategory, deleteInventory, deleteProduct,
     departmentFilter, discountForm, discountInputs, discountList, discounts,
-    displayOrders, downloadImportTemplate, downloadJournalCsv, editInvForm, editInvModal,
+    displayOrders, downloadImportTemplate, editInvForm, editInvModal,
     editInvSubmitting, editPriceId, editPriceVal, editingCategory, editingProduct,
     effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
     expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
@@ -96,6 +133,7 @@ export default function LedgerTab({ ctx }) {
     bills, billsFilter, setBillsFilter, fetchBills, billBusy,
     billCreate, setBillCreate, submitCreateBill,
     approveBill, rejectBill, scheduleBill,
+    billInvoiceModal, setBillInvoiceModal, billInvoiceForm, setBillInvoiceForm, openBillInvoice, submitBillInvoice,
     billPayModal, setBillPayModal, billPayFrom, setBillPayFrom, billPayReference, setBillPayReference, submitBillPay, expenseAccounts,
     billPayAmount, setBillPayAmount, applySupplierCredit,
     clientCreditModal, setClientCreditModal, openClientCredit, submitClientCredit,
@@ -107,10 +145,12 @@ export default function LedgerTab({ ctx }) {
     advCancelModal, setAdvCancelModal, submitCancelAdvance,
     obEntry, obRows, setObRows, obMeta, setObMeta, obBusy, fetchOpeningBalances, submitOpeningBalances, balanceSheetAccounts,
     exportBusy, downloadDataset, downloadAccountBalances,
+    exportAllBusy, downloadAllExports, exportProgress, exportDatasets, fetchExportDatasets,
+    backupBusy, backupProgress, downloadFullBackup, restoreFullBackup,
     profitByCategory, fetchProfitByCategory,
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
-    salesLineItems, sliRange, setSliRange, fetchSalesLineItems, exportSalesLineItemsPDF,
+    salesLineItems, sliRange, setSliRange, salesSource, setSalesSource, fetchSalesLineItems, exportSalesLineItemsPDF,
     menuEngineering, fetchMenuEngineering, cashierVariance, fetchCashierVariance, purchaseOrder, fetchPurchaseOrder,
     commissions, fetchCommissions,
     exportPnlPDF, exportBalanceSheetPDF, exportPurchaseOrderPDF, reconcileInventory,
@@ -125,11 +165,75 @@ export default function LedgerTab({ ctx }) {
     periodCloseForm, setPeriodCloseForm,
     auditLogEntries, auditLogPage, auditLogPages, auditLogFilter, setAuditLogFilter, fetchAuditLog,
     paymentMap, fetchPaymentMap, savePaymentMapping, resetPaymentMapping,
-    tenancyReport, tenancyBusy, fetchTenancyReport, runTenancyRebackfill,
+    tenancyReport, tenancyBusy, tenancyError, tenancyProgress, fetchTenancyReport, runTenancyRebackfill,
     backdateForm, setBackdateForm, backdateBusy, submitBackdateSale,
+    clientAccounts,
+    systemSettings = {},
   } = ctx;
 
   // ── Stage 2 report views: self-contained fetches via ctx.apiFetch ──────────
+
+  // A check voucher exists to be printed and signed - prepared, approved,
+  // received. Until now it could only be listed and voided on screen, which is
+  // the one thing a voucher is not for.
+  const printCheckVoucher = (v) => {
+    const PURPOSE_LABEL = {
+      'bill-payment': "Payment of supplier's bill",
+      'client-credit-refund': 'Refund of client credit balance',
+      payroll: 'Payroll - net pay',
+      expense: 'Operating expense',
+      'petty-cash': 'Petty cash / revolving fund',
+      advance: 'Advance payment',
+      other: 'Disbursement',
+    };
+    printBillingDoc(buildBillingDocHTML({
+      docTitle: 'CHECK VOUCHER',
+      dateLabel: 'Date',
+      dateStr: new Date(v.date).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' }),
+      settings: systemSettings,
+      metaFields: [
+        { label: 'Voucher No.', value: v.voucherNumber || '' },
+        { label: 'Pay To', value: v.payeeName || '' },
+        ...(v.branchCode ? [{ label: 'Branch', value: v.branchCode }] : []),
+        { label: 'Paid From', value: v.sourceAccountName || v.sourceAccount || '' },
+        ...(v.referenceNumber ? [{ label: 'Check / Ref No.', value: v.referenceNumber }] : []),
+      ],
+      subFields: [
+        { label: 'Purpose', value: PURPOSE_LABEL[v.purpose] || v.purpose || '' },
+        ...(v.journalEntryRef ? [{ label: 'Journal Ref.', value: v.journalEntryRef }] : []),
+      ],
+      // A voided voucher still prints - it has to be filed as evidence of the
+      // cancellation, with the reason on its face.
+      schedRows: v.status === 'Voided'
+        ? [{ label: 'VOIDED:', value: `${v.voidReason || 'No reason given'}${v.voidedBy ? ` (by ${v.voidedBy})` : ''}` }]
+        : [],
+      itemColumns: [
+        { label: 'Particulars', key: 'desc' },
+        { label: 'Reference', key: 'ref' },
+        { label: 'Amount', key: 'amount', align: 'right', money: true },
+      ],
+      items: [{
+        desc: v.notes || PURPOSE_LABEL[v.purpose] || 'Disbursement',
+        ref: v.referenceNumber || v.journalEntryRef || '',
+        amount: v.amount,
+      }],
+      totals: [{ label: 'TOTAL', value: v.amount, grand: true }],
+      termsTitle: 'Please note',
+      terms: [
+        'This voucher records a payment made out of the account shown above.',
+        'It is valid only with the authorising signature; keep it with the supporting invoice or receipt.',
+        v.status === 'Voided'
+          ? 'THIS VOUCHER HAS BEEN VOIDED. It is kept on file as the record of the cancellation - do not pay against it.'
+          : 'Sign on receipt of the amount stated.',
+      ],
+      signatures: [
+        'PREPARED BY: Signature over Printed Name / Date',
+        'APPROVED BY: Signature over Printed Name / Date',
+        'RECEIVED BY: Signature over Printed Name / Date',
+      ],
+      copies: ['ORIGINAL'],
+    }));
+  };
   const money2 = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   // journalEntries only ever holds the 500 most recent-by-date entries, so an
@@ -154,13 +258,223 @@ export default function LedgerTab({ ctx }) {
   // ── Backdate Sale - a mini-POS: pick products, quantities, discount, comp,
   //    then record it against a past date (optionally reducing today's stock). ──
   const [bd, setBd] = useState({
-    date: new Date().toISOString().slice(0, 10),
-    customerName: '', paymentMethod: 'Cash', notes: '',
+    date: todayStr(),
+    customerName: '', paymentMethod: 'Cash', notes: '', checkNumber: '', checkDate: '',
     discountPercent: 0, affectInventory: false, isComplimentary: false,
   });
   const [bdCart, setBdCart] = useState([]); // [{ productId, productCode, name, price, quantity }]
+  // Tenancy Health scans every businessType-carrying collection (~two dozen),
+  // and nearly all of them are clean, so defects are what the panel shows by
+  // default and the full list is opt-in.
+  const [tenancyShowAll, setTenancyShowAll] = useState(false);
+  // Export All defaults to the current month: the journal export is capped at
+  // one quarter server-side, so a wide-open default would just fail.
+  const [exportAllRange, setExportAllRange] = useState(() => {
+    return { start: monthStartStr(), end: todayStr() };
+  });
+  // What to export. A key that is missing counts as selected, so everything is
+  // ticked until someone chooses otherwise; the presets write explicit values.
+  const [exportPicked, setExportPicked] = useState({ ds: {}, rep: {} });
+  const EXPORT_REPORTS = [
+    { key: 'journal', label: 'General Journal', note: 'PDF report, one line per posting, with totals - capped at one quarter' },
+    { key: 'auditlog', label: 'Audit Log', note: 'PDF report - who changed what, and when' },
+    { key: 'accountBalances', label: 'Account Balances', note: 'Sheet in the workbook - every account and its balance' },
+    { key: 'validValues', label: 'Valid Values', note: 'Sheet in the workbook - accepted values for each column' },
+  ];
+
+  // One progress bar for both long-running screens. It shows finished steps
+  // out of the total, so it only ever moves when real work completes - a
+  // spinner cannot tell "nearly done" from "stuck", and that was the problem.
+  const renderProgress = (prog, fallback) => {
+    if (!prog) return null;
+    const pct = prog.total > 0 ? Math.round((prog.done / prog.total) * 100) : 0;
+    return (
+      <div className="space-y-1.5" role="progressbar" aria-valuemin={0} aria-valuemax={prog.total} aria-valuenow={prog.done}>
+        <div className="flex justify-between gap-3 text-[10px] font-bold uppercase tracking-widest text-fg/70">
+          <span className="truncate">{prog.label || fallback}</span>
+          <span className="tabular-nums shrink-0">{prog.done} / {prog.total} - {pct}%</span>
+        </div>
+        <div className="h-2 bg-page-bg border border-white/10 rounded-full overflow-hidden">
+          <div className="h-full bg-brand transition-all duration-300" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    );
+  };
   const [bdSearch, setBdSearch] = useState('');
   const [bdBusy, setBdBusy] = useState(false);
+  // Bumped when an entry is sent for approval, so the waiting list reloads.
+  const [jeDraftsKey, setJeDraftsKey] = useState(0);
+  // A change request's values in the terms of their field: money in pesos,
+  // terms in days, yes/no for flags, and text (a TIN, a name) as written.
+  const MONEY_FIELDS = new Set(['basePrice', 'costOverride', 'creditLimit', 'unitCost', 'srp']);
+  const crValue = (field, v) => {
+    if (v === null || v === undefined || v === '') return field === 'creditLimit' ? 'no limit' : '(blank)';
+    if (MONEY_FIELDS.has(field)) return `₱${Number(v || 0).toFixed(2)}`;
+    if (field === 'creditTermsDays') return `${v} days`;
+    if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+    return String(v);
+  };
+  const CR_ENTITY = { Product: 'Product', Inventory: 'Stock item', ClientAccount: 'Client', Supplier: 'Supplier' };
+  // Daily sales report: the item-level detail, or one row per sales document.
+  const [sliView, setSliView] = useState('detail');
+  const [sliSummary, setSliSummary] = useState(null);
+  // All sales, or only backdated ones, or only live ones - the same choice on
+  // every sales report (see salesSource in AdminDashboard).
+  const srcOf = (arg) => (typeof arg === 'string' ? arg : (salesSource || ''));
+  const salesSourceSelect = (onPick) => (
+    <select value={salesSource || ''} aria-label="Which sales"
+      onChange={e => { const v = e.target.value; setSalesSource?.(v); onPick(v); }}
+      title="All sales, only backdated sales (entered after the fact or imported), or only live sales"
+      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg text-xs font-bold outline-none focus:border-brand/60">
+      <option value="">All sales</option>
+      <option value="backdated">Backdated only</option>
+      <option value="live">Live only</option>
+    </select>
+  );
+  const loadSliSummary = async (src) => {
+    try {
+      const s = srcOf(src);
+      const d = await (await apiFetch(`/api/reports/sales-documents?start=${sliRange.start}&end=${sliRange.end}${s ? `&source=${s}` : ''}`)).json();
+      if (d.success) setSliSummary(d); else ui.alert(d.error || 'Could not load the summary.');
+    } catch { ui.alert('Network error.'); }
+  };
+  const loadSli = (src) => (sliView === 'summary' ? loadSliSummary(src) : fetchSalesLineItems(src));
+  // One Sales page, four ways to read it. The first two are the same report
+  // (by payment channel) per order or per day; "Orders" is one row per order
+  // with just its subtotal, discount and total; "Detailed" is one row per item.
+  const [salesView, setSalesView] = useState(sssGroup === 'day' ? 'day' : 'order');
+  // Writing a PO number on a bill that did not come from one of our POs.
+  const [billPoEdit, setBillPoEdit] = useState(null);   // { id, value }
+  // Check vouchers: writing one by hand, and the list as Excel / PDF (what is
+  // on screen - the filters above it apply).
+  const [cvNewOpen, setCvNewOpen] = useState(false);
+  // Cost of goods sold for backdated sales that have products but no cost yet.
+  const [bdCosting, setBdCosting] = useState(false);
+  const bookBackdatedCosts = async () => {
+    if (!(await ui.confirm({
+      title: 'Book cost of goods sold for backdated sales?',
+      message: 'Each backdated sale that has its products but no cost yet gets its cost of goods sold booked on its own date, from what its stock items cost now. Stock quantities are not changed. Sales already costed are left alone.',
+      confirmLabel: 'Book the cost',
+    }))) return;
+    setBdCosting(true);
+    try {
+      const d = await (await apiFetch('/api/admin/backdate-sale/book-costs', { method: 'POST' })).json();
+      if (!d.success) return ui.alert(d.error || 'Could not book the cost.');
+      const p2 = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      ui.alert(`${d.booked} of ${d.checked} sale(s) costed - ${p2(d.total)} booked as cost of goods sold.`
+        + ((d.noCost || []).length ? `\n\nNo cost found for (no stock item, or its cost is 0):\n- ${d.noCost.slice(0, 15).join('\n- ')}${d.noCost.length > 15 ? `\n...and ${d.noCost.length - 15} more` : ''}` : '')
+        + ((d.problems || []).length ? `\n\nSkipped:\n- ${d.problems.slice(0, 5).join('\n- ')}` : ''));
+      fetchERPData?.();
+    } catch { ui.alert('Network error - run it again; sales already costed are skipped.'); }
+    finally { setBdCosting(false); }
+  };
+  const cvExportRows = () => (checkVouchers || []).map(v => [
+    v.voucherNumber || '', v.date ? dateStr(v.date) : '', v.payeeName || '', v.payeeType || '', v.purpose || '',
+    v.sourceAccountName || v.sourceAccount || '', v.referenceNumber || '', v.notes || '', v.status || '',
+  ]);
+  const CV_HEAD = ['Voucher No.', 'Date', 'Payee', 'Payee type', 'Purpose', 'Paid from', 'Reference', 'Particulars', 'Status'];
+  const cvStamp = () => `${cvFilter.start || 'start'}_to_${cvFilter.end || todayStr()}`;
+  const exportCvExcel = async () => {
+    if (!(checkVouchers || []).length) return ui.alert('No vouchers to export.');
+    const XLSX = await import('xlsx');
+    const body = checkVouchers.map((v, i) => [...cvExportRows()[i], v.amount || 0]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[...CV_HEAD, 'Amount'], ...body, [], ['TOTAL ISSUED (voided excluded)', '', '', '', '', '', '', '', '', cvTotal || 0]]), 'Check Vouchers');
+    XLSX.writeFile(wb, `Check-Vouchers_${cvStamp()}.xlsx`);
+  };
+  const exportCvPDF = async () => {
+    if (!(checkVouchers || []).length) return ui.alert('No vouchers to export.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Check Vouchers`, 14, 14);
+    doc.setFontSize(9); doc.text(`${cvFilter.start || 'All dates'}${cvFilter.end ? ` to ${cvFilter.end}` : ''}${cvFilter.status ? `  ·  ${cvFilter.status}` : ''}${cvFilter.payeeType ? `  ·  ${cvFilter.payeeType}` : ''}`, 14, 20);
+    autoTable(doc, {
+      startY: 24, head: [[...CV_HEAD, 'Amount']],
+      body: checkVouchers.map((v, i) => [...cvExportRows()[i], pdfMoney(v.amount)]),
+      foot: [['TOTAL ISSUED (voided excluded)', '', '', '', '', '', '', '', '', pdfMoney(cvTotal || 0)]],
+      styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], textColor: 255 },
+    });
+    doc.save(`Check-Vouchers_${cvStamp()}.pdf`);
+  };
+  const saveBillPo = async () => {
+    if (!billPoEdit) return;
+    try {
+      const d = await (await apiFetch(`/api/bills/${billPoEdit.id}/po-number`, { method: 'PATCH', body: JSON.stringify({ poNumber: billPoEdit.value }) })).json();
+      if (!d.success) return ui.alert(d.error || 'Could not save the PO number.');
+      const typed = billPoEdit.value.trim();
+      setBillPoEdit(null);
+      fetchBills();
+      if (typed) ui.toast(d.linked ? `Linked to purchase order ${d.bill.poNumber}.` : `Saved as a reference - there is no purchase order ${typed} in the app.`);
+    } catch { ui.alert('Network error.'); }
+  };
+  const SALES_VIEWS = [
+    ['order', 'Summary', 'One row per order, by how it was paid'],
+    ['day', 'Daily', 'One row per day, by how it was paid'],
+    ['docs', 'Orders', 'One row per order: gross sales, discount and sales after discount'],
+    ['detail', 'Detailed', 'One row per item sold'],
+  ];
+  const pickSalesView = (k) => {
+    setSalesView(k);
+    if (k === 'order' || k === 'day') { setSssGroup(k); if (!salesSummary) fetchSalesSummary(); }
+    else if (k === 'docs') { setSliView('summary'); if (!sliSummary) setTimeout(loadSliSummary, 0); }
+    else { setSliView('detail'); if (!salesLineItems) fetchSalesLineItems(); }
+  };
+  const salesViewTabs = () => (
+    <div className="flex gap-1 mt-2 flex-wrap" role="tablist" aria-label="How to show the sales">
+      {SALES_VIEWS.map(([k, label, hint]) => (
+        <button key={k} role="tab" aria-selected={salesView === k} title={hint} onClick={() => pickSalesView(k)}
+          className={`px-3 py-1 rounded-lg text-[11px] font-bold ${salesView === k ? 'bg-brand text-on-brand' : 'bg-white/5 text-fg/80 hover:bg-white/10'}`}>{label}</button>
+      ))}
+    </div>
+  );
+  const exportSssExcel = async () => {
+    if (!salesSummary) return ui.alert('Load the report first.');
+    const XLSX = await import('xlsx');
+    const day = sssGroup === 'day';
+    const head = ['Date', ...(day ? ['Orders'] : ['Customer ID', 'Customer Name', 'Order']), 'Cash', 'E-Wallet', 'Bank', 'Delivery', 'Gross Sales', 'Sales After Discount'];
+    const body = sssRows.map(r => [r.date ? dateStr(r.date) : '', ...(day ? [r.count] : [r.customerId || '', r.customerName || '', r.orderNumber]), r.cash || 0, r.ewallet || 0, r.bank || 0, r.delivery || 0, r.subtotal || 0, r.total || 0]);
+    const t = salesSummary.totals || {};
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body, [], ['TOTAL', ...(day ? [''] : ['', '', '']), t.cash || 0, t.ewallet || 0, t.bank || 0, t.delivery || 0, t.subtotal || 0, t.total || 0]]), day ? 'Sales per day' : 'Sales per order');
+    XLSX.writeFile(wb, `Sales-${day ? 'Daily' : 'Summary'}_${sssRange.start}_to_${sssRange.end}.xlsx`);
+  };
+  const exportSliSummaryPDF = async () => {
+    if (!sliSummary) return ui.alert('Load the report first.');
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Sales by Order`, 14, 14);
+    doc.setFontSize(9); doc.text(`${sliRange.start} to ${sliRange.end}`, 14, 20);
+    const t = sliSummary.rows.reduce((a, r) => ({ g: a.g + (r.gross || 0), d: a.d + (r.discount || 0) }), { g: 0, d: 0 });
+    const d8 = (v) => (v ? dateStr(v) : '');
+    autoTable(doc, {
+      startY: 24,
+      head: [['Date', 'Cust. No.', 'Customer', 'Order', 'Billing Doc', 'DR No.', 'SI / OR No.', 'Payment', 'Gross Sales', 'Discount', 'Sales After Discount']],
+      body: sliSummary.rows.map(r => [d8(r.postingDate), r.customerNumber || '', r.customerName || '', r.orderNumber || '', r.billingNumber || '', r.drNumbers || '', r.orNumber || '', r.paymentMethod || '', pdfMoney(r.gross), pdfMoney(r.discount), pdfMoney(r.amount)]),
+      foot: [[`TOTAL (${sliSummary.count})`, '', '', '', '', '', '', '', pdfMoney(t.g), pdfMoney(t.d), pdfMoney(sliSummary.total)]],
+      styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], textColor: 255 },
+    });
+    doc.save(`Sales-Orders_${sliRange.start}_to_${sliRange.end}.pdf`);
+  };
+  const fmtD = (d) => (d ? dateStr(d) : '');
+  const exportSliExcel = async () => {
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+    if (sliView === 'summary') {
+      if (!sliSummary) return ui.alert('Load the summary first.');
+      const head = ['Posting Date', 'Document Date', 'Customer Number', 'Customer Name', 'Order', 'Billing Document No.', 'Delivery Receipt No.', 'Sales Invoice / OR No.', 'Payment', 'Gross Sales', 'Discount', 'Sales After Discount'];
+      const body = sliSummary.rows.map(r => [fmtD(r.postingDate), fmtD(r.documentDate), r.customerNumber, r.customerName, r.orderNumber, r.billingNumber, r.drNumbers, r.orNumber, r.paymentMethod, r.gross, r.discount, r.amount]);
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body, [], ['TOTAL', '', '', '', '', '', '', '', '', '', '', sliSummary.total]]), 'Daily Sales Summary');
+    } else {
+      if (!salesLineItems) return ui.alert('Load the report first.');
+      const head = ['Posting Date', 'Document Date', 'Item Code', 'Product Name', 'Customer Number', 'Customer Name', 'Billing Document No.', 'Delivery Receipt No.', 'Sales Invoice / OR No.', 'SRP', 'Unit Price', 'Price After Discount', 'Quantity', 'Gross Sales', 'Discount', 'Sales After Discount'];
+      const body = salesLineItems.rows.filter(r => !r.isComponent).map(r => [fmtD(r.postingDate || r.date), fmtD(r.documentDate || r.date), r.itemCode, r.itemName, r.customerId, r.customerName, r.billingNumber || '', r.drNumbers || '', r.orNumber || '', r.srp ?? r.unitPrice ?? '', r.unitPrice ?? '', r.unitAfterDiscount ?? r.unitPrice ?? '', r.quantity, r.grossSales ?? r.lineTotal, r.discount ?? 0, r.netSales ?? r.lineTotal]);
+      const t = salesLineItems.totals || {};
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body, [], ['TOTAL', '', '', '', '', '', '', '', '', '', '', '', '', t.gross ?? salesLineItems.grandTotal, t.discount ?? 0, t.net ?? salesLineItems.grandTotal]]), 'Daily Sales Detail');
+    }
+    XLSX.writeFile(wb, `Daily-Sales-${sliView === 'summary' ? 'Summary' : 'Detail'}_${sliRange.start}_to_${sliRange.end}.xlsx`);
+  };
+  // The voucher whose supporting documents are open.
+  const [cvDocs, setCvDocs] = useState(null);
 
   const bdAddProduct = (p) => setBdCart(prev => {
     const key = String(p._id);
@@ -174,16 +488,25 @@ export default function LedgerTab({ ctx }) {
     return n === 0 ? [] : [{ ...x, quantity: n }];
   }));
   const bdSetPrice = (id, price) => setBdCart(prev => prev.map(x => x.productId === id ? { ...x, price: Math.max(0, Number(price) || 0) } : x));
+  // A line's own discount (0-100%), kept as typed so the field can be cleared.
+  const bdSetLineDisc = (id, v) => setBdCart(prev => prev.map(x => x.productId === id ? { ...x, discountPercent: v } : x));
   const bdRemove = (id) => setBdCart(prev => prev.filter(x => x.productId !== id));
 
+  const r2 = roundMoney;
+  const bdLinePct = (x) => Math.max(0, Math.min(100, Number(x.discountPercent) || 0));
   const bdGross = bdCart.reduce((s, x) => s + x.price * x.quantity, 0);
   const bdPct = bd.isComplimentary ? 0 : Math.max(0, Math.min(100, Number(bd.discountPercent) || 0));
-  const bdDiscount = +(bdGross * bdPct / 100).toFixed(2);
-  const bdTotal = bd.isComplimentary ? 0 : +(bdGross - bdDiscount).toFixed(2);
+  // Same order as the server: each line's own discount first, then the
+  // order-wide percent on what is left.
+  const bdLineDiscount = bd.isComplimentary ? 0 : r2(bdCart.reduce((s, x) => s + r2(x.price * x.quantity * bdLinePct(x) / 100), 0));
+  const bdDiscount = r2(bdLineDiscount + (bdGross - bdLineDiscount) * bdPct / 100);
+  const bdTotal = bd.isComplimentary ? 0 : r2(bdGross - bdDiscount);
 
   const submitBackdateCart = async () => {
     if (!bd.date) return ui.alert('Pick the sale date.');
     if (bdCart.length === 0) return ui.alert('Add at least one product to the sale.');
+    if (!bd.isComplimentary && bd.paymentMethod === 'Check' && !bd.checkNumber.trim()) return ui.alert('Enter the check number.');
+    if (!bd.isComplimentary && bd.paymentMethod === 'Split' && !splitReady(bdTotal, bd.payments || [])) return ui.alert('The split payments must add up to the sale total, with at least two parts.');
     const label = bd.isComplimentary ? 'complimentary (₱0)' : `₱${bdTotal.toFixed(2)}`;
     const stockNote = bd.affectInventory ? '\n\nThis WILL reduce current inventory.' : '';
     if (!(await ui.confirm(`Record a backdated sale of ${label} on ${bd.date}?${stockNote}`))) return;
@@ -191,14 +514,16 @@ export default function LedgerTab({ ctx }) {
     try {
       const r = await apiFetch('/api/admin/backdate-sale', { method: 'POST', body: JSON.stringify({
         date: bd.date, customerName: bd.customerName, paymentMethod: bd.paymentMethod, notes: bd.notes,
+        ...(bd.paymentMethod === 'Check' ? { paymentReference: bd.checkNumber.trim(), paymentCheckDate: bd.checkDate || null } : {}),
+        ...(bd.paymentMethod === 'Split' && !bd.isComplimentary ? { payments: splitPayload(bd.payments) } : {}),
         discountPercent: bdPct, affectInventory: bd.affectInventory, isComplimentary: bd.isComplimentary,
-        items: bdCart.map(x => ({ name: x.name, price: x.price, quantity: x.quantity, productId: x.productId, productCode: x.productCode })),
+        items: bdCart.map(x => ({ name: x.name, price: x.price, quantity: x.quantity, discountPercent: bdLinePct(x), productId: x.productId, productCode: x.productCode })),
       }) });
       const d = await r.json();
       if (d.success) {
         ui.alert(`Backdated sale recorded: ${d.order.orderNumber}\nJournal ref: ${d.journalReference}`);
         setBdCart([]);
-        setBd(b => ({ ...b, customerName: '', notes: '', discountPercent: 0, isComplimentary: false }));
+        setBd(b => ({ ...b, customerName: '', notes: '', discountPercent: 0, isComplimentary: false, checkNumber: '', checkDate: '' }));
         fetchERPData();
         fetchBdHistory(1);
       } else ui.alert(d.error || 'Failed to record backdated sale.');
@@ -216,7 +541,7 @@ export default function LedgerTab({ ctx }) {
   // etc.) is identical to entering them by hand - just faster for a batch.
   const [bdImportPreview, setBdImportPreview] = useState(null); // { groups: [...], skipped }
   const [bdImporting, setBdImporting] = useState(false);
-  const [bdImportSettings, setBdImportSettings] = useState({ paymentMethod: 'Cash', affectInventory: false });
+  const [bdImportSettings, setBdImportSettings] = useState({ paymentMethod: 'Cash', affectInventory: false, replaceExisting: false });
   // Workbooks with more than one tab pause here so the user can pick which
   // sheet(s) to pull sales from, instead of silently only reading the first.
   const [bdSheetPicker, setBdSheetPicker] = useState(null); // { wb, sheetNames, selected: Set<string> }
@@ -321,6 +646,36 @@ export default function LedgerTab({ ctx }) {
     return '';
   };
 
+  // The grand total: the first amount BELOW the "DELIVERY FEE" row (the big
+  // merged cell the billing statement puts there), in any column. That is the
+  // figure the customer was billed - after the discount and with the delivery
+  // fee - so it is taken as the sale's total rather than rebuilt from the
+  // item lines, which missed the sheet's DISCOUNT line. Null when the sheet
+  // has no such row.
+  const bdFindGrandTotal = (grid) => {
+    for (let r = 0; r < Math.min(grid.length, 120); r++) {
+      const row = grid[r] || [];
+      if (!row.some(c => ['deliveryfee', 'freight', 'shippingfee', 'deliverycharge'].some(a => bdNorm(c).includes(a)))) continue;
+      for (let r2 = r + 1; r2 < Math.min(grid.length, r + 6); r2++) {
+        // Only a cell that IS an amount ("₱21,698.18", 21698.18) - the same
+        // rows carry the Terms text ("within 24-48 hours"), whose digits
+        // must never be read as a total. Rightmost first: the total sits on
+        // the right, the terms on the left.
+        const row2 = grid[r2] || [];
+        for (let c2 = row2.length - 1; c2 >= 0; c2--) {
+          const v = row2[c2];
+          if (v === '' || v == null) continue;
+          const isAmount = typeof v === 'number' || /^\s*(PHP|Php|₱|P)?\s*-?[\d,]+(\.\d+)?\s*$/.test(String(v));
+          if (!isAmount) continue;
+          const n = bdNumify(typeof v === 'number' ? v : String(v).replace(/^\s*(PHP|Php|P)\s*/, ''));
+          if (n > 0) return n;
+        }
+      }
+      return null;
+    }
+    return null;
+  };
+
   // Parses ONE sheet's grid (array-of-arrays) into { groups, skipped }. Used
   // for both the single-sheet fast path and each sheet picked in the
   // multi-sheet picker below.
@@ -366,6 +721,7 @@ export default function LedgerTab({ ctx }) {
     // add onto the total the same way the live POS delivery fee now does
     // (see POST /api/orders and createBackdatedSale server-side).
     const sheetDeliveryFee = bdNumify(bdFindLabelValueSameRow(grid, ['deliveryfee', 'freight', 'shippingfee', 'deliverycharge']));
+    const sheetGrandTotal = bdFindGrandTotal(grid);
 
     // Transaction/client/date usually only repeat on the FIRST row of a sale
     // (exactly how a flat-columns import lays them out) - carry the
@@ -414,8 +770,13 @@ export default function LedgerTab({ ctx }) {
         const match = (products || []).find(p => (it.code && p.productCode === it.code) || p.name.toLowerCase() === it.name.toLowerCase());
         return { ...it, productId: match?._id || null, productCode: match?.productCode || it.code || null, matched: !!match };
       });
-      const itemsTotal = items.reduce((s, x) => s + x.price * x.quantity, 0);
-      return { ...g, items, deliveryFee: sheetDeliveryFee, total: itemsTotal + sheetDeliveryFee, needsPaymentMethod };
+      const itemsTotal = roundMoney(items.reduce((s, x) => s + x.price * x.quantity, 0));
+      const built = roundMoney(itemsTotal + sheetDeliveryFee);
+      // One sale per sheet carries the sheet's grand total; the gap between
+      // it and the item lines is the sheet's discount, sent as pesos.
+      const oneSale = byTrans.size === 1;
+      const discountAmount = oneSale && sheetGrandTotal != null ? roundMoney(Math.max(0, built - sheetGrandTotal)) : 0;
+      return { ...g, items, deliveryFee: sheetDeliveryFee, discountAmount, total: roundMoney(built - discountAmount), sheetTotal: oneSale ? sheetGrandTotal : null, needsPaymentMethod };
     });
     // A group whose transaction no. or client carries the mark - someone wrote
     // "INV-1042 CANCELLED" rather than annotating each line.
@@ -478,6 +839,7 @@ export default function LedgerTab({ ctx }) {
           body: JSON.stringify({ items: queueGroups.map(g => ({
             transNo: g.transNo, client: g.client, date: g.date, sheet: g.sheet,
             items: g.items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity, code: it.code, productId: it.productId, productCode: it.productCode })),
+            deliveryFee: g.deliveryFee || 0, discountAmount: g.discountAmount || 0,
             missingFields: ['paymentMethod'],
           })) }),
         });
@@ -501,6 +863,63 @@ export default function LedgerTab({ ctx }) {
     return xlsxRef.current.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '' });
   };
 
+  // The Orders export (Order No | Date | Customer | Status | Payment | Subtotal |
+  // Discount | Total, and "Order Lines" beside it when the export is a recent
+  // one) brought back through /api/orders/import: each completed order returns
+  // as a sale on its own date with its own number. Returns false when the file
+  // is not one, so the caller carries on reading it as billing statements.
+  const importOrdersExport = async (XLSX, wb) => {
+    const need = ['Order No', 'Date', 'Customer', 'Total'];
+    const sheet = (wb.SheetNames || []).find((n) => {
+      const head = (XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '' })[0] || []).map(h => String(h ?? '').trim());
+      return need.every(h => head.includes(h));
+    });
+    if (!sheet) return false;
+    const php = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheet], { defval: '' }).filter(r => String(r['Order No'] || '').trim());
+    if (!rows.length) { ui.alert('That Orders export has no orders in it.'); return true; }
+    const lines = wb.Sheets['Order Lines'] ? XLSX.utils.sheet_to_json(wb.Sheets['Order Lines'], { defval: '' }) : [];
+    const total = rows.reduce((sum, r) => sum + (Number(r.Total) || 0), 0);
+    const ok = await ui.confirm({
+      title: `Import ${rows.length} order(s) - ${php(total)}?`,
+      message: 'This is an Orders export. Each completed order comes back as a sale on its own date, with its own order number, and is posted to the books. Orders already in the app are skipped. '
+        + (lines.length
+          ? 'It carries its product lines, so the products come back too.'
+          : 'It has no product lines, so each order comes back with one summary line - totals and receivables will be right, but product reports will not include them and stock is not touched.'),
+      confirmLabel: 'Import orders',
+    });
+    if (!ok) return true;
+    setBulkOpInProgress?.(true);
+    try {
+      let created = 0, sum = 0, costed = 0, costSum = 0; const skipped = [], problems = [];
+      // In batches, so a long export is never one enormous request.
+      for (let i = 0; i < rows.length; i += 200) {
+        const part = rows.slice(i, i + 200);
+        const nums = new Set(part.map(r => String(r['Order No']).trim()));
+        const d = await (await apiFetch('/api/orders/import', {
+          method: 'POST', body: JSON.stringify({ rows: part, lines: lines.filter(l => nums.has(String(l['Order No'] || '').trim())) }),
+        })).json();
+        if (!d.success) { ui.alert(d.error || 'The import failed - nothing more was imported.'); break; }
+        created += d.created || 0; sum += d.total || 0; costed += d.costed || 0; costSum += d.costTotal || 0;
+        skipped.push(...(d.skipped || []).map(x => x.error)); problems.push(...(d.problems || []));
+      }
+      const already = skipped.filter(e => /already in the app/i.test(e)).length;
+      const other = skipped.filter(e => !/already in the app/i.test(e));
+      ui.alert(
+        `${created} order(s) imported - ${php(sum)}.`
+        + (costed ? `
+Cost of goods sold booked for ${costed} order(s) - ${php(costSum)}.` : '')
+        + (already ? `\n${already} were already in the app and were skipped.` : '')
+        + (other.length ? `\n\nNot imported (${other.length}):\n- ${other.slice(0, 12).join('\n- ')}${other.length > 12 ? `\n...and ${other.length - 12} more` : ''}` : '')
+        + (problems.length ? `\n\nCheck these:\n- ${problems.slice(0, 8).join('\n- ')}` : ''),
+      );
+      fetchERPData?.();
+      fetchBdHistory(1);
+    } catch { ui.alert('Network error - check which orders came in before trying again (those already in are skipped).'); }
+    finally { setBulkOpInProgress?.(false); }
+    return true;
+  };
+
   const parseBackdateExcel = async (file) => {
     if (!file) return;
     // Defensive reset - a leftover preview/queue-resolve modal from a prior
@@ -516,6 +935,9 @@ export default function LedgerTab({ ctx }) {
       xlsxRef.current = XLSX;
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheetNames = wb.SheetNames || [];
+      // An Orders export, not a billing statement: it has its own importer, and
+      // this is the button people reach for with it - so take it here too.
+      if (await importOrdersExport(XLSX, wb)) { setBdImporting(false); return; }
       // Always pause here first - even a single-sheet file - so Payment Method
       // and Reduce Inventory are chosen BEFORE the sale preview is built, same
       // as the manual entry form asks for them up front.
@@ -546,6 +968,17 @@ export default function LedgerTab({ ctx }) {
 
   const confirmBdImport = async () => {
     if (!bdImportPreview) return;
+    // A split whose parts do not add up to the sale would be refused one by one
+    // mid-import - say which, before anything is posted.
+    const badSplits = bdImportPreview.groups.filter(g => g.paymentMethod === 'Split' && !splitReady(g.total, g.payments || []));
+    const noCheckNo = bdImportPreview.groups.filter(g => (g.paymentMethod || bdImportSettings.paymentMethod) === 'Check' && !(g.checkNumber || '').trim());
+    if (noCheckNo.length) return ui.alert(`Enter the check number for: ${noCheckNo.slice(0, 10).map(g => g.client || g.transNo || 'a sale').join(', ')}${noCheckNo.length > 10 ? ` and ${noCheckNo.length - 10} more` : ''}.`);
+    if (badSplits.length) return ui.alert(`Fix the split payment on: ${badSplits.map(g => g.client || g.transNo || 'a sale').join(', ')} - the parts must add up to the sale total, with at least two parts, and each check needs its number.`);
+    if (bdImportSettings.replaceExisting && !(await ui.confirm({
+      title: 'Replace sales already imported?',
+      message: 'Any sale here whose transaction no. was imported before will be reversed - its journal entries and any stock it took - and recorded again from this sheet. The old one stays in history as Voided.',
+      confirmLabel: 'Import and replace',
+    }))) return;
     setBdImporting(true);
     const total = bdImportPreview.groups.length;
     setBdImportProgress({ done: 0, total });
@@ -572,6 +1005,9 @@ export default function LedgerTab({ ctx }) {
               method: 'POST',
               body: JSON.stringify({
                 date: g.date, customerName: g.client, paymentMethod: g.paymentMethod || bdImportSettings.paymentMethod,
+                ...(g.paymentMethod === 'Split' ? { payments: splitPayload(g.payments) } : {}),
+                ...((g.paymentMethod || bdImportSettings.paymentMethod) === 'Check' ? { paymentReference: (g.checkNumber || '').trim(), paymentCheckDate: g.checkDate || null } : {}),
+                ...(bdImportSettings.replaceExisting ? { replaceExisting: true } : {}),
                 notes: g.transNo ? `Imported - ${g.transNo}` : 'Imported from Excel',
                 // The sheet's own transaction/invoice number - lets the server skip
                 // this row as a duplicate if it (or an overlapping file) was already
@@ -579,6 +1015,7 @@ export default function LedgerTab({ ctx }) {
                 importRef: g.transNo || undefined,
                 affectInventory: bdImportSettings.affectInventory, isComplimentary: false, discountPercent: 0,
                 deliveryFee: g.deliveryFee || undefined,
+                discountAmount: g.discountAmount || undefined,
                 items: g.items.map(it => ({ name: it.name, price: it.price, quantity: it.quantity, productId: it.productId, productCode: it.productCode })),
               }),
             });
@@ -647,7 +1084,7 @@ export default function LedgerTab({ ctx }) {
         foot: [[{ content: 'Total', colSpan: 5 }, pdfMoney(d.orders.reduce((s, o) => s + (o.total || 0), 0))]],
         styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 5: { halign: 'right' } },
       });
-      doc.save(`Backdate-Sale-History-${new Date().toISOString().slice(0, 10)}.pdf`);
+      doc.save(`Backdate-Sale-History-${todayStr()}.pdf`);
     } catch { ui.alert('Failed to export backdated sales.'); }
     finally { setBdExporting(false); }
   };
@@ -672,12 +1109,16 @@ export default function LedgerTab({ ctx }) {
   const saveBdQueueItem = async () => {
     if (!bdQueueResolve) return;
     if (!bdQueueResolve.paymentMethod) { ui.alert('Pick a payment method.'); return; }
+    if (bdQueueResolve.paymentMethod === 'Check' && !(bdQueueResolve.checkNumber || '').trim()) { ui.alert('Enter the check number.'); return; }
     setBdQueueSaving(true);
     try {
       const row = bdQueueResolve.row;
       const r = await apiFetch(`/api/admin/backdate-sale/queue/${row._id}/save`, {
         method: 'POST',
-        body: JSON.stringify({ paymentMethod: bdQueueResolve.paymentMethod, affectInventory: !!bdQueueResolve.affectInventory }),
+        body: JSON.stringify({
+          paymentMethod: bdQueueResolve.paymentMethod, affectInventory: !!bdQueueResolve.affectInventory,
+          ...(bdQueueResolve.paymentMethod === 'Check' ? { paymentReference: (bdQueueResolve.checkNumber || '').trim(), paymentCheckDate: bdQueueResolve.checkDate || null } : {}),
+        }),
       });
       const d = await r.json();
       if (d.success) {
@@ -722,7 +1163,7 @@ export default function LedgerTab({ ctx }) {
     finally { setTbLoading(false); }
   };
   const [ptax, setPtax] = useState(null);
-  const [ptaxRange, setPtaxRange] = useState({ start: '', end: '' });
+  const [ptaxRange, setPtaxRange] = useState(() => ({ start: monthStartStr(), end: todayStr() }));
   const [ptaxLoading, setPtaxLoading] = useState(false);
   const loadPtax = async () => {
     setPtaxLoading(true);
@@ -732,6 +1173,56 @@ export default function LedgerTab({ ctx }) {
       setPtax(d.success ? d : { error: d.error || 'Provide a start and end date.' });
     } catch { setPtax({ error: 'Network error' }); }
     finally { setPtaxLoading(false); }
+  };
+  // Books health: subledgers vs their control accounts.
+  const [bookshealth, setBooksHealth] = useState(null);
+  const [bookshealthLoading, setBooksHealthLoading] = useState(false);
+  const loadBooksHealth = async () => {
+    setBooksHealthLoading(true);
+    try {
+      const r = await apiFetch('/api/reports/books-health'); const d = await r.json();
+      setBooksHealth(d.success ? d : { error: d.error || 'Could not run the checks.' });
+    } catch { setBooksHealth({ error: 'Network error' }); }
+    finally { setBooksHealthLoading(false); }
+  };
+
+  // VAT return: output VAT collected, input VAT creditable, net owed.
+  const [vatRet, setVatRet] = useState(null);
+  const [vatRange, setVatRange] = useState(() => ({ start: monthStartStr(), end: todayStr() }));
+  const [vatLoading, setVatLoading] = useState(false);
+  const loadVatReturn = async () => {
+    setVatLoading(true);
+    try {
+      const q = vatRange.start && vatRange.end ? `?start=${vatRange.start}&end=${vatRange.end}` : '';
+      const r = await apiFetch(`/api/reports/vat${q}`); const d = await r.json();
+      setVatRet(d.success ? d : { error: d.error || 'Provide a start and end date.' });
+    } catch { setVatRet({ error: 'Network error' }); }
+    finally { setVatLoading(false); }
+  };
+
+  // Book a month's percentage tax into the ledger (DR 745000 / CR 230400).
+  // The report alone never reached the books, so the P&L overstated net
+  // income. Safe to re-run: it posts only the difference from what is
+  // already accrued, and nothing at all when the month is unchanged.
+  const [ptaxMonth, setPtaxMonth] = useState(() => {
+    const d = new Date(); d.setDate(0);            // last month
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [ptaxAccruing, setPtaxAccruing] = useState(false);
+  const accruePtax = async () => {
+    if (!await ui.confirm(`Book the 3% percentage tax for ${ptaxMonth} into the ledger?
+
+It posts only what is not already accrued for that month.`)) return;
+    setPtaxAccruing(true);
+    try {
+      const r = await apiFetch('/api/reports/percentage-tax/accrue', { method: 'POST', body: JSON.stringify({ month: ptaxMonth }) });
+      const d = await r.json();
+      if (!d.success) return ui.alert(d.error || 'Could not accrue.');
+      ui.alert(d.posted
+        ? `Posted ${d.reference}: ${money2(d.amount)}. The month's tax is ${money2(d.taxDue)}.`
+        : `Nothing to post - ${ptaxMonth} is already accrued at ${money2(d.taxDue)}.`);
+    } catch { ui.alert('Network error.'); }
+    finally { setPtaxAccruing(false); }
   };
   const exportTrialBalancePDF = async () => {
     if (!tb || tb.error) return ui.alert('Load the Trial Balance first.');
@@ -748,7 +1239,7 @@ export default function LedgerTab({ ctx }) {
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], fontStyle: 'bold', textColor: 255 },
       columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' } },
     });
-    doc.save(`Trial-Balance-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Trial-Balance-${todayStr()}.pdf`);
   };
   const exportPercentageTaxPDF = async () => {
     if (!ptax || ptax.error) return ui.alert('Compute the Percentage Tax report first.');
@@ -818,8 +1309,15 @@ export default function LedgerTab({ ctx }) {
     if (!(await ui.confirm(`Approve ${slip.slipNumber}: ${label}?`))) return;
     setReqSlipBusy(true);
     try {
-      const r = await apiFetch(`/api/requisition-slips/${slip._id}/approve`, { method: 'POST', body: JSON.stringify({}) });
-      const d = await r.json();
+      const send = async (body) => (await apiFetch(`/api/requisition-slips/${slip._id}/approve`, { method: 'POST', body: JSON.stringify(body) })).json();
+      let d = await send({});
+      // Over the month's budget: the server holds it until the approver says
+      // why it should go ahead anyway. The reason is kept on the slip.
+      if (!d.success && d.overBudget) {
+        const reason = prompt(`${d.error}\n\nApprove over budget? Give the reason:`);
+        if (!reason || !reason.trim()) return;
+        d = await send({ acceptOverBudget: true, overBudgetReason: reason.trim() });
+      }
       if (d.success) { fetchRequisitionSlips(); fetchERPData(); ui.alert(`${slip.slipNumber} approved.`); }
       else ui.alert(d.error || 'Failed to approve.');
     } catch { ui.alert('Network error.'); }
@@ -869,16 +1367,86 @@ export default function LedgerTab({ ctx }) {
       ]),
       styles: { fontSize: 7.5 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' } },
     });
-    doc.save(`Requisition-Slips-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Requisition-Slips-${todayStr()}.pdf`);
   };
+
+  // Opening a page: set it, and load what it shows. Used by the page buttons
+  // and by the landing rule below, so a page reached either way arrives with
+  // its figures rather than an empty table.
+  const openLedgerPage = (id) => {
+  setLedgerSubTab(id);
+  // Merged "Accounts & Periods" page: load all its sections.
+  if (id === 'accperiods') { fetchCoa(); fetchClosedPeriods(); fetchPaymentMap(); fetchOpeningBalances(); }
+  // Merged "AR & AP" page.
+  if (id === 'araap') { fetchArOutstanding(); fetchArAgeing(); fetchApData(); fetchSuppliers(); }
+  if (id === 'bills') { fetchBills(); fetchSuppliers(); fetchCoa(); }
+  if (id === 'pnl' && !pnlData) fetchPnl();
+  if (id === 'trial') loadTrial();
+  if (id === 'percentagetax') loadPtax();
+  if (id === 'vatreturn' && !vatRet) loadVatReturn();
+  if (id === 'bookshealth' && !bookshealth) loadBooksHealth();
+  if (id === 'pnlmonthly' && !pnlMonthly) fetchPnlMonthly();
+  if (id === 'balance' && !bsData) fetchBalanceSheet();
+  if (id === 'bsmonthly' && !bsMonthly) fetchBsMonthly();
+  if (id === 'salessummary') fetchSalesSummary();
+  if (id === 'payments') fetchSalesByPayment();
+  if (id === 'arreport' && !arReport) fetchArReport();
+  if (id === 'collections') { if (!collectionReport) fetchCollectionReport(); if (!checkRegister) fetchChecks(); }
+  if (id === 'pricelog') { fetchChangeRequests(); if (!priceChangeLog) fetchPriceChangeLog(); }
+  if (id === 'apreport' && !apReport) fetchApReport();
+  if (id === 'supplierpay' && !supplierPayments) fetchSupplierPayments();
+  if (id === 'checkvouchers' && !checkVouchers) fetchCheckVouchers();
+  // The liquidate modal picks from real bills / receivables,
+  // so those lists have to be present before it can open.
+  if (id === 'advances') { if (!advances) fetchAdvances(); fetchBills(); fetchArOutstanding(); }
+  if (id === 'profitcat') fetchProfitByCategory();
+  if (id === 'menueng') fetchMenuEngineering();
+  if (id === 'variance') fetchCashierVariance();
+  if (id === 'commissions') fetchCommissions();
+  if (id === 'revolving') { fetchRfFunds(); setRfActiveFund(null); setRfTxs([]); }
+  if (id === 'expenses') { fetchExpenseCategories(); fetchExpenses(); }
+  if (id === 'approvals') fetchRequisitionSlips();
+  };
+
+  // The pages of this tab this person may open. A page they may not is not
+  // listed - and not landed on: a deep link, the tab's default page or the
+  // page left open by someone else on this till moves to the first allowed
+  // one. The old merged ids (coa, periods, payroute, ar, ap) still resolve to
+  // the page that now holds them.
+  const LEDGER_ALIAS = { coa: 'accperiods', periods: 'accperiods', payroute: 'accperiods', ar: 'araap', ap: 'araap' };
+  const pageTab = activeTab === 'reports' ? 'reports' : 'ledger';
+  // Approvals has its own sidebar entry: this screen then shows that one page
+  // and nothing of the Ledger around it - no page tabs, no export bar.
+  const soloApprovals = activeTab === 'approvals';
+  const pageGroups = soloApprovals ? [] : (pageTab === 'reports' ? REPORT_TAB_GROUPS : LEDGER_TAB_GROUPS)
+    .map(([label, items]) => [label, items.filter(([id]) => can(`screen.${pageTab}.${id}`))])
+    .filter(([, items]) => items.length > 0);
+  useEffect(() => {
+    if (!soloApprovals) return;
+    if (ledgerSubTab !== 'approvals') setLedgerSubTab('approvals');
+    fetchRequisitionSlips();
+  }, [soloApprovals]); // eslint-disable-line react-hooks/exhaustive-deps
+  const allowedPages = pageGroups.flatMap(([, items]) => items.map(([id]) => id));
+  useEffect(() => {
+    if (activeTab !== 'ledger' && activeTab !== 'reports') return;
+    const cur = LEDGER_ALIAS[ledgerSubTab] || ledgerSubTab;
+    if (allowedPages.includes(cur) || allowedPages.length === 0) return;
+    openLedgerPage(allowedPages[0]);
+  }, [activeTab, ledgerSubTab, allowedPages.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-load the active view's data on entry (nav landing or sub-tab click).
   useEffect(() => {
+    if (!allowedPages.includes(LEDGER_ALIAS[ledgerSubTab] || ledgerSubTab)) return;
     if (ledgerSubTab === 'trial') loadTrial();
+    if (ledgerSubTab === 'revolving') fetchRfFunds();
     if (ledgerSubTab === 'salessummary' && !salesSummary) fetchSalesSummary();
-    if (ledgerSubTab === 'salesline' && !salesLineItems) fetchSalesLineItems();
     if (ledgerSubTab === 'backdate' && !bdHistory) fetchBdHistory(1);
     if (ledgerSubTab === 'backdate' && !bdQueue) fetchBdQueue(1);
+    // Tenancy Health had no entry here at all, so opening the page never
+    // started the check: it sat on its loading line indefinitely, and the only
+    // buttons that could start it appear after a result or an error.
+    if (ledgerSubTab === 'tenancy' && !tenancyReport && !tenancyProgress) fetchTenancyReport?.();
+    if (ledgerSubTab === 'exportall' && !exportDatasets) fetchExportDatasets?.();
   }, [ledgerSubTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Which Payment Routing parent groups (111000 / 112000 / etc.) are expanded.
@@ -978,64 +1546,8 @@ export default function LedgerTab({ ctx }) {
     } finally { setBillImporting(false); }
   };
 
-  const REPORT_TAB_GROUPS = [
-    ['Sales', [
-      ['salessummary',  'Sales Summary',          BarChart3],
-      ['salesline',     'Sales Line Items',       FileText],
-      ['payments',      'By Payment',             Banknote],
-      ['profitcat',     'By Category',            BarChart2],
-      ['menueng',       'Menu Engineering',       TrendingUp],
-    ]],
-    ['Receivable', [
-      ['arreport',      'A/R Report',             Truck],
-      ['collections',   'Collections',            Banknote],
-    ]],
-    ['Payable', [
-      ['apreport',      'A/P Report',             Receipt],
-      ['supplierpay',   'Supplier Payments',      Banknote],
-      ['checkvouchers', 'Check Vouchers',         Receipt],
-      ['advances',      'Advances',               HandCoins],
-    ]],
-    ['Financials', [
-      ['pnlmonthly',    'Monthly P&L',            BarChart3],
-      ['bsmonthly',     'Monthly Balance Sheet',  BarChart3],
-      ['percentagetax', 'Percentage Tax',         FileText],
-    ]],
-    ['Operations', [
-      ['pricelog',      'Price Changes',          TrendingUp],
-      ['variance',      'Cashier Variance',       Users],
-      ['commissions',   'Commissions',            Users],
-    ]],
-  ];
-  const LEDGER_TAB_GROUPS = [
-    ['Books', [
-      ['journal',    'General Ledger',      FileText],
-      ['trial',      'Trial Balance',       BarChart2],
-      ['pnl',        'P&L',                 TrendingUp],
-      ['balance',    'Balance Sheet',       BarChart2],
-    ]],
-    ['AR & AP', [
-      ['araap',      'AR & AP',             Truck],
-      ['bills',      'Bills (AP)',          Receipt],
-    ]],
-    ['Cash Out', [
-      ['revolving',  'Revolving Funds',     RefreshCw],
-      ['expenses',   'Expenses',            Receipt],
-    ]],
-    ['Setup', [
-      ['accperiods', 'Accounts & Periods',  Settings],
-      ['backdate',   'Backdate Sale',       Clock],
-      // Always visible to any staff - the server itself scopes what comes back:
-      // without requisitions.view you only ever see your OWN filed slips (so you
-      // can check "is my request still pending"), not anyone else's. Approve or
-      // Reject still require requisitions.approve regardless.
-      ['approvals',  'Approvals',           ShieldCheck],
-      // Tenancy Health had a panel but no way in - the only diagnostic that
-      // answers "is every document stamped with this server's business type",
-      // which is what a mis-scoped report looks like from the outside.
-      ['tenancy',    'Tenancy Health',      ShieldCheck],
-    ]],
-  ];
+  // The sub-nav lists live in navRegistry.js, shared with the Ctrl+K palette so
+  // a page added here is searchable without being registered a second time.
 
   return (
         <div className="space-y-4">
@@ -1047,7 +1559,7 @@ export default function LedgerTab({ ctx }) {
               listed, so the nav stays two rows however many reports exist. */}
           {/* Export / template control. Which dataset a page exports is a
               lookup, not a button per screen - a new page is one line here. */}
-          {(() => {
+          {!soloApprovals && (() => {
             const DATASET_FOR_PAGE = {
               checkvouchers: 'checkVouchers', advances: 'advances', expenses: 'expenses',
               journal: 'journal', bills: 'bills', araap: 'bills', revolving: 'revolvingFunds',
@@ -1085,7 +1597,8 @@ export default function LedgerTab({ ctx }) {
           })()}
 
           {(() => {
-            const groups = activeTab === 'reports' ? REPORT_TAB_GROUPS : LEDGER_TAB_GROUPS;
+            const groups = pageGroups;
+            if (groups.length === 0) return null;
             // Derived from the current page rather than stored: deep links,
             // reloads and the merged pages all resolve to the right group
             // without a second piece of state that could disagree with it.
@@ -1096,39 +1609,7 @@ export default function LedgerTab({ ctx }) {
             // The group buttons previously synthesised a DOM click on the
             // target page button - which only exists while its group is
             // already active, so every inactive group tab did nothing.
-            const openPage = (id) => {
-            setLedgerSubTab(id);
-            // Merged "Accounts & Periods" page: load all its sections.
-            if (id === 'accperiods') { fetchCoa(); fetchClosedPeriods(); fetchPaymentMap(); fetchOpeningBalances(); }
-            // Merged "AR & AP" page.
-            if (id === 'araap') { fetchArOutstanding(); fetchArAgeing(); fetchApData(); fetchSuppliers(); }
-            if (id === 'bills') { fetchBills(); fetchSuppliers(); fetchCoa(); }
-            if (id === 'pnl' && !pnlData) fetchPnl();
-            if (id === 'trial') loadTrial();
-            if (id === 'percentagetax') loadPtax();
-            if (id === 'pnlmonthly' && !pnlMonthly) fetchPnlMonthly();
-            if (id === 'balance' && !bsData) fetchBalanceSheet();
-            if (id === 'bsmonthly' && !bsMonthly) fetchBsMonthly();
-            if (id === 'salessummary') fetchSalesSummary();
-            if (id === 'salesline') fetchSalesLineItems();
-            if (id === 'payments') fetchSalesByPayment();
-            if (id === 'arreport' && !arReport) fetchArReport();
-            if (id === 'collections') { if (!collectionReport) fetchCollectionReport(); if (!checkRegister) fetchChecks(); }
-            if (id === 'pricelog') { fetchChangeRequests(); if (!priceChangeLog) fetchPriceChangeLog(); }
-            if (id === 'apreport' && !apReport) fetchApReport();
-            if (id === 'supplierpay' && !supplierPayments) fetchSupplierPayments();
-            if (id === 'checkvouchers' && !checkVouchers) fetchCheckVouchers();
-            // The liquidate modal picks from real bills / receivables,
-            // so those lists have to be present before it can open.
-            if (id === 'advances') { if (!advances) fetchAdvances(); fetchBills(); fetchArOutstanding(); }
-            if (id === 'profitcat') fetchProfitByCategory();
-            if (id === 'menueng') fetchMenuEngineering();
-            if (id === 'variance') fetchCashierVariance();
-            if (id === 'commissions') fetchCommissions();
-            if (id === 'revolving') { fetchRfFunds(); setRfActiveFund(null); setRfTxs([]); }
-            if (id === 'expenses') { fetchExpenseCategories(); fetchExpenses(); }
-            if (id === 'approvals') fetchRequisitionSlips();
-            };
+            const openPage = openLedgerPage;
 
             return (
               <div className="bg-surface border border-white/10 rounded-2xl p-1.5">
@@ -1140,7 +1621,7 @@ export default function LedgerTab({ ctx }) {
                         key={groupLabel}
                         onClick={() => { if (!isActive) openPage(items[0][0]); }}
                         className={`relative shrink-0 px-3.5 py-2 text-[11px] font-black uppercase tracking-widest transition ${
-                          isActive ? 'text-fg' : 'text-fg/70 hover:text-fg/70'}`}
+                          isActive ? 'text-fg' : 'text-fg/70'}`}
                       >
                         {groupLabel}
                         {/* Underline, not a filled pill - the group marks where
@@ -1185,17 +1666,17 @@ export default function LedgerTab({ ctx }) {
               <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                 <div>
                   <h3 className="text-lg font-black text-fg">Trial Balance</h3>
-                  <p className="text-fg/60 text-xs">All accounts with their net debit / credit balance.</p>
+                  <p className="text-fg/65 text-xs">All accounts with their net debit / credit balance.</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={loadTrial} disabled={tbLoading} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition">
+                  <button onClick={loadTrial} disabled={tbLoading} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition">
                     <RefreshCw size={12} className={tbLoading ? 'animate-spin' : ''} /> Refresh
                   </button>
-                  {tb && !tb.error && <button onClick={exportTrialBalancePDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
+                  {tb && !tb.error && <button onClick={exportTrialBalancePDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
                 </div>
               </div>
               {tb?.error ? (
-                <p className="text-red-300 text-sm font-bold">{tb.error}</p>
+                <p className="text-danger text-sm font-bold">{tb.error}</p>
               ) : !tb ? (
                 <p className="text-fg/70 text-sm">Loading…</p>
               ) : (
@@ -1231,145 +1712,23 @@ export default function LedgerTab({ ctx }) {
           )}
 
           {/* ── SALES SUMMARY (channel breakdown) ─────────────────────────────── */}
-          {ledgerSubTab === 'salessummary' && (
-            <div className="bg-surface border border-white/10 rounded-2xl p-5">
-              <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-                <div>
-                  <h3 className="text-lg font-black text-fg">Sales Summary</h3>
-                  <p className="text-fg/60 text-xs">Completed sales broken down by payment channel.</p>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <input type="date" value={sssRange.start} max={sssRange.end || undefined}
-                    onChange={e => setSssRange(r => ({ ...r, start: e.target.value }))}
-                    className="bg-white/5 border border-white/10 rounded-xl px-2.5 py-2 text-fg text-xs font-bold outline-none focus:border-brand" />
-                  <span className="text-fg/70 text-xs font-bold">to</span>
-                  <input type="date" value={sssRange.end} min={sssRange.start || undefined}
-                    onChange={e => setSssRange(r => ({ ...r, end: e.target.value }))}
-                    className="bg-white/5 border border-white/10 rounded-xl px-2.5 py-2 text-fg text-xs font-bold outline-none focus:border-brand" />
-                  <button onClick={fetchSalesSummary} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/80 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Refresh</button>
-                  {salesSummary && <button onClick={exportSalesSummaryPDF} className="flex items-center gap-1.5 bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
-                </div>
-              </div>
-              {!sssRows || sssRows.length === 0 ? (
-                <p className="text-fg/80 text-sm">No completed sales in range. Press Refresh.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-fg/80 text-[10px] font-black uppercase tracking-wider text-left border-b border-white/10">
-                        <th className="py-2">Date</th>
-                        <th className="py-2">Customer ID</th><th className="py-2">Customer Name</th>
-                        <th className="py-2">Order</th>
-                        <th className="py-2 text-right">Cash</th><th className="py-2 text-right">E-Wallet</th>
-                        <th className="py-2 text-right">Bank</th><th className="py-2 text-right">Delivery</th><th className="py-2 text-right">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="text-fg/75">
-                      {sssRows.map((row, i) => {
-                        const isDayRow = row.orderNumber == null;
-                        return (
-                        <tr key={i} className="border-b border-white/5">
-                          <td className="py-1.5 text-fg/70 text-xs">{row.date ? new Date(row.date).toLocaleDateString() : ''}</td>
-                          <td className="py-1.5 font-mono text-xs text-fg/70">{isDayRow ? '-' : (row.customerId || '-')}</td>
-                          <td className="py-1.5 text-xs text-fg/70">{isDayRow ? '-' : (row.customerName || 'Guest')}</td>
-                          <td className="py-1.5 font-mono text-xs text-fg/70">{isDayRow ? row.count : row.orderNumber}</td>
-                          <td className="py-1.5 text-right font-mono">{row.cash ? money2(row.cash) : ''}</td>
-                          <td className="py-1.5 text-right font-mono">{row.ewallet ? money2(row.ewallet) : ''}</td>
-                          <td className="py-1.5 text-right font-mono">{row.bank ? money2(row.bank) : ''}</td>
-                          <td className="py-1.5 text-right font-mono">{row.delivery ? money2(row.delivery) : ''}</td>
-                          <td className="py-1.5 text-right font-mono font-bold text-fg/90">{money2(row.total)}</td>
-                        </tr>
-                        );
-                      })}
-                    </tbody>
-                    {salesSummary?.totals && (
-                      <tfoot>
-                        <tr className="font-black text-fg border-t-2 border-white/20">
-                          <td className="py-2" colSpan={4}>Totals</td>
-                          <td className="py-2 text-right font-mono">{money2(salesSummary.totals.cash)}</td>
-                          <td className="py-2 text-right font-mono">{money2(salesSummary.totals.ewallet)}</td>
-                          <td className="py-2 text-right font-mono">{money2(salesSummary.totals.bank)}</td>
-                          <td className="py-2 text-right font-mono">{money2(salesSummary.totals.delivery)}</td>
-                          <td className="py-2 text-right font-mono text-brand-text">{money2(salesSummary.totals.total)}</td>
-                        </tr>
-                      </tfoot>
-                    )}
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
+          <SalesByOrderTab
+            ledgerSubTab={ledgerSubTab} salesView={salesView} salesViewTabs={salesViewTabs} sssRange={sssRange} setSssRange={setSssRange} fetchSalesSummary={fetchSalesSummary}
+            salesSourceSelect={salesSourceSelect} salesSummary={salesSummary} exportSalesSummaryPDF={exportSalesSummaryPDF} exportSssExcel={exportSssExcel} sssRows={sssRows} money2={money2} />
 
           {/* ── SALES LINE ITEMS (item-level detail) ────────────────────────────── */}
-          {ledgerSubTab === 'salesline' && (
-            <div className="bg-surface border border-white/10 rounded-2xl p-5">
-              <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-                <div>
-                  <h3 className="text-lg font-black text-fg">Sales Line Items</h3>
-                  <p className="text-fg/60 text-xs">One row per item ordered - item code, item, quantity, per line.</p>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <input type="date" value={sliRange.start} onChange={e => setSliRange(p => ({ ...p, start: e.target.value }))}
-                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
-                  <span className="text-fg/60 font-bold text-sm">→</span>
-                  <input type="date" value={sliRange.end} onChange={e => setSliRange(p => ({ ...p, end: e.target.value }))}
-                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
-                  <button onClick={fetchSalesLineItems} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/80 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Load</button>
-                  {salesLineItems && <button onClick={exportSalesLineItemsPDF} className="flex items-center gap-1.5 bg-white/5 text-fg/80 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
-                </div>
-              </div>
-              {!salesLineItems ? (
-                <p className="text-fg/60 text-sm">Pick a range and press Load.</p>
-              ) : sliPage.pageItems.length === 0 ? (
-                <p className="text-fg/60 text-sm">No completed sales in range.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-fg/80 text-[10px] font-black uppercase tracking-wider text-left border-b border-white/10">
-                        <th className="py-2">Date</th>
-                        <th className="py-2">Customer ID</th><th className="py-2">Customer Name</th>
-                        <th className="py-2">Order</th>
-                        <th className="py-2">Item Code</th><th className="py-2">Item</th>
-                        <th className="py-2 text-right">Qty</th>
-                        <th className="py-2 text-right">Line Total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="text-fg/75">
-                      {sliPage.pageItems.map((row, i) => (
-                        <tr key={i} className={`border-b border-white/5 ${row.isComponent ? 'bg-white/[0.02]' : ''}`}>
-                          <td className="py-1.5 text-fg/70 text-xs">{row.isComponent ? '' : (row.date ? new Date(row.date).toLocaleDateString() : '')}</td>
-                          <td className="py-1.5 font-mono text-xs text-fg/70">{row.isComponent ? '' : (row.customerId || '-')}</td>
-                          <td className="py-1.5 text-xs text-fg/70">{row.isComponent ? '' : (row.customerName || 'Guest')}</td>
-                          <td className="py-1.5 font-mono text-xs text-fg/70">{row.isComponent ? '' : row.orderNumber}</td>
-                          <td className="py-1.5 font-mono text-xs text-fg/70">{row.itemCode || (row.isComponent ? '' : '-')}</td>
-                          <td className={`py-1.5 text-xs ${row.isComponent ? 'text-fg/70 pl-4' : 'text-fg/70'} ${row.isCombo ? 'font-bold' : ''}`}>
-                            {row.isComponent ? `↳ ${row.itemName}` : row.itemName}{row.isCombo ? ' (promo)' : ''}
-                          </td>
-                          <td className="py-1.5 text-right font-mono">{row.quantity}</td>
-                          <td className="py-1.5 text-right font-mono font-bold text-fg/90">{row.isComponent ? <span className="text-fg/65 font-normal not-italic">included</span> : money2(row.lineTotal)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="font-black text-fg border-t-2 border-white/20">
-                        <td className="py-2" colSpan={7}>Total</td>
-                        <td className="py-2 text-right font-mono text-brand-text">{money2(salesLineItems.grandTotal)}</td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                  <div className="px-3 pt-2"><Pager {...sliPage} label="lines" /></div>
-                </div>
-              )}
-            </div>
-          )}
+          <SalesDocsTab
+            ledgerSubTab={ledgerSubTab} salesView={salesView} sliView={sliView} salesViewTabs={salesViewTabs} sliRange={sliRange} setSliRange={setSliRange}
+            loadSli={loadSli} salesSourceSelect={salesSourceSelect} setSliSummary={setSliSummary} salesLineItems={salesLineItems} exportSalesLineItemsPDF={exportSalesLineItemsPDF} sliSummary={sliSummary}
+            exportSliSummaryPDF={exportSliSummaryPDF} exportSliExcel={exportSliExcel} fmtD={fmtD} money2={money2} sliPage={sliPage} />
 
           {/* ── PERCENTAGE TAX ────────────────────────────────────────────────── */}
           {ledgerSubTab === 'percentagetax' && (
             <div className="bg-surface border border-white/10 rounded-2xl p-5 max-w-2xl">
               <h3 className="text-lg font-black text-fg mb-1">Percentage Tax</h3>
-              <p className="text-fg/60 text-xs mb-4">Non-VAT percentage tax on net collected sales for a period.</p>
+              <p className="text-fg/65 text-xs mb-4">Non-VAT percentage tax on net collected sales for a period.</p>
               <div className="flex items-end gap-2 mb-4 flex-wrap">
+                <RangePresets value={ptaxRange} onChange={r => setPtaxRange(p => ({ ...p, ...r }))} onRun={loadPtax} />
                 <label className="text-xs font-bold text-fg/70">Start
                   <input type="date" value={ptaxRange.start} onChange={(e) => setPtaxRange((r) => ({ ...r, start: e.target.value }))} className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
                 </label>
@@ -1377,10 +1736,10 @@ export default function LedgerTab({ ctx }) {
                   <input type="date" value={ptaxRange.end} onChange={(e) => setPtaxRange((r) => ({ ...r, end: e.target.value }))} className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
                 </label>
                 <button onClick={loadPtax} disabled={ptaxLoading} className="bg-brand hover:bg-brand/90 text-on-brand font-bold text-sm px-4 py-2 rounded-lg transition">{ptaxLoading ? 'Loading…' : 'Compute'}</button>
-                {ptax && !ptax.error && <button onClick={exportPercentageTaxPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
+                {ptax && !ptax.error && <button onClick={exportPercentageTaxPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
               </div>
               {ptax?.error ? (
-                <p className="text-red-300 text-sm font-bold">{ptax.error}</p>
+                <p className="text-danger text-sm font-bold">{ptax.error}</p>
               ) : ptax && !ptax.error ? (
                 <div className="space-y-1">
                   <p className="text-fg/70 text-xs mb-2">{ptax.orders} completed order(s) in range.</p>
@@ -1388,8 +1747,8 @@ export default function LedgerTab({ ctx }) {
                     const isTax = i === (ptax.lines.length - 1);
                     return (
                       <div key={i} className={`flex justify-between text-sm py-2 ${isTax ? 'border-t-2 border-white/20 mt-1 font-black text-fg' : 'border-b border-white/5'}`}>
-                        <span className={isTax ? '' : 'text-fg/60'}>{l.label}</span>
-                        <span className={`font-mono font-bold ${isTax ? 'text-brand-text' : l.amount < 0 ? 'text-red-300' : 'text-fg/85'}`}>{money2(l.amount)}</span>
+                        <span className={isTax ? '' : 'text-fg/65'}>{l.label}</span>
+                        <span className={`font-mono font-bold ${isTax ? 'text-brand-text' : l.amount < 0 ? 'text-danger' : 'text-fg/85'}`}>{money2(l.amount)}</span>
                       </div>
                     );
                   })}
@@ -1400,196 +1759,69 @@ export default function LedgerTab({ ctx }) {
             </div>
           )}
 
-          {(ledgerSubTab === 'coa' || ledgerSubTab === 'accperiods') && (
-            <div className={`space-y-4${ledgerSubTab === 'accperiods' ? ' lg:row-span-2' : ''}`}>
-            {/* ── OPENING BALANCES ──────────────────────────────────────────
-                Onboarding a business that already has a history. Each row is an
-                account's natural balance as a positive number; the server picks
-                the debit/credit side and plugs the difference to Owner's
-                Capital, so nobody hand-balances a multi-line entry. */}
-            <div className="bg-surface border border-white/10 rounded-2xl p-5">
-              <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
-                <div>
-                  <h3 className="text-fg font-black uppercase tracking-wider text-sm flex items-center gap-2">
-                    <Wallet size={15} className="text-brand-text" /> Opening Balances
-                  </h3>
-                  {/* The value table: every account with its balance, on the
-                      side that account naturally carries. Useful for handing an
-                      accountant a position without exporting the whole ledger. */}
-                  <button onClick={() => downloadAccountBalances()} disabled={exportBusy === 'account-balances'}
-                    className="mt-2 flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
-                    <Download size={12} /> {exportBusy === 'account-balances' ? 'Working…' : 'Export Account Balances'}
-                  </button>
-                  <p className="text-[11px] text-fg/70 mt-1">
-                    Carry an existing balance sheet into the books. Balance-sheet accounts only.
+          {ledgerSubTab === 'vatreturn' && (
+            <div className="bg-surface border border-white/10 rounded-2xl p-5 max-w-2xl">
+              <h3 className="text-lg font-black text-fg mb-1">VAT Return</h3>
+              <p className="text-fg/65 text-xs mb-4">Output VAT collected on sales, less creditable input VAT on purchases.</p>
+              <div className="flex items-end gap-2 mb-4 flex-wrap">
+                <RangePresets value={vatRange} onChange={r => setVatRange(p => ({ ...p, ...r }))} onRun={loadVatReturn} />
+                <label className="text-xs font-bold text-fg/70" htmlFor="vat-start">Start
+                  <input id="vat-start" type="date" value={vatRange.start} onChange={(e) => setVatRange((r) => ({ ...r, start: e.target.value }))} className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
+                </label>
+                <label className="text-xs font-bold text-fg/70" htmlFor="vat-end">End
+                  <input id="vat-end" type="date" value={vatRange.end} onChange={(e) => setVatRange((r) => ({ ...r, end: e.target.value }))} className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
+                </label>
+                <button onClick={loadVatReturn} disabled={vatLoading} className="bg-brand hover:bg-brand/90 text-on-brand font-bold text-sm px-4 py-2 rounded-lg transition">{vatLoading ? 'Loading…' : 'Compute'}</button>
+              </div>
+              {vatRet?.error ? (
+                <p className="text-danger text-sm font-bold">{vatRet.error}</p>
+              ) : vatRet?.notApplicable ? (
+                <p className="text-fg/75 text-sm leading-snug bg-white/[0.03] border border-white/10 rounded-lg p-3">{vatRet.reason}</p>
+              ) : vatRet ? (
+                <div className="space-y-1">
+                  <p className="text-fg/70 text-xs mb-2">{vatRet.orders} completed order(s) in range.</p>
+                  {(vatRet.lines || []).map((l, i) => {
+                    const isNet = i === (vatRet.lines.length - 1);
+                    return (
+                      <div key={i} className={`flex justify-between text-sm py-2 ${isNet ? 'border-t-2 border-white/20 mt-1 font-black text-fg' : 'border-b border-white/5'}`}>
+                        <span className={isNet ? '' : 'text-fg/65'}>{l.label}</span>
+                        <span className={`font-mono font-bold ${isNet ? 'text-brand-text' : l.amount < 0 ? 'text-danger' : 'text-fg/85'}`}>{money2(l.amount)}</span>
+                      </div>
+                    );
+                  })}
+                  <p className="text-[11px] text-fg/65 pt-2 leading-snug">
+                    Read from the ledger: 230300 Output VAT Payable and 170300 Input VAT (Creditable). Input VAT only appears for purchases marked as charged VAT by a VAT-registered supplier.
                   </p>
                 </div>
-                {obEntry === undefined && (
-                  <button onClick={fetchOpeningBalances}
-                    className="border border-white/15 text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-white/5 transition">
-                    Load
+              ) : (
+                <p className="text-fg/70 text-sm">Pick a date range and press Compute.</p>
+              )}
+              {/* Only where the tax applies, and only for someone who may post. */}
+              {!ptax?.notApplicable && auth.can('accounting.manage') && (
+                <div className="mt-5 pt-4 border-t border-white/10 flex flex-wrap items-end gap-3">
+                  <div>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-fg/70">Book into the ledger</label>
+                    <input type="month" value={ptaxMonth} onChange={(e) => setPtaxMonth(e.target.value)}
+                      className="block bg-white/5 border border-white/15 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
+                  </div>
+                  <button onClick={accruePtax} disabled={ptaxAccruing || !ptaxMonth}
+                    className="bg-brand hover:bg-brand-dark text-on-brand font-bold text-sm px-4 py-2 rounded-lg transition disabled:opacity-50">
+                    {ptaxAccruing ? 'Posting…' : 'Accrue month'}
                   </button>
-                )}
-              </div>
-
-              {obEntry && (
-                <div className="mt-3 text-[11px] text-warning bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5">
-                  Already posted as <span className="font-black">{obEntry.reference}</span> on{' '}
-                  {new Date(obEntry.date).toLocaleDateString()} ({peso(obEntry.totalDebit)}).
-                  Posting again adds a second full set and doubles every carried-in balance.
+                  <p className="text-xs text-fg/70 max-w-md">
+                    Posts the month's 3% as Percentage Tax Expense / Payable. Re-run after a void to correct it.
+                  </p>
                 </div>
               )}
-
-              <div className="mt-4 space-y-2">
-                {obRows.map((r, i) => (
-                  <div key={i} className="flex gap-2 items-start">
-                    <select value={r.accountCode}
-                      onChange={e => setObRows(rows => rows.map((x, j) => j === i ? { ...x, accountCode: e.target.value } : x))}
-                      className="flex-1 min-w-0 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs outline-none focus:border-brand">
-                      <option value="">Select an account…</option>
-                      {(balanceSheetAccounts || []).map(a => (
-                        <option key={a.code} value={a.code}>{a.code} - {a.name}</option>
-                      ))}
-                    </select>
-                    <input type="number" step="0.01" value={r.amount} placeholder="0.00"
-                      onChange={e => setObRows(rows => rows.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
-                      className="w-32 shrink-0 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs text-right tabular-nums outline-none focus:border-brand" />
-                    <button onClick={() => setObRows(rows => rows.length > 1 ? rows.filter((_, j) => j !== i) : rows)}
-                      disabled={obRows.length === 1}
-                      className="shrink-0 text-fg/65 hover:text-danger disabled:opacity-20 transition p-2" title="Remove row">
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                ))}
-                <button onClick={() => setObRows(rows => [...rows, { accountCode: '', amount: '' }])}
-                  className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-brand-text hover:text-brand/80 transition pt-1">
-                  <Plus size={12} /> Add account
-                </button>
-              </div>
-
-              {/* Live preview of what the server will do, so the plug is not a
-                  surprise after posting. */}
-              {(() => {
-                const rows = obRows.filter(r => r.accountCode && parseFloat(r.amount));
-                if (rows.length === 0) return null;
-                const byCode = new Map((balanceSheetAccounts || []).map(a => [a.code, a]));
-                let dr = 0, cr = 0;
-                for (const r of rows) {
-                  const t = byCode.get(r.accountCode)?.type;
-                  const amt = parseFloat(r.amount) || 0;
-                  if (t === 'asset') { dr += Math.max(0, amt); cr += Math.max(0, -amt); }
-                  else { cr += Math.max(0, amt); dr += Math.max(0, -amt); }
-                }
-                const diff = Math.round((dr - cr) * 100) / 100;
-                return (
-                  <div className="mt-3 bg-page-bg border border-white/10 rounded-lg p-3 text-[11px] space-y-1">
-                    <div className="flex justify-between"><span className="text-fg/75">Total debits</span><span className="tabular-nums text-fg/80">{peso(dr)}</span></div>
-                    <div className="flex justify-between"><span className="text-fg/75">Total credits</span><span className="tabular-nums text-fg/80">{peso(cr)}</span></div>
-                    <div className="flex justify-between border-t border-white/10 pt-1 mt-1">
-                      <span className="text-fg/70 font-bold">{diff === 0 ? 'Balanced' : "To Owner's Capital"}</span>
-                      <span className={`tabular-nums font-black ${diff === 0 ? 'text-success' : 'text-brand-text'}`}>
-                        {diff === 0 ? '-' : peso(Math.abs(diff))}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
-                <div>
-                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">As of date</label>
-                  <input type="date" value={obMeta.date}
-                    onChange={e => setObMeta(m => ({ ...m, date: e.target.value }))}
-                    className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs outline-none focus:border-brand" />
-                </div>
-                <div>
-                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Reference No.</label>
-                  <input type="text" value={obMeta.referenceNumber} placeholder="Prior-books ref, audit ref..."
-                    onChange={e => setObMeta(m => ({ ...m, referenceNumber: e.target.value }))}
-                    className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs outline-none focus:border-brand" />
-                </div>
-              </div>
-              <div className="mt-2">
-                <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Remarks</label>
-                <textarea value={obMeta.note} rows={2} placeholder="Where these figures came from"
-                  onChange={e => setObMeta(m => ({ ...m, note: e.target.value }))}
-                  className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs outline-none focus:border-brand" />
-              </div>
-
-              <button onClick={() => submitOpeningBalances(!!obEntry)} disabled={obBusy}
-                className={`w-full mt-4 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition disabled:opacity-50 ${
-                  obEntry ? 'bg-amber-500 hover:bg-amber-400 text-page-bg' : 'bg-brand hover:bg-brand-dark text-on-brand'}`}>
-                {obBusy ? 'Posting…' : obEntry ? 'Post Again (doubles balances)' : 'Post Opening Balances'}
-              </button>
-            </div>
-
-              {/* Add child account */}
-              <div className="bg-surface border border-white/10 rounded-2xl p-5">
-                <h3 className="text-lg font-black text-fg mb-1">Add Sub-Account</h3>
-                <p className="text-xs text-fg/60 mb-4">Create a custom child account under any parent. It inherits the parent's classification and becomes usable in journal entries and reports.</p>
-                {isSuperAdmin && (
-                  <button onClick={seedPaymentSubaccounts}
-                    title="Auto-create standard payment-method sub-accounts (GCash, Maya, Foodpanda, Lalamove, etc.). Idempotent - existing accounts are skipped."
-                    className="w-full sm:w-auto text-[10px] uppercase tracking-widest font-black bg-white/5 hover:bg-white/10 text-brand-text border border-brand/20 px-3 py-2 rounded-lg transition flex items-center justify-center gap-1.5 mb-4">
-                    <Zap size={11}/> Seed payment methods
-                  </button>
-                )}
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <select value={coaParent} onChange={e => setCoaParent(e.target.value)}
-                    className="flex-1 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm font-bold outline-none focus:border-brand/60">
-                    <option value="">Select parent account…</option>
-                    {coaParents.map(p => (
-                      <option key={p.code} value={p.code}>{p.code} · {p.name}{p.isParent ? ' (header)' : ''}</option>
-                    ))}
-                  </select>
-                  <input type="text" placeholder="New account name" value={coaNewName}
-                    onChange={e => setCoaNewName(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') addCoaChild(); }}
-                    className="flex-1 bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm font-bold outline-none focus:border-brand/60 placeholder-white/25" />
-                  <button onClick={addCoaChild} disabled={coaBusy}
-                    className="shrink-0 whitespace-nowrap inline-flex items-center justify-center gap-1.5 bg-brand text-on-brand font-black text-xs uppercase tracking-widest px-5 py-2.5 rounded-xl hover:bg-brand-dark transition disabled:opacity-50">
-                    <Plus size={14} /> Add
-                  </button>
-                </div>
-              </div>
-
-              {/* Existing custom accounts grouped by parent */}
-              <div className="bg-surface border border-white/10 rounded-2xl p-5">
-                <h3 className="text-lg font-black text-fg mb-4">Custom Sub-Accounts</h3>
-                {coaParents.filter(p => coaChildrenOf(p.code).length > 0).length === 0 ? (
-                  <p className="text-sm text-fg/60 italic">No custom accounts yet. Add one above.</p>
-                ) : coaParents.filter(p => coaChildrenOf(p.code).length > 0).map(p => (
-                  <div key={p.code} className="mb-4 last:mb-0">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-1.5">{p.code} · {p.name}</p>
-                    <div className="space-y-1.5">
-                      {coaChildrenOf(p.code).map(c => (
-                        <div key={c._id} className="flex items-center gap-2 bg-page-bg border border-white/10 rounded-xl px-3 py-2">
-                          <span className="font-mono text-xs text-brand/80 w-16 shrink-0">{c.code}</span>
-                          {coaEditId === c._id ? (
-                            <>
-                              <input autoFocus value={coaEditName} onChange={e => setCoaEditName(e.target.value)}
-                                onKeyDown={e => { if (e.key === 'Enter') renameCoaChild(c._id); if (e.key === 'Escape') setCoaEditId(null); }}
-                                className="flex-1 bg-surface border border-brand/40 rounded-lg px-2 py-1 text-fg text-sm outline-none" />
-                              <button onClick={() => renameCoaChild(c._id)} className="text-success hover:text-green-300 text-xs font-black uppercase">Save</button>
-                              <button onClick={() => setCoaEditId(null)} className="text-fg/70 hover:text-fg text-xs">Cancel</button>
-                            </>
-                          ) : (
-                            <>
-                              <span className="flex-1 text-sm font-bold text-fg">{c.name}</span>
-                              <button onClick={() => { setCoaEditId(c._id); setCoaEditName(c.name); }} title="Rename"
-                                className="text-blue-300/70 hover:text-blue-300 p-1"><Edit size={13} /></button>
-                              <button onClick={() => deleteCoaChild(c._id)} title="Delete"
-                                className="text-red-400/70 hover:text-danger p-1"><Trash2 size={13} /></button>
-                            </>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
             </div>
           )}
+
+          <ChartOfAccountsTab
+            ledgerSubTab={ledgerSubTab} downloadAccountBalances={downloadAccountBalances} exportBusy={exportBusy} obEntry={obEntry} fetchOpeningBalances={fetchOpeningBalances} peso={peso}
+            obRows={obRows} setObRows={setObRows} balanceSheetAccounts={balanceSheetAccounts} obMeta={obMeta} setObMeta={setObMeta} submitOpeningBalances={submitOpeningBalances}
+            obBusy={obBusy} isSuperAdmin={isSuperAdmin} seedPaymentSubaccounts={seedPaymentSubaccounts} coaParent={coaParent} setCoaParent={setCoaParent} coaParents={coaParents}
+            coaNewName={coaNewName} setCoaNewName={setCoaNewName} addCoaChild={addCoaChild} coaBusy={coaBusy} coaChildrenOf={coaChildrenOf} coaEditId={coaEditId}
+            coaEditName={coaEditName} setCoaEditName={setCoaEditName} renameCoaChild={renameCoaChild} setCoaEditId={setCoaEditId} deleteCoaChild={deleteCoaChild} />
 
           {ledgerSubTab === 'journal' && (
         <div className="flex flex-col xl:flex-row gap-8">
@@ -1598,13 +1830,25 @@ export default function LedgerTab({ ctx }) {
           <div className="w-full xl:w-1/3 space-y-6">
             
             {/* --- LIVE CASH ON HAND --- */}
-            <div className="bg-accent border border-accent/30 rounded-xl p-6 shadow-lg shadow-accent/5">
-              <p className="text-on-brand text-xs font-bold uppercase tracking-wider mb-1">Live Cash on Hand</p>
-              <p className="text-4xl font-black text-on-brand">P{cashOnHand.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+            {/* Cash on hand below zero is not a balance, it is an error in the
+                books (more paid out of the drawer than was ever put in), so it
+                is shown as one - red, sign first - not in the same green as a
+                healthy drawer. */}
+            <div className={`${cashOnHand < 0 ? 'bg-red-700 border-red-800' : 'bg-accent border-accent/30'} border rounded-xl p-6 shadow-lg shadow-accent/5`}>
+              <p className={`${cashOnHand < 0 ? 'text-white' : 'text-on-brand'} text-xs font-bold uppercase tracking-wider mb-1`}>Live Cash on Hand</p>
+              <p className={`text-4xl font-black ${cashOnHand < 0 ? 'text-white' : 'text-on-brand'}`}>
+                {cashOnHand < 0 ? '−' : ''}₱{Math.abs(cashOnHand).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+              {cashOnHand < 0 && (
+                <p className="text-white/90 text-xs font-bold mt-2">More has been paid out of cash than was recorded coming in. Check the journal for a missing receipt or opening balance.</p>
+              )}
             </div>
 
+            <ManualJournalApprovals apiFetch={apiFetch} can={can} peso={peso} onPosted={fetchERPData}
+              refreshKey={jeDraftsKey} activeAdmin={activeAdmin} isSuperAdmin={isSuperAdmin} />
             <div className="bg-surface border border-white/10 rounded-xl p-6 h-fit">
               <h3 className="text-xl font-bold mb-4 text-brand-text border-b border-white/10 pb-2">New Journal Entry</h3>
+              {!can('journal.approve') && <p className="text-[11px] text-fg/70 -mt-2 mb-3">Your entries are held for an approver before they reach the ledger.</p>}
               <div className="space-y-4">
                 <div>
                   <label className="text-[10px] text-fg/80 font-bold uppercase block mb-1">Entry date</label>
@@ -1623,7 +1867,7 @@ export default function LedgerTab({ ctx }) {
                         disabled={jeForm.lines.length <= 2}
                         title={jeForm.lines.length <= 2 ? 'A journal entry needs at least 2 lines' : 'Remove this line'}
                         onClick={() => setJeForm({ ...jeForm, lines: jeForm.lines.filter((_, i) => i !== idx) })}
-                        className="text-white hover:text-red-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                        className="text-white hover:text-danger disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <X size={14} />
                       </button>
@@ -1638,8 +1882,8 @@ export default function LedgerTab({ ctx }) {
                       {jeAccounts.map(acc => <option key={acc.accountCode} value={acc.accountCode}>{acc.accountCode} - {acc.accountName}</option>)}
                     </select>
                     <div className="flex gap-2">
-                      <input type="number" placeholder="Debit" value={line.debit} onChange={e => { const nl = [...jeForm.lines]; nl[idx].debit = e.target.value; nl[idx].credit = ''; setJeForm({...jeForm, lines: nl}); }} className="w-1/2 bg-page-bg border border-gray-600 rounded p-2 text-sm text-fg placeholder-gray-500" />
-                      <input type="number" placeholder="Credit" value={line.credit} onChange={e => { const nl = [...jeForm.lines]; nl[idx].credit = e.target.value; nl[idx].debit = ''; setJeForm({...jeForm, lines: nl}); }} className="w-1/2 bg-page-bg border border-gray-600 rounded p-2 text-sm text-fg placeholder-gray-500" />
+                      <input type="number" placeholder="Debit" value={line.debit} onChange={e => { const nl = [...jeForm.lines]; nl[idx].debit = e.target.value; nl[idx].credit = ''; setJeForm({...jeForm, lines: nl}); }} className="w-1/2 bg-page-bg border border-gray-600 rounded p-2 text-sm text-fg placeholder-fg/70" />
+                      <input type="number" placeholder="Credit" value={line.credit} onChange={e => { const nl = [...jeForm.lines]; nl[idx].credit = e.target.value; nl[idx].debit = ''; setJeForm({...jeForm, lines: nl}); }} className="w-1/2 bg-page-bg border border-gray-600 rounded p-2 text-sm text-fg placeholder-fg/70" />
                     </div>
                   </div>
                 ))}
@@ -1658,13 +1902,16 @@ export default function LedgerTab({ ctx }) {
                       const res = await apiFetch(`/api/journal`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(jeForm) });
                       const d = await res.json();
                       if (!d.success) { ui.alert(d.error || 'The entry was not posted.'); return; }
+                      if (d.pending) {
+                        ui.toast(`Saved as ${d.draft?.draftNumber} - it posts once an approver signs off.`, { tone: 'success' });
+                        setJeDraftsKey(k => k + 1);
+                      }
                       setJeForm({
-                        date: new Date().toISOString().slice(0, 10),
+                        date: todayStr(),
                         description: '',
                         lines: [{accountCode:'', accountName:'', debit:'', credit:''}, {accountCode:'', accountName:'', debit:'', credit:''}],
                       });
-                      ui.toast('Entry posted.', { tone: 'success' });
-                      fetchERPData();
+                      if (!d.pending) { ui.toast('Entry posted.', { tone: 'success' }); fetchERPData(); }
                     } catch { ui.alert('Network error - nothing was posted.'); }
                   }} className="bg-accent text-on-brand font-bold py-2 px-4 rounded hover:bg-page-bg hover:text-brand-text transition shadow-lg shadow-accent/20">Post Entry</button>
                 </div>
@@ -1687,7 +1934,7 @@ export default function LedgerTab({ ctx }) {
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/70" />
               <input type="text" placeholder="Search by reference or description (e.g. BACKDATE, order #)…"
                 value={journalSearch} onChange={e => { setJournalSearch(e.target.value); setAccountingPage(1); }}
-                className="w-full bg-page-bg border border-white/10 rounded-lg pl-9 pr-9 py-2 text-sm text-fg placeholder-gray-500 outline-none focus:border-accent" />
+                className="w-full bg-page-bg border border-white/10 rounded-lg pl-9 pr-9 py-2 text-sm text-fg placeholder-fg/70 outline-none focus:border-accent" />
               {journalSearch && (
                 <button onClick={() => setJournalSearch('')} aria-label="Clear search" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-fg/70 hover:text-fg transition">
                   <X size={14} />
@@ -1697,7 +1944,7 @@ export default function LedgerTab({ ctx }) {
             <div className="space-y-4">
               {currentEntries.length === 0 && (
                 <div className="py-14 px-6 text-center border border-dashed border-white/10 rounded-xl">
-                  <FileText size={26} className="mx-auto mb-3 text-brand/50" />
+                  <FileText size={26} className="mx-auto mb-3 text-brand-text" />
                   <p className="text-fg/70 font-black uppercase tracking-widest text-xs mb-1">
                     {journalSearch ? 'No matching entries' : 'No journal entries yet'}
                   </p>
@@ -1733,7 +1980,7 @@ export default function LedgerTab({ ctx }) {
                   <button 
                     onClick={() => setAccountingPage(prev => Math.max(prev - 1, 1))}
                     disabled={accountingPage === 1}
-                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${accountingPage === 1 ? 'bg-gray-800 text-fg/70 cursor-not-allowed' : 'bg-surface border border-gray-700 text-fg hover:border-accent hover:text-brand-text'}`}
+                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${accountingPage === 1 ? 'bg-white/5 text-fg/70 cursor-not-allowed' : 'bg-surface border border-gray-700 text-fg hover:border-accent hover:text-brand-text'}`}
                   >
                     <span className="flex items-center gap-1"><ChevronLeft size={12} /> Prev</span>
                   </button>
@@ -1743,7 +1990,7 @@ export default function LedgerTab({ ctx }) {
                   <button 
                     onClick={() => setAccountingPage(prev => Math.min(prev + 1, totalAccountingPages))}
                     disabled={accountingPage === totalAccountingPages}
-                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${accountingPage === totalAccountingPages ? 'bg-gray-800 text-fg/70 cursor-not-allowed' : 'bg-surface border border-gray-700 text-fg hover:border-accent hover:text-brand-text'}`}
+                    className={`px-4 py-1.5 rounded font-bold uppercase tracking-wider text-[10px] transition ${accountingPage === totalAccountingPages ? 'bg-white/5 text-fg/70 cursor-not-allowed' : 'bg-surface border border-gray-700 text-fg hover:border-accent hover:text-brand-text'}`}
                   >
                     <span className="flex items-center gap-1">Next <ChevronRight size={12} /></span>
                   </button>
@@ -1756,138 +2003,8 @@ export default function LedgerTab({ ctx }) {
           )}
 
           {/* ===== PROFIT & LOSS SUB-TAB ===== */}
-          {ledgerSubTab === 'pnl' && (
-            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
-              <div className="flex flex-col sm:flex-row sm:items-end gap-3 sm:justify-between border-b border-white/10 pb-4">
-                <div>
-                  <h3 className="text-2xl font-black text-fg">Profit &amp; Loss Statement</h3>
-                  <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">Non-VAT Registered</p>
-                </div>
-                <div className="flex flex-wrap gap-2 items-end">
-                  <div>
-                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Start</label>
-                    <input type="date" value={pnlRange.start} onChange={e => setPnlRange({...pnlRange, start: e.target.value})} className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm font-bold outline-none focus:border-brand/60" />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">End</label>
-                    <input type="date" value={pnlRange.end} onChange={e => setPnlRange({...pnlRange, end: e.target.value})} className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm font-bold outline-none focus:border-brand/60" />
-                  </div>
-                  <button onClick={fetchPnl} className="bg-brand text-on-brand px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[44px]">Run</button>
-                  <button onClick={exportPnlPDF} className="bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition min-h-[44px] flex items-center gap-1.5"><Download size={13}/> PDF</button>
-                </div>
-              </div>
-
-              {!pnlData ? (
-                <div className="py-16 text-center text-fg/60 font-bold uppercase tracking-widest text-sm">Click "Run" to generate report</div>
-              ) : (() => {
-                // Renders one bucket (Revenue, OpEx, ...) as a stack of NAMED
-                // sections with their own subtotal - e.g. "Salaries & Wages",
-                // "Repairs & Maintenance" - each a bolded header + its line
-                // items + a subtotal row, instead of one flat undifferentiated
-                // list. Falls back to the flat list when the server sent no
-                // section breakdown (older cached response) or there's
-                // nothing to show for this bucket.
-                const Sections = ({ sections, flat, emptyLabel }) => {
-                  if (!flat || flat.length === 0) return <p className="text-fg/60 text-sm">{emptyLabel}</p>;
-                  if (!sections || sections.length === 0) sections = [{ code: '_flat', name: '', items: flat, total: flat.reduce((s, r) => s + r.amount, 0) }];
-                  return (
-                    <div className="space-y-3">
-                      {sections.map(sec => (
-                        <table key={sec.code} className="w-full text-sm">
-                          <tbody>
-                            {sec.name && sec.items.length > 1 && (
-                              <tr><td colSpan={2} className="pb-1 text-[10px] font-black uppercase tracking-widest text-fg/70">{sec.name}</td></tr>
-                            )}
-                            {sec.items.map(r => (
-                              <tr key={r.code} className="border-b border-white/5">
-                                <td className="py-2 text-fg/80 text-xs"><span className="text-fg/60 mr-2">{r.code}</span>{r.name}</td>
-                                <td className="py-2 text-right text-fg tabular-nums font-bold">{r.amount >= 0 ? '' : '('}₱{Math.abs(r.amount).toFixed(2)}{r.amount < 0 ? ')' : ''}</td>
-                              </tr>
-                            ))}
-                            {sec.items.length > 1 && (
-                              <tr><td className="pt-1 text-fg/75 text-[11px] font-bold uppercase">{sec.name || 'Subtotal'}</td><td className="pt-1 text-right text-fg/70 tabular-nums font-bold text-xs">₱{sec.total.toFixed(2)}</td></tr>
-                            )}
-                          </tbody>
-                        </table>
-                      ))}
-                    </div>
-                  );
-                };
-
-                return (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Revenue */}
-                  <div className="space-y-3">
-                    <h4 className="text-brand-text font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2">Revenue</h4>
-                    <Sections sections={pnlData.sections?.revenue} flat={pnlData.revenue} emptyLabel="No revenue entries." />
-                    {pnlData.revenue.length > 0 && (
-                      <table className="w-full text-sm"><tbody>
-                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Net Revenue</td><td className="pt-2 text-right text-brand-text tabular-nums font-black text-lg">₱{pnlData.totals.netRevenue.toFixed(2)}</td></tr>
-                      </tbody></table>
-                    )}
-
-                    <h4 className="text-warning font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mt-6">Cost of Goods Sold</h4>
-                    <Sections sections={pnlData.sections?.cogs} flat={pnlData.cogs} emptyLabel="No COGS entries." />
-                    {pnlData.cogs.length > 0 && (
-                      <table className="w-full text-sm"><tbody>
-                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Total COGS</td><td className="pt-2 text-right text-warning tabular-nums font-black">₱{pnlData.totals.cogs.toFixed(2)}</td></tr>
-                      </tbody></table>
-                    )}
-                    <table className="w-full text-sm"><tbody>
-                      <tr className="border-t border-white/10"><td className="pt-3 font-black text-fg uppercase text-sm">Gross Profit</td><td className="pt-3 text-right text-success tabular-nums font-black text-lg">₱{pnlData.totals.grossProfit.toFixed(2)}</td></tr>
-                      <tr><td className="font-bold text-fg/75 uppercase text-xs">Gross Margin</td><td className="text-right text-fg/70 tabular-nums font-black text-sm">{pnlData.totals.grossMargin.toFixed(2)}%</td></tr>
-                    </tbody></table>
-
-                    {/* Other Income - kept separate from Revenue (interest
-                        earned, gains, etc. aren't sales) so the top line
-                        isn't inflated by non-operating income. */}
-                    {pnlData.otherIncome?.length > 0 && (<>
-                      <h4 className="text-info font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mt-6">Other Income</h4>
-                      <Sections sections={pnlData.sections?.otherIncome} flat={pnlData.otherIncome} emptyLabel="" />
-                      <table className="w-full text-sm"><tbody>
-                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Total Other Income</td><td className="pt-2 text-right text-info tabular-nums font-black">₱{pnlData.totals.otherIncome.toFixed(2)}</td></tr>
-                      </tbody></table>
-                    </>)}
-                  </div>
-
-                  {/* Operating Expenses */}
-                  <div className="space-y-3">
-                    <h4 className="text-danger font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2">Operating Expenses</h4>
-                    <Sections sections={pnlData.sections?.opex} flat={pnlData.opex} emptyLabel="No expense entries in this period." />
-                    {pnlData.opex.length > 0 && (
-                      <table className="w-full text-sm"><tbody>
-                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Total OpEx</td><td className="pt-2 text-right text-danger tabular-nums font-black">₱{pnlData.totals.opex.toFixed(2)}</td></tr>
-                      </tbody></table>
-                    )}
-
-                    {/* Other (Non-Operating) Expenses - the same distinction
-                        as Other Income above; interest paid, disposal losses,
-                        etc. sit below regular OpEx, not mixed into it. */}
-                    {pnlData.otherExpense?.length > 0 && (<>
-                      <h4 className="text-fg/75 font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mt-6">Other Expenses</h4>
-                      <Sections sections={pnlData.sections?.otherExpense} flat={pnlData.otherExpense} emptyLabel="" />
-                      <table className="w-full text-sm"><tbody>
-                        <tr><td className="pt-2 font-black text-fg uppercase text-xs">Total Other Expenses</td><td className="pt-2 text-right text-fg/70 tabular-nums font-black">₱{pnlData.totals.otherExpense.toFixed(2)}</td></tr>
-                      </tbody></table>
-                    </>)}
-
-                    {/* Net Income Summary */}
-                    <div className={`mt-6 rounded-xl p-5 border ${pnlData.totals.netIncome >= 0 ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
-                      <p className="text-fg/80 text-xs font-black uppercase tracking-widest mb-2">Net Income</p>
-                      <p className={`text-4xl font-black tabular-nums ${pnlData.totals.netIncome >= 0 ? 'text-success' : 'text-danger'}`}>
-                        {pnlData.totals.netIncome < 0 ? '−' : ''}₱{Math.abs(pnlData.totals.netIncome).toFixed(2)}
-                      </p>
-                      <p className="text-fg/80 text-xs font-bold mt-2">Net Margin: <span className="tabular-nums">{pnlData.totals.netMargin.toFixed(2)}%</span></p>
-                      <p className="text-fg/60 text-[10px] font-bold uppercase tracking-widest mt-3 border-t border-white/10 pt-2">
-                        Period: {new Date(pnlData.period.start).toLocaleDateString()} → {new Date(pnlData.period.end).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                );
-              })()}
-            </div>
-          )}
+          <ProfitAndLossTab
+            ledgerSubTab={ledgerSubTab} pnlRange={pnlRange} setPnlRange={setPnlRange} fetchPnl={fetchPnl} exportPnlPDF={exportPnlPDF} pnlData={pnlData} />
 
           {/* ===== MONTHLY P&L (period + matrix views, common-size & share-of-parent ratios) ===== */}
           {ledgerSubTab === 'pnlmonthly' && (() => {
@@ -1900,8 +2017,9 @@ export default function LedgerTab({ ctx }) {
             return (
             <div className="space-y-4 animate-fade-in">
               <div className="flex flex-wrap gap-3 items-center">
+                <RangePresets value={pnlmRange} onChange={r => setPnlmRange(p => ({ ...p, ...r }))} onRun={fetchPnlMonthly} />
                 <input type="date" value={pnlmRange.start} onChange={e => setPnlmRange(p => ({ ...p, start: e.target.value }))} className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
-                <span className="text-fg/60 font-bold text-sm">→</span>
+                <span className="text-fg/65 font-bold text-sm">→</span>
                 <input type="date" value={pnlmRange.end} onChange={e => setPnlmRange(p => ({ ...p, end: e.target.value }))} className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
                 <button onClick={fetchPnlMonthly} className="px-5 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition">Load</button>
                 <div className="flex rounded-xl overflow-hidden border border-white/10">
@@ -1912,7 +2030,7 @@ export default function LedgerTab({ ctx }) {
                 {m && <button onClick={exportPnlMonthlyPDF} className="ml-auto bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition flex items-center gap-1.5"><Download size={13}/> PDF</button>}
               </div>
 
-              {!m ? <p className="text-fg/60 text-sm text-center p-6 font-bold">Pick a range and click Load.</p> : (
+              {!m ? <p className="text-fg/65 text-sm text-center p-6 font-bold">Pick a range and click Load.</p> : (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs whitespace-nowrap">
@@ -1961,103 +2079,8 @@ export default function LedgerTab({ ctx }) {
           })()}
 
           {/* ===== BALANCE SHEET SUB-TAB ===== */}
-          {ledgerSubTab === 'balance' && (
-            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
-              <div className="flex justify-between items-end border-b border-white/10 pb-4">
-                <div>
-                  <h3 className="text-2xl font-black text-fg">Balance Sheet</h3>
-                  <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">Snapshot as of {bsData ? new Date(bsData.asOf).toLocaleDateString() : 'today'}</p>
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={reconcileInventory} title="Set book Inventory = actual on-hand value (fixes negative/opening inventory)" className="bg-amber-500 text-white border border-amber-500 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-amber-500/60 transition min-h-[44px] flex items-center gap-1.5"><Package size={13}/> Reconcile Inventory</button>
-                  {bsData && <button onClick={exportBalanceSheetPDF} className="bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition min-h-[44px] flex items-center gap-1.5"><Download size={13}/> PDF</button>}
-                  <button onClick={fetchBalanceSheet} className="bg-brand text-on-brand px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[44px] flex items-center gap-1.5"><RefreshCw size={13}/> Refresh</button>
-                </div>
-              </div>
-
-              {!bsData ? (
-                <div className="py-16 text-center text-fg/60 font-bold uppercase tracking-widest text-sm">Click "Refresh" to load</div>
-              ) : (() => {
-                // Same named-section-with-subtotal pattern as the P&L above -
-                // "Current Assets", "Accounts Payable", etc. as their own
-                // bolded header + subtotal, instead of one flat list per side.
-                const BsSections = ({ sections, flat, emptyLabel }) => {
-                  if (!flat || flat.length === 0) return <p className="text-fg/60 text-xs italic py-2">{emptyLabel}</p>;
-                  if (!sections || sections.length === 0) sections = [{ code: '_flat', name: '', items: flat, total: flat.reduce((s, r) => s + r.amount, 0) }];
-                  return (
-                    <div className="space-y-3">
-                      {sections.map(sec => (
-                        <table key={sec.code} className="w-full text-sm">
-                          <tbody>
-                            {sec.name && sec.items.length > 1 && (
-                              <tr><td colSpan={2} className="pb-1 text-[10px] font-black uppercase tracking-widest text-fg/70">{sec.name}</td></tr>
-                            )}
-                            {sec.items.map(r => (
-                              <tr key={r.code} className="border-b border-white/5">
-                                <td className="py-2 text-fg/80 text-xs"><span className="text-fg/60 mr-2">{r.code}</span>{r.name}</td>
-                                <td className="py-2 text-right text-fg tabular-nums font-bold">{r.amount < 0 ? '−' : ''}₱{Math.abs(r.amount).toFixed(2)}</td>
-                              </tr>
-                            ))}
-                            {sec.items.length > 1 && (
-                              <tr><td className="pt-1 text-fg/75 text-[11px] font-bold uppercase">{sec.name || 'Subtotal'}</td><td className="pt-1 text-right text-fg/70 tabular-nums font-bold text-xs">₱{sec.total.toFixed(2)}</td></tr>
-                            )}
-                          </tbody>
-                        </table>
-                      ))}
-                    </div>
-                  );
-                };
-                return (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {/* Assets */}
-                  <div>
-                    <h4 className="text-brand-text font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mb-3">Assets</h4>
-                    <BsSections sections={bsData.sections?.assets} flat={bsData.assets} emptyLabel="No assets recorded" />
-                    <table className="w-full text-sm"><tbody>
-                      <tr><td className="pt-3 font-black text-fg uppercase text-xs">Total Assets</td><td className="pt-3 text-right text-brand-text tabular-nums font-black text-lg">₱{bsData.totals.assets.toFixed(2)}</td></tr>
-                    </tbody></table>
-                  </div>
-                  {/* Liabilities */}
-                  <div>
-                    <h4 className="text-danger font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mb-3">Liabilities</h4>
-                    <BsSections sections={bsData.sections?.liabilities} flat={bsData.liabilities} emptyLabel="No liabilities recorded" />
-                    <table className="w-full text-sm"><tbody>
-                      <tr><td className="pt-3 font-black text-fg uppercase text-xs">Total Liabilities</td><td className="pt-3 text-right text-danger tabular-nums font-black">₱{bsData.totals.liabilities.toFixed(2)}</td></tr>
-                    </tbody></table>
-                  </div>
-                  {/* Equity */}
-                  <div>
-                    <h4 className="text-success font-black text-sm uppercase tracking-widest border-b border-white/10 pb-2 mb-3">Equity</h4>
-                    <table className="w-full text-sm">
-                      <tbody>
-                        {bsData.equity.map(r => (
-                          <tr key={r.code} className="border-b border-white/5">
-                            <td className="py-2 text-fg/80 text-xs"><span className="text-fg/60 mr-2">{r.code}</span>{r.name}</td>
-                            <td className="py-2 text-right text-fg tabular-nums font-bold">{r.amount < 0 ? '−' : ''}₱{Math.abs(r.amount).toFixed(2)}</td>
-                          </tr>
-                        ))}
-                        <tr><td className="pt-3 font-black text-fg uppercase text-xs">Total Equity</td><td className="pt-3 text-right text-success tabular-nums font-black">₱{bsData.totals.equity.toFixed(2)}</td></tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                );
-              })()}
-
-              {bsData && (
-                <div className={`mt-4 rounded-xl p-4 flex justify-between items-center border ${bsData.totals.balanced ? 'bg-accent border-accent' : 'bg-red-500 border-red-500'}`}>
-                  <div>
-                    <p className="text-white text-xs font-black uppercase tracking-widest">Accounting Equation Check</p>
-                    <p className="text-white text-xs mt-1">Assets = Liabilities + Equity</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-white tabular-nums font-black text-lg">₱{bsData.totals.assets.toFixed(2)} = ₱{bsData.totals.liabilitiesAndEquity.toFixed(2)}</p>
-                    <p className={`text-xs font-black uppercase mt-1 ${bsData.totals.balanced ? 'text-white' : 'text-white'}`}>{bsData.totals.balanced ? '✓ Balanced' : '✗ Out of Balance'}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+          <BalanceSheetTab
+            ledgerSubTab={ledgerSubTab} bsData={bsData} reconcileInventory={reconcileInventory} exportBalanceSheetPDF={exportBalanceSheetPDF} fetchBalanceSheet={fetchBalanceSheet} arOutstanding={arOutstanding} />
 
           {/* ===== MONTHLY BALANCE SHEET (period + matrix, % of assets & % of parent) ===== */}
           {ledgerSubTab === 'bsmonthly' && (() => {
@@ -2070,8 +2093,9 @@ export default function LedgerTab({ ctx }) {
             return (
             <div className="space-y-4 animate-fade-in">
               <div className="flex flex-wrap gap-3 items-center">
+                <RangePresets value={bsmRange} onChange={r => setBsmRange(p => ({ ...p, ...r }))} onRun={fetchBsMonthly} />
                 <input type="date" value={bsmRange.start} onChange={e => setBsmRange(p => ({ ...p, start: e.target.value }))} className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
-                <span className="text-fg/60 font-bold text-sm">→</span>
+                <span className="text-fg/65 font-bold text-sm">→</span>
                 <input type="date" value={bsmRange.end} onChange={e => setBsmRange(p => ({ ...p, end: e.target.value }))} className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
                 <button onClick={fetchBsMonthly} className="px-5 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition">Load</button>
                 <div className="flex rounded-xl overflow-hidden border border-white/10">
@@ -2081,7 +2105,7 @@ export default function LedgerTab({ ctx }) {
                 </div>
                 {b && <button onClick={exportBsMonthlyPDF} className="ml-auto bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition flex items-center gap-1.5"><Download size={13}/> PDF</button>}
               </div>
-              {!b ? <p className="text-fg/60 text-sm text-center p-6 font-bold">Pick a range and click Load.</p> : (
+              {!b ? <p className="text-fg/65 text-sm text-center p-6 font-bold">Pick a range and click Load.</p> : (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs whitespace-nowrap">
@@ -2127,839 +2151,38 @@ export default function LedgerTab({ ctx }) {
               what has already been applied across the whole catalogue. The
               per-product view lives behind Pricing Control's History button;
               this is the "what did anyone change last month" view. */}
-          {ledgerSubTab === 'pricelog' && (
-            <div className="space-y-4 animate-fade-in">
-
-              {/* ── Awaiting approval ── */}
-              {changeRequests?.length > 0 && (
-                <div className="bg-surface border border-yellow-500/25 rounded-2xl p-6 space-y-3">
-                  <div>
-                    <h3 className="text-xl font-black text-fg flex items-center gap-2">
-                      <ShieldCheck size={18} className="text-warning" />
-                      {changeRequests.length} Price Change{changeRequests.length === 1 ? '' : 's'} Awaiting Approval
-                    </h3>
-                    <p className="text-fg/70 text-[11px] mt-0.5">
-                      {canApprovePricing
-                        ? 'These are not in effect yet. Approving applies the new value immediately.'
-                        : 'Your requests. Someone with approval rights has to sign these off.'}
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    {changeRequests.map(r => (
-                      <div key={r._id} className="bg-page-bg/50 border border-white/10 rounded-xl p-3">
-                        <div className="flex items-start justify-between gap-3 flex-wrap">
-                          <div className="min-w-0">
-                            <p className="text-fg font-bold text-sm">{r.entityName || r.entityId}</p>
-                            {r.changes.map((c, i) => (
-                              <div key={i} className="flex items-center gap-2 font-mono text-xs mt-0.5">
-                                <span className="text-fg/75">{c.label}</span>
-                                <span className="text-fg/70 line-through">₱{Number(c.oldValue || 0).toFixed(2)}</span>
-                                <span className="text-fg/65">→</span>
-                                <span className={`font-black ${Number(c.newValue) > Number(c.oldValue) ? 'text-danger' : 'text-success'}`}>
-                                  ₱{Number(c.newValue || 0).toFixed(2)}
-                                </span>
-                              </div>
-                            ))}
-                            <p className="text-[10px] text-fg/70 mt-1">
-                              by {r.requestedBy || 'someone'} · {new Date(r.createdAt).toLocaleDateString()}
-                              {r.reason && <span className="italic"> · "{r.reason}"</span>}
-                            </p>
-                          </div>
-                          <div className="flex gap-2 shrink-0">
-                            {canApprovePricing ? (
-                              <>
-                                <button onClick={() => actOnChangeRequest(r._id, 'approve')}
-                                  className="bg-brand text-on-brand px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[36px]">
-                                  Approve
-                                </button>
-                                <button onClick={async () => {
-                                  const reason = await ui.confirm({
-                                    title: 'Reject this price change?',
-                                    message: `${r.entityName}: ${r.changes.map(c => `${c.label} → ₱${Number(c.newValue || 0).toFixed(2)}`).join(', ')}. The price stays as it is.`,
-                                    confirmLabel: 'Reject', tone: 'danger',
-                                  });
-                                  if (reason) actOnChangeRequest(r._id, 'reject', 'Rejected by approver');
-                                }}
-                                  className="bg-red-500/10 text-danger px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-red-500/20 transition min-h-[36px]">
-                                  Reject
-                                </button>
-                              </>
-                            ) : (
-                              <button onClick={() => actOnChangeRequest(r._id, 'withdraw')}
-                                className="bg-white/5 text-fg/75 px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-white/10 transition min-h-[36px]">
-                                Withdraw
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* ── Applied changes ── */}
-              <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4">
-                <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
-                  <div>
-                    <h3 className="text-2xl font-black text-fg">Price Change Log</h3>
-                    <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">Every price &amp; cost change, and who signed it off</p>
-                  </div>
-                  <div className="flex items-end gap-2">
-                    <div>
-                      <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">From</label>
-                      <input type="date" value={priceLogRange.start} onChange={e => setPriceLogRange({ ...priceLogRange, start: e.target.value })}
-                        className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">To</label>
-                      <input type="date" value={priceLogRange.end} onChange={e => setPriceLogRange({ ...priceLogRange, end: e.target.value })}
-                        className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
-                    </div>
-                    <button onClick={fetchPriceChangeLog}
-                      className="bg-brand text-on-brand px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
-                      Run
-                    </button>
-                  </div>
-                </div>
-
-                {!priceChangeLog ? (
-                  <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Pick a range and run the log</div>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Changes</p>
-                        <p className="text-xl font-black tabular-nums text-fg">{priceChangeLog.summary.total}</p>
-                        <p className="text-[9px] text-fg/70 mt-0.5">{priceChangeLog.summary.priceChanges} price · {priceChangeLog.summary.costChanges} cost</p>
-                      </div>
-                      <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Increases</p>
-                        <p className="text-xl font-black tabular-nums text-danger">{priceChangeLog.summary.increases}</p>
-                        {priceChangeLog.summary.largestIncrease && (
-                          <p className="text-[9px] text-fg/70 mt-0.5 truncate">
-                            max +{priceChangeLog.summary.largestIncrease.percent}% · {priceChangeLog.summary.largestIncrease.productName}
-                          </p>
-                        )}
-                      </div>
-                      <div className="rounded-xl border border-green-500/20 bg-green-500/10 px-4 py-3">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Decreases</p>
-                        <p className="text-xl font-black tabular-nums text-success">{priceChangeLog.summary.decreases}</p>
-                        {priceChangeLog.summary.largestDecrease && (
-                          <p className="text-[9px] text-fg/70 mt-0.5 truncate">
-                            max {priceChangeLog.summary.largestDecrease.percent}% · {priceChangeLog.summary.largestDecrease.productName}
-                          </p>
-                        )}
-                      </div>
-                      {/* How many went through review rather than straight in -
-                          the number that says whether the gate is doing anything. */}
-                      <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Reviewed</p>
-                        <p className="text-xl font-black tabular-nums text-fg/70">{priceChangeLog.summary.viaApproval}</p>
-                        <p className="text-[9px] text-fg/70 mt-0.5">{priceChangeLog.summary.pendingCount} still pending</p>
-                      </div>
-                    </div>
-
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
-                            <th className="text-left py-2.5">When</th>
-                            <th className="text-left py-2.5">Product</th>
-                            <th className="text-left py-2.5">Type</th>
-                            <th className="text-right py-2.5">From</th>
-                            <th className="text-right py-2.5">To</th>
-                            <th className="text-right py-2.5">Move</th>
-                            <th className="text-left py-2.5 pl-3">Who</th>
-                            <th className="text-left py-2.5">Reason</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {priceChangeLog.changes.map((c, i) => (
-                            <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition">
-                              <td className="py-2.5 text-fg/75 text-xs">{new Date(c.date).toLocaleDateString()}</td>
-                              <td className="py-2.5 text-fg font-bold text-xs">
-                                {c.productName}
-                                {c.productCode && <span className="block text-[9px] text-fg/65">{c.productCode}</span>}
-                              </td>
-                              <td className="py-2.5">
-                                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${c.type === 'price' ? 'bg-brand/20 text-brand-text' : 'bg-orange-500/20 text-warning'}`}>
-                                  {c.type === 'price' ? 'Price' : 'Cost'}
-                                </span>
-                              </td>
-                              <td className="py-2.5 text-right tabular-nums text-fg/70">₱{Number(c.oldValue || 0).toFixed(2)}</td>
-                              <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{Number(c.newValue || 0).toFixed(2)}</td>
-                              <td className={`py-2.5 text-right tabular-nums font-bold ${c.delta > 0 ? 'text-danger' : c.delta < 0 ? 'text-success' : 'text-fg/65'}`}>
-                                {c.percent === null ? '-' : `${c.percent > 0 ? '+' : ''}${c.percent}%`}
-                              </td>
-                              <td className="py-2.5 pl-3 text-xs">
-                                {c.viaApproval ? (
-                                  <>
-                                    <span className="text-fg/70">{c.requestedBy || '-'}</span>
-                                    <span className="block text-[9px] text-success">approved by {c.approvedBy || '-'}</span>
-                                  </>
-                                ) : (
-                                  <span className="text-fg/70">{c.changedBy || '-'}</span>
-                                )}
-                              </td>
-                              <td className="py-2.5 text-fg/70 text-xs italic max-w-[200px] truncate" title={c.reason}>{c.reason || '-'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      {!priceChangeLog.changes.length && (
-                        <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">No price changes in this range</div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
+          <PriceLogTab
+            ledgerSubTab={ledgerSubTab} changeRequests={changeRequests} canApprovePricing={canApprovePricing} CR_ENTITY={CR_ENTITY} crValue={crValue} MONEY_FIELDS={MONEY_FIELDS}
+            actOnChangeRequest={actOnChangeRequest} priceLogRange={priceLogRange} setPriceLogRange={setPriceLogRange} fetchPriceChangeLog={fetchPriceChangeLog} priceChangeLog={priceChangeLog} />
 
           {/* ===== A/R REPORT SUB-TAB ===== */}
           {/* The printable receivables schedule: one line per open invoice.
               Read as-of a date, so re-running last month's report reproduces
               last month's numbers instead of restating them with collections
               that have happened since. */}
-          {ledgerSubTab === 'arreport' && (
-            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
-              <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
-                <div>
-                  <h3 className="text-2xl font-black text-fg">A/R Report</h3>
-                  <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">Aged receivables schedule · invoice level</p>
-                </div>
-                <div className="flex items-end gap-2">
-                  <div>
-                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">As Of</label>
-                    <input type="date" value={arReportAsOf} onChange={e => setArReportAsOf(e.target.value)}
-                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
-                  </div>
-                  <button onClick={fetchArReport}
-                    className="bg-brand text-on-brand px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
-                    Run
-                  </button>
-                </div>
-              </div>
-
-              {!arReport ? (
-                <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Pick a date and run the report</div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                    {[
-                      { label: 'Current', sub: '0-30d', amt: arReport.totals.current, cls: 'text-success bg-green-500/10 border-green-500/20' },
-                      { label: '31-60',   sub: 'days',  amt: arReport.totals.d31_60,  cls: 'text-warning bg-yellow-500/10 border-yellow-500/20' },
-                      { label: '61-90',   sub: 'days',  amt: arReport.totals.d61_90,  cls: 'text-warning bg-orange-500/10 border-orange-500/20' },
-                      { label: '91+',     sub: 'days',  amt: arReport.totals.d90_plus,cls: 'text-danger bg-red-500/10 border-red-500/20' },
-                      { label: 'Total',   sub: `${arReport.totals.count} invoice(s)`, amt: arReport.totals.total, cls: 'text-brand-text bg-brand/10 border-brand/25' },
-                    ].map(b => (
-                      <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.cls.split(' ').slice(1).join(' ')}`}>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
-                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.cls.split(' ')[0] : 'text-fg/60'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  {arReport.overdueTotal > 0 && (
-                    <div className="bg-red-500/10 border border-red-500/25 rounded-xl px-4 py-3">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-danger">Past Their Agreed Due Date</p>
-                      <p className="text-xl font-black tabular-nums text-danger">₱{arReport.overdueTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                    </div>
-                  )}
-
-                  {/* Per-client roll-up first - the question is almost always
-                      "who owes me" before "which invoice". */}
-                  <div className="bg-page-bg/40 border border-white/10 rounded-xl overflow-x-auto">
-                    <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 px-4 py-3 border-b border-white/10">By Client</p>
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
-                          <th className="text-left py-2.5 px-4">Client</th>
-                          <th className="text-right py-2.5">Current</th>
-                          <th className="text-right py-2.5">31-60</th>
-                          <th className="text-right py-2.5">61-90</th>
-                          <th className="text-right py-2.5">91+</th>
-                          <th className="text-right py-2.5 px-4">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {arReport.byClient.map(c => (
-                          <tr key={c.client} className="border-b border-white/5">
-                            <td className="py-2.5 px-4 font-bold text-fg">{c.client}{c.clientCode && <span className="ml-2 text-[9px] text-fg/65">{c.clientCode}</span>}</td>
-                            <td className="py-2.5 text-right tabular-nums text-fg/70">{c.current ? `₱${c.current.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                            <td className="py-2.5 text-right tabular-nums text-yellow-500/80">{c.d31_60 ? `₱${c.d31_60.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                            <td className="py-2.5 text-right tabular-nums text-orange-500/80">{c.d61_90 ? `₱${c.d61_90.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                            <td className="py-2.5 text-right tabular-nums text-red-500/80">{c.d90_plus ? `₱${c.d90_plus.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                            <td className="py-2.5 px-4 text-right tabular-nums font-black text-fg">₱{c.total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 mb-2">Open Invoices</p>
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
-                          <th className="text-left py-2.5">Invoice</th>
-                          <th className="text-left py-2.5">Client</th>
-                          <th className="text-left py-2.5">Date</th>
-                          <th className="text-left py-2.5">Due</th>
-                          <th className="text-left py-2.5">Age</th>
-                          <th className="text-right py-2.5">Invoiced</th>
-                          <th className="text-right py-2.5">Collected</th>
-                          <th className="text-right py-2.5">Balance</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {arReport.invoices.map(i => (
-                          <tr key={i._id} className={`border-b border-white/5 ${i.overdue ? 'bg-red-500/5' : ''}`}>
-                            <td className="py-2.5 font-bold text-fg">{i.orderNumber}</td>
-                            <td className="py-2.5 text-fg/70">{i.client}</td>
-                            <td className="py-2.5 text-fg/75 text-xs">{new Date(i.invoiceDate).toLocaleDateString()}</td>
-                            <td className="py-2.5 text-xs">{i.dueDate ? <span className={i.overdue ? 'text-danger font-bold' : 'text-fg/60'}>{new Date(i.dueDate).toLocaleDateString()}</span> : <span className="text-fg/60">-</span>}</td>
-                            <td className="py-2.5"><span className={`text-[10px] font-black px-2 py-1 rounded ${i.bucket === 'current' ? 'bg-green-400/15 text-success' : i.bucket === 'd31_60' ? 'bg-yellow-500/15 text-warning' : i.bucket === 'd61_90' ? 'bg-orange-500/15 text-warning' : 'bg-red-500/15 text-danger'}`}>{i.ageDays}d</span></td>
-                            <td className="py-2.5 text-right tabular-nums text-fg/75">₱{i.faceTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                            <td className="py-2.5 text-right tabular-nums text-success">{i.paid ? `₱${i.paid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : <span className="text-fg/60">-</span>}</td>
-                            <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{i.balance.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {!arReport.invoices.length && <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Nothing outstanding as of this date</div>}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+          <ReceivablesReportTab
+            ledgerSubTab={ledgerSubTab} arReportAsOf={arReportAsOf} setArReportAsOf={setArReportAsOf} fetchArReport={fetchArReport} arReport={arReport} />
 
           {/* ===== COLLECTIONS SUB-TAB ===== */}
           {/* Two halves of one question. The check register is what has been
               taken in but is not yet money; the collection report is what
               actually came in over a period. */}
-          {ledgerSubTab === 'collections' && (
-            <div className="space-y-4 animate-fade-in">
-              {/* ── CHECK REGISTER ──────────────────────────────────────────
-                  A check is a promise of money, and the gap between taking one
-                  in and the bank honouring it is where receivables go wrong.
-                  Every check lives here through On Hand → Deposited → Cleared,
-                  or Bounced - which reverses the collection and reopens the
-                  invoice. */}
-              <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4">
-                <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
-                  <div>
-                    <h3 className="text-xl font-black text-fg">Check Register</h3>
-                    <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">Checks received against receivables</p>
-                  </div>
-                  <div className="flex items-end gap-2">
-                    <select value={checkFilter} onChange={e => { setCheckFilter(e.target.value); fetchChecks(e.target.value); }}
-                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
-                      <option value="">All statuses</option>
-                      <option value="On Hand">On Hand</option>
-                      <option value="Deposited">Deposited</option>
-                      <option value="Cleared">Cleared</option>
-                      <option value="Bounced">Bounced</option>
-                    </select>
-                    <button onClick={() => fetchChecks(checkFilter)}
-                      className="bg-white/5 hover:bg-white/10 text-fg/60 px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[40px]">
-                      Refresh
-                    </button>
-                  </div>
-                </div>
-
-                {!checkRegister ? (
-                  <div className="py-12 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Loading check register…</div>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      {/* On-hand checks whose date has arrived: money sitting in
-                          a drawer that could be in the bank today. */}
-                      <div className="rounded-xl border border-green-500/20 bg-green-500/10 px-4 py-3">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Ready to Deposit</p>
-                        <p className="text-xl font-black tabular-nums text-success">₱{checkRegister.summary.readyToDepositTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                        <p className="text-[9px] text-fg/70 mt-0.5">{checkRegister.summary.readyToDepositCount} check(s)</p>
-                      </div>
-                      <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Post-Dated</p>
-                        <p className="text-xl font-black tabular-nums text-fg/70">₱{checkRegister.summary.postDatedTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                        <p className="text-[9px] text-fg/70 mt-0.5">Not bankable yet</p>
-                      </div>
-                      <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/10 px-4 py-3">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">In Clearing</p>
-                        <p className="text-xl font-black tabular-nums text-warning">₱{checkRegister.summary.inClearingTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                        <p className="text-[9px] text-fg/70 mt-0.5">{checkRegister.summary.inClearingCount} with the bank</p>
-                      </div>
-                      <div className={`rounded-xl border px-4 py-3 ${checkRegister.summary.bouncedCount > 0 ? 'border-red-500/25 bg-red-500/10' : 'border-white/10 bg-white/5'}`}>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Bounced</p>
-                        <p className={`text-xl font-black tabular-nums ${checkRegister.summary.bouncedCount > 0 ? 'text-danger' : 'text-fg/60'}`}>₱{checkRegister.summary.bouncedTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                        <p className="text-[9px] text-fg/70 mt-0.5">{checkRegister.summary.bouncedCount} reversed</p>
-                      </div>
-                    </div>
-
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
-                            <th className="text-left py-2.5">Check No.</th>
-                            <th className="text-left py-2.5">Bank / Drawer</th>
-                            <th className="text-left py-2.5">Client</th>
-                            <th className="text-left py-2.5">Invoice</th>
-                            <th className="text-left py-2.5">Check Date</th>
-                            <th className="text-right py-2.5">Amount</th>
-                            <th className="text-left py-2.5 pl-3">Status</th>
-                            <th className="text-right py-2.5">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {checkRegister.checks.map(c => (
-                            <tr key={c.paymentId} className={`border-b border-white/5 hover:bg-white/5 transition ${c.status === 'Bounced' ? 'bg-red-500/5' : ''}`}>
-                              <td className="py-2.5 font-black text-fg tabular-nums">{c.checkNumber}</td>
-                              <td className="py-2.5 text-fg/60 text-xs">
-                                {c.checkBank || <span className="text-fg/60">-</span>}
-                                {c.checkDrawer && <span className="block text-[9px] text-fg/70">{c.checkDrawer}</span>}
-                              </td>
-                              <td className="py-2.5 text-fg/70 text-xs">{c.client}</td>
-                              <td className="py-2.5 text-fg/75 text-xs">{c.orderNumber}</td>
-                              <td className="py-2.5 text-xs">
-                                {c.checkDate ? (
-                                  <span className={c.postDated ? 'text-warning font-bold' : 'text-fg/60'}>
-                                    {new Date(c.checkDate).toLocaleDateString()}
-                                  </span>
-                                ) : <span className="text-fg/60">-</span>}
-                                {c.postDated && <span className="block text-[9px] text-yellow-500/70">post-dated</span>}
-                                {/* A check sitting with the bank for a week+ is
-                                    worth chasing. */}
-                                {c.daysInClearing > 6 && <span className="block text-[9px] text-warning">{c.daysInClearing}d in clearing</span>}
-                              </td>
-                              <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{c.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                              <td className="py-2.5 pl-3">
-                                <span className={`text-[10px] font-black px-2 py-1 rounded ${
-                                  c.status === 'Cleared' ? 'bg-green-500/15 text-success'
-                                  : c.status === 'Bounced' ? 'bg-red-500/15 text-danger'
-                                  : c.status === 'Deposited' ? 'bg-yellow-500/15 text-warning'
-                                  : 'bg-white/10 text-fg/60'}`}>{c.status}</span>
-                                {c.status === 'Bounced' && c.bounceReason && (
-                                  <span className="block text-[9px] text-red-400/70 italic mt-0.5 max-w-[160px]">{c.bounceReason}</span>
-                                )}
-                              </td>
-                              <td className="py-2.5 text-right">
-                                <div className="flex gap-1 justify-end">
-                                  {c.status === 'On Hand' && (
-                                    <button
-                                      onClick={() => actOnCheck(c, 'deposit')}
-                                      disabled={c.postDated}
-                                      title={c.postDated ? `Cannot be deposited before ${new Date(c.checkDate).toLocaleDateString()}` : 'Mark as handed to the bank'}
-                                      className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/8 text-fg/60 hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed min-h-[28px]">
-                                      Deposit
-                                    </button>
-                                  )}
-                                  {['On Hand', 'Deposited'].includes(c.status) && (
-                                    <>
-                                      <button onClick={() => actOnCheck(c, 'clear')} title="The bank honoured it"
-                                        className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-green-500/15 text-success hover:bg-green-500/25 min-h-[28px]">
-                                        Clear
-                                      </button>
-                                      <button onClick={() => actOnCheck(c, 'bounce')} title="Reverses the collection - the invoice reopens"
-                                        className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-red-500/10 text-danger hover:bg-red-500/20 min-h-[28px]">
-                                        Bounce
-                                      </button>
-                                    </>
-                                  )}
-                                  {c.status === 'Cleared' && (
-                                    <button onClick={() => actOnCheck(c, 'bounce')} title="Bank reversed a cleared check"
-                                      className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/5 text-fg/70 hover:bg-red-500/15 hover:text-danger min-h-[28px]">
-                                      Reverse
-                                    </button>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      {!checkRegister.checks.length && (
-                        <div className="py-12 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">
-                          {checkFilter ? `No ${checkFilter.toLowerCase()} checks` : 'No checks received yet'}
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-
-
-            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4">
-              <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
-                <div>
-                  <h3 className="text-2xl font-black text-fg">Collection Report</h3>
-                  <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">Payments received against receivables</p>
-                </div>
-                <div className="flex flex-wrap items-end gap-2">
-                  <div>
-                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">From</label>
-                    <input type="date" value={collRange.start} onChange={e => setCollRange({ ...collRange, start: e.target.value })}
-                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">To</label>
-                    <input type="date" value={collRange.end} onChange={e => setCollRange({ ...collRange, end: e.target.value })}
-                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
-                  </div>
-                  {/* Which date the range is read on. Collection basis = what
-                      the collectors took in; deposit basis = what reached the
-                      bank, i.e. the figure that ties to a bank statement. */}
-                  <div>
-                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Date Basis</label>
-                    <select value={collRange.basis} onChange={e => setCollRange({ ...collRange, basis: e.target.value })}
-                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
-                      <option value="collection">Collection date</option>
-                      <option value="deposit">Deposit date</option>
-                    </select>
-                  </div>
-                  <button onClick={fetchCollectionReport}
-                    className="bg-brand text-on-brand px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
-                    Run
-                  </button>
-                </div>
-              </div>
-
-              {!collectionReport ? (
-                <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Pick a range and run the report</div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="bg-green-500/10 border border-green-500/20 rounded-xl px-4 py-3">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Total Collected</p>
-                      <p className="text-2xl font-black tabular-nums text-success">₱{collectionReport.totalCollected.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                    </div>
-                    <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Collections</p>
-                      <p className="text-2xl font-black tabular-nums text-fg">{collectionReport.count}</p>
-                    </div>
-                    {/* Money taken in but not yet banked. This gap is exactly
-                        where cash goes missing, so it gets its own tile. */}
-                    <div className={`rounded-xl px-4 py-3 border ${collectionReport.undepositedTotal > 0 ? 'bg-yellow-500/10 border-yellow-500/25' : 'bg-white/5 border-white/10'}`}>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Not Yet Deposited</p>
-                      <p className={`text-2xl font-black tabular-nums ${collectionReport.undepositedTotal > 0 ? 'text-warning' : 'text-fg/60'}`}>₱{collectionReport.undepositedTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                    </div>
-                  </div>
-
-                  <div className="grid md:grid-cols-3 gap-3">
-                    {[
-                      ['By Client', collectionReport.byClient, 'client'],
-                      ['By Account', collectionReport.byMethod, 'method'],
-                      ['By Collector', collectionReport.byCollector, 'collector'],
-                    ].map(([label, list, key]) => (
-                      <div key={label} className="bg-page-bg/40 border border-white/10 rounded-xl overflow-hidden">
-                        <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 px-4 py-2.5 border-b border-white/10">{label}</p>
-                        <table className="w-full text-sm">
-                          <tbody>
-                            {list.slice(0, 8).map(r => (
-                              <tr key={r[key]} className="border-b border-white/5">
-                                <td className="py-2 px-4 text-fg/70 truncate max-w-[140px]">{r[key]}</td>
-                                <td className="py-2 px-4 text-right tabular-nums font-bold text-fg">₱{r.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                              </tr>
-                            ))}
-                            {!list.length && <tr><td className="py-4 px-4 text-fg/65 text-xs">None</td></tr>}
-                          </tbody>
-                        </table>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
-                          <th className="text-left py-2.5">Collected</th>
-                          <th className="text-left py-2.5">Deposited</th>
-                          <th className="text-left py-2.5">Invoice</th>
-                          <th className="text-left py-2.5">Client</th>
-                          <th className="text-left py-2.5">To</th>
-                          <th className="text-left py-2.5">Reference</th>
-                          <th className="text-right py-2.5">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {collectionReport.collections.map((r, idx) => (
-                          <tr key={`${r.orderId}-${idx}`} className="border-b border-white/5 hover:bg-white/5 transition">
-                            <td className="py-2.5 text-fg/70 text-xs">
-                              {new Date(r.collectionDate).toLocaleDateString()}
-                              {r.collectedBy && <span className="block text-[9px] text-fg/70">by {r.collectedBy}</span>}
-                            </td>
-                            <td className="py-2.5 text-xs">
-                              {r.depositDate
-                                ? <span className="text-fg/70">{new Date(r.depositDate).toLocaleDateString()}</span>
-                                : <span className="text-[10px] font-black px-2 py-1 rounded bg-yellow-500/15 text-warning">IN TRANSIT</span>}
-                              {r.floatDays > 0 && <span className="block text-[9px] text-yellow-500/70">+{r.floatDays}d float</span>}
-                            </td>
-                            <td className="py-2.5 text-fg font-bold">{r.orderNumber}</td>
-                            <td className="py-2.5 text-fg/70">{r.client}</td>
-                            <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand-text px-2 py-1 rounded">{r.depositedTo || '-'}</span></td>
-                            <td className="py-2.5 text-fg/75 text-xs">
-                              {r.referenceNumber || <span className="text-fg/60">-</span>}
-                              {r.note && <span className="block text-[9px] text-fg/65 italic">{r.note}</span>}
-                            </td>
-                            <td className="py-2.5 text-right tabular-nums font-black text-success">₱{r.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {!collectionReport.collections.length && <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">No collections in this range</div>}
-                  </div>
-                </>
-              )}
-            </div>
-            </div>
-          )}
+          <CollectionsTab
+            ledgerSubTab={ledgerSubTab} checkFilter={checkFilter} setCheckFilter={setCheckFilter} fetchChecks={fetchChecks} checkRegister={checkRegister} actOnCheck={actOnCheck}
+            collRange={collRange} setCollRange={setCollRange} fetchCollectionReport={fetchCollectionReport} collectionReport={collectionReport} />
 
           {/* ===== A/P REPORT SUB-TAB ===== */}
           {/* The mirror of the A/R report. Aged on the DUE date, not the bill
               date: nobody cares how long ago a bill was raised, only how far
               past its payment date it is. */}
-          {ledgerSubTab === 'apreport' && (
-            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
-              <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
-                <div>
-                  <h3 className="text-2xl font-black text-fg">A/P Report</h3>
-                  <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">Aged payables · what we owe, and when it's due</p>
-                </div>
-                <div className="flex items-end gap-2">
-                  <div>
-                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">As Of</label>
-                    <input type="date" value={apReportAsOf} onChange={e => setApReportAsOf(e.target.value)}
-                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
-                  </div>
-                  <button onClick={fetchApReport}
-                    className="bg-brand text-on-brand px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
-                    Run
-                  </button>
-                </div>
-              </div>
-
-              {!apReport ? (
-                <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Pick a date and run the report</div>
-              ) : (
-                <>
-                  {/* Buckets are DAYS PAST DUE here, not invoice age. */}
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                    {[
-                      { label: 'Not Yet Due', sub: '', amt: apReport.totals.current, color: 'text-success', bg: 'bg-green-500/10 border-green-500/20' },
-                      { label: '1-30', sub: 'days late', amt: apReport.totals.d31_60, color: 'text-warning', bg: 'bg-yellow-500/10 border-yellow-500/20' },
-                      { label: '31-60', sub: 'days late', amt: apReport.totals.d61_90, color: 'text-warning', bg: 'bg-orange-500/10 border-orange-500/20' },
-                      { label: '61+', sub: 'days late', amt: apReport.totals.d90_plus, color: 'text-danger', bg: 'bg-red-500/10 border-red-500/20' },
-                      { label: 'Total', sub: `${apReport.totals.count} bill(s)`, amt: apReport.totals.total, color: 'text-brand-text', bg: 'bg-brand/10 border-brand/25' },
-                    ].map(b => (
-                      <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.bg}`}>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
-                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-fg/60'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className={`rounded-xl border px-4 py-3 ${apReport.overdueTotal > 0 ? 'border-red-500/25 bg-red-500/10' : 'border-white/10 bg-white/5'}`}>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Overdue</p>
-                      <p className={`text-xl font-black tabular-nums ${apReport.overdueTotal > 0 ? 'text-danger' : 'text-fg/60'}`}>₱{apReport.overdueTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                      <p className="text-[9px] text-fg/70 mt-0.5">{apReport.overdueCount} bill(s) past their date</p>
-                    </div>
-                    {/* An aged bucket never answers "do we have the cash this
-                        week" - this does. */}
-                    <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Due Within 7 Days</p>
-                      <p className="text-xl font-black tabular-nums text-fg">₱{apReport.dueSoonTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                      <p className="text-[9px] text-fg/70 mt-0.5">{apReport.dueSoonCount} bill(s) coming up</p>
-                    </div>
-                    {/* Owed regardless, but can't be scheduled until someone
-                        signs it off - an approval problem, not a cash one. */}
-                    <div className={`rounded-xl border px-4 py-3 ${apReport.awaitingApprovalTotal > 0 ? 'border-yellow-500/25 bg-yellow-500/10' : 'border-white/10 bg-white/5'}`}>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Awaiting Approval</p>
-                      <p className={`text-xl font-black tabular-nums ${apReport.awaitingApprovalTotal > 0 ? 'text-warning' : 'text-fg/60'}`}>₱{apReport.awaitingApprovalTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                      <p className="text-[9px] text-fg/70 mt-0.5">{apReport.awaitingApprovalCount} bill(s) not yet authorised</p>
-                    </div>
-                  </div>
-
-                  {apReport.totals.undated > 0 && (
-                    <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">No Due Date Set</p>
-                      <p className="text-lg font-black tabular-nums text-fg/70">₱{apReport.totals.undated.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                      <p className="text-[9px] text-fg/70 mt-0.5">Can't be aged - set terms on these bills so they stop hiding from the buckets.</p>
-                    </div>
-                  )}
-
-                  <div className="bg-page-bg/40 border border-white/10 rounded-xl overflow-x-auto">
-                    <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 px-4 py-3 border-b border-white/10">By Supplier</p>
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
-                          <th className="text-left py-2.5 px-4">Supplier</th>
-                          <th className="text-right py-2.5">Not Due</th>
-                          <th className="text-right py-2.5">1-30</th>
-                          <th className="text-right py-2.5">31-60</th>
-                          <th className="text-right py-2.5">61+</th>
-                          <th className="text-right py-2.5 px-4">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {apReport.bySupplier.map(g => (
-                          <tr key={g.supplier} className="border-b border-white/5">
-                            <td className="py-2.5 px-4 font-bold text-fg">{g.supplier}</td>
-                            <td className="py-2.5 text-right tabular-nums text-fg/70">{g.current ? `₱${g.current.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                            <td className="py-2.5 text-right tabular-nums text-yellow-500/80">{g.d31_60 ? `₱${g.d31_60.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                            <td className="py-2.5 text-right tabular-nums text-orange-500/80">{g.d61_90 ? `₱${g.d61_90.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                            <td className="py-2.5 text-right tabular-nums text-red-500/80">{g.d90_plus ? `₱${g.d90_plus.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                            <td className="py-2.5 px-4 text-right tabular-nums font-black text-fg">₱{g.total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 mb-2">Open Bills</p>
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
-                          <th className="text-left py-2.5">Bill</th>
-                          <th className="text-left py-2.5">Supplier</th>
-                          <th className="text-left py-2.5">Description</th>
-                          <th className="text-left py-2.5">Due</th>
-                          <th className="text-left py-2.5">Status</th>
-                          <th className="text-right py-2.5">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {apReport.bills.map(b => (
-                          <tr key={b._id} className={`border-b border-white/5 ${b.overdue ? 'bg-red-500/5' : ''}`}>
-                            <td className="py-2.5 font-bold text-fg text-xs">
-                              {b.billNumber}
-                              {b.poNumber && <span className="block text-[9px] text-fg/65">{b.poNumber}</span>}
-                            </td>
-                            <td className="py-2.5 text-fg/70 text-xs">{b.supplier}</td>
-                            <td className="py-2.5 text-fg/75 text-xs max-w-[220px] truncate" title={b.description}>{b.description || '-'}</td>
-                            <td className="py-2.5 text-xs">
-                              {b.dueDate ? (
-                                b.overdue
-                                  ? <span className="text-[10px] font-black px-2 py-1 rounded bg-red-500/15 text-danger">{b.daysPastDue}d LATE</span>
-                                  : <span className="text-fg/60">{new Date(b.dueDate).toLocaleDateString()}</span>
-                              ) : <span className="text-[10px] font-black px-2 py-1 rounded bg-white/10 text-fg/70">NO DATE</span>}
-                            </td>
-                            <td className="py-2.5">
-                              <span className={`text-[9px] font-black uppercase px-2 py-1 rounded ${b.awaitingApproval ? 'bg-yellow-500/15 text-warning' : 'bg-white/10 text-fg/60'}`}>
-                                {b.status}
-                              </span>
-                            </td>
-                            <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{b.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {!apReport.bills.length && <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Nothing owed as of this date</div>}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+          <PayablesReportTab
+            ledgerSubTab={ledgerSubTab} apReportAsOf={apReportAsOf} setApReportAsOf={setApReportAsOf} fetchApReport={fetchApReport} apReport={apReport} />
 
           {/* ===== SUPPLIER PAYMENTS SUB-TAB ===== */}
           {/* The exact counterpart of the collection report: that one is what
               came in, this is what went out. */}
-          {ledgerSubTab === 'supplierpay' && (
-            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
-              <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
-                <div>
-                  <h3 className="text-2xl font-black text-fg">Supplier Payments</h3>
-                  <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">What we actually paid out, and from which account</p>
-                </div>
-                <div className="flex flex-wrap items-end gap-2">
-                  <div>
-                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">From</label>
-                    <input type="date" value={supPayRange.start} onChange={e => setSupPayRange({ ...supPayRange, start: e.target.value })}
-                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">To</label>
-                    <input type="date" value={supPayRange.end} onChange={e => setSupPayRange({ ...supPayRange, end: e.target.value })}
-                      className="bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
-                  </div>
-                  <button onClick={fetchSupplierPayments}
-                    className="bg-brand text-on-brand px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
-                    Run
-                  </button>
-                </div>
-              </div>
-
-              {!supplierPayments ? (
-                <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Pick a range and run the report</div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Total Paid Out</p>
-                      <p className="text-2xl font-black tabular-nums text-danger">₱{supplierPayments.totalPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">Payments</p>
-                      <p className="text-2xl font-black tabular-nums text-fg">{supplierPayments.count}</p>
-                    </div>
-                  </div>
-
-                  <div className="grid md:grid-cols-2 gap-3">
-                    {[
-                      ['By Supplier', supplierPayments.bySupplier, 'supplier'],
-                      ['By Account Paid From', supplierPayments.byAccount, 'account'],
-                    ].map(([label, list, key]) => (
-                      <div key={label} className="bg-page-bg/40 border border-white/10 rounded-xl overflow-hidden">
-                        <p className="text-[11px] font-black uppercase tracking-widest text-fg/60 px-4 py-2.5 border-b border-white/10">{label}</p>
-                        <table className="w-full text-sm">
-                          <tbody>
-                            {list.slice(0, 10).map(r => (
-                              <tr key={r[key]} className="border-b border-white/5">
-                                <td className="py-2 px-4 text-fg/70 truncate max-w-[180px]">{r[key]}</td>
-                                <td className="py-2 px-4 text-right tabular-nums font-bold text-fg">₱{r.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                              </tr>
-                            ))}
-                            {!list.length && <tr><td className="py-4 px-4 text-fg/65 text-xs">None</td></tr>}
-                          </tbody>
-                        </table>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
-                          <th className="text-left py-2.5">Date</th>
-                          <th className="text-left py-2.5">Supplier</th>
-                          <th className="text-left py-2.5">Reference</th>
-                          <th className="text-left py-2.5">Paid From</th>
-                          <th className="text-right py-2.5">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {supplierPayments.payments.map((p, i) => (
-                          <tr key={`${p.reference}-${i}`} className="border-b border-white/5 hover:bg-white/5 transition">
-                            <td className="py-2.5 text-fg/75 text-xs">{new Date(p.date).toLocaleDateString()}</td>
-                            <td className="py-2.5 text-fg/70 text-xs">{p.supplier}</td>
-                            <td className="py-2.5 text-fg/75 text-xs">
-                              {p.reference || '-'}
-                              {p.description && <span className="block text-[9px] text-fg/65 italic max-w-[240px] truncate" title={p.description}>{p.description}</span>}
-                            </td>
-                            <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand-text px-2 py-1 rounded">{p.paidFrom || '-'}</span></td>
-                            <td className="py-2.5 text-right tabular-nums font-black text-danger">₱{p.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {!supplierPayments.payments.length && <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">No supplier payments in this range</div>}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+          <SupplierPaymentsTab
+            ledgerSubTab={ledgerSubTab} supPayRange={supPayRange} setSupPayRange={setSupPayRange} fetchSupplierPayments={fetchSupplierPayments} supplierPayments={supplierPayments} />
 
           {/* ===== CHECK VOUCHERS SUB-TAB ===== */}
           {/* The disbursement paper trail. Vouchers are raised automatically by
@@ -2967,1121 +2190,60 @@ export default function LedgerTab({ ctx }) {
               here, so this is read + void only. Voiding marks the voucher and
               nothing else: the journal entry stays posted and the bill stays
               paid, because a real check may already be in someone's hands. */}
-          {ledgerSubTab === 'checkvouchers' && (
-            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
-              <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
-                <div className="min-w-0">
-                  <h3 className="text-xl sm:text-2xl font-black text-fg">Check Vouchers</h3>
-                  <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">
-                    The disbursement paper trail
-                  </p>
-                  <p className="text-[11px] text-fg/70 mt-1">
-                    Issued automatically on every bill payment, credit refund and cash advance - never by hand.
-                  </p>
-                </div>
-                <div className="text-right shrink-0">
-                  <p className="text-[10px] text-fg/70 font-bold uppercase tracking-widest">Total Issued</p>
-                  <p className="text-2xl text-brand-text font-black tabular-nums">{peso(cvTotal || 0)}</p>
-                  <p className="text-[10px] text-fg/70 mt-0.5">Voided excluded</p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-end gap-2">
-                <div>
-                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Payee</label>
-                  <select value={cvFilter.payeeType} onChange={e => setCvFilter(f => ({ ...f, payeeType: e.target.value }))}
-                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs">
-                    <option value="">All</option>
-                    <option value="supplier">Supplier</option>
-                    <option value="client">Client</option>
-                    <option value="other">Other</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Status</label>
-                  <select value={cvFilter.status} onChange={e => setCvFilter(f => ({ ...f, status: e.target.value }))}
-                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs">
-                    <option value="">All</option>
-                    <option value="Issued">Issued</option>
-                    <option value="Voided">Voided</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">From</label>
-                  <input type="date" value={cvFilter.start} onChange={e => setCvFilter(f => ({ ...f, start: e.target.value }))}
-                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs" />
-                </div>
-                <div>
-                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">To</label>
-                  <input type="date" value={cvFilter.end} onChange={e => setCvFilter(f => ({ ...f, end: e.target.value }))}
-                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-xs" />
-                </div>
-                <button onClick={fetchCheckVouchers}
-                  className="bg-brand text-on-brand px-4 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[38px]">
-                  Apply
-                </button>
-              </div>
-
-              {!checkVouchers ? (
-                <div className="py-16 text-center text-fg/70 font-bold uppercase tracking-widest text-sm">Loading…</div>
-              ) : checkVouchers.length === 0 ? (
-                <div className="py-16 text-center">
-                  <Receipt size={28} className="mx-auto text-fg/60 mb-3" />
-                  <p className="text-fg/75 font-bold uppercase tracking-widest text-sm">No vouchers found</p>
-                  <p className="text-fg/65 text-xs mt-1">Pay a bill, refund a credit or issue an advance and it lands here.</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
-                        <th className="text-left py-2.5">Voucher #</th>
-                        <th className="text-left py-2.5">Date</th>
-                        <th className="text-left py-2.5">Payee</th>
-                        <th className="text-left py-2.5">Purpose</th>
-                        <th className="text-left py-2.5">Paid From</th>
-                        <th className="text-left py-2.5">Reference</th>
-                        <th className="text-right py-2.5">Amount</th>
-                        <th className="text-right py-2.5">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {checkVouchers.map(v => (
-                        <tr key={v._id} className={`border-b border-white/5 hover:bg-white/5 transition ${v.status === 'Voided' ? 'opacity-50' : ''}`}>
-                          <td className="py-2.5 text-fg font-bold text-xs">
-                            {v.voucherNumber || '-'}
-                            {/* Voucher numbers restart per branch, so the number
-                                alone is ambiguous once a business runs more than
-                                one inventory. */}
-                            {v.branchCode && <span className="block text-[9px] text-fg/65 font-normal font-mono">{v.branchCode}</span>}
-                          </td>
-                          <td className="py-2.5 text-fg/75 text-xs">{new Date(v.date).toLocaleDateString()}</td>
-                          <td className="py-2.5 text-xs">
-                            <span className="text-fg/70">{v.payeeName}</span>
-                            <span className="ml-1.5 text-[9px] font-black uppercase text-fg/65">{v.payeeType}</span>
-                          </td>
-                          <td className="py-2.5 text-fg/75 text-xs">{v.purpose}</td>
-                          <td className="py-2.5 text-fg/75 text-xs">{v.sourceAccountName || v.sourceAccount || '-'}</td>
-                          <td className="py-2.5 text-fg/75 text-xs">{v.referenceNumber || '-'}</td>
-                          <td className={`py-2.5 text-right tabular-nums font-black ${v.status === 'Voided' ? 'text-fg/70 line-through' : 'text-fg'}`}>
-                            {peso(v.amount)}
-                          </td>
-                          <td className="py-2.5 text-right">
-                            {v.status === 'Issued' ? (
-                              <button onClick={() => setCvVoidModal({ voucher: v, reason: '', busy: false })}
-                                className="border border-red-500/40 text-danger px-2.5 py-1 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-red-500/10 transition">
-                                Void
-                              </button>
-                            ) : (
-                              <span className="text-[10px] font-black uppercase bg-red-500/15 text-danger px-2 py-1 rounded" title={v.voidReason || ''}>
-                                Voided
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {/* Void modal - the server requires a reason, so this cannot be a
-                  plain confirm. Lives inside this sub-tab because that is the
-                  only place a void can be started from. */}
-              {cvVoidModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setCvVoidModal(null)}>
-                  <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
-                    <h2 className="font-black text-fg mb-1">Void voucher {cvVoidModal.voucher.voucherNumber}</h2>
-                    <p className="text-xs text-fg/75 mb-3">
-                      {peso(cvVoidModal.voucher.amount)} to {cvVoidModal.voucher.payeeName}
-                    </p>
-                    <div className="text-[11px] text-warning bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-3">
-                      This marks the voucher only. The journal entry stays posted and the bill stays paid -
-                      correcting those is a separate, deliberate entry.
-                    </div>
-                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Reason (required)</label>
-                    <textarea
-                      value={cvVoidModal.reason} rows={3}
-                      onChange={e => setCvVoidModal(m => ({ ...m, reason: e.target.value }))}
-                      placeholder="e.g. printed with the wrong payee"
-                      className="w-full bg-page-bg border border-white/10 rounded-lg p-2.5 text-fg text-sm outline-none focus:border-brand" />
-                    <div className="flex gap-2 mt-4">
-                      <button onClick={() => setCvVoidModal(null)} disabled={cvVoidModal.busy}
-                        className="flex-1 border border-white/15 text-fg/70 px-4 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-white/5 transition">
-                        Cancel
-                      </button>
-                      <button onClick={submitVoidVoucher} disabled={cvVoidModal.busy || !cvVoidModal.reason.trim()}
-                        className="flex-1 bg-red-500 text-white px-4 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-red-500/90 transition disabled:opacity-40">
-                        {cvVoidModal.busy ? 'Voiding…' : 'Void Voucher'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+          <CheckVouchersTab
+            ledgerSubTab={ledgerSubTab} peso={peso} cvTotal={cvTotal} cvFilter={cvFilter} setCvFilter={setCvFilter} fetchCheckVouchers={fetchCheckVouchers}
+            exportCvPDF={exportCvPDF} exportCvExcel={exportCvExcel} can={can} cvNewOpen={cvNewOpen} setCvNewOpen={setCvNewOpen} coaAccounts={coaAccounts}
+            fetchCoa={fetchCoa} apiFetch={apiFetch} cashAndBankAccounts={cashAndBankAccounts} fetchERPData={fetchERPData} checkVouchers={checkVouchers} setCvDocs={setCvDocs}
+            printCheckVoucher={printCheckVoucher} setCvVoidModal={setCvVoidModal} cvDocs={cvDocs} activeAdmin={activeAdmin} isSuperAdmin={isSuperAdmin} cvVoidModal={cvVoidModal}
+            submitVoidVoucher={submitVoidVoucher} />
 
           {/* ===== ADVANCES SUB-TAB ===== */}
-          {ledgerSubTab === 'advances' && (
-            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-5 animate-fade-in">
-              <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
-                <div className="min-w-0">
-                  <h3 className="text-xl sm:text-2xl font-black text-fg">Advances</h3>
-                  <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">
-                    Money moved before the transaction it belongs to
-                  </p>
-                </div>
-                <button onClick={() => setAdvIssueModal({ ...ADV_ISSUE_BLANK })}
-                  className="flex items-center gap-2 bg-brand hover:bg-brand-dark text-on-brand px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[40px]">
-                  <Plus size={14} /> New Advance
-                </button>
-              </div>
-
-              {/* Issued vs still-open, the two numbers that actually matter */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="bg-page-bg border border-white/10 rounded-xl p-4">
-                  <p className="text-[10px] text-fg/70 font-bold uppercase tracking-widest mb-1">Total Issued</p>
-                  <p className="text-2xl font-black tabular-nums text-fg">{peso(advTotals.totalIssued)}</p>
-                  <p className="text-[10px] text-fg/70 mt-1">Excludes cancelled</p>
-                </div>
-                <div className="bg-page-bg border border-white/10 rounded-xl p-4">
-                  <p className="text-[10px] text-fg/70 font-bold uppercase tracking-widest mb-1">Still Outstanding</p>
-                  <p className={`text-2xl font-black tabular-nums ${advTotals.totalOutstanding > 0 ? 'text-warning' : 'text-success'}`}>
-                    {peso(advTotals.totalOutstanding)}
-                  </p>
-                  <p className="text-[10px] text-fg/70 mt-1">Not yet liquidated</p>
-                </div>
-              </div>
-
-              {/* Filters */}
-              <div className="flex flex-wrap items-end gap-2">
-                <div>
-                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Type</label>
-                  <select value={advFilter.type} onChange={e => setAdvFilter(f => ({ ...f, type: e.target.value }))}
-                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand">
-                    <option value="">All</option>
-                    <option value="employee">Employee</option>
-                    <option value="supplier">Supplier</option>
-                    <option value="customer">Customer deposit</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Status</label>
-                  <select value={advFilter.status} onChange={e => setAdvFilter(f => ({ ...f, status: e.target.value }))}
-                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand">
-                    <option value="">All</option>
-                    <option value="Open">Open</option>
-                    <option value="Partially Liquidated">Partially Liquidated</option>
-                    <option value="Liquidated">Liquidated</option>
-                    <option value="Cancelled">Cancelled</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">From</label>
-                  <input type="date" value={advFilter.start} onChange={e => setAdvFilter(f => ({ ...f, start: e.target.value }))}
-                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
-                </div>
-                <div>
-                  <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">To</label>
-                  <input type="date" value={advFilter.end} onChange={e => setAdvFilter(f => ({ ...f, end: e.target.value }))}
-                    className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
-                </div>
-                <button onClick={fetchAdvances}
-                  className="border border-white/15 text-fg px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-white/5 transition min-h-[38px]">
-                  Apply
-                </button>
-              </div>
-
-              {!advances ? (
-                <div className="py-16 text-center text-fg/70 font-bold uppercase tracking-widest text-sm">Loading…</div>
-              ) : advances.length === 0 ? (
-                <div className="py-16 text-center">
-                  <HandCoins size={28} className="mx-auto text-fg/60 mb-3" />
-                  <p className="text-fg/75 font-bold uppercase tracking-widest text-sm">No advances yet</p>
-                  <p className="text-fg/65 text-xs mt-1">Cash floats, supplier prepayments and customer deposits show up here.</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-fg/75 text-[10px] uppercase tracking-widest border-b border-white/10">
-                        <th className="text-left py-2.5">Number</th>
-                        <th className="text-left py-2.5">Type</th>
-                        <th className="text-left py-2.5">Payee</th>
-                        <th className="text-left py-2.5">Purpose</th>
-                        <th className="text-left py-2.5">Date</th>
-                        <th className="text-right py-2.5">Amount</th>
-                        <th className="text-right py-2.5">Outstanding</th>
-                        <th className="text-left py-2.5 pl-3">Status</th>
-                        <th className="text-right py-2.5">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {advances.map(a => {
-                        const typeCls = {
-                          employee: 'bg-blue-500/15 text-info',
-                          supplier: 'bg-purple-500/15 text-purple-400',
-                          customer: 'bg-teal-500/15 text-teal-400',
-                        }[a.type];
-                        const stCls = {
-                          'Open': 'bg-amber-500/15 text-warning',
-                          'Partially Liquidated': 'bg-orange-500/15 text-warning',
-                          'Liquidated': 'bg-green-500/15 text-success',
-                          'Cancelled': 'bg-white/10 text-fg/70',
-                        }[a.status];
-                        const done = a.status === 'Liquidated' || a.status === 'Cancelled';
-                        return (
-                          <tr key={a._id} className={`border-b border-white/5 hover:bg-white/5 transition ${a.status === 'Cancelled' ? 'opacity-50' : ''}`}>
-                            <td className="py-2.5 font-bold text-fg text-xs">
-                              {a.advanceNumber}
-                              {a.branchCode && <span className="block text-[9px] text-fg/65 font-normal font-mono">{a.branchCode}</span>}
-                              {a.checkVoucherRef && <span className="block text-[9px] text-fg/65 font-normal">CV {a.checkVoucherRef}</span>}
-                            </td>
-                            <td className="py-2.5">
-                              <span className={`text-[9px] font-black uppercase px-2 py-1 rounded ${typeCls}`}>{a.type}</span>
-                            </td>
-                            <td className="py-2.5 text-fg/70 text-xs">{a.payeeName}</td>
-                            <td className="py-2.5 text-fg/70 text-xs max-w-[180px] truncate" title={a.purpose || ''}>{a.purpose || '-'}</td>
-                            <td className="py-2.5 text-fg/75 text-xs">{new Date(a.date).toLocaleDateString()}</td>
-                            <td className="py-2.5 text-right tabular-nums text-fg/70">{peso(a.amount)}</td>
-                            <td className={`py-2.5 text-right tabular-nums font-black ${a.outstanding > 0 ? 'text-warning' : 'text-fg/65'}`}>
-                              {a.outstanding > 0 ? peso(a.outstanding) : '-'}
-                            </td>
-                            <td className="py-2.5 pl-3">
-                              <span className={`text-[9px] font-black uppercase px-2 py-1 rounded whitespace-nowrap ${stCls}`}
-                                title={a.status === 'Cancelled' ? (a.cancelReason || '') : ''}>
-                                {a.status}
-                              </span>
-                            </td>
-                            <td className="py-2.5 text-right">
-                              {!done && (
-                                <div className="flex flex-col items-end gap-1">
-                                  <button onClick={() => openAdvLiquidate(a)}
-                                    className="bg-brand text-on-brand px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition whitespace-nowrap">
-                                    Liquidate
-                                  </button>
-                                  {/* Cancelling is only honest while nothing has
-                                      been cleared - after that the server sends
-                                      you to a cash return instead. */}
-                                  {a.status === 'Open' && (
-                                    <button onClick={() => setAdvCancelModal({ advance: a, reason: '' })}
-                                      className="border border-red-500/30 text-danger px-3 py-1 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-red-500/10 transition">
-                                      Cancel
-                                    </button>
-                                  )}
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {/* ── Issue modal ── */}
-              {advIssueModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setAdvIssueModal(null)}>
-                  <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-                    <h2 className="font-black text-fg text-lg mb-1">New Advance</h2>
-                    <p className="text-xs text-fg/75 mb-4">
-                      {advIssueModal.type === 'customer'
-                        ? 'A deposit received from a customer. Cash comes in and we owe them goods or services.'
-                        : 'Cash goes out now against something that has not been billed yet. A Check Voucher is issued automatically.'}
-                    </p>
-
-                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Type</label>
-                    <div className="grid grid-cols-3 gap-2 mb-4">
-                      {[['employee', 'Employee'], ['supplier', 'Supplier'], ['customer', 'Customer']].map(([v, label]) => (
-                        <button key={v} onClick={() => setAdvIssueModal(f => ({ ...f, type: v }))}
-                          className={`px-2 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition ${
-                            advIssueModal.type === v ? 'bg-brand text-on-brand' : 'bg-white/5 text-fg/75 hover:text-fg'}`}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-
-                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">
-                      {advIssueModal.type === 'customer' ? 'Customer' : advIssueModal.type === 'supplier' ? 'Supplier' : 'Employee'} name
-                    </label>
-                    <input type="text" value={advIssueModal.payeeName} autoFocus
-                      onChange={e => setAdvIssueModal(f => ({ ...f, payeeName: e.target.value }))}
-                      placeholder="Who is this for?"
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
-
-                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Amount</label>
-                    <input type="number" step="0.01" min="0" value={advIssueModal.amount}
-                      onChange={e => setAdvIssueModal(f => ({ ...f, amount: e.target.value }))}
-                      placeholder="0.00"
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
-
-                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">
-                      {advIssueModal.type === 'customer' ? 'Deposit into' : 'Pay from'}
-                    </label>
-                    <select value={advIssueModal.sourceAccount}
-                      onChange={e => setAdvIssueModal(f => ({ ...f, sourceAccount: e.target.value }))}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand">
-                      {(cashAndBankAccounts || []).map(a => <option key={a.code} value={a.code}>{a.code} - {a.name}</option>)}
-                    </select>
-
-                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Date of Transaction</label>
-                    <input type="date" value={advIssueModal.date}
-                      onChange={e => setAdvIssueModal(f => ({ ...f, date: e.target.value }))}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-1 outline-none focus:border-brand" />
-                    <p className="text-[10px] text-fg/65 mb-4">When the money actually moved. Leave blank for today.</p>
-
-                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Reference No.</label>
-                    <input type="text" value={advIssueModal.referenceNumber}
-                      onChange={e => setAdvIssueModal(f => ({ ...f, referenceNumber: e.target.value }))}
-                      placeholder="OR no., check no., deposit slip..."
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
-
-                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Purpose / Remarks</label>
-                    <textarea value={advIssueModal.purpose} rows={2}
-                      onChange={e => setAdvIssueModal(f => ({ ...f, purpose: e.target.value }))}
-                      placeholder="e.g. fuel float for the week"
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-5 outline-none focus:border-brand" />
-
-                    <div className="flex gap-3">
-                      <button onClick={() => setAdvIssueModal(null)} disabled={advBusy}
-                        className="flex-1 bg-white/5 hover:bg-white/10 text-fg/75 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
-                        Cancel
-                      </button>
-                      <button onClick={submitIssueAdvance} disabled={advBusy}
-                        className="flex-1 bg-brand hover:bg-brand-dark text-on-brand font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">
-                        {advBusy ? 'Recording…' : 'Issue Advance'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ── Liquidate modal ── */}
-              {advLiqModal && (() => {
-                const a = advLiqModal.advance;
-                const methods = a.type === 'customer'
-                  ? [['order', 'Apply to an order'], ['cash-return', 'Refund the cash']]
-                  : [['expense', 'Spent on an expense'], ['bill', 'Apply to a bill'], ['cash-return', 'Cash returned']];
-                const entered = parseFloat(advLiqModal.amount) || 0;
-                const over = entered > a.outstanding + 0.01;
-                return (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setAdvLiqModal(null)}>
-                    <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-                      <h2 className="font-black text-fg text-lg mb-1">Liquidate {a.advanceNumber}</h2>
-                      <p className="text-xs text-fg/75 mb-4">
-                        {a.payeeName} · {peso(a.outstanding)} of {peso(a.amount)} still open
-                      </p>
-
-                      <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">How was it cleared?</label>
-                      <div className="space-y-1.5 mb-4">
-                        {methods.map(([v, label]) => (
-                          <button key={v} onClick={() => setAdvLiqModal(f => ({ ...f, method: v }))}
-                            className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold transition border ${
-                              advLiqModal.method === v
-                                ? 'bg-brand/15 border-brand/50 text-fg'
-                                : 'bg-white/5 border-white/10 text-fg/75 hover:text-fg'}`}>
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-
-                      <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Amount</label>
-                      <input type="number" step="0.01" min="0" value={advLiqModal.amount}
-                        onChange={e => setAdvLiqModal(f => ({ ...f, amount: e.target.value }))}
-                        className={`w-full bg-white/5 border rounded-lg px-3 py-2.5 text-sm text-fg mb-1 outline-none ${
-                          over ? 'border-red-500/60' : 'border-white/10 focus:border-brand'}`} />
-                      {over
-                        ? <p className="text-[11px] text-danger mb-3">Exceeds the {peso(a.outstanding)} still open on this advance.</p>
-                        : <p className="text-[11px] text-fg/65 mb-3">Leave as-is to clear the full remaining balance.</p>}
-
-                      {advLiqModal.method === 'expense' && (
-                        <>
-                          <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Expense account</label>
-                          <select value={advLiqModal.expenseAccount}
-                            onChange={e => setAdvLiqModal(f => ({ ...f, expenseAccount: e.target.value }))}
-                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand">
-                            <option value="">Select what it was spent on…</option>
-                            {(expenseAccounts || []).map(x => <option key={x.code} value={x.code}>{x.code} - {x.name}</option>)}
-                          </select>
-                        </>
-                      )}
-
-                      {advLiqModal.method === 'cash-return' && (
-                        <>
-                          <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Returned into</label>
-                          <select value={advLiqModal.returnToAccount}
-                            onChange={e => setAdvLiqModal(f => ({ ...f, returnToAccount: e.target.value }))}
-                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand">
-                            {(cashAndBankAccounts || []).map(x => <option key={x.code} value={x.code}>{x.code} - {x.name}</option>)}
-                          </select>
-                        </>
-                      )}
-
-                      {advLiqModal.method === 'bill' && (() => {
-                        // Only a bill that can still take money is a valid
-                        // target; anything Paid or Rejected would just error.
-                        const payable = (bills || []).filter(b => ['Approved', 'Partially Paid'].includes(b.status));
-                        return (
-                          <>
-                            <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Bill to settle</label>
-                            {payable.length === 0 ? (
-                              <p className="text-[11px] text-warning bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-4">
-                                No approved or partially paid bills to apply this against.
-                              </p>
-                            ) : (
-                              <select value={advLiqModal.billId}
-                                onChange={e => setAdvLiqModal(f => ({ ...f, billId: e.target.value }))}
-                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand">
-                                <option value="">Select a bill…</option>
-                                {payable.map(b => (
-                                  <option key={b._id} value={b._id}>
-                                    {b.billNumber} · {b.supplierName} · {peso(b.amount - (b.paidAmount || 0))} left
-                                  </option>
-                                ))}
-                              </select>
-                            )}
-                          </>
-                        );
-                      })()}
-
-                      {advLiqModal.method === 'order' && (() => {
-                        const open = arOutstanding?.orders || [];
-                        return (
-                          <>
-                            <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Order to apply to</label>
-                            {open.length === 0 ? (
-                              <p className="text-[11px] text-warning bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-4">
-                                No outstanding receivables to apply this deposit against.
-                              </p>
-                            ) : (
-                              <select value={advLiqModal.orderId}
-                                onChange={e => setAdvLiqModal(f => ({ ...f, orderId: e.target.value }))}
-                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand">
-                                <option value="">Select an order…</option>
-                                {open.map(o => (
-                                  <option key={o._id} value={o._id}>
-                                    {o.orderNumber} · {o.customerName} · {peso(o.balance ?? o.total)} due
-                                  </option>
-                                ))}
-                              </select>
-                            )}
-                          </>
-                        );
-                      })()}
-
-                      <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Date of Transaction</label>
-                      <input type="date" value={advLiqModal.date || ''}
-                        onChange={e => setAdvLiqModal(f => ({ ...f, date: e.target.value }))}
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
-
-                      <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Reference No.</label>
-                      <input type="text" value={advLiqModal.referenceNumber}
-                        onChange={e => setAdvLiqModal(f => ({ ...f, referenceNumber: e.target.value }))}
-                        placeholder="Receipt no., OR no., txn ref..."
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
-
-                      <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Remarks</label>
-                      <textarea value={advLiqModal.note} rows={2}
-                        onChange={e => setAdvLiqModal(f => ({ ...f, note: e.target.value }))}
-                        placeholder="What this covers"
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-5 outline-none focus:border-brand" />
-
-                      <div className="flex gap-3">
-                        <button onClick={() => setAdvLiqModal(null)} disabled={advBusy}
-                          className="flex-1 bg-white/5 hover:bg-white/10 text-fg/75 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
-                          Cancel
-                        </button>
-                        <button onClick={submitLiquidateAdvance} disabled={advBusy || over}
-                          className="flex-1 bg-brand hover:bg-brand-dark text-on-brand font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">
-                          {advBusy ? 'Posting…' : 'Liquidate'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* ── Cancel modal ── */}
-              {advCancelModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setAdvCancelModal(null)}>
-                  <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
-                    <h2 className="font-black text-fg mb-1">Cancel {advCancelModal.advance.advanceNumber}</h2>
-                    <p className="text-xs text-fg/75 mb-3">
-                      {peso(advCancelModal.advance.amount)} · {advCancelModal.advance.payeeName}
-                    </p>
-                    <div className="text-[11px] text-warning bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5 mb-3">
-                      This posts a reversal of the original entry. Only possible because nothing has been
-                      liquidated yet.
-                    </div>
-                    <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1">Reason (required)</label>
-                    <textarea value={advCancelModal.reason} rows={3}
-                      onChange={e => setAdvCancelModal(m => ({ ...m, reason: e.target.value }))}
-                      placeholder="e.g. issued twice by mistake"
-                      className="w-full bg-page-bg border border-white/10 rounded-lg p-2.5 text-fg text-sm outline-none focus:border-brand" />
-                    <div className="flex gap-2 mt-4">
-                      <button onClick={() => setAdvCancelModal(null)} disabled={advBusy}
-                        className="flex-1 border border-white/15 text-fg/70 px-4 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-white/5 transition">
-                        Keep
-                      </button>
-                      <button onClick={submitCancelAdvance} disabled={advBusy || !advCancelModal.reason.trim()}
-                        className="flex-1 bg-red-500 text-white px-4 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-red-500/90 transition disabled:opacity-40">
-                        {advBusy ? 'Cancelling…' : 'Cancel Advance'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+          <AdvancesTab
+            ledgerSubTab={ledgerSubTab} setAdvIssueModal={setAdvIssueModal} ADV_ISSUE_BLANK={ADV_ISSUE_BLANK} peso={peso} advTotals={advTotals} advFilter={advFilter}
+            setAdvFilter={setAdvFilter} fetchAdvances={fetchAdvances} advances={advances} openAdvLiquidate={openAdvLiquidate} setAdvCancelModal={setAdvCancelModal} advIssueModal={advIssueModal}
+            suppliers={suppliers} fetchSuppliers={fetchSuppliers} clientAccounts={clientAccounts} cashAndBankAccounts={cashAndBankAccounts} advBusy={advBusy} submitIssueAdvance={submitIssueAdvance}
+            advLiqModal={advLiqModal} setAdvLiqModal={setAdvLiqModal} expenseAccounts={expenseAccounts} bills={bills} arOutstanding={arOutstanding} submitLiquidateAdvance={submitLiquidateAdvance}
+            advCancelModal={advCancelModal} submitCancelAdvance={submitCancelAdvance} />
 
           {/* ===== A/R OUTSTANDING SUB-TAB ===== */}
-          {(ledgerSubTab === 'ar' || ledgerSubTab === 'araap') && (
-            <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4 animate-fade-in">
-              <div className="flex flex-wrap justify-between items-end gap-3 border-b border-white/10 pb-4">
-                <div className="min-w-0">
-                  <h3 className="text-xl sm:text-2xl font-black text-fg">Accounts Receivable</h3>
-                  <p className="text-fg/60 text-xs font-bold uppercase tracking-widest mt-1">Non-Cash sales awaiting settlement (E-Wallet · Bank · Delivery)</p>
-                </div>
-                <div className="flex items-end gap-3 flex-wrap">
-                  <div className="text-right">
-                    <p className="text-fg/60 text-[10px] font-bold uppercase whitespace-nowrap">Total Outstanding</p>
-                    <p className="text-2xl sm:text-3xl text-brand-text font-black tabular-nums whitespace-nowrap">₱{arOutstanding.totalOutstanding.toFixed(2)}</p>
-                  </div>
-                  {arOutstanding.orders.length > 0 && <button onClick={exportArPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition shrink-0"><Download size={12} /> PDF</button>}
-                </div>
-              </div>
-
-              {/* AR Aging Summary */}
-              {arOutstanding.orders.length > 0 && (() => {
-                // Age on the unpaid remainder - a partly collected invoice
-                // must not keep sitting in a bucket at its original value.
-                const ab = agingBuckets(arOutstanding.orders, o => o.createdAt, o => (o.balance ?? o.total));
-                const buckets = [
-                  { label: 'Current', sub: '0-30 days', amt: ab.c,    color: 'text-success',  bg: 'bg-green-500/10 border-green-500/20' },
-                  { label: '31-60',   sub: 'days',       amt: ab.d60,  color: 'text-warning', bg: 'bg-yellow-500/10 border-yellow-500/20' },
-                  { label: '61-90',   sub: 'days',       amt: ab.d90,  color: 'text-warning', bg: 'bg-orange-500/10 border-orange-500/20' },
-                  { label: '91+',     sub: 'days',       amt: ab.over, color: 'text-danger',    bg: 'bg-red-500/10 border-red-500/20' },
-                ];
-                return (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    {buckets.map(b => (
-                      <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.bg}`}>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-fg/60">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
-                        <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-fg/60'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()}
-
-              {/* Per-client ageing - answers "who owes me, how old is it, and are
-                  they over their limit?" without leaving the tab. Server-computed
-                  so these buckets and the order-time credit gate share one rule set. */}
-              {arAgeing?.clients?.length > 0 && (
-                <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
-                  <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-                    <p className="text-[11px] font-black uppercase tracking-widest text-fg/60">Ageing by Client</p>
-                    {arAgeing.mode !== 'off' && (
-                      <span className="text-[9px] font-black uppercase tracking-widest bg-brand/15 border border-brand/30 text-brand-text px-2 py-1 rounded-full">
-                        Limits: {arAgeing.mode.replace('_', ' ')}
-                      </span>
-                    )}
-                  </div>
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-fg/60 text-[10px] uppercase tracking-widest border-b border-white/10">
-                        <th className="text-left py-2.5 px-4">Client</th>
-                        <th className="text-right py-2.5">Current</th>
-                        <th className="text-right py-2.5">31-60</th>
-                        <th className="text-right py-2.5">61-90</th>
-                        <th className="text-right py-2.5">91+</th>
-                        <th className="text-right py-2.5">Total</th>
-                        <th className="text-right py-2.5" title="Everything on account including orders still in flight - this is what the credit limit spends">Committed</th>
-                        <th className="text-right py-2.5 px-4">Limit / Left</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {arAgeing.clients.map(row => (
-                        <tr key={row.client} className={`border-b border-white/5 ${row.overLimit ? 'bg-red-500/5' : ''}`}>
-                          <td className="py-2.5 px-4 font-bold text-fg">
-                            {row.client}
-                            {row.overLimit && <span className="ml-2 text-[8px] font-black bg-red-500 text-white px-1.5 py-0.5 rounded uppercase">Over</span>}
-                          </td>
-                          <td className="py-2.5 text-right tabular-nums text-fg/70">{row.current ? `₱${row.current.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                          <td className="py-2.5 text-right tabular-nums text-yellow-500/80">{row.d31_60 ? `₱${row.d31_60.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                          <td className="py-2.5 text-right tabular-nums text-orange-500/80">{row.d61_90 ? `₱${row.d61_90.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                          <td className="py-2.5 text-right tabular-nums text-red-500/80">{row.d90_plus ? `₱${row.d90_plus.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
-                          <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{row.total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                          <td className="py-2.5 text-right tabular-nums text-brand/80">
-                            {row.exposure ? `₱${row.exposure.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}
-                          </td>
-                          <td className="py-2.5 px-4 text-right tabular-nums text-xs">
-                            {row.creditLimit === null || row.creditLimit === undefined ? (
-                              <span className="text-fg/65">No limit</span>
-                            ) : (
-                              <span className={row.overLimit ? 'text-danger font-bold' : 'text-fg/60'}>
-                                ₱{row.creditLimit.toLocaleString('en-PH')} <span className="text-fg/60">/</span> ₱{(row.available ?? 0).toLocaleString('en-PH')}
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {arOutstanding.orders.length === 0 ? (
-                <div className="py-16 text-center text-fg/60 font-bold uppercase tracking-widest text-sm">No outstanding A/R </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-fg/60 text-xs uppercase tracking-widest border-b border-white/10">
-                        <th className="text-left py-3">Order #</th>
-                        <th className="text-left py-3">Customer</th>
-                        <th className="text-left py-3">Channel</th>
-                        <th className="text-left py-3">Date</th>
-                        <th className="text-left py-3">Age</th>
-                        <th className="text-left py-3">Due</th>
-                        <th className="text-right py-3">Invoiced</th>
-                        <th className="text-right py-3">Collected</th>
-                        <th className="text-right py-3">Balance</th>
-                        <th className="text-right py-3">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {arPage.pageItems.map(o => {
-                        const days = Math.floor((Date.now() - new Date(o.createdAt).getTime()) / 86400000);
-                        const ageBadge = days <= 30
-                          ? 'bg-green-400/15 text-success'
-                          : days <= 60 ? 'bg-yellow-500/15 text-warning'
-                          : days <= 90 ? 'bg-orange-500/15 text-warning'
-                          : 'bg-red-500/15 text-danger';
-                        return (
-                          <tr key={o._id} className="border-b border-white/5 hover:bg-white/5 transition">
-                            <td className="py-3 text-fg font-bold">{o.orderNumber}</td>
-                            <td className="py-3 text-fg/70">{o.customerName}</td>
-                            <td className="py-3"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/20 text-brand-text px-2 py-1 rounded">{o.paymentMethod}</span></td>
-                            <td className="py-3 text-fg/75 text-xs">{new Date(o.createdAt).toLocaleDateString()}</td>
-                            <td className="py-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${ageBadge}`}>{days}d</span></td>
-                            <td className="py-3 text-xs">
-                              {o.arDueDate ? (
-                                o.overdue
-                                  ? <span className="text-[10px] font-black px-2 py-1 rounded bg-red-500/15 text-danger">OVERDUE · {new Date(o.arDueDate).toLocaleDateString()}</span>
-                                  : <span className="text-fg/60">{new Date(o.arDueDate).toLocaleDateString()}</span>
-                              ) : <span className="text-fg/65">-</span>}
-                            </td>
-                            {/* Invoiced is the face value and never moves;
-                                balance is what is still owed after any partial
-                                collections. Both are shown because a client
-                                asking "what do I owe on invoice X" needs the
-                                second, and reconciling against the sale needs
-                                the first. */}
-                            <td className="py-3 text-right text-fg/75 tabular-nums">₱{o.total.toFixed(2)}</td>
-                            <td className="py-3 text-right tabular-nums">
-                              {o.paid > 0
-                                ? <button onClick={() => openArHistory(o)} className="text-success font-bold hover:underline" title="View payment history">₱{o.paid.toFixed(2)}{o.paymentCount > 1 ? ` (${o.paymentCount})` : ''}</button>
-                                : <span className="text-fg/60">-</span>}
-                            </td>
-                            <td className="py-3 text-right text-fg tabular-nums font-black">₱{(o.balance ?? o.total).toFixed(2)}</td>
-                            <td className="py-3 text-right">
-                              <button onClick={() => {
-                                let defaultMethod = 'Cash on Hand';
-                                if (o.paymentMethod === 'Bank Transfer') defaultMethod = 'Bank Transfer';
-                                else if (o.paymentMethod === 'Check') defaultMethod = 'Check';
-                                else if (['GCash','Maya','Maribank','E-Wallet','Other E-Wallet','QR'].includes(o.paymentMethod)) defaultMethod = o.paymentMethod === 'Other E-Wallet' ? 'GCash' : o.paymentMethod;
-                                else if (['Grab Delivery','Foodpanda','Manual Delivery'].includes(o.paymentMethod)) defaultMethod = 'Bank Transfer';
-                                setSettleModal({ order: o });
-                                // Default to collecting the REMAINDER, not the
-                                // invoice face value - on a partly paid invoice
-                                // the face value would be rejected as an overpayment.
-                                // A sale tendered by check already captured the
-                                // check number and date - carry them into the
-                                // register rather than making someone read them
-                                // off the paper a second time (and risk a typo
-                                // that breaks the match).
-                                const wasCheck = o.paymentMethod === 'Check';
-                                setSettleForm({
-                                  amount: (o.balance ?? o.total).toFixed(2), paymentMethod: defaultMethod,
-                                  note: '', referenceNumber: '', collectedBy: '',
-                                  collectionDate: todayLocal(), depositDate: todayLocal(),
-                                  checkNumber: wasCheck ? (o.paymentReference || '') : '',
-                                  checkDate: wasCheck && o.paymentCheckDate ? new Date(o.paymentCheckDate).toISOString().slice(0, 10) : '',
-                                  checkBank: '', checkDrawer: '',
-                                });
-                              }}
-                                className="bg-brand text-on-brand px-3 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-brand/90 transition min-h-[40px]">
-                                {o.paid > 0 ? 'Collect' : 'Settle'}
-                              </button>
-                              {/* Stored credit from a past overpayment draws the
-                                  invoice down with no cash collected, so it is a
-                                  separate action from Settle/Collect. Only shown
-                                  when this client actually has credit sitting on
-                                  their account. */}
-                              {o.clientCredit > 0 && (
-                                <button
-                                  onClick={() => openClientCredit(o, Math.min(o.clientCredit, o.balance ?? o.total))}
-                                  title={`₱${o.clientCredit.toFixed(2)} credit available`}
-                                  className="block w-full mt-1 border border-emerald-500/40 text-emerald-400 px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider hover:bg-emerald-500/10 transition">
-                                  Use ₱{Math.min(o.clientCredit, o.balance ?? o.total).toFixed(2)} Credit
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                  <Pager {...arPage} label="orders" />
-
-                  {/* Applying stored credit posts to the ledger just like a cash
-                      collection does, so it collects the same reference and
-                      remarks rather than firing on a bare confirm. */}
-                  {clientCreditModal && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setClientCreditModal(null)}>
-                      <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
-                        <h2 className="font-black text-fg text-lg mb-1">Apply client credit</h2>
-                        <p className="text-xs text-fg/75 mb-4">
-                          {clientCreditModal.order.orderNumber} · {clientCreditModal.order.customerName}
-                        </p>
-                        <div className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 rounded-lg p-2.5 mb-4">
-                          {peso(clientCreditModal.order.clientCredit)} credit available ·
-                          {' '}{peso(clientCreditModal.order.balance ?? clientCreditModal.order.total)} still due.
-                          No cash is collected.
-                        </div>
-
-                        <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Amount</label>
-                        <input type="number" step="0.01" min="0" value={clientCreditModal.amount}
-                          onChange={e => setClientCreditModal(m => ({ ...m, amount: e.target.value }))}
-                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
-
-                        <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Reference No.</label>
-                        <input type="text" value={clientCreditModal.referenceNumber}
-                          onChange={e => setClientCreditModal(m => ({ ...m, referenceNumber: e.target.value }))}
-                          placeholder="Credit memo no., OR no..."
-                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-4 outline-none focus:border-brand" />
-
-                        <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">Remarks</label>
-                        <textarea value={clientCreditModal.note} rows={2}
-                          onChange={e => setClientCreditModal(m => ({ ...m, note: e.target.value }))}
-                          placeholder="Why this credit is being applied here"
-                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-5 outline-none focus:border-brand" />
-
-                        <div className="flex gap-3">
-                          <button onClick={() => setClientCreditModal(null)} disabled={clientCreditModal.busy}
-                            className="flex-1 bg-white/5 hover:bg-white/10 text-fg/75 hover:text-fg font-bold py-2.5 rounded-xl transition text-sm">
-                            Cancel
-                          </button>
-                          <button onClick={submitClientCredit} disabled={clientCreditModal.busy}
-                            className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-white font-bold py-2.5 rounded-xl transition text-sm disabled:opacity-50">
-                            {clientCreditModal.busy ? 'Applying…' : 'Apply Credit'}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+          <ReceivablesTab
+            ledgerSubTab={ledgerSubTab} arOutstanding={arOutstanding} exportArPDF={exportArPDF} agingBuckets={agingBuckets} arAgeing={arAgeing} can={can}
+            apiFetch={apiFetch} fetchArOutstanding={fetchArOutstanding} fetchArAgeing={fetchArAgeing} fetchERPData={fetchERPData} arPage={arPage} openArHistory={openArHistory}
+            setSettleModal={setSettleModal} setSettleForm={setSettleForm} todayLocal={todayLocal} openClientCredit={openClientCredit} clientCreditModal={clientCreditModal} setClientCreditModal={setClientCreditModal}
+            peso={peso} submitClientCredit={submitClientCredit} />
 
           {/* ===== ACCOUNTS PAYABLE SUB-TAB ===== */}
-          {(ledgerSubTab === 'ap' || ledgerSubTab === 'araap') && (
-            <div className="space-y-6 animate-fade-in">
-              {/* Summary KPI bar */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="bg-surface border border-white/10 rounded-xl p-5">
-                  <p className="text-[10px] text-fg/70 font-bold uppercase tracking-widest mb-1">Outstanding A/P Balance</p>
-                  <p className={`text-2xl font-black tabular-nums ${apData?.outstandingBalance > 0 ? 'text-danger' : 'text-success'}`}>
-                    ₱{(apData?.outstandingBalance || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                  </p>
-                  <p className="text-[10px] text-fg/60 mt-1">Total owed to suppliers</p>
-                </div>
-                <div className="bg-surface border border-white/10 rounded-xl p-5">
-                  <p className="text-[10px] text-fg/70 font-bold uppercase tracking-widest mb-1">Total Purchased on Credit</p>
-                  <p className="text-xl font-black text-fg/80 tabular-nums">₱{(apData?.totalCredit || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                </div>
-                <div className="bg-surface border border-white/10 rounded-xl p-5">
-                  <p className="text-[10px] text-fg/70 font-bold uppercase tracking-widest mb-1">Total Payments Made</p>
-                  <p className="text-xl font-black text-green-400/80 tabular-nums">₱{(apData?.totalDebit || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                </div>
-              </div>
-
-              {/* Pay AP button */}
-              <div className="flex justify-end gap-2">
-                {apData && <button onClick={exportApPDF} className="flex items-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
-                {apData?.outstandingBalance > 0 && (
-                  <button onClick={() => setApPayModal(true)}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition shadow-elev-1">
-                    <CreditCard size={15}/> Record Supplier Payment
-                  </button>
-                )}
-              </div>
-
-              {/* Pay AP modal */}
-              {apPayModal && (
-                <div className="fixed inset-0 z-[9998] bg-black/85 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
-                  <div className="bg-surface border border-white/10 rounded-2xl w-full max-w-sm shadow-elev-3 flex flex-col max-h-[90vh] overflow-hidden">
-                    <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
-                      <h2 className="text-fg font-black text-lg">Record A/P Payment</h2>
-                      <button onClick={() => setApPayModal(false)} className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 text-fg/75 flex items-center justify-center transition"><X size={14}/></button>
-                    </div>
-                    <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-                      <div className="bg-brand/10 border border-brand/20 rounded-xl px-4 py-3 text-xs text-brand/80 font-bold">
-                        Outstanding: ₱{(apData?.outstandingBalance || 0).toFixed(2)} · Journal: DR 2000 A/P / CR Cash
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Amount (₱) *</label>
-                        <input type="number" min="0" step="0.01" value={apPayForm.amount}
-                          onChange={e => setApPayForm(p => ({...p, amount: e.target.value}))}
-                          className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg text-xl font-black tabular-nums outline-none focus:border-brand/60" />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Pay From *</label>
-                        <select value={apPayForm.payFromAccount} onChange={e => setApPayForm(p => ({...p, payFromAccount: e.target.value}))}
-                          className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg font-bold outline-none focus:border-brand/60">
-                          {(cashAndBankAccounts || []).map(a => (
-                            <option key={a.code} value={a.code}>{a.name} ({a.code})</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Supplier</label>
-                        <select value={apPayForm.supplierId || ''}
-                          onChange={e => {
-                            const id = e.target.value;
-                            const owed = (apData?.bySupplier || []).find(s => s.supplierId === id);
-                            // Prefill the amount with what this supplier is owed -
-                            // paying a balance in full is the common case.
-                            setApPayForm(p => ({
-                              ...p, supplierId: id,
-                              amount: owed ? String(owed.balance) : p.amount,
-                            }));
-                          }}
-                          className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg font-bold outline-none focus:border-brand/60">
-                          <option value="">- Other / one-off payee -</option>
-                          {(suppliers || []).map(s => {
-                            const owed = (apData?.bySupplier || []).find(b => b.supplierId === String(s._id));
-                            return (
-                              <option key={s._id} value={s._id}>
-                                {s.name}{owed ? ` - ₱${owed.balance.toLocaleString('en-PH', { minimumFractionDigits: 2 })} owed` : ''}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </div>
-                      {!apPayForm.supplierId && (
-                        <div>
-                          <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Payee Name</label>
-                          <input type="text" placeholder="e.g. one-off hauler" value={apPayForm.vendorName}
-                            onChange={e => setApPayForm(p => ({...p, vendorName: e.target.value}))}
-                            className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand/60 placeholder-white/20" />
-                          <p className="text-[10px] text60 mt-1">Payments without a supplier record group under “Unattributed”.</p>
-                        </div>
-                      )}
-                      <div>
-                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Description</label>
-                        <input type="text" placeholder="e.g. Weekly supply payment" value={apPayForm.description}
-                          onChange={e => setApPayForm(p => ({...p, description: e.target.value}))}
-                          className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand/60 placeholder-white/20" />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Reference No. (optional)</label>
-                        <input type="text" placeholder="Bank txn ID, check no., GCash ref..." value={apPayForm.referenceNumber}
-                          onChange={e => setApPayForm(p => ({...p, referenceNumber: e.target.value}))}
-                          className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-3 text-fg outline-none focus:border-brand/60 placeholder-white/20" />
-                      </div>
-                    </div>
-                    <div className="px-5 py-4 border-t border-white/10 flex gap-3">
-                      <button onClick={() => setApPayModal(false)} className="flex-1 bg-white/5 text-fg/60 rounded-xl py-3 font-bold text-sm hover:bg-white/10 transition">Cancel</button>
-                      <button onClick={submitApPayment} disabled={apPaySubmitting}
-                        className="flex-1 bg-brand text-on-brand rounded-xl py-3 font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">
-                        {apPaySubmitting ? 'Recording…' : 'Record Payment'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* AP Aging */}
-              {apCreditEntries.length > 0 && (() => {
-                const ab = agingBuckets(apCreditEntries, e => e.date, e => e.outstandingAmt);
-                const buckets = [
-                  { label: 'Current', sub: '0-30 days', amt: ab.c,    color: 'text-success',  bg: 'bg-green-500/10 border-green-500/20' },
-                  { label: '31-60',   sub: 'days',       amt: ab.d60,  color: 'text-warning', bg: 'bg-yellow-500/10 border-yellow-500/20' },
-                  { label: '61-90',   sub: 'days',       amt: ab.d90,  color: 'text-warning', bg: 'bg-orange-500/10 border-orange-500/20' },
-                  { label: '91+',     sub: 'days',       amt: ab.over, color: 'text-danger',    bg: 'bg-red-500/10 border-red-500/20' },
-                ];
-                return (
-                  <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
-                    <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
-                      <AlertTriangle size={14} className="text-fg/75"/>
-                      <h3 className="text-sm font-black text-fg uppercase tracking-wider">A/P Aging</h3>
-                      <span className="ml-auto text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">FIFO - oldest paid first</span>
-                    </div>
-                    <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      {buckets.map(b => (
-                        <div key={b.label} className={`rounded-xl border px-4 py-3 ${b.bg}`}>
-                          <p className="text-[10px] font-black uppercase tracking-widest text-fg/70">{b.label} <span className="normal-case font-normal">{b.sub}</span></p>
-                          <p className={`text-xl font-black tabular-nums mt-1 ${b.amt > 0 ? b.color : 'text-fg/60'}`}>₱{b.amt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="overflow-x-auto border-t border-white/10">
-                      <table className="w-full text-left text-xs min-w-[480px]">
-                        <thead className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
-                          <tr>
-                            <th className="px-5 py-2.5">Date</th>
-                            <th className="px-5 py-2.5">Reference</th>
-                            <th className="px-5 py-2.5">Description</th>
-                            <th className="px-5 py-2.5 text-center">Age</th>
-                            <th className="px-5 py-2.5 text-right">Outstanding</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {apCreditEntries.map((e, i) => {
-                            const days = Math.floor((Date.now() - new Date(e.date).getTime()) / 86400000);
-                            const ageBadge = days <= 30
-                              ? 'bg-green-500/15 text-success'
-                              : days <= 60 ? 'bg-yellow-500/15 text-warning'
-                              : days <= 90 ? 'bg-orange-500/15 text-warning'
-                              : 'bg-red-500/15 text-danger';
-                            return (
-                              <tr key={e._id || i} className={`border-b border-white/5 hover:bg-white/3 ${i % 2 === 0 ? '' : 'bg-white/[0.015]'}`}>
-                                <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap">{new Date(e.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: '2-digit' })}</td>
-                                <td className="px-5 py-2.5 font-mono text-fg/60 whitespace-nowrap">{e.reference}</td>
-                                <td className="px-5 py-2.5 text-fg/70 truncate max-w-[200px]">{e.description}</td>
-                                <td className="px-5 py-2.5 text-center"><span className={`text-[10px] font-black px-2 py-0.5 rounded ${ageBadge}`}>{days}d</span></td>
-                                <td className="px-5 py-2.5 text-right text-danger font-mono tabular-nums font-bold">₱{e.outstandingAmt.toFixed(2)}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Who we owe - per-supplier payable balances. Answers "how much do
-                  we owe Best Beans?" without reading journal descriptions. */}
-              {(apData?.bySupplier || []).length > 0 && (
-                <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
-                  <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
-                    <Truck size={14} className="text-fg/75"/>
-                    <h3 className="text-sm font-black text-fg uppercase tracking-wider">Payables by Supplier</h3>
-                    <span className="ml-auto text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">{apData.bySupplier.length}</span>
-                  </div>
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-fg/70 text-[10px] uppercase tracking-widest border-b border-white/10">
-                        <th className="text-left py-2.5 px-4">Supplier</th>
-                        <th className="text-right py-2.5">Purchased</th>
-                        <th className="text-right py-2.5">Paid</th>
-                        <th className="text-right py-2.5">Balance</th>
-                        <th className="text-right py-2.5 px-4">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {apData.bySupplier.map(s => (
-                        <tr key={s.supplierId || 'unattributed'} className="border-b border-white/5">
-                          <td className="py-2.5 px-4 font-bold text-fg">
-                            {s.supplier}
-                            {!s.supplierId && (
-                              <span className="ml-2 text-[8px] font-black bg-white/10 text-fg/70 px-1.5 py-0.5 rounded uppercase" title="Entries recorded without a supplier record">No record</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 text-right tabular-nums text-fg/60">₱{s.incurred.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                          <td className="py-2.5 text-right tabular-nums text-green-400/70">₱{s.paid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                          <td className={`py-2.5 text-right tabular-nums font-black ${s.balance > 0 ? 'text-danger' : 'text-success'}`}>
-                            ₱{s.balance.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                          </td>
-                          <td className="py-2.5 px-4 text-right">
-                            {s.supplierId && s.balance > 0 && (
-                              <button
-                                onClick={() => { setApPayForm(p => ({ ...p, supplierId: s.supplierId, amount: String(s.balance) })); setApPayModal(true); }}
-                                className="text-[10px] font-black uppercase tracking-wider bg-brand/15 border border-brand/30 text-brand-text px-3 py-1.5 rounded-lg hover:bg-brand hover:text-on-brand transition">
-                                Pay
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {/* Recent AP Journal Entries */}
-              <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
-                <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
-                  <FileText size={14} className="text-fg/75"/>
-                  <h3 className="text-sm font-black text-fg uppercase tracking-wider">A/P Journal History</h3>
-                  <span className="ml-auto text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">{(apData?.recent || []).length} entries</span>
-                </div>
-                {!apData ? (
-                  <p className="text-fg/60 text-sm p-6 text-center font-bold">Loading…</p>
-                ) : (apData.recent || []).length === 0 ? (
-                  <p className="text-fg/60 text-sm p-6 text-center font-bold">No A/P transactions yet. Procure inventory on credit to see entries here.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs min-w-[480px]">
-                      <thead className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
-                        <tr>
-                          <th className="px-5 py-2.5">Date</th>
-                          <th className="px-5 py-2.5">Reference</th>
-                          <th className="px-5 py-2.5">Supplier</th>
-                          <th className="px-5 py-2.5">Description</th>
-                          <th className="px-5 py-2.5 text-right">Incurred (CR)</th>
-                          <th className="px-5 py-2.5 text-right">Paid (DR)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {apPage.pageItems.map((e, i) => (
-                          <tr key={e._id || i} className={`border-b border-white/5 hover:bg-white/3 ${i % 2 === 0 ? '' : 'bg-white/[0.015]'}`}>
-                            <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap">{new Date(e.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: '2-digit' })}</td>
-                            <td className="px-5 py-2.5 font-mono text-fg/60 whitespace-nowrap">{e.reference}</td>
-                            <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap">{e.supplierName || <span className="text-fg/60">-</span>}</td>
-                            <td className="px-5 py-2.5 text-fg/70 truncate max-w-[200px]">{e.description}</td>
-                            <td className="px-5 py-2.5 text-right text-danger font-mono tabular-nums font-bold">{e.credit > 0 ? `₱${e.credit.toFixed(2)}` : '-'}</td>
-                            <td className="px-5 py-2.5 text-right text-success font-mono tabular-nums font-bold">{e.debit > 0 ? `₱${e.debit.toFixed(2)}` : '-'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    <Pager {...apPage} label="entries" />
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+          <PayablesTab
+            ledgerSubTab={ledgerSubTab} apData={apData} exportApPDF={exportApPDF} setApPayModal={setApPayModal} apPayModal={apPayModal} apPayForm={apPayForm}
+            setApPayForm={setApPayForm} cashAndBankAccounts={cashAndBankAccounts} suppliers={suppliers} submitApPayment={submitApPayment} apPaySubmitting={apPaySubmitting} apCreditEntries={apCreditEntries}
+            agingBuckets={agingBuckets} apPage={apPage} />
 
           {/* ===== SALES BY PAYMENT METHOD ===== */}
           {ledgerSubTab === 'payments' && (
             <div className="space-y-4 animate-fade-in">
               {/* Date range picker */}
               <div className="flex flex-wrap gap-3 items-center">
+                <RangePresets value={sbpRange} onChange={r => setSbpRange(p => ({ ...p, ...r }))} onRun={fetchSalesByPayment} />
                 <input type="date" value={sbpRange.start} onChange={e => setSbpRange(p=>({...p,start:e.target.value}))}
                   className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
-                <span className="text-fg/60 font-bold text-sm">→</span>
+                <span className="text-fg/65 font-bold text-sm">→</span>
                 <input type="date" value={sbpRange.end} onChange={e => setSbpRange(p=>({...p,end:e.target.value}))}
                   className="bg-surface border border-white/10 rounded-xl px-3 py-2 text-fg text-sm outline-none focus:border-brand/50" />
+                {salesSourceSelect(fetchSalesByPayment)}
                 <button onClick={fetchSalesByPayment} className="px-5 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition">Load</button>
-                {salesByPayment && <button onClick={exportPaymentsPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
+                {salesByPayment && <button onClick={exportPaymentsPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
               </div>
               {!salesByPayment ? (
-                <p className="text-fg/60 text-sm text-center p-6 font-bold">Select a date range and click Load.</p>
+                <p className="text-fg/65 text-sm text-center p-6 font-bold">Select a date range and click Load.</p>
               ) : (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="bg-surface border border-white/10 rounded-xl p-5">
-                      <p className="text-[10px] text-fg/60 font-bold uppercase">Total Revenue</p>
+                      <p className="text-[10px] text-fg/65 font-bold uppercase">Total Revenue</p>
                       <p className="text-2xl font-black text-brand-text tabular-nums">₱{(salesByPayment.grandTotal||0).toLocaleString('en-PH',{minimumFractionDigits:2})}</p>
                     </div>
                     <div className="bg-surface border border-white/10 rounded-xl p-5">
-                      <p className="text-[10px] text-fg/60 font-bold uppercase">Payment Channels</p>
+                      <p className="text-[10px] text-fg/65 font-bold uppercase">Payment Channels</p>
                       <p className="text-2xl font-black text-fg">{(salesByPayment.breakdown||[]).length}</p>
                     </div>
                   </div>
@@ -4123,13 +2285,13 @@ export default function LedgerTab({ ctx }) {
           {ledgerSubTab === 'profitcat' && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex justify-end gap-2">
-                {profitByCategory && <button onClick={exportProfitByCategoryPDF} className="flex items-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
+                {profitByCategory && <button onClick={exportProfitByCategoryPDF} className="flex items-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
                 <button onClick={fetchProfitByCategory} className="flex items-center gap-2 px-5 py-2.5 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition">
                   <RefreshCw size={14}/> Refresh
                 </button>
               </div>
               {!profitByCategory ? (
-                <p className="text-fg/60 text-sm text-center p-6 font-bold">Click Refresh to compute gross profit by menu category.</p>
+                <p className="text-fg/65 text-sm text-center p-6 font-bold">Click Refresh to compute gross profit by menu category.</p>
               ) : (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[500px]">
@@ -4147,7 +2309,7 @@ export default function LedgerTab({ ctx }) {
                         <tr key={c.category||i} className={`border-b border-white/5 ${i%2===0?'':'bg-white/[0.015]'}`}>
                           <td className="px-5 py-3 font-bold text-fg">{c.category}</td>
                           <td className="px-5 py-3 text-right text-fg/80 tabular-nums font-mono">₱{c.revenue.toFixed(2)}</td>
-                          <td className="px-5 py-3 text-right text-orange-400/70 tabular-nums font-mono">₱{c.estimatedCOGS.toFixed(2)}</td>
+                          <td className="px-5 py-3 text-right text-caution tabular-nums font-mono">₱{c.estimatedCOGS.toFixed(2)}</td>
                           <td className="px-5 py-3 text-right font-black tabular-nums font-mono text-success">₱{c.grossProfit.toFixed(2)}</td>
                           <td className="px-5 py-3 text-right">
                             <span className={`font-black text-sm ${c.margin>=60?'text-success':c.margin>=35?'text-warning':'text-danger'}`}>
@@ -4159,7 +2321,7 @@ export default function LedgerTab({ ctx }) {
                     </tbody>
                   </table>
                   <div className="px-3"><Pager {...pbcPage} label="categories" /></div>
-                  <p className="text-[10px] text-fg/60 p-3 text-center">
+                  <p className="text-[10px] text-fg/65 p-3 text-center">
                     COGS is estimated using <span className="text-fg/80 font-bold">today's</span> ingredient costs, not the cost at the time each sale happened - a negative
                     margin here usually means a recipe's ingredient cost has risen since past sales, or a recipe cost was only just set. That's why this can
                     disagree with Pricing Control, which compares today's price against today's cost. Items without a recipe show ₱0 COGS.
@@ -4173,14 +2335,14 @@ export default function LedgerTab({ ctx }) {
           {ledgerSubTab === 'menueng' && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex justify-between items-center">
-                <p className="text-xs text-fg/60">Stars (sell + profit), Plowhorses (sell, low margin), Puzzles (high margin, low sell), Dogs (neither).</p>
+                <p className="text-xs text-fg/65">Stars (sell + profit), Plowhorses (sell, low margin), Puzzles (high margin, low sell), Dogs (neither).</p>
                 <div className="flex gap-2">
-                  {menuEngineering && <button onClick={exportMenuEngineeringPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
+                  {menuEngineering && <button onClick={exportMenuEngineeringPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
                   <button onClick={fetchMenuEngineering} className="flex items-center gap-2 px-4 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
                 </div>
               </div>
               {!menuEngineering ? (
-                <p className="text-fg/60 text-sm text-center p-6 font-bold">Click Refresh to analyse the menu.</p>
+                <p className="text-fg/65 text-sm text-center p-6 font-bold">Click Refresh to analyse {BUSINESS_TYPE === 'log' ? 'the products' : 'the menu'}.</p>
               ) : (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[520px]">
@@ -4212,16 +2374,16 @@ export default function LedgerTab({ ctx }) {
           {ledgerSubTab === 'variance' && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex justify-between items-center">
-                <p className="text-xs text-fg/60">Average cash drawer variance per cashier across closed shifts. Negative = consistently short.</p>
+                <p className="text-xs text-fg/65">Average cash drawer variance per cashier across closed shifts. Negative = consistently short.</p>
                 <div className="flex gap-2">
-                  {cashierVariance && <button onClick={exportVariancePDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
+                  {cashierVariance && <button onClick={exportVariancePDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
                   <button onClick={fetchCashierVariance} className="flex items-center gap-2 px-4 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
                 </div>
               </div>
               {!cashierVariance ? (
-                <p className="text-fg/60 text-sm text-center p-6 font-bold">Click Refresh to load cashier variance.</p>
+                <p className="text-fg/65 text-sm text-center p-6 font-bold">Click Refresh to load cashier variance.</p>
               ) : (cashierVariance.cashiers||[]).length === 0 ? (
-                <p className="text-fg/60 text-sm text-center p-6 font-bold">No closed shifts with variance data yet.</p>
+                <p className="text-fg/65 text-sm text-center p-6 font-bold">No closed shifts with variance data yet.</p>
               ) : (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[480px]">
@@ -4246,20 +2408,37 @@ export default function LedgerTab({ ctx }) {
             </div>
           )}
 
+          {ledgerSubTab === 'cashflow' && <CashFlowReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'saleschannel' && <SalesByChannelReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'salescustomer' && <SalesByCustomerReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'budget' && <BudgetReport apiFetch={apiFetch} can={can} />}
+          {ledgerSubTab === 'exceptions' && <ExceptionsReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'waste' && <WasteReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'saleshours' && <SalesByHourReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'cashierperf' && <CashierPerformanceReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'cashforecast' && <CashForecastReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'supplierprices' && <SupplierPricesReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'salestargets' && <SalesTargetsReport apiFetch={apiFetch} can={can} />}
+          {ledgerSubTab === 'deliverysheet' && <DeliverySheetReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'supplierstatement' && <SupplierStatementReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'preplist' && <PrepListReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'feedback' && <FeedbackReport apiFetch={apiFetch} />}
+          {ledgerSubTab === 'closing' && <ClosingChecklist apiFetch={apiFetch} can={can} />}
+
           {/* ===== COMMISSIONS ===== */}
           {ledgerSubTab === 'commissions' && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex justify-between items-center">
-                <p className="text-xs text-fg/60">Sales attributed by cashier, at each staff member's commission rate (set in User Control). Complimentary and unattributed sales earn no commission.</p>
+                <p className="text-xs text-fg/65">Sales attributed by cashier, at each staff member's commission rate (set in User Control). Complimentary and unattributed sales earn no commission.</p>
                 <div className="flex gap-2">
-                  {commissions && <button onClick={exportCommissionsPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
+                  {commissions && <button onClick={exportCommissionsPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
                   <button onClick={fetchCommissions} className="flex items-center gap-2 px-4 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
                 </div>
               </div>
               {!commissions ? (
-                <p className="text-fg/60 text-sm text-center p-6 font-bold">Click Refresh to compute commissions.</p>
+                <p className="text-fg/65 text-sm text-center p-6 font-bold">Click Refresh to compute commissions.</p>
               ) : (commissions.sellers||[]).length === 0 ? (
-                <p className="text-fg/60 text-sm text-center p-6 font-bold">No attributed sales yet.</p>
+                <p className="text-fg/65 text-sm text-center p-6 font-bold">No attributed sales yet.</p>
               ) : (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[520px]">
@@ -4279,13 +2458,13 @@ export default function LedgerTab({ ctx }) {
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-white/10">
-                        <td colSpan={4} className="px-5 py-3 text-right font-bold text-fg/60 uppercase text-[10px] tracking-wider">Total</td>
+                        <td colSpan={4} className="px-5 py-3 text-right font-bold text-fg/65 uppercase text-[10px] tracking-wider">Total</td>
                         <td className="px-5 py-3 text-right font-black tabular-nums font-mono text-success">₱{(commissions.totalCommission||0).toFixed(2)}</td>
                       </tr>
                     </tfoot>
                   </table>
                   <div className="px-3"><Pager {...cmPage} label="sellers" /></div>
-                  <p className="text-[10px] text-fg/60 p-3 text-center">A cashier's rate is set on their user profile in User Control. 0% shows if none is set.</p>
+                  <p className="text-[10px] text-fg/65 p-3 text-center">A cashier's rate is set on their user profile in User Control. 0% shows if none is set.</p>
                 </div>
               )}
             </div>
@@ -4294,6 +2473,8 @@ export default function LedgerTab({ ctx }) {
           {/* ===== BILLS (AP approval workflow) ===== */}
           {ledgerSubTab === 'bills' && (
             <div className="space-y-4 animate-fade-in">
+              <RecurringBills apiFetch={apiFetch} suppliers={suppliers || []} accounts={coaAccounts || []}
+                canManage={can('accounting.manage')} onRaised={() => fetchBills()} />
               <div className="flex justify-between items-center flex-wrap gap-2">
                 <div className="flex gap-1.5 flex-wrap">
                   {['Pending','Approved','Paid','Rejected','All'].map(s => (
@@ -4306,7 +2487,7 @@ export default function LedgerTab({ ctx }) {
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => setBillCreate(c => ({ ...c, open: !c.open }))} className="flex items-center gap-2 px-4 py-2 bg-white/5 text-fg/70 rounded-xl font-bold text-sm hover:bg-white/10 transition"><Plus size={14}/> Manual bill</button>
-                  {bills && bills.length > 0 && <button onClick={exportBillsPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
+                  {bills && bills.length > 0 && <button onClick={exportBillsPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
                   <button onClick={() => fetchBills()} className="flex items-center gap-2 px-4 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
                 </div>
               </div>
@@ -4317,10 +2498,10 @@ export default function LedgerTab({ ctx }) {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Supplier</label>
-                      <select value={billCreate.supplierId} onChange={e => setBillCreate(c => ({ ...c, supplierId: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg">
-                        <option value="">Select supplier…</option>
-                        {(suppliers||[]).map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
-                      </select>
+                      <SearchSelect value={billCreate.supplierId} onChange={e => setBillCreate(c => ({ ...c, supplierId: e.target.value }))}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand"
+                        placeholder="Type to find a supplier"
+                        options={(suppliers || []).map(s => ({ value: s._id, label: s.name }))} />
                     </div>
                     <div>
                       <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Expense account (debited on approval)</label>
@@ -4336,10 +2517,27 @@ export default function LedgerTab({ ctx }) {
                       <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Due date (optional)</label>
                       <input type="date" value={billCreate.dueDate} onChange={e => setBillCreate(c => ({ ...c, dueDate: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" />
                     </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Supplier invoice no. (optional)</label>
+                      <input value={billCreate.supplierInvoiceNo || ''} onChange={e => setBillCreate(c => ({ ...c, supplierInvoiceNo: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" placeholder="e.g. INV-88120" />
+                    </div>
                     <div className="sm:col-span-2">
                       <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Description</label>
                       <input value={billCreate.description} onChange={e => setBillCreate(c => ({ ...c, description: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg" placeholder="e.g. October warehouse rent" />
                     </div>
+                    {systemSettings.vatEnabled === true && (
+                      <div className="sm:col-span-2">
+                        <label className="flex items-start gap-2 cursor-pointer">
+                          <input type="checkbox" checked={billCreate.claimInputVat === true}
+                            onChange={e => setBillCreate(c => ({ ...c, claimInputVat: e.target.checked }))}
+                            className="mt-0.5 accent-brand" />
+                          <span>
+                            <span className="text-[11px] text-fg font-bold block">Supplier charged VAT (claim input VAT)</span>
+                            <span className="text-[10px] text-fg/65 leading-snug block">Splits the VAT out of this amount into Input VAT (Creditable) when the bill is approved. Tick only for a VAT-registered supplier with an official receipt.</span>
+                          </span>
+                        </label>
+                      </div>
+                    )}
                   </div>
                   <div className="flex justify-end">
                     <button onClick={submitCreateBill} disabled={billBusy} className="px-5 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition disabled:opacity-50">{billBusy ? 'Saving…' : 'Create bill'}</button>
@@ -4348,9 +2546,9 @@ export default function LedgerTab({ ctx }) {
               )}
 
               {!bills ? (
-                <p className="text-fg/60 text-sm text-center p-6 font-bold">Loading bills…</p>
+                <p className="text-fg/65 text-sm text-center p-6 font-bold">Loading bills…</p>
               ) : bills.length === 0 ? (
-                <p className="text-fg/60 text-sm text-center p-6 font-bold">No {billsFilter !== 'All' ? billsFilter.toLowerCase() : ''} bills.</p>
+                <p className="text-fg/65 text-sm text-center p-6 font-bold">No {billsFilter !== 'All' ? billsFilter.toLowerCase() : ''} bills.</p>
               ) : (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[720px]">
@@ -4358,7 +2556,7 @@ export default function LedgerTab({ ctx }) {
                       <tr>
                         <th className="px-4 py-3">Bill #</th><th className="px-4 py-3">Supplier</th>
                         <th className="px-4 py-3">Source</th><th className="px-4 py-3">Description</th>
-                        <th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3">Invoice match</th><th className="px-4 py-3">Status</th>
                         <th className="px-4 py-3 text-right">Actions</th>
                       </tr>
                     </thead>
@@ -4371,10 +2569,41 @@ export default function LedgerTab({ ctx }) {
                             <td className="px-4 py-3 font-mono text-fg/70">{b.billNumber}</td>
                             <td className="px-4 py-3 font-bold text-fg">{b.supplierName || '-'}</td>
                             <td className="px-4 py-3"><span className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-fg/75 font-bold">{b.source}</span></td>
-                            <td className="px-4 py-3 text-fg/60 max-w-[200px] truncate" title={b.description || b.poNumber}>{b.description || b.poNumber || '-'}</td>
+                            <td className="px-4 py-3 text-fg/65 max-w-[220px]">
+                              <span className="block truncate" title={b.description || ''}>{b.description || '-'}</span>
+                              {billPoEdit?.id === b._id ? (
+                                <form className="flex gap-1 mt-1" onSubmit={e => { e.preventDefault(); saveBillPo(); }}>
+                                  <input autoFocus value={billPoEdit.value} onChange={e => setBillPoEdit({ id: b._id, value: e.target.value })}
+                                    placeholder="PO number" aria-label="PO number" maxLength={60}
+                                    className="w-28 bg-page-bg border border-white/20 rounded-lg px-2 py-1 text-fg text-[11px]" />
+                                  <button type="submit" className="px-2 rounded-lg bg-brand text-on-brand text-[11px] font-bold">Save</button>
+                                  <button type="button" onClick={() => setBillPoEdit(null)} className="px-2 rounded-lg bg-white/5 text-fg/80 text-[11px] font-bold">Cancel</button>
+                                </form>
+                              ) : (
+                                <span className="block text-[11px] mt-0.5">
+                                  {b.poNumber && <span className="font-mono text-fg/80" title={b.purchaseOrderId ? 'Linked to this purchase order in Procurement' : 'A reference only - no purchase order with this number in the app'}>PO: {b.poNumber}{b.purchaseOrderId ? ' (linked) ' : ' '}</span>}
+                                  {b.source !== 'PO' && (b.imported || b.source === 'Opening') && can('accounting.manage') && (
+                                    <button onClick={() => setBillPoEdit({ id: b._id, value: b.poNumber || '' })} className="text-brand-text font-bold hover:underline">{b.poNumber ? 'Change' : '+ Add PO no.'}</button>
+                                  )}
+                                </span>
+                              )}
+                            </td>
                             <td className="px-4 py-3 text-right font-black tabular-nums font-mono text-fg">
                               {peso(b.amount)}
                               {b.status === 'Partially Paid' && <div className="text-[10px] font-normal text-warning mt-0.5">{peso(billOutstanding)} left</div>}
+                            </td>
+                            <td className="px-4 py-3">
+                              {(() => {
+                                const ms = b.match?.status || (b.source === 'PO' ? 'Unmatched' : null);
+                                if (!ms) return <span className="text-[10px] text-fg/65">{b.supplierInvoiceNo || '-'}</span>;
+                                const cls = { Matched: 'bg-green-500/15 text-success', Accepted: 'bg-blue-500/15 text-info', Exception: 'bg-red-500/15 text-danger', Unmatched: 'bg-white/5 text-fg/70' }[ms];
+                                return (
+                                  <div title={(b.match?.issues || []).map(x => x.text).join(' ') || undefined}>
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${cls}`}>{ms === 'Unmatched' ? 'Needs invoice' : ms}</span>
+                                    {b.supplierInvoiceNo && <div className="text-[10px] text-fg/65 mt-1 font-mono">{b.supplierInvoiceNo}</div>}
+                                  </div>
+                                );
+                              })()}
                             </td>
                             <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${stCls}`}>{b.status}</span>
                               {b.scheduledPaymentDate && b.status === 'Approved' && <div className="text-[10px] text-fg/70 mt-1">pay {String(b.scheduledPaymentDate).slice(0,10)}</div>}
@@ -4382,13 +2611,14 @@ export default function LedgerTab({ ctx }) {
                             <td className="px-4 py-3 text-right whitespace-nowrap">
                               {b.status === 'Pending' && (
                                 <div className="flex gap-1.5 justify-end">
+                                  <button disabled={billBusy} onClick={() => openBillInvoice(b)} className="px-2.5 py-1 rounded-lg bg-white/5 text-fg/80 hover:bg-white/10 text-[11px] font-bold transition disabled:opacity-50">{b.supplierInvoiceNo ? 'Invoice' : 'Record invoice'}</button>
                                   <button disabled={billBusy} onClick={() => approveBill(b)} className="px-2.5 py-1 rounded-lg bg-green-500/15 text-success hover:bg-green-500/25 text-[11px] font-bold transition disabled:opacity-50">Approve</button>
-                                  <button disabled={billBusy} onClick={() => rejectBill(b)} className="px-2.5 py-1 rounded-lg bg-red-500/10 text-red-400/80 hover:bg-red-500/20 text-[11px] font-bold transition disabled:opacity-50">Reject</button>
+                                  <button disabled={billBusy} onClick={() => rejectBill(b)} className="px-2.5 py-1 rounded-lg bg-red-500/10 text-danger hover:bg-red-500/20 text-[11px] font-bold transition disabled:opacity-50">Reject</button>
                                 </div>
                               )}
                               {(b.status === 'Approved' || b.status === 'Partially Paid') && (
                                 <div className="flex gap-1.5 justify-end">
-                                  {b.status === 'Approved' && <button disabled={billBusy} onClick={() => scheduleBill(b)} className="px-2.5 py-1 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 text-[11px] font-bold transition disabled:opacity-50">Schedule</button>}
+                                  {b.status === 'Approved' && <button disabled={billBusy} onClick={() => scheduleBill(b)} className="px-2.5 py-1 rounded-lg bg-white/5 text-fg/65 hover:bg-white/10 text-[11px] font-bold transition disabled:opacity-50">Schedule</button>}
                                   <button disabled={billBusy} onClick={() => { setBillPayModal(b); setBillPayFrom('111000'); setBillPayReference(''); setBillPayAmount(String(billOutstanding)); }} className="px-2.5 py-1 rounded-lg bg-brand/20 text-brand-text hover:bg-brand/30 text-[11px] font-bold transition disabled:opacity-50">Pay</button>
                                 </div>
                               )}
@@ -4402,11 +2632,34 @@ export default function LedgerTab({ ctx }) {
                     </tbody>
                   </table>
                   <div className="px-3"><Pager {...billsPage} label="bills" /></div>
-                  <p className="text-[10px] text-fg/60 p-3 text-center">PO-sourced bills already posted their liability at goods receipt - approving one is a sign-off, not a new posting. Manual bills post on approval.</p>
+                  <p className="text-[10px] text-fg/65 p-3 text-center">PO-sourced bills already posted their liability at goods receipt - approving one is a sign-off, not a new posting. Manual bills post on approval.</p>
                 </div>
               )}
 
               {/* Pay modal */}
+              {billInvoiceModal && (
+                <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => setBillInvoiceModal(null)}>
+                  <div role="dialog" aria-label="Supplier invoice" className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 my-auto" onClick={e => e.stopPropagation()}>
+                    <h2 className="font-black text-fg mb-1">Supplier invoice - {billInvoiceModal.billNumber}</h2>
+                    <p className="text-fg/75 text-sm mb-3">{billInvoiceModal.supplierName} · received {peso(billInvoiceModal.amount)}{billInvoiceModal.poNumber ? ` on ${billInvoiceModal.poNumber}` : ''}</p>
+                    <p className="text-[11px] text-fg/70 mb-3">{billInvoiceModal.source === 'PO' ? 'Compared with the PO price of what arrived and with what receiving booked. It must match (within ₱1) before this bill can be approved.' : 'Compared with this bill\'s amount.'}</p>
+                    <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Invoice number</label>
+                    <input value={billInvoiceForm.no} onChange={e => setBillInvoiceForm(f => ({ ...f, no: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-3" placeholder="As printed on the invoice" />
+                    <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Invoice total</label>
+                    <input type="number" min="0" step="0.01" value={billInvoiceForm.amount} onChange={e => setBillInvoiceForm(f => ({ ...f, amount: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-3" />
+                    <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Invoice date (optional)</label>
+                    <input type="date" value={billInvoiceForm.date} onChange={e => setBillInvoiceForm(f => ({ ...f, date: e.target.value }))} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-fg mb-1" />
+                    <Attachments entity="Bill" entityId={billInvoiceModal._id} apiFetch={apiFetch} canAttach={can('accounting.manage')}
+                      currentUserId={activeAdmin?._id} isSuperAdmin={isSuperAdmin} title="Invoice & delivery documents" />
+                    <div className="mb-4" />
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => setBillInvoiceModal(null)} className="px-4 py-2 rounded-xl bg-white/5 text-fg/80 text-sm font-bold">Cancel</button>
+                      <button onClick={submitBillInvoice} disabled={billBusy} className="px-4 py-2 rounded-xl bg-brand text-on-brand text-sm font-bold disabled:opacity-50">{billBusy ? 'Checking…' : 'Record & match'}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {billPayModal && (() => {
                 const outstanding = +(billPayModal.amount - (billPayModal.paidAmount || 0)).toFixed(2);
                 const enteredAmt = parseFloat(billPayAmount) || 0;
@@ -4414,8 +2667,8 @@ export default function LedgerTab({ ctx }) {
                 const supplier = (suppliers || []).find(s => String(s._id) === String(billPayModal.supplierId));
                 const availableCredit = supplier?.creditBalance || 0;
                 return (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setBillPayModal(null)}>
-                  <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+                <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => setBillPayModal(null)}>
+                  <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 my-auto" onClick={e => e.stopPropagation()}>
                     <h2 className="font-black text-fg mb-1">Pay bill {billPayModal.billNumber}</h2>
                     <p className="text-fg/75 text-sm mb-1">{billPayModal.supplierName} · {peso(billPayModal.amount)} total</p>
                     {billPayModal.paidAmount > 0 && <p className="text-warning text-xs mb-2">{peso(billPayModal.paidAmount)} already paid · {peso(outstanding)} remaining</p>}
@@ -4464,12 +2717,12 @@ export default function LedgerTab({ ctx }) {
           {ledgerSubTab === 'expenses' && <ExpensesPage />}
 
           {/* ===== APPROVALS SUB-TAB (Requisition Slips) ===== */}
-          {ledgerSubTab === 'approvals' && (
+          {soloApprovals && ledgerSubTab === 'approvals' && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div>
                   <h3 className="text-xl font-black text-fg flex items-center gap-2"><ShieldCheck size={18} className="text-brand-text"/> Approvals</h3>
-                  <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Requisition slips - petty cash disbursements and new purchase orders wait here until approved</p>
+                  <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Requisition slips and revolving fund spends wait here until approved</p>
                 </div>
                 <div className="flex bg-page-bg p-1 rounded-lg shadow-inner">
                   <button onClick={() => { setReqSlipView('pending'); fetchRequisitionSlips('Pending'); }}
@@ -4481,16 +2734,18 @@ export default function LedgerTab({ ctx }) {
                     Slips
                   </button>
                 </div>
-                <button onClick={exportRequisitionSlipsPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[44px]">
+                <button onClick={exportRequisitionSlipsPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[44px]">
                   Export PDF
                 </button>
               </div>
+
+              {can('accounting.view') && <FundSpendsToCheck apiFetch={apiFetch} onChanged={fetchERPData} />}
 
               <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
                 {reqSlipsLoading && reqSlips.length === 0 ? (
                   <p className="text-fg/70 text-sm p-8 text-center font-bold">Loading…</p>
                 ) : reqSlips.length === 0 ? (
-                  <p className="text-fg/60 text-sm p-10 text-center font-bold">
+                  <p className="text-fg/65 text-sm p-10 text-center font-bold">
                     {reqSlipView === 'pending' ? 'Nothing waiting on approval.' : 'No requisition slips yet.'}
                   </p>
                 ) : (
@@ -4513,9 +2768,9 @@ export default function LedgerTab({ ctx }) {
                             <td className="px-5 py-2.5 font-mono text-fg/70 whitespace-nowrap">
                               <button onClick={() => setReqSlipPreview(s)} className="hover:text-brand-text hover:underline">{s.slipNumber}</button>
                             </td>
-                            <td className="px-5 py-2.5 text-fg/60 whitespace-nowrap">{reqTypeLabel(s.type)}</td>
-                            <td className="px-5 py-2.5 text-fg/70 truncate max-w-[260px]">{reqSummary(s)}</td>
-                            <td className="px-5 py-2.5 text-fg/60 whitespace-nowrap">{s.preparedBy || '-'}</td>
+                            <td className="px-5 py-2.5 text-fg/65 whitespace-nowrap">{reqTypeLabel(s.type)}</td>
+                            <td className="px-5 py-2.5 text-fg/70 truncate max-w-[260px]">{(s.budgetCheck || []).some(c => c.over) && <span className="mr-1.5 px-1.5 py-0.5 rounded bg-red-500/15 text-danger text-[9px] font-black uppercase" title={s.overBudgetReason ? `Accepted by ${s.overBudgetAcceptedBy}: ${s.overBudgetReason}` : "Over this month's budget"}>Over budget</span>}{reqSummary(s)}</td>
+                            <td className="px-5 py-2.5 text-fg/65 whitespace-nowrap">{s.preparedBy || '-'}</td>
                             <td className="px-5 py-2.5">
                               <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-full ${s.status === 'Pending' ? 'bg-amber-500/20 text-warning' : s.status === 'Approved' ? 'bg-brand/20 text-brand-text' : 'bg-red-500/20 text-danger'}`}>{s.status}</span>
                             </td>
@@ -4524,7 +2779,7 @@ export default function LedgerTab({ ctx }) {
                               {s.status === 'Pending' && can('requisitions.approve') ? (
                                 <div className="flex items-center justify-end gap-3">
                                   <button onClick={() => approveReqSlip(s)} disabled={reqSlipBusy} className="text-[10px] font-black uppercase tracking-wider text-brand-text hover:underline disabled:opacity-40">Approve</button>
-                                  <button onClick={() => { setReqSlipRejecting(s); setReqSlipRejectReason(''); }} disabled={reqSlipBusy} className="text-[10px] font-black uppercase tracking-wider text-red-400/70 hover:text-danger hover:underline disabled:opacity-40">Reject</button>
+                                  <button onClick={() => { setReqSlipRejecting(s); setReqSlipRejectReason(''); }} disabled={reqSlipBusy} className="text-[10px] font-black uppercase tracking-wider text-danger hover:underline disabled:opacity-40">Reject</button>
                                 </div>
                               ) : s.status === 'Pending' ? (
                                 <span className="text-[10px] font-black uppercase tracking-wider text-fg/65">Awaiting approval</span>
@@ -4542,207 +2797,11 @@ export default function LedgerTab({ ctx }) {
             </div>
           )}
 
-          {ledgerSubTab === 'revolving' && (
-            <div className="space-y-6 animate-fade-in">
-
-              {/* HEADER + NEW FUND BUTTON */}
-              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 border-b border-white/10 pb-4">
-                <div>
-                  <h3 className="text-2xl font-black text-fg">Revolving Funds</h3>
-                  <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Petty cash pools - track disbursements and replenishments</p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button onClick={exportRevolvingFundsPDF} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition min-h-[44px]">
-                    Export PDF
-                  </button>
-                  <button
-                    onClick={() => setRfNewModal(true)}
-                    className="flex items-center gap-2 bg-brand text-on-brand px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-brand/90 transition min-h-[44px]"
-                  >
-                    <Plus size={14}/> New Fund
-                  </button>
-                </div>
-              </div>
-
-              {rfLoading && <div className="py-12 text-center text-fg/60 font-bold uppercase text-sm tracking-widest">Loading…</div>}
-
-              {!rfLoading && rfFunds.length === 0 && (
-                <div className="py-16 text-center space-y-3">
-                  <RefreshCw size={32} className="mx-auto text-fg/60"/>
-                  <p className="text-fg/60 font-bold uppercase tracking-widest text-sm">No revolving funds yet</p>
-                  <p className="text-fg/60 text-xs">Create a fund to track petty cash and small operational expenses.</p>
-                </div>
-              )}
-
-              {!rfLoading && rfFunds.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {rfFunds.map(fund => {
-                    const pct      = fund.initialAmount > 0 ? (fund.currentBalance / fund.initialAmount) * 100 : 0;
-                    const low      = pct <= 25;
-                    const isActive = rfActiveFund?._id === fund._id;
-                    return (
-                      <div key={fund._id}
-                        className={`bg-surface border rounded-2xl p-5 space-y-4 transition ${isActive ? 'border-brand shadow-lg shadow-brand/10' : 'border-white/10'}`}
-                      >
-                        {/* Fund name + close button */}
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <p className="text-fg font-black text-base leading-tight">{fund.name}</p>
-                            {fund.description && <p className="text-fg/70 text-xs mt-0.5 line-clamp-1">{fund.description}</p>}
-                          </div>
-                          <button
-                            onClick={() => closeRfFund(fund._id)}
-                            className="text-fg/60 hover:text-danger transition p-1 shrink-0"
-                            title="Close fund"
-                          ><X size={13}/></button>
-                        </div>
-
-                        {/* Balance display */}
-                        <div>
-                          <p className="text-fg/70 text-[10px] font-bold uppercase tracking-widest mb-0.5">Current Balance</p>
-                          <p className={`text-3xl font-black tabular-nums ${low ? 'text-danger' : 'text-brand-text'}`}>
-                            ₱{fund.currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                          </p>
-                          <p className="text-fg/60 text-xs">of ₱{fund.initialAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} initial</p>
-                        </div>
-
-                        {/* Progress bar */}
-                        <div className="space-y-1">
-                          <div className="w-full bg-white/10 rounded-full h-1.5">
-                            <div
-                              className={`h-1.5 rounded-full transition-all ${low ? 'bg-danger' : 'bg-brand'}`}
-                              style={{ width: `${Math.min(100, pct).toFixed(1)}%` }}
-                            />
-                          </div>
-                          <p className={`text-[10px] font-bold ${low ? 'text-danger' : 'text-fg/60'}`}>
-                            {pct.toFixed(0)}% remaining{low ? ' - LOW' : ''}
-                          </p>
-                        </div>
-
-                        {/* Action buttons */}
-                        <div className="grid grid-cols-3 gap-1.5 pt-1">
-                          <button
-                            onClick={() => { setRfActiveFund(fund); setRfDisbForm({ amount: '', description: '', categoryCode: '760000' }); setRfDisbModal(true); }}
-                            className="bg-danger/10 text-danger border border-danger/20 rounded-xl py-2 font-bold text-[10px] uppercase tracking-wider hover:bg-danger/20 transition min-h-[40px]"
-                          >
-                            <Minus size={11} className="inline mr-1"/>Out
-                          </button>
-                          <button
-                            onClick={() => { setRfActiveFund(fund); setRfReplForm({ amount: (fund.initialAmount - fund.currentBalance).toFixed(2), note: '', sourceAccount: '111000' }); setRfReplModal(true); }}
-                            className="bg-brand/10 text-brand-text border border-brand/20 rounded-xl py-2 font-bold text-[10px] uppercase tracking-wider hover:bg-brand/20 transition min-h-[40px]"
-                          >
-                            <Plus size={11} className="inline mr-1"/>In
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (isActive) {
-                                // clicking again collapses the history
-                                setRfActiveFund(null);
-                                setRfTxs([]);
-                              } else {
-                                setRfActiveFund(fund);
-                                setRfTxs([]);
-                                fetchRfTxs(fund._id, 1);
-                              }
-                            }}
-                            className={`rounded-xl py-2 font-bold text-[10px] uppercase tracking-wider transition min-h-[40px] border ${isActive ? 'bg-white/10 text-fg border-white/20' : 'bg-white/5 text-fg/70 border-white/10 hover:bg-white/10 hover:text-fg'}`}
-                          >
-                            <FileText size={11} className="inline mr-1"/>{isActive ? 'Hide' : 'History'}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* TRANSACTION HISTORY - only shown when a fund is explicitly selected */}
-              {rfActiveFund && (
-                <div className="bg-surface border border-brand/30 rounded-2xl overflow-hidden animate-fade-in">
-                  {/* Header */}
-                  <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-brand/5">
-                    <div>
-                      <h4 className="text-fg font-black text-lg">Transaction History</h4>
-                      <p className="text-brand-text text-xs font-bold uppercase tracking-widest mt-0.5">{rfActiveFund.name}</p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-fg/60 text-xs tabular-nums">{rfTxTotal} {rfTxTotal === 1 ? 'entry' : 'entries'}</span>
-                      <button
-                        onClick={() => { setRfActiveFund(null); setRfTxs([]); }}
-                        className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/15 text-fg/70 hover:text-fg flex items-center justify-center transition"
-                        title="Close history"
-                      ><X size={14}/></button>
-                    </div>
-                  </div>
-
-                  {/* Table */}
-                  {rfTxs.length === 0 ? (
-                    <div className="py-14 text-center">
-                      <FileText size={28} className="mx-auto text-fg/15 mb-3"/>
-                      <p className="text-fg/60 text-sm font-bold uppercase tracking-widest">No transactions yet</p>
-                      <p className="text-fg/60 text-xs mt-1">Disbursements and replenishments will appear here.</p>
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-fg/70 text-[10px] font-bold uppercase tracking-widest border-b border-white/10 bg-white/2">
-                            <th className="text-left px-6 py-3">Date</th>
-                            <th className="text-left px-3 py-3">Type</th>
-                            <th className="text-left px-3 py-3">Description</th>
-                            <th className="text-left px-3 py-3 hidden sm:table-cell">By</th>
-                            <th className="text-right px-3 py-3">Amount</th>
-                            <th className="text-right px-6 py-3">Balance After</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {rfTxs.map((tx, idx) => (
-                            <tr key={tx._id} className={`border-b border-white/5 transition hover:bg-white/3 ${idx % 2 === 0 ? '' : 'bg-white/1'}`}>
-                              <td className="py-3 px-6 text-fg/75 text-xs tabular-nums whitespace-nowrap">
-                                {new Date(tx.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
-                              </td>
-                              <td className="py-3 px-3">
-                                <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-full whitespace-nowrap ${tx.type === 'disbursement' ? 'bg-danger/20 text-danger' : 'bg-brand/20 text-brand-text'}`}>
-                                  {tx.type === 'disbursement' ? '▼ Out' : '▲ In'}
-                                </span>
-                              </td>
-                              <td className="py-3 px-3 text-fg/80 max-w-[200px] truncate">{tx.description}</td>
-                              <td className="py-3 px-3 text-fg/70 text-xs hidden sm:table-cell">{tx.performedBy || '-'}</td>
-                              <td className={`py-3 px-3 text-right font-black tabular-nums ${tx.type === 'disbursement' ? 'text-danger' : 'text-brand-text'}`}>
-                                {tx.type === 'disbursement' ? '−' : '+'}₱{tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                              </td>
-                              <td className="py-3 px-6 text-right text-fg/75 tabular-nums text-xs">
-                                ₱{(tx.balanceAfter ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-
-                  {/* Pagination - always visible when there are entries */}
-                  {rfTxTotal > 0 && (
-                    <div className="flex items-center justify-between px-6 py-3 border-t border-white/10 bg-white/1">
-                      <button
-                        disabled={rfTxPage <= 1}
-                        onClick={() => fetchRfTxs(rfActiveFund._id, rfTxPage - 1)}
-                        className="px-4 py-2 rounded-lg bg-white/5 text-fg/75 font-bold text-xs disabled:opacity-25 hover:bg-white/10 hover:text-fg transition"
-                      >← Prev</button>
-                      <span className="text-fg/60 text-xs font-bold">
-                        Page {rfTxPage} of {rfTxPages} &nbsp;·&nbsp; {rfTxTotal} {rfTxTotal === 1 ? 'entry' : 'entries'}
-                      </span>
-                      <button
-                        disabled={rfTxPage >= rfTxPages}
-                        onClick={() => fetchRfTxs(rfActiveFund._id, rfTxPage + 1)}
-                        className="px-4 py-2 rounded-lg bg-white/5 text-fg/75 font-bold text-xs disabled:opacity-25 hover:bg-white/10 hover:text-fg transition"
-                      >Next →</button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+          <RevolvingFundTab
+            ledgerSubTab={ledgerSubTab} exportRevolvingFundsPDF={exportRevolvingFundsPDF} setRfNewModal={setRfNewModal} rfLoading={rfLoading} rfFunds={rfFunds} rfActiveFund={rfActiveFund}
+            closeRfFund={closeRfFund} setRfActiveFund={setRfActiveFund} setRfDisbForm={setRfDisbForm} setRfDisbModal={setRfDisbModal} setRfReplForm={setRfReplForm} setRfReplModal={setRfReplModal}
+            setRfTxs={setRfTxs} fetchRfTxs={fetchRfTxs} rfTxTotal={rfTxTotal} rfTxs={rfTxs} rfTxPage={rfTxPage} rfTxPages={rfTxPages}
+            apiFetch={apiFetch} fetchRfFunds={fetchRfFunds} />
 
           {/* ── PERIOD LOCK ─────────────────────────────────────────────── */}
           {(ledgerSubTab === 'periods' || ledgerSubTab === 'accperiods') && (
@@ -4817,281 +2876,19 @@ export default function LedgerTab({ ctx }) {
           )}
 
           {/* ── PAYMENT ROUTING ───────────────────────────────────────────── */}
-          {(ledgerSubTab === 'payroute' || ledgerSubTab === 'accperiods') && (() => {
-            const methods = Array.from(new Set([
-              ...Object.keys(paymentMap?.defaults || {}),
-              ...Object.keys(paymentMap?.effective || {}),
-            ])).sort();
-            // Group eligible target accounts by parent (cash, bank, e-wallet, AR, AP)
-            const allEligible = [
-              ...(cashAndBankAccounts || []),
-              ...(arAccounts || []),
-              ...(apAccounts || []),
-            ];
-            // Superadmin-only edit gate. Server enforces this on PUT/DELETE
-            // (returns 403 to non-superadmins) - mirror it in the UI so the
-            // controls don't tease the user. Everyone else gets a read-only view.
-            const canEdit = !!isSuperAdmin;
-            const customSubsAvailable = allEligible.filter(a => a.code && /\d{3,}\d{3}/.test(a.code) && !['111000','112000','113000','120000','220000'].includes(a.code)).length;
-            return (
-              <div className="bg-surface border border-white/10 rounded-2xl p-6 space-y-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-xl font-black text-fg flex items-center gap-2"><CreditCard size={18} className="text-brand-text"/> Payment Method Routing</h3>
-                    <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">
-                      Map each POS payment method to a specific account
-                      {customSubsAvailable > 0 && <span className="ml-2 text-emerald-400 normal-case tracking-normal">· {customSubsAvailable} custom sub-account{customSubsAvailable === 1 ? '' : 's'} available</span>}
-                    </p>
-                    {!canEdit && (
-                      <p className="mt-2 text-[10px] uppercase tracking-widest font-black text-warning bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1.5 inline-flex items-center gap-1.5">
-                        <Lock size={11}/> Superadmin only - sign in as superadmin to change routes
-                      </p>
-                    )}
-                  </div>
-                  {canEdit && (
-                    <button onClick={() => setLedgerSubTab('coa')}
-                      className="shrink-0 bg-white/5 hover:bg-white/10 border border-white/10 text-fg/70 hover:text-fg text-[10px] uppercase tracking-widest font-black px-3 py-2 rounded-lg transition flex items-center gap-1.5"
-                      title="Rename / delete custom sub-accounts in the Chart of Accounts view">
-                      <Settings size={11}/> Manage in COA
-                    </button>
-                  )}
-                </div>
-
-
-                {(() => {
-                  // Group payment methods by the canonical PARENT account (first
-                  // 3 digits of the default → "<3digits>000"). The parent row is
-                  // always visible; children only render when expanded.
-                  const PARENT_ORDER = ['111000','112000','113000','120000','220000'];
-                  const PARENT_LABEL = {
-                    '111000': 'Cash on Hand',
-                    '112000': 'Cash in Bank',
-                    '113000': 'E-Wallet',
-                    '120000': 'Accounts Receivable',
-                    '220000': 'Accounts Payable',
-                  };
-                  // Seed a group for every canonical parent so headers render even
-                  // when no payment method currently routes through it.
-                  const groups = {};
-                  for (const pc of PARENT_ORDER) {
-                    groups[pc] = { parentMethods: [], childMethods: [], subAccounts: [] };
-                  }
-                  // All custom sub-accounts under each parent - drives the [N SUB]
-                  // count and the "available sub-accounts" list inside the group.
-                  for (const a of (coaAccounts || [])) {
-                    if (!a.custom || !a.parent) continue;
-                    if (groups[a.parent]) groups[a.parent].subAccounts.push(a);
-                  }
-                  // Map: account code → payment methods routing to it. So when we
-                  // list Metrobank we can show which methods (if any) currently
-                  // book to it.
-                  const codeToMethods = {};
-                  for (const m of methods) {
-                    const eff = paymentMap?.effective?.[m] || paymentMap?.defaults?.[m] || '111000';
-                    (codeToMethods[eff] ||= []).push(m);
-                  }
-                  for (const m of methods) {
-                    const def = paymentMap?.defaults?.[m] || '111000';
-                    const parentCode = String(def).slice(0, 3) + '000';
-                    if (!groups[parentCode]) groups[parentCode] = { parentMethods: [], childMethods: [], subAccounts: [] };
-                    if (def === parentCode) groups[parentCode].parentMethods.push(m);
-                    else groups[parentCode].childMethods.push(m);
-                  }
-                  for (const k of Object.keys(groups)) {
-                    groups[k].parentMethods.sort();
-                    groups[k].childMethods.sort();
-                    groups[k].subAccounts.sort((a, b) => a.code.localeCompare(b.code));
-                  }
-                  const renderRow = (m, indent = false) => {
-                    const def = paymentMap?.defaults?.[m] || '111000';
-                    const eff = paymentMap?.effective?.[m] || def;
-                    const isOverride = paymentMap?.overrides?.[m];
-                    const effName = (allEligible.find(a => a.code === eff)?.name) || (coaAccounts.find(a => a.code === eff)?.name) || eff;
-                    return (
-                      <tr key={m} className="border-b border-white/5 hover:bg-page-bg/30">
-                        <td className={`py-2 text-fg font-bold text-sm ${indent ? 'pl-10' : 'pl-3'}`}>
-                          {indent && <span className="text-fg/60 mr-2">↳</span>}{m}
-                        </td>
-                        <td className="py-2 text-fg/70 text-xs font-mono">{def}</td>
-                        <td className="py-2">
-                          {canEdit ? (
-                            <select value={eff} onChange={e => savePaymentMapping(m, e.target.value)}
-                              className="bg-page-bg border border-white/10 rounded-lg px-2 py-1 text-fg text-xs font-bold outline-none focus:border-brand/60">
-                              {allEligible.map(a => (
-                                <option key={a.code} value={a.code}>{a.name} ({a.code})</option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span className="text-fg text-xs font-bold font-mono">{effName} <span className="text-fg/60">({eff})</span></span>
-                          )}
-                          {canEdit && <span className="ml-2 text-[10px] text-fg/60">{effName}</span>}
-                          {isOverride && <span className="ml-2 text-[9px] uppercase tracking-widest font-black text-warning bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded">Override</span>}
-                        </td>
-                        <td className="py-2 pr-3 text-right">
-                          {canEdit && isOverride && (
-                            <button onClick={() => resetPaymentMapping(m)} className="text-[10px] uppercase tracking-widest font-black bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-1 rounded-lg transition">Reset</button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  };
-                  return (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-sm">
-                        <thead>
-                          <tr className="text-fg/80 border-b border-white/10 text-[10px] uppercase tracking-widest">
-                            <th className="pb-2 pl-3">Payment Method</th>
-                            <th className="pb-2">Default</th>
-                            <th className="pb-2">Currently Routes To</th>
-                            <th className="pb-2 pr-3 text-right">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {PARENT_ORDER.filter(pc => groups[pc]).map(parentCode => {
-                            const { parentMethods, childMethods, subAccounts } = groups[parentCode];
-                            const isExpanded = expandedPayRouteGroups.has(parentCode);
-                            // Count sub-accounts (real children of the parent in the COA),
-                            // not just methods. Adding Metrobank under Cash in Bank should
-                            // increment this immediately.
-                            const childCount = subAccounts.length;
-                            return (
-                              <React.Fragment key={parentCode}>
-                                {/* Group header - clickable to expand/collapse. */}
-                                <tr className="bg-white/[0.03] border-b border-white/10 cursor-pointer hover:bg-white/[0.06] transition"
-                                    onClick={() => childCount > 0 && togglePayRouteGroup(parentCode)}>
-                                  <td colSpan={4} className="py-2.5 pl-3 pr-3">
-                                    <div className="flex items-center justify-between gap-2">
-                                      <div className="flex items-center gap-2">
-                                        {childCount > 0 ? (
-                                          isExpanded
-                                            ? <ChevronDown size={14} className="text-brand-text"/>
-                                            : <ChevronRight size={14} className="text-fg/70"/>
-                                        ) : <span className="w-[14px]" />}
-                                        <span className="text-[10px] uppercase tracking-widest font-black text-fg/70">{parentCode}</span>
-                                        <span className="text-fg font-black text-sm">{PARENT_LABEL[parentCode] || parentCode}</span>
-                                        {childCount > 0 && (
-                                          <span className="text-[9px] uppercase tracking-widest font-black bg-brand/15 text-brand-text border border-brand/30 px-1.5 py-0.5 rounded">
-                                            {childCount} sub
-                                          </span>
-                                        )}
-                                      </div>
-                                      <span className="text-[10px] uppercase tracking-widest font-black text-fg/60">
-                                        {parentMethods.length === 1 ? parentMethods[0] : parentMethods.length > 1 ? `${parentMethods.length} methods` : ''}
-                                      </span>
-                                    </div>
-                                  </td>
-                                </tr>
-                                {/* Parent-account row is intentionally omitted - the header
-                                    already displays the same info, and parent-account routing
-                                    is locked (parents cannot be remapped from a child UI). */}
-                                {/* Expanded: list every sub-account under this parent (custom
-                                    children from the COA), with the payment method(s) routing
-                                    to it (if any). Lets the user see Metrobank/BPI/etc. even
-                                    when no payment method targets them yet. */}
-                                {isExpanded && subAccounts.map(sa => {
-                                  const methodsHere = codeToMethods[sa.code] || [];
-                                  return (
-                                    <tr key={`${parentCode}-sa-${sa.code}`} className="border-b border-white/5 hover:bg-page-bg/30">
-                                      <td className="py-2 pl-10 text-fg/80 text-sm">
-                                        <span className="text-fg/60 mr-2">↳</span>
-                                        <span className={`font-bold ${sa.isActive === false ? 'line-through text-fg/65' : ''}`}>{sa.name}</span>
-                                        {sa.isActive === false && (
-                                          <span className="ml-2 text-[9px] uppercase tracking-widest font-black bg-white/10 text-fg/70 px-1.5 py-0.5 rounded">Inactive</span>
-                                        )}
-                                      </td>
-                                      <td className="py-2 text-fg/70 text-xs font-mono">{sa.code}</td>
-                                      <td className="py-2">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                          {/* Existing method chips - click ✕ to detach (resets that method back to its default). */}
-                                          {methodsHere.map(m => (
-                                            <span key={m} className="text-[10px] uppercase tracking-widest font-black bg-brand/15 text-brand-text border border-brand/30 px-1.5 py-0.5 rounded inline-flex items-center gap-1">
-                                              {m}
-                                              {canEdit && (
-                                                <button onClick={() => resetPaymentMapping(m)}
-                                                  title={`Detach ${m} from this account (resets to default)`}
-                                                  className="text-brand-text/85 hover:text-brand-text transition">
-                                                  <X size={10}/>
-                                                </button>
-                                              )}
-                                            </span>
-                                          ))}
-                                          {/* Inline picker: route a POS payment method to THIS sub-account.
-                                              Filter to methods whose canonical default lives under the
-                                              SAME parent - keeps classification clean (no GCash under
-                                              Cash on Hand, no Lalamove under E-Wallet). */}
-                                          {canEdit && (() => {
-                                            const eligibleMethods = methods.filter(m => {
-                                              if (methodsHere.includes(m)) return false; // already routed here
-                                              const methodDefault = paymentMap?.defaults?.[m] || '111000';
-                                              const methodParent = String(methodDefault).slice(0, 3) + '000';
-                                              return methodParent === parentCode;
-                                            });
-                                            if (eligibleMethods.length === 0) {
-                                              return (
-                                                <span className="text-[10px] uppercase tracking-widest font-black text-fg/60 italic">
-                                                  All matching methods already routed
-                                                </span>
-                                              );
-                                            }
-                                            return (
-                                              <select
-                                                value=""
-                                                onChange={e => { if (e.target.value) savePaymentMapping(e.target.value, sa.code); }}
-                                                className="bg-page-bg border border-white/10 rounded-lg px-2 py-1 text-fg/60 text-[10px] font-bold outline-none focus:border-brand/60 hover:text-fg"
-                                                title={`Route a ${PARENT_LABEL[parentCode] || ''} payment method to this sub-account`}>
-                                                <option value="">+ Route a method here…</option>
-                                                {eligibleMethods.map(m => (
-                                                  <option key={m} value={m}>{m}</option>
-                                                ))}
-                                              </select>
-                                            );
-                                          })()}
-                                          {!canEdit && methodsHere.length === 0 && (
-                                            <span className="text-[10px] uppercase tracking-widest font-black text-fg/60 italic">No method routes here yet</span>
-                                          )}
-                                        </div>
-                                      </td>
-                                      <td className="py-2 pr-3 text-right">
-                                        {canEdit ? (
-                                          <button onClick={() => toggleAccountActive(sa._id, sa.isActive === false)}
-                                            title={sa.isActive === false
-                                              ? 'Bring back as a selectable payment method'
-                                              : 'Remove from POS/portal picker without deleting - history stays intact'}
-                                            className={`text-[9px] uppercase tracking-widest font-black px-2 py-1 rounded transition ${
-                                              sa.isActive === false
-                                                ? 'bg-green-500/10 text-success hover:bg-green-500/20'
-                                                : 'bg-white/5 text-fg/75 hover:bg-white/10 hover:text-fg'
-                                            }`}>
-                                            {sa.isActive === false ? 'Reactivate' : 'Deactivate'}
-                                          </button>
-                                        ) : (
-                                          <span className="text-[10px] uppercase tracking-widest font-black text-fg/60">Sub-account</span>
-                                        )}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </React.Fragment>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  );
-                })()}
-                <p className="text-[10px] text-fg/60">
-                  Changes take effect immediately for new orders and settlements. Past journal entries are not modified.
-                  Need a sub-account for a specific bank (e.g. Metrobank 112001)? Add it in <span className="text-brand-text font-bold">Chart of Accounts</span> under the parent (Cash in Bank), then it appears here automatically.
-                </p>
-              </div>
-            );
-          })()}
+          <PaymentRoutingTab
+            ledgerSubTab={ledgerSubTab} paymentMap={paymentMap} cashAndBankAccounts={cashAndBankAccounts} arAccounts={arAccounts} apAccounts={apAccounts} isSuperAdmin={isSuperAdmin}
+            setLedgerSubTab={setLedgerSubTab} coaAccounts={coaAccounts} savePaymentMapping={savePaymentMapping} resetPaymentMapping={resetPaymentMapping} expandedPayRouteGroups={expandedPayRouteGroups} togglePayRouteGroup={togglePayRouteGroup}
+            toggleAccountActive={toggleAccountActive} />
 
           {/* ── AUDIT LOG ──────────────────────────────────────────────────── */}
 
           {/* ── TENANCY HEALTH + MY PERMISSIONS ───────────────────────────── */}
           {/* ── BACKDATE SALES (superadmin only) ──────────────────────────── */}
-          {ledgerSubTab === 'backdate' && (
+          {ledgerSubTab === 'backdate' && !can('sales.backdate') && (
+            <p className="text-fg/70 text-sm font-bold p-8 text-center">Entering backdated sales needs the "Enter backdated sales and import past orders" permission.</p>
+          )}
+          {ledgerSubTab === 'backdate' && can('sales.backdate') && (
             <div className="space-y-4 animate-fade-in">
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div>
@@ -5100,7 +2897,7 @@ export default function LedgerTab({ ctx }) {
                 </div>
                 {isSuperAdmin && (
                   <div className="flex items-center gap-2 shrink-0">
-                    <button onClick={downloadBackdateTemplate} title="Download a blank template with the expected headers" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition">
+                    <button onClick={downloadBackdateTemplate} title="Download a blank template with the expected headers" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition">
                       <FileText size={15} /> Template
                     </button>
                     <label className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition cursor-pointer">
@@ -5111,11 +2908,16 @@ export default function LedgerTab({ ctx }) {
                   </div>
                 )}
               </div>
-              {!isSuperAdmin ? (
-                <p className="mt-2 text-[10px] uppercase tracking-widest font-black text-warning bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1.5 inline-flex items-center gap-1.5">
-                  <Lock size={11}/> Superadmin only
+              <div className="flex flex-wrap items-center gap-3 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                <p className="text-xs text-fg/80 flex-1 min-w-[220px]">
+                  <b className="text-fg">Cost of goods sold.</b> Backdated sales that have their products but took no stock carry no cost, so profit reads too high. This books each one's cost from what its stock items cost now. Stock counts are not changed - the next stock count settles them.
                 </p>
-              ) : (
+                <button type="button" disabled={bdCosting} onClick={bookBackdatedCosts}
+                  className="bg-brand text-on-brand px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-40">
+                  {bdCosting ? 'Working…' : 'Book cost of goods sold'}
+                </button>
+              </div>
+              {(
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
                   {/* LEFT: product picker + cart */}
@@ -5143,21 +2945,33 @@ export default function LedgerTab({ ctx }) {
                       ) : bdCart.map(x => (
                         <div key={x.productId} className="flex items-center gap-2 py-2 border-b border-white/5">
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold text-fg truncate">{x.name}</p>
+                            <p className="text-xs font-bold text-fg truncate" title={String((x.name) ?? '')}>{x.name}</p>
                             <div className="flex items-center gap-1 mt-1">
                               <span className="text-[10px] text-fg/70">₱</span>
                               <input type="number" min="0" step="0.01" value={x.price} onChange={e => bdSetPrice(x.productId, e.target.value)}
+                                aria-label={`Price of ${x.name}`}
                                 className="w-16 bg-surface border border-white/10 rounded px-1.5 py-0.5 text-[11px] text-fg tabular-nums outline-none focus:border-brand/60" />
+                              {!bd.isComplimentary && (<>
+                                <span className="text-[10px] text-fg/70 ml-2">Disc</span>
+                                <input type="number" min="0" max="100" step="0.01" placeholder="0" value={x.discountPercent ?? ''}
+                                  onChange={e => bdSetLineDisc(x.productId, e.target.value)}
+                                  aria-label={`Discount percent on ${x.name}`}
+                                  className="w-12 bg-surface border border-white/10 rounded px-1.5 py-0.5 text-[11px] text-fg tabular-nums outline-none focus:border-brand/60" />
+                                <span className="text-[10px] text-fg/70">%</span>
+                              </>)}
                             </div>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
-                            <button onClick={() => bdSetQty(x.productId, x.quantity - 1)} className="w-7 h-7 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 font-black">−</button>
+                            <button onClick={() => bdSetQty(x.productId, x.quantity - 1)} className="w-7 h-7 rounded-lg bg-white/5 text-fg/65 hover:bg-white/10 font-black">−</button>
                             <input type="number" min="1" value={x.quantity} onChange={e => bdSetQty(x.productId, parseInt(e.target.value) || 1)}
                               className="w-11 bg-surface border border-white/10 rounded px-1 py-1 text-center text-xs text-fg tabular-nums outline-none focus:border-brand/60" />
-                            <button onClick={() => bdSetQty(x.productId, x.quantity + 1)} className="w-7 h-7 rounded-lg bg-white/5 text-fg/60 hover:bg-white/10 font-black">+</button>
+                            <button onClick={() => bdSetQty(x.productId, x.quantity + 1)} className="w-7 h-7 rounded-lg bg-white/5 text-fg/65 hover:bg-white/10 font-black">+</button>
                           </div>
-                          <span className="w-20 text-right text-xs font-black text-fg tabular-nums shrink-0">{peso(x.price * x.quantity)}</span>
-                          <button onClick={() => bdRemove(x.productId)} className="text-danger/80 hover:text-danger shrink-0"><Trash2 size={14}/></button>
+                          <span className="w-20 text-right shrink-0 tabular-nums">
+                            {bdLinePct(x) > 0 && !bd.isComplimentary && <span className="block text-[10px] text-fg/65 line-through">{peso(x.price * x.quantity)}</span>}
+                            <span className="text-xs font-black text-fg">{peso(bd.isComplimentary ? x.price * x.quantity : x.price * x.quantity - r2(x.price * x.quantity * bdLinePct(x) / 100))}</span>
+                          </span>
+                          <button onClick={() => bdRemove(x.productId)} className="text-danger shrink-0"><Trash2 size={14}/></button>
                         </div>
                       ))}
                     </div>
@@ -5168,19 +2982,21 @@ export default function LedgerTab({ ctx }) {
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Sale Date *</label>
-                        <input type="date" value={bd.date} max={new Date().toISOString().slice(0,10)}
+                        <input type="date" value={bd.date} max={todayStr()}
                           onChange={e => setBd({ ...bd, date: e.target.value })}
                           className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
                       </div>
                       <div>
                         <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Payment Method</label>
-                        <select value={bd.paymentMethod} onChange={e => setBd({ ...bd, paymentMethod: e.target.value })}
+                        <select value={bd.paymentMethod} onChange={e => setBd({ ...bd, paymentMethod: e.target.value, ...(e.target.value === 'Split' ? { payments: newSplit(bdTotal) } : {}) })}
                           disabled={bd.isComplimentary}
                           className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60 disabled:opacity-40">
                           <optgroup label="In-Store Payments">
                             <option value="Cash">Cash</option>
                             <option value="Bank Transfer">Bank Transfer</option>
+                            <option value="Check">Check</option>
                           </optgroup>
+                          <optgroup label="Paid in parts"><option value="Split">Split payment (e.g. part cash, part on account)</option></optgroup>
                           <optgroup label="E-Wallets">
                             <option value="GCash">GCash</option>
                             <option value="Maya">Maya</option>
@@ -5196,6 +3012,26 @@ export default function LedgerTab({ ctx }) {
                           <optgroup label="Credit"><option value="On Account">On Account (A/R)</option></optgroup>
                         </select>
                       </div>
+                      {bd.paymentMethod === 'Split' && !bd.isComplimentary && (
+                        <div className="sm:col-span-2">
+                          <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Split payment</label>
+                          <SplitPayEditor total={bdTotal} parts={bd.payments || newSplit(bdTotal)} onChange={parts => setBd({ ...bd, payments: parts })} />
+                        </div>
+                      )}
+                      {bd.paymentMethod === 'Check' && !bd.isComplimentary && (<>
+                        <div>
+                          <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Check No. *</label>
+                          <input type="text" value={bd.checkNumber} maxLength={60} placeholder="e.g. 0012345"
+                            onChange={e => setBd({ ...bd, checkNumber: e.target.value })}
+                            className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60 placeholder-fg/65" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Check Date</label>
+                          <input type="date" value={bd.checkDate}
+                            onChange={e => setBd({ ...bd, checkDate: e.target.value })}
+                            className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
+                        </div>
+                      </>)}
                     </div>
 
                     {/* Toggles: reduce inventory (default off) + complimentary */}
@@ -5231,7 +3067,7 @@ export default function LedgerTab({ ctx }) {
                       </div>
                       <div>
                         <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Discount %</label>
-                        <input type="number" min="0" max="100" step="0.5" value={bd.discountPercent} disabled={bd.isComplimentary}
+                        <input type="number" min="0" max="100" step="any" value={bd.discountPercent} disabled={bd.isComplimentary}
                           onChange={e => setBd({ ...bd, discountPercent: e.target.value })}
                           className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold tabular-nums outline-none focus:border-brand/60 disabled:opacity-40" />
                       </div>
@@ -5245,8 +3081,9 @@ export default function LedgerTab({ ctx }) {
 
                     {/* Totals */}
                     <div className="bg-surface border border-white/10 rounded-lg p-3 space-y-1 text-sm">
-                      <div className="flex justify-between text-fg/60"><span>Gross</span><span className="tabular-nums">{peso(bdGross)}</span></div>
-                      {bdDiscount > 0 && <div className="flex justify-between text-fg/60"><span>Discount ({bdPct}%)</span><span className="tabular-nums">−{peso(bdDiscount)}</span></div>}
+                      <div className="flex justify-between text-fg/65"><span>Gross</span><span className="tabular-nums">{peso(bdGross)}</span></div>
+                      {bdLineDiscount > 0 && <div className="flex justify-between text-fg/65"><span>Item discounts</span><span className="tabular-nums">−{peso(bdLineDiscount)}</span></div>}
+                      {bdDiscount - bdLineDiscount > 0.004 && <div className="flex justify-between text-fg/65"><span>Discount ({bdPct}%)</span><span className="tabular-nums">−{peso(r2(bdDiscount - bdLineDiscount))}</span></div>}
                       <div className="flex justify-between text-base font-black text-fg border-t border-white/10 pt-1 mt-1"><span>{bd.isComplimentary ? 'Complimentary' : 'Total'}</span><span className="tabular-nums text-brand-text">{peso(bdTotal)}</span></div>
                     </div>
 
@@ -5268,14 +3105,14 @@ export default function LedgerTab({ ctx }) {
               )}
 
               {/* ── BACKDATE SALE QUEUE ── rows a bulk import couldn't post blind (no Terms of Payment on the sheet) */}
-              {isSuperAdmin && bdQueue?.total > 0 && (
+              {can('sales.backdate') && bdQueue?.total > 0 && (
                 <div className="bg-surface border border-amber-500/30 rounded-xl overflow-hidden mt-2">
                   <div className="px-5 py-3 border-b border-amber-500/20 bg-amber-500/5 flex items-center gap-2 flex-wrap">
                     <AlertTriangle size={14} className="text-warning" />
                     <h3 className="text-sm font-black text-fg uppercase tracking-wider">Backdate Queue</h3>
                     <span className="text-[10px] text-warning font-bold">{bdQueue.total} needs a payment method</span>
                     <button onClick={() => fetchBdQueue(bdQueuePage)} disabled={bdQueueLoading}
-                      className="ml-auto flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition disabled:opacity-50">
+                      className="ml-auto flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition disabled:opacity-50">
                       <RefreshCw size={11} className={bdQueueLoading ? 'animate-spin' : ''}/> Refresh
                     </button>
                   </div>
@@ -5302,13 +3139,13 @@ export default function LedgerTab({ ctx }) {
                               <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap font-bold">{row.date || <span className="text-danger">no date</span>}</td>
                               <td className="px-5 py-2.5 text-fg/70 truncate max-w-[140px]">{row.sheet || '-'}</td>
                               <td className="px-5 py-2.5 text-fg/80 font-bold truncate max-w-[160px]">{row.client || 'Walk-in'}</td>
-                              <td className="px-5 py-2.5 text-fg/60 truncate max-w-[220px]">{(row.items || []).map(it => it.name).join(', ')}</td>
+                              <td className="px-5 py-2.5 text-fg/65 truncate max-w-[220px]" title={String(((row.items || []).map(it => it.name).join(', ')) ?? '')}>{(row.items || []).map(it => it.name).join(', ')}</td>
                               <td className="px-5 py-2.5 text-right text-fg font-mono tabular-nums font-bold">{peso(total)}</td>
                               <td className="px-5 py-2.5 text-right whitespace-nowrap">
                                 <button onClick={() => setBdQueueResolve({ row, paymentMethod: 'Cash', affectInventory: false })}
                                   className="text-[10px] font-black uppercase tracking-wider text-brand-text hover:underline mr-3">Complete</button>
                                 <button onClick={() => discardBdQueueItem(row)}
-                                  className="text-[10px] font-black uppercase tracking-wider text-red-400/70 hover:text-danger hover:underline">Discard</button>
+                                  className="text-[10px] font-black uppercase tracking-wider text-danger hover:underline">Discard</button>
                               </td>
                             </tr>
                           );
@@ -5336,18 +3173,18 @@ export default function LedgerTab({ ctx }) {
                     <h3 className="text-sm font-black text-fg uppercase tracking-wider">Backdate History</h3>
                     {bdHistory?.total > 0 && <span className="text-[10px] text-fg/70 font-bold">{bdHistory.total} total</span>}
                     <button onClick={exportBackdateHistoryPDF} disabled={bdExporting || !bdHistory?.total}
-                      className="ml-auto flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition disabled:opacity-50">
+                      className="ml-auto flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition disabled:opacity-50">
                       <Download size={11}/> {bdExporting ? 'Exporting…' : 'Export PDF'}
                     </button>
                     <button onClick={() => fetchBdHistory(bdHistoryPage)} disabled={bdHistoryLoading}
-                      className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition disabled:opacity-50">
+                      className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-wider transition disabled:opacity-50">
                       <RefreshCw size={11} className={bdHistoryLoading ? 'animate-spin' : ''}/> Refresh
                     </button>
                   </div>
                   {bdHistoryLoading && !bdHistory ? (
                     <p className="text-fg/70 text-sm p-6 text-center font-bold">Loading…</p>
                   ) : !bdHistory || bdHistory.orders.length === 0 ? (
-                    <p className="text-fg/60 text-sm p-8 text-center font-bold">No backdated sales recorded yet.</p>
+                    <p className="text-fg/65 text-sm p-8 text-center font-bold">No backdated sales recorded yet.</p>
                   ) : (
                     <>
                       <div className="overflow-x-auto">
@@ -5368,9 +3205,9 @@ export default function LedgerTab({ ctx }) {
                                 <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap font-bold">
                                   {new Date(o.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
                                 </td>
-                                <td className="px-5 py-2.5 font-mono text-fg/60 whitespace-nowrap">{o.orderNumber}</td>
-                                <td className="px-5 py-2.5 text-fg/80 font-bold truncate max-w-[160px]">{o.customerName || 'Walk-in'}</td>
-                                <td className="px-5 py-2.5 text-fg/60 whitespace-nowrap">{o.paymentMethod}</td>
+                                <td className="px-5 py-2.5 font-mono text-fg/65 whitespace-nowrap">{o.orderNumber}</td>
+                                <td className="px-5 py-2.5 text-fg/80 font-bold truncate max-w-[160px]" title={String((o.customerName || 'Walk-in') ?? '')}>{o.customerName || 'Walk-in'}</td>
+                                <td className="px-5 py-2.5 text-fg/65 whitespace-nowrap">{o.paymentMethod}</td>
                                 <td className="px-5 py-2.5 text-fg/70 truncate max-w-[220px]">{o.orderNotes || '-'}</td>
                                 <td className="px-5 py-2.5 text-right text-fg font-mono tabular-nums font-bold">{peso(o.total)}</td>
                               </tr>
@@ -5396,8 +3233,8 @@ export default function LedgerTab({ ctx }) {
 
           {/* ── BACKDATE QUEUE - COMPLETE ── supply the missing payment method, then post */}
           {bdQueueResolve && !bdSheetPicker && !bdImportPreview && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !bdQueueSaving && setBdQueueResolve(null)}>
-              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !bdQueueSaving && setBdQueueResolve(null)}>
+              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl my-auto" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
                   <div>
                     <h2 className="font-black text-fg text-base">Complete Queued Sale</h2>
@@ -5422,9 +3259,20 @@ export default function LedgerTab({ ctx }) {
                       <option value="Bank Transfer">Bank Transfer</option>
                       <option value="GCash">GCash</option>
                       <option value="Maya">Maya</option>
+                      <option value="Check">Check</option>
                       <option value="On Account">On Account (A/R)</option>
                     </select>
                   </div>
+                  {bdQueueResolve.paymentMethod === 'Check' && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <input value={bdQueueResolve.checkNumber || ''} onChange={e => setBdQueueResolve(s => ({ ...s, checkNumber: e.target.value }))}
+                        placeholder="Check number *" aria-label="Check number" maxLength={60}
+                        className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand/60" />
+                      <input type="date" value={bdQueueResolve.checkDate || ''} onChange={e => setBdQueueResolve(s => ({ ...s, checkDate: e.target.value }))}
+                        aria-label="Check date" title="Check date"
+                        className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand/60" />
+                    </div>
+                  )}
                   <button onClick={() => setBdQueueResolve(s => ({ ...s, affectInventory: !s.affectInventory }))}
                     className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition ${bdQueueResolve.affectInventory ? 'bg-amber-500/10 border-amber-500/40' : 'bg-page-bg border-white/10'}`}>
                     <span className="text-left">
@@ -5448,8 +3296,8 @@ export default function LedgerTab({ ctx }) {
 
           {/* ── BACKDATE IMPORT - OPTIONS (sheet selection + the same settings the manual entry form asks for) ── */}
           {bdSheetPicker && !bdImportPreview && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !bdImporting && setBdSheetPicker(null)}>
-              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !bdImporting && setBdSheetPicker(null)}>
+              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl my-auto" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
                   <div>
                     <h2 className="font-black text-fg text-base">Import Options</h2>
@@ -5467,7 +3315,7 @@ export default function LedgerTab({ ctx }) {
                     <div className="px-5 py-3 flex items-center gap-2 border-b border-white/10">
                       <button onClick={() => setBdSheetPicker(s => ({ ...s, selected: new Set(s.sheetNames) }))}
                         className="text-[10px] font-black uppercase tracking-widest text-brand-text hover:underline">Select All</button>
-                      <span className="text-fg/60">·</span>
+                      <span className="text-fg/65">·</span>
                       <button onClick={() => setBdSheetPicker(s => ({ ...s, selected: new Set() }))}
                         className="text-[10px] font-black uppercase tracking-widest text-fg/70 hover:underline">Select None</button>
                     </div>
@@ -5481,7 +3329,7 @@ export default function LedgerTab({ ctx }) {
                               next.has(name) ? next.delete(name) : next.add(name);
                               return { ...s, selected: next };
                             })} className="accent-brand w-4 h-4" />
-                            <span className="text-sm font-bold text-fg truncate">{name}</span>
+                            <span className="text-sm font-bold text-fg truncate" title={String((name) ?? '')}>{name}</span>
                           </label>
                         );
                       })}
@@ -5498,6 +3346,7 @@ export default function LedgerTab({ ctx }) {
                       <option value="Bank Transfer">Bank Transfer</option>
                       <option value="GCash">GCash</option>
                       <option value="Maya">Maya</option>
+                      <option value="Check">Check</option>
                       <option value="On Account">On Account (A/R)</option>
                     </select>
                   </div>
@@ -5558,6 +3407,7 @@ export default function LedgerTab({ ctx }) {
                       <option value="Bank Transfer">Bank Transfer</option>
                       <option value="GCash">GCash</option>
                       <option value="Maya">Maya</option>
+                      <option value="Check">Check</option>
                       <option value="On Account">On Account (A/R)</option>
                     </select>
                   </div>
@@ -5567,6 +3417,21 @@ export default function LedgerTab({ ctx }) {
                       <span className="text-xs font-bold text-fg">Reduce current inventory</span>
                       <span className={`w-9 h-5 rounded-full shrink-0 relative transition ${bdImportSettings.affectInventory ? 'bg-amber-500' : 'bg-white/15'}`}>
                         <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${bdImportSettings.affectInventory ? 'left-[18px]' : 'left-0.5'}`}/>
+                      </span>
+                    </button>
+                  </div>
+                  {/* A sheet imported before - say at its subtotal instead of its
+                      grand total - is reversed and recorded again, instead of
+                      skipped as a duplicate. */}
+                  <div className="col-span-2">
+                    <button onClick={() => setBdImportSettings(s => ({ ...s, replaceExisting: !s.replaceExisting }))} aria-pressed={bdImportSettings.replaceExisting}
+                      className={`w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg border transition text-left ${bdImportSettings.replaceExisting ? 'bg-amber-500/10 border-amber-500/40' : 'bg-page-bg border-white/10'}`}>
+                      <span>
+                        <span className="text-xs font-bold text-fg block">Replace sales already imported</span>
+                        <span className="text-[10px] text-fg/70 block">A sale with the same transaction no. is reversed (its entries, and any stock it took) and recorded again from this sheet. Off: it is skipped.</span>
+                      </span>
+                      <span className={`w-9 h-5 rounded-full shrink-0 relative transition ${bdImportSettings.replaceExisting ? 'bg-amber-500' : 'bg-white/15'}`}>
+                        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${bdImportSettings.replaceExisting ? 'left-[18px]' : 'left-0.5'}`}/>
                       </span>
                     </button>
                   </div>
@@ -5580,27 +3445,51 @@ export default function LedgerTab({ ctx }) {
                           {bdImportPreview.multiSheet && g.sheet && <span className="text-[9px] bg-white/10 text-fg/75 px-1.5 py-0.5 rounded uppercase tracking-wider">{g.sheet}</span>}
                           {g.transNo && <span>{g.transNo}</span>}
                           <span>{g.date || <span className="text-danger">no date</span>}</span>
+                          {g.discountAmount > 0 && <span title="The sheet's discount - its grand total is below the item lines">less {peso(g.discountAmount)}</span>}
                           <span className="text-brand-text">{peso(g.total)}</span>
+                          {g.sheetTotal != null && Math.abs(g.sheetTotal - g.total) > 0.005 && (
+                            <span className="text-danger" title="The sheet's grand total is higher than its items plus delivery - check the sheet">sheet says {peso(g.sheetTotal)}</span>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2 mb-2">
                         <select value={g.paymentMethod || bdImportSettings.paymentMethod}
-                          onChange={e => { const v = e.target.value; setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, paymentMethod: v } : x) })); }}
-                          className={`text-[10px] font-bold uppercase tracking-wider rounded-lg px-2 py-1 outline-none border ${g.paymentMethod ? 'bg-brand/10 border-brand/40 text-brand-text' : 'bg-page-bg border-white/10 text-fg/60'}`}>
+                          onChange={e => { const v = e.target.value; setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, paymentMethod: v, ...(v === 'Split' ? { payments: newSplit(x.total) } : {}) } : x) })); }}
+                          className={`text-[10px] font-bold uppercase tracking-wider rounded-lg px-2 py-1 outline-none border ${g.paymentMethod ? 'bg-brand/10 border-brand/40 text-brand-text' : 'bg-page-bg border-white/10 text-fg/65'}`}>
                           <option value="Cash">Cash</option>
                           <option value="Bank Transfer">Bank Transfer</option>
                           <option value="GCash">GCash</option>
                           <option value="Maya">Maya</option>
+                          <option value="Check">Check</option>
                           <option value="On Account">On Account (A/R)</option>
+                          <option value="Split">Split payment</option>
                         </select>
                         {g.paymentMethod && (
                           <button onClick={() => setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, paymentMethod: null } : x) }))}
-                            className="text-[9px] font-bold uppercase tracking-wider text-fg/65 hover:text-fg/60 transition">reset to default</button>
+                            className="text-[9px] font-bold uppercase tracking-wider text-fg/65 transition">reset to default</button>
                         )}
                       </div>
+                      {(g.paymentMethod || bdImportSettings.paymentMethod) === 'Check' && (
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <input value={g.checkNumber || ''} placeholder="Check number *" aria-label="Check number" maxLength={60}
+                            onChange={e => { const v = e.target.value; setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, checkNumber: v } : x) })); }}
+                            className={`w-40 bg-page-bg border rounded-lg px-2 py-1 text-fg text-xs outline-none ${(g.checkNumber || '').trim() ? 'border-white/10' : 'border-red-500/60'}`} />
+                          <label className="flex items-center gap-1 text-[10px] font-bold uppercase text-fg/70">Check date
+                            <input type="date" value={g.checkDate || ''} aria-label="Check date"
+                              onChange={e => { const v = e.target.value; setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, checkDate: v } : x) })); }}
+                              className="bg-page-bg border border-white/10 rounded-lg px-2 py-1 text-fg text-xs outline-none" />
+                          </label>
+                        </div>
+                      )}
+                      {g.paymentMethod === 'Split' && (
+                        <div className="mb-2 max-w-md">
+                          <SplitPayEditor compact total={g.total} parts={g.payments || newSplit(g.total)}
+                            onChange={parts => setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, payments: parts } : x) }))} />
+                        </div>
+                      )}
                       <div className="space-y-0.5">
                         {g.items.map((it, li) => (
-                          <div key={li} className="flex items-center justify-between text-xs text-fg/60">
+                          <div key={li} className="flex items-center justify-between text-xs text-fg/65">
                             <span className="truncate pr-2">
                               {it.code ? `${it.code} · ` : ''}{it.name}
                               {!it.matched && <span className="ml-1.5 text-[9px] font-black bg-amber-500/20 text-warning border border-amber-500/40 px-1 py-0.5 rounded uppercase align-middle">No product match</span>}
@@ -5636,8 +3525,8 @@ export default function LedgerTab({ ctx }) {
 
           {/* ── REQUISITION SLIP - REJECT REASON ── */}
           {reqSlipRejecting && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !reqSlipBusy && setReqSlipRejecting(null)}>
-              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={() => !reqSlipBusy && setReqSlipRejecting(null)}>
+              <div className="bg-sidebar-bg border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl my-auto" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
                   <h2 className="font-black text-fg text-base">Reject {reqSlipRejecting.slipNumber}</h2>
                   <button onClick={() => !reqSlipBusy && setReqSlipRejecting(null)} className="text-fg/70 hover:text-fg transition"><X size={18} /></button>
@@ -5650,7 +3539,7 @@ export default function LedgerTab({ ctx }) {
                 </div>
                 <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
                   <button onClick={() => setReqSlipRejecting(null)} disabled={reqSlipBusy} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/75 hover:text-fg transition disabled:opacity-40">Cancel</button>
-                  <button onClick={submitRejectReqSlip} disabled={reqSlipBusy || !reqSlipRejectReason.trim()} className="flex items-center gap-2 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
+                  <button onClick={submitRejectReqSlip} disabled={reqSlipBusy || !reqSlipRejectReason.trim()} className="flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white font-bold text-sm px-5 py-2 rounded-xl transition">
                     {reqSlipBusy ? 'Rejecting…' : 'Reject Slip'}
                   </button>
                 </div>
@@ -5687,7 +3576,7 @@ export default function LedgerTab({ ctx }) {
                         <div className="flex justify-between border-t border-white/10 pt-2 mt-1 text-xs">
                           <span className="text-fg/70">Current Balance → After</span>
                           <span className="font-mono tabular-nums">
-                            <span className="text-fg/60">{peso(reqSlipFundBalance)}</span>
+                            <span className="text-fg/65">{peso(reqSlipFundBalance)}</span>
                             <span className="text-fg/65 mx-1">→</span>
                             <span className={reqSlipFundBalance - reqSlipPreview.amount < 0 ? 'text-danger font-bold' : 'text-fg font-bold'}>
                               {peso(reqSlipFundBalance - reqSlipPreview.amount)}
@@ -5726,7 +3615,7 @@ export default function LedgerTab({ ctx }) {
                           <div className="flex justify-between border-t border-white/10 pt-2 mt-1 text-xs">
                             <span className="text-fg/70">Current Balance → After</span>
                             <span className="font-mono tabular-nums">
-                              <span className="text-fg/60">{peso(reqSlipFundBalance)}</span>
+                              <span className="text-fg/65">{peso(reqSlipFundBalance)}</span>
                               <span className="text-fg/65 mx-1">→</span>
                               <span className="text-fg font-bold">{willBe !== null ? peso(willBe) : '-'}</span>
                             </span>
@@ -5775,7 +3664,7 @@ export default function LedgerTab({ ctx }) {
                           <span className="text-fg/70 font-bold text-[10px] ml-2">{new Date(reqSlipPreview.approvedAt).toLocaleDateString()}</span>
                         </p>
                       ) : reqSlipPreview.status === 'Rejected' ? (
-                        <p className="text-red-400/70 font-bold text-sm border-b border-white/20 pb-1.5">Rejected by {reqSlipPreview.rejectedBy}</p>
+                        <p className="text-danger font-bold text-sm border-b border-white/20 pb-1.5">Rejected by {reqSlipPreview.rejectedBy}</p>
                       ) : (
                         <p className="text-fg/65 font-bold text-sm border-b border-white/10 pb-1.5 italic">Pending approval</p>
                       )}
@@ -5785,12 +3674,98 @@ export default function LedgerTab({ ctx }) {
                 {reqSlipPreview.status === 'Pending' && (
                   <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
                     <button onClick={() => { setReqSlipRejecting(reqSlipPreview); setReqSlipRejectReason(''); setReqSlipPreview(null); }} disabled={reqSlipBusy}
-                      className="text-sm font-bold px-4 py-2 rounded-xl text-red-400/70 hover:text-danger transition disabled:opacity-40">Reject</button>
+                      className="text-sm font-bold px-4 py-2 rounded-xl text-danger transition disabled:opacity-40">Reject</button>
                     <button onClick={() => { approveReqSlip(reqSlipPreview); setReqSlipPreview(null); }} disabled={reqSlipBusy}
                       className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-on-brand font-bold text-sm px-5 py-2 rounded-xl transition">Approve</button>
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          <ExportAllTab
+            ledgerSubTab={ledgerSubTab} exportDatasets={exportDatasets} exportPicked={exportPicked} EXPORT_REPORTS={EXPORT_REPORTS} setExportPicked={setExportPicked} apiFetch={apiFetch}
+            can={can} isSuperAdmin={isSuperAdmin} BUSINESS_TYPE={BUSINESS_TYPE} parseImportFile={parseImportFile} fetchSuppliers={fetchSuppliers} fetchBills={fetchBills}
+            fetchExpenses={fetchExpenses} fetchERPData={fetchERPData} downloadFullBackup={downloadFullBackup} backupBusy={backupBusy} restoreFullBackup={restoreFullBackup} backupProgress={backupProgress}
+            exportAllBusy={exportAllBusy} exportAllRange={exportAllRange} setExportAllRange={setExportAllRange} exportProgress={exportProgress} renderProgress={renderProgress} downloadAllExports={downloadAllExports} />
+
+          {ledgerSubTab === 'bookshealth' && (
+            <div className="bg-surface border border-white/10 rounded-2xl p-5 max-w-3xl">
+              <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
+                <div>
+                  <h3 className="text-lg font-black text-fg">Books Health</h3>
+                  <p className="text-fg/65 text-xs mt-0.5 max-w-prose">
+                    Every screen is a subledger - open invoices, unpaid bills, stock, deposits - and each one has an account behind it that should match. A red line means the two disagree.
+                  </p>
+                </div>
+                <button onClick={loadBooksHealth} disabled={bookshealthLoading}
+                  className="bg-brand hover:bg-brand/90 text-on-brand font-bold text-sm px-4 py-2 rounded-lg transition disabled:opacity-50">
+                  {bookshealthLoading ? 'Checking…' : 'Run checks'}
+                </button>
+              </div>
+
+              {bookshealth?.error ? (
+                <p className="text-danger text-sm font-bold mt-4">{bookshealth.error}</p>
+              ) : bookshealth ? (
+                <div className="mt-4">
+                  <div className={`rounded-xl px-4 py-3 mb-4 border ${bookshealth.failing === 0
+                    ? 'bg-green-500/10 border-green-500/25 text-success'
+                    : 'bg-red-500/10 border-red-500/25 text-danger'}`}>
+                    <p className="font-black text-sm">
+                      {bookshealth.failing === 0
+                        ? 'Everything ties out.'
+                        : `${bookshealth.failing} check${bookshealth.failing === 1 ? '' : 's'} need attention.`}
+                    </p>
+                    <p className="text-[11px] text-fg/70 mt-0.5">Checked {new Date(bookshealth.checkedAt).toLocaleString()}</p>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm min-w-[560px]">
+                      <thead>
+                        <tr className="text-[10px] uppercase tracking-wider text-fg/65 border-b border-white/10">
+                          <th className="text-left font-bold py-2">Check</th>
+                          <th className="text-right font-bold py-2">Documents</th>
+                          <th className="text-right font-bold py-2">Ledger</th>
+                          <th className="text-right font-bold py-2">Difference</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(bookshealth.checks || []).map(c => (
+                          <tr key={c.key} className={`border-b border-white/5 ${c.ok ? '' : 'bg-red-500/[0.06]'}`}>
+                            <td className="py-2.5 pr-3">
+                              <span className="flex items-center gap-2">
+                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.ok ? 'bg-success' : 'bg-danger'}`} />
+                                <span className="text-fg font-semibold">{c.label}</span>
+                              </span>
+                              {!c.ok && <span className="block text-[11px] text-fg/65 mt-1 pl-3.5 leading-snug">{c.fix}</span>}
+                              {/* A count check (the stock card) names the items that do not agree. */}
+                              {!c.ok && c.count && (c.detail || []).length > 0 && (
+                                <ul className="mt-1.5 pl-3.5 space-y-0.5 text-[11px] text-fg/80">
+                                  {c.detail.slice(0, 10).map(d => (
+                                    <li key={d.itemName} className="tabular-nums">{d.itemName}: on hand {d.onHand} {d.unit}, stock card {d.cardTotal} {d.unit} (off by {d.difference})</li>
+                                  ))}
+                                  {c.detail.length > 10 && <li>…and {c.detail.length - 10} more</li>}
+                                </ul>
+                              )}
+                            </td>
+                            <td className="py-2.5 text-right font-mono tabular-nums text-fg/85">{c.count ? `${c.documents} items` : money2(c.documents)}</td>
+                            <td className="py-2.5 text-right font-mono tabular-nums text-fg/85">{c.count ? `${c.ledger} agree` : money2(c.ledger)}</td>
+                            <td className={`py-2.5 text-right font-mono tabular-nums font-bold ${c.ok ? 'text-fg/65' : 'text-danger'}`}>{c.count ? `${c.difference} off` : money2(c.difference)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {(bookshealth.vat?.outputVat > 0 || bookshealth.vat?.inputVat > 0) && (
+                    <p className="text-[11px] text-fg/65 mt-3 leading-snug">
+                      VAT held: {money2(bookshealth.vat.outputVat)} collected, {money2(bookshealth.vat.inputVat)} creditable, {money2(bookshealth.vat.netPayable)} owed. See the VAT Return report.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-fg/70 text-sm mt-4">Press Run checks.</p>
+              )}
             </div>
           )}
 
@@ -5801,15 +3776,29 @@ export default function LedgerTab({ ctx }) {
                 <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Verify every doc is stamped with this server's business type</p>
               </div>
 
-              {!tenancyReport ? (
-                <p className="text-fg/70 text-sm italic">Loading report…</p>
+              {tenancyError && !tenancyReport ? (
+                <div className="bg-page-bg border border-danger/40 rounded-xl p-4">
+                  <p className="text-danger text-sm font-bold">{tenancyError}</p>
+                  <button onClick={fetchTenancyReport}
+                    className="mt-3 bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold px-4 py-2 rounded-lg uppercase tracking-widest text-xs transition">
+                    Try Again
+                  </button>
+                </div>
+              ) : !tenancyReport ? (
+                tenancyProgress
+                  ? renderProgress(
+                      { ...tenancyProgress, label: tenancyProgress.current ? `Checked ${tenancyProgress.current}` : 'Starting...' },
+                      'Checking collections...')
+                  : <p className="text-fg/70 text-sm italic">Starting the check...</p>
               ) : (
                 <>
                   <div className="bg-page-bg border border-white/10 rounded-xl p-4">
                     <p className="text-[10px] uppercase tracking-widest text-fg/70 font-bold mb-1">Current Business Type</p>
                     <p className="text-2xl font-black text-brand-text">{tenancyReport.currentBusinessType}</p>
                     <p className={`mt-2 text-[10px] uppercase tracking-widest font-black ${tenancyReport.isClean ? 'text-success' : 'text-warning'}`}>
-                      {tenancyReport.isClean ? '✓ Clean - all docs stamped' : '⚠ Some docs need attention'}
+                      {tenancyReport.isClean
+                        ? `✓ Clean - all docs stamped across ${tenancyReport.scannedCollections} collections`
+                        : `⚠ ${(tenancyReport.flagged || []).length} of ${tenancyReport.scannedCollections} collections need attention`}
                     </p>
                   </div>
                   <div className="overflow-x-auto">
@@ -5822,26 +3811,32 @@ export default function LedgerTab({ ctx }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {tenancyReport.rows.map(r => (
+                        {(tenancyShowAll ? tenancyReport.rows : (tenancyReport.flagged || [])).map(r => (
                           <tr key={r.collection} className="border-b border-white/5">
                             <td className="py-2 text-fg font-bold">{r.collection}</td>
-                            <td className={`py-2 text-right font-mono tabular-nums ${r.missingBusinessType > 0 ? 'text-warning font-black' : 'text-fg/70'}`}>{r.missingBusinessType.toLocaleString()}</td>
-                            <td className={`py-2 text-right font-mono tabular-nums ${r.otherBusinessType > 0 ? 'text-danger font-black' : 'text-fg/70'}`}>{r.otherBusinessType.toLocaleString()}</td>
+                            <td className={`py-2 text-right font-mono tabular-nums ${r.timedOut ? 'text-warning' : r.missingBusinessType > 0 ? 'text-warning font-black' : 'text-fg/70'}`}>{r.timedOut ? 'timed out' : r.missingBusinessType.toLocaleString()}</td>
+                            <td className={`py-2 text-right font-mono tabular-nums ${r.timedOut ? 'text-warning' : r.otherBusinessType > 0 ? 'text-danger font-black' : 'text-fg/70'}`}>{r.timedOut ? '-' : r.otherBusinessType.toLocaleString()}</td>
                           </tr>
                         ))}
+                        {!tenancyShowAll && (tenancyReport.flagged || []).length === 0 && (
+                          <tr><td colSpan={3} className="py-3 text-fg/70 italic">No mis-stamped or unstamped docs in any scanned collection.</td></tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button onClick={fetchTenancyReport} className="bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold px-4 py-2 rounded-lg uppercase tracking-widest text-xs transition">
                       Refresh
+                    </button>
+                    <button onClick={() => setTenancyShowAll(v => !v)} className="bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg font-bold px-4 py-2 rounded-lg uppercase tracking-widest text-xs transition">
+                      {tenancyShowAll ? 'Show Only Issues' : `Show All ${tenancyReport.scannedCollections} Collections`}
                     </button>
                     <button onClick={runTenancyRebackfill} disabled={tenancyBusy}
                       className="bg-brand text-on-brand font-black px-4 py-2 rounded-lg uppercase tracking-widest text-xs hover:bg-brand/90 transition disabled:opacity-50">
                       {tenancyBusy ? 'Running…' : 'Run Re-Backfill'}
                     </button>
                   </div>
-                  <p className="text-[10px] text-fg/70">"Other businessType" docs belong to another tenant on the same database. Re-backfill only stamps docs missing the field - it never overwrites an existing different value.</p>
+                  <p className="text-[10px] text-fg/70">Scans every collection carrying a business type. "Other businessType" means the doc is stamped for the other deployment (fb vs log) - hub partners are separate databases and never write here, so a foreign stamp is a mis-stamp. Re-backfill only stamps docs missing the field - it never overwrites an existing different value.</p>
                 </>
               )}
             </div>

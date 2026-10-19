@@ -106,13 +106,13 @@ function ConfirmDialog({ req, onResolve }) {
 
   return (
     <div
-      className="fixed inset-0 z-[100000] flex items-end sm:items-center justify-center bg-black/85 backdrop-blur-sm p-0 sm:p-4 animate-fade-in"
+      className="fixed inset-0 z-[100000] flex justify-center overflow-y-auto bg-black/85 backdrop-blur-sm p-0 sm:p-4 animate-fade-in"
       onClick={(e) => { if (e.target === e.currentTarget) onResolve(false); }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="ui-confirm-title"
     >
-      <div className="bg-surface border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 animate-scale-in overflow-hidden">
+      <div className="bg-surface border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 animate-scale-in overflow-hidden mt-auto sm:my-auto">
         <div className="px-6 pt-6 pb-4">
           <h2 id="ui-confirm-title" className={`font-black text-lg ${danger ? 'text-danger' : 'text-fg'}`}>
             {req.title || 'Please confirm'}
@@ -131,7 +131,7 @@ function ConfirmDialog({ req, onResolve }) {
         <div className="flex gap-3 px-6 pb-6 pt-2">
           <button
             onClick={() => onResolve(false)}
-            className="flex-1 py-3.5 bg-surface-2 border border-white/10 text-fg/60 font-bold rounded-xl hover:text-fg transition text-sm uppercase tracking-wider min-h-[48px]"
+            className="flex-1 py-3.5 bg-surface-2 border border-white/10 text-fg/65 font-bold rounded-xl hover:text-fg transition text-sm uppercase tracking-wider min-h-[48px]"
           >
             {req.cancelLabel || 'Cancel'}
           </button>

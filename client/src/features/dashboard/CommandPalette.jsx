@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, CornerDownLeft, Command } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
+import { paletteDestinations } from './navRegistry';
 
 // Command palette - jump anywhere without hunting through the sidebar.
 //
@@ -9,43 +10,25 @@ import { useDashboard } from './DashboardContext';
 // the people using this. Both routes open the same panel, and the list is
 // tappable - arrow keys are an accelerator, not a requirement.
 
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
 export default function CommandPalette({ open, onClose }) {
-  const { setActiveTab, setNavMode, setLedgerSubTab, can, isSuperAdmin } = useDashboard();
+  const { setActiveTab, setNavMode, setLedgerSubTab, can, isSuperAdmin, moduleOn, navigate } = useDashboard();
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
   const inputRef = useRef(null);
   const listRef = useRef(null);
 
-  const allow = (perm) => !perm || isSuperAdmin || can?.(perm);
 
-  // Destinations mirror the sidebar, plus the ledger sub-pages that are
-  // otherwise two clicks deep.
-  const commands = useMemo(() => ([
-    { id: 'orders',      label: 'Orders & POS',      hint: 'Take and manage orders', perm: 'orders.view',      mode: 'libellus' },
-    { id: 'inventory',   label: 'Inventory & Stock', hint: 'Stock levels, expiry',   perm: 'inventory.view',   mode: 'libellus' },
-    { id: 'procurement', label: 'Procurement',       hint: 'Suppliers, POs',          perm: 'procurement.view', mode: 'libellus' },
-    { id: 'clients',     label: 'Clients',           hint: 'Balances, credit limits', perm: 'orders.view',      mode: 'libellus' },
-    { id: 'products',    label: BUSINESS_TYPE === 'log' ? 'Catalog Setup' : 'Menu Setup', hint: 'Products, prices', perm: 'products.view', mode: 'libellus' },
-    { id: 'analytics',   label: 'Analytics',         hint: 'Sales dashboard',         perm: 'analytics.view',   mode: 'negotium' },
-    { id: 'reports',     label: 'Reports',           hint: 'Sales summaries',         perm: 'reports.view',     mode: 'negotium', sub: 'salessummary' },
-    { id: 'ledger',      label: 'General Ledger',    hint: 'Journal entries',         perm: 'accounting.view',  mode: 'negotium', sub: 'journal' },
-    { id: 'ledger',      label: 'Profit & Loss',     hint: 'P&L statement',           perm: 'accounting.view',  mode: 'negotium', sub: 'pnl' },
-    { id: 'ledger',      label: 'Balance Sheet',     hint: 'Assets and liabilities',  perm: 'accounting.view',  mode: 'negotium', sub: 'balance' },
-    { id: 'ledger',      label: 'AR & AP',           hint: 'Who owes what',           perm: 'accounting.view',  mode: 'negotium', sub: 'araap' },
-    { id: 'ledger',      label: 'Expenses',          hint: 'Record an expense',       perm: 'accounting.view',  mode: 'negotium', sub: 'expenses' },
-    { id: 'ledger',      label: 'Revolving Funds',   hint: 'Petty cash',              perm: 'accounting.view',  mode: 'negotium', sub: 'revolving' },
-    { id: 'pricing',     label: 'Pricing Control',   hint: 'Prices and margins',      perm: 'products.manage',  mode: 'negotium' },
-    { id: 'history',     label: 'Shifts & Cash',     hint: 'Shift history, X-reading', perm: null, superOnly: true, mode: 'negotium' },
-    { id: 'audit',       label: 'Audit Report',      hint: 'Who changed what',        perm: 'audit.view',       mode: 'negotium' },
-    { id: 'fixedassets', label: 'Fixed Assets',      hint: 'Register, depreciation',  perm: 'accounting.view',  mode: 'negotium' },
-    { id: 'production',  label: 'Production',         hint: 'Bulk recipes, batches',   perm: 'inventory.view',   mode: 'negotium' },
-    { id: 'bankrec',     label: 'Bank Reconciliation', hint: 'Match the statement',    perm: 'accounting.view',  mode: 'negotium' },
-    { id: 'wht',         label: 'Withholding Tax',   hint: 'Held for the BIR',        perm: 'accounting.view',  mode: 'negotium' },
-    { id: 'payroll',     label: 'Payroll',           hint: 'Runs and payslips',       perm: 'accounting.view',  mode: 'negotium' },
-    { id: 'settings',    label: 'Settings',          hint: 'Preferences, appearance', perm: null,               mode: 'negotium' },
-  ].filter(c => (c.superOnly ? isSuperAdmin : allow(c.perm)))), [isSuperAdmin, can]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // Destinations come from navRegistry.js - the same list the sidebar renders.
+  // They used to be two hand-written copies that had drifted: Hub, Quotations
+  // and the Admin Panel were missing from search entirely, the optional
+  // modules showed even when switched off, and Production carried the wrong
+  // nav mode so jumping to it left the sidebar highlighting nothing.
+  const commands = useMemo(
+    () => paletteDestinations({ can, isSuperAdmin, moduleOn, businessType: BUSINESS_TYPE }),
+    [can, isSuperAdmin, moduleOn],
+  );
 
   const results = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -65,10 +48,13 @@ export default function CommandPalette({ open, onClose }) {
 
   const run = (cmd) => {
     if (!cmd) return;
+    onClose();
+    // The Admin Panel lives outside the tabbed shell, so it is a route rather
+    // than a tab - setting activeTab to it would land nowhere.
+    if (cmd.route) { navigate?.(cmd.route); return; }
     if (cmd.mode && setNavMode) setNavMode(cmd.mode);
     if (cmd.sub && setLedgerSubTab) setLedgerSubTab(cmd.sub);
     setActiveTab(cmd.id);
-    onClose();
   };
 
   if (!open) return null;
@@ -95,7 +81,7 @@ export default function CommandPalette({ open, onClose }) {
             onChange={e => setQ(e.target.value)}
             onKeyDown={onKey}
             placeholder="Go to…"
-            className="flex-1 bg-transparent text-fg placeholder-white/25 outline-none text-sm font-bold"
+            className="flex-1 bg-transparent text-fg placeholder-fg/70 outline-none text-sm font-bold"
           />
           <button onClick={onClose} className="text-[10px] font-black uppercase tracking-wider text-fg/65 hover:text-fg transition px-2 py-1 rounded border border-white/10">
             Esc
@@ -107,7 +93,7 @@ export default function CommandPalette({ open, onClose }) {
             <p className="px-4 py-10 text-center text-fg/65 text-sm font-bold">Nothing matches “{q}”.</p>
           ) : results.map((c, i) => (
             <button
-              key={`${c.id}-${c.sub || ''}-${c.label}`}
+              key={c.key}
               data-idx={i}
               onClick={() => run(c)}
               onMouseEnter={() => setSel(i)}
@@ -119,7 +105,7 @@ export default function CommandPalette({ open, onClose }) {
                 <span className={`block text-sm font-bold ${i === sel ? 'text-brand-text' : 'text-fg'}`}>{c.label}</span>
                 {c.hint && <span className="block text-fg/70 text-xs mt-0.5">{c.hint}</span>}
               </span>
-              {i === sel && <CornerDownLeft size={13} className="text-brand-text/85 shrink-0" />}
+              {i === sel && <CornerDownLeft size={13} className="text-brand-text shrink-0" />}
             </button>
           ))}
         </div>

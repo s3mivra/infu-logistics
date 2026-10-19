@@ -5,6 +5,8 @@ import {
 import { useDashboard } from '../dashboard/DashboardContext';
 import * as ui from '../../shared/ui';
 
+import { todayStr } from '../../shared/businessDay.js';
+import { useRefreshTick } from '../../shared/refreshBus';
 // Bank reconciliation - explaining the gap between the ledger and the bank.
 //
 // The screen is a worksheet, not a report: you tick off what the statement
@@ -14,7 +16,7 @@ import * as ui from '../../shared/ui';
 
 const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-');
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayStr();
 const inputCls = 'w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg focus:border-brand/50 focus:outline-none';
 
 function Field({ label, hint, children }) {
@@ -45,7 +47,8 @@ export default function BankReconciliationTab() {
     finally { setLoading(false); }
   }, [apiFetch]);
 
-  useEffect(() => { load(); }, [load]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { load(); }, [load, refreshTick]);
   useEffect(() => {
     (async () => {
       try {
@@ -104,8 +107,8 @@ export default function BankReconciliationTab() {
               {list.map(r => (
                 <tr key={r._id} className="border-b border-white/5 hover:bg-white/[0.02]">
                   <td className="px-3 py-2.5 font-bold text-fg">{r.reference}</td>
-                  <td className="px-3 py-2.5 text-fg/60">{r.accountName}</td>
-                  <td className="px-3 py-2.5 text-fg/60">{shortDate(r.statementDate)}</td>
+                  <td className="px-3 py-2.5 text-fg/65">{r.accountName}</td>
+                  <td className="px-3 py-2.5 text-fg/65">{shortDate(r.statementDate)}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-fg">{peso(r.statementBalance)}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-fg/70">{peso(r.ledgerBalance)}</td>
                   <td className="px-3 py-2.5">
@@ -160,8 +163,8 @@ function StartModal({ accounts, apiFetch, onClose, onDone }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto" onClick={onClose}>
+      <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-lg p-6 my-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-black text-fg text-lg">New bank statement</h2>
           <button onClick={onClose} className="text-fg/70 hover:text-fg transition"><X size={18} /></button>
@@ -219,7 +222,8 @@ function Worksheet({ id, onBack, apiFetch }) {
     } catch { ui.alert('Network error.'); }
   }, [apiFetch, id]);
 
-  useEffect(() => { load(); }, [load]);
+  const refreshTick = useRefreshTick();
+  useEffect(() => { load(); }, [load, refreshTick]);
 
   // The running figures, computed here so every tick updates instantly rather
   // than waiting on a round trip. The server recomputes the same way on save.
@@ -325,7 +329,7 @@ function Worksheet({ id, onBack, apiFetch }) {
         </div>
 
         {!live.reconciles && !closed && (
-          <p className="flex items-start gap-2 text-[11px] text-amber-400/90 mt-3 max-w-2xl">
+          <p className="flex items-start gap-2 text-[11px] text-warning mt-3 max-w-2xl">
             <AlertCircle size={13} className="shrink-0 mt-0.5" />
             <span>
               Still out by {peso(Math.abs(live.difference))}. Tick the items the statement shows. If something
@@ -374,11 +378,11 @@ function Worksheet({ id, onBack, apiFetch }) {
                           return next;
                         })} />
                     </td>
-                    <td className="px-3 py-2 text-fg/60">{shortDate(l.date)}</td>
+                    <td className="px-3 py-2 text-fg/65">{shortDate(l.date)}</td>
                     <td className="px-3 py-2 text-fg/80">{l.reference}</td>
                     <td className="px-3 py-2 text-fg/75 truncate max-w-[18rem]">{l.description}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-green-400/80">{l.debit ? peso(l.debit) : ''}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-red-400/70">{l.credit ? peso(l.credit) : ''}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-success">{l.debit ? peso(l.debit) : ''}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-danger">{l.credit ? peso(l.credit) : ''}</td>
                   </tr>
                 );
               })}
@@ -393,7 +397,7 @@ function Worksheet({ id, onBack, apiFetch }) {
 function Row({ label, value, hint, bold, tone }) {
   return (
     <div className="flex items-baseline justify-between gap-4">
-      <span className={`${bold ? 'font-bold text-fg' : 'text-fg/60'}`}>
+      <span className={`${bold ? 'font-bold text-fg' : 'text-fg/65'}`}>
         {label}
         {hint && <span className="block text-[10px] text-fg/65">{hint}</span>}
       </span>

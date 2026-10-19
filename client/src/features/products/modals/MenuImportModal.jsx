@@ -47,7 +47,7 @@ export default function MenuImportModal() {
               {menuImportRows.map((r, i) => (
                 <tr key={i} className="border-b border-white/5 align-top">
                   <td className="px-4 py-2.5 text-fg font-bold whitespace-nowrap">{r.name}</td>
-                  <td className="px-2 py-2.5 text-fg/60">{r.category}</td>
+                  <td className="px-2 py-2.5 text-fg/65">{r.category}</td>
                   <td className="px-2 py-2.5 text-right text-fg font-bold tabular-nums whitespace-nowrap">{peso(r.srp)}</td>
                   <td className="px-4 py-2.5">
                     {r.ingredients.length === 0 && <span className="text-fg/65 italic">No ingredients listed</span>}
@@ -67,7 +67,7 @@ export default function MenuImportModal() {
         </div>
 
         <div className="px-5 py-4 border-t border-white/10 flex items-center gap-3 shrink-0">
-          <button onClick={() => setMenuImportModal(false)} disabled={menuImportSubmitting} className="flex-1 sm:flex-initial px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-fg/60 hover:text-fg font-bold text-xs uppercase tracking-wider transition min-h-[44px] disabled:opacity-40 disabled:pointer-events-none">
+          <button onClick={() => setMenuImportModal(false)} disabled={menuImportSubmitting} className="flex-1 sm:flex-initial px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg font-bold text-xs uppercase tracking-wider transition min-h-[44px] disabled:opacity-40 disabled:pointer-events-none">
             Cancel
           </button>
           <button onClick={submitMenuImport} disabled={menuImportSubmitting || menuImportRows.length === 0}

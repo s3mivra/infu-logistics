@@ -1,4 +1,5 @@
-﻿// Canonical text normalization for user-entered fields.
+import { roundMoney } from './money.js';
+// Canonical text normalization for user-entered fields.
 //
 // WHY: without this, "Kasa Lokal", "KASA LOKAL" and "kasa lokal" are three
 // different suppliers. Normalizing at the Zod boundary means the DB only ever
@@ -56,6 +57,10 @@ export const title = (s) => {
   return words.map((w, i) => titleWord(w, i === 0, i === words.length - 1)).join(' ');
 };
 
+// Names of parties - clients, suppliers, customers, contact people - are kept
+// in ALL CAPS, the way they are written on receipts and the books.
+export const partyName = (s) => upper(s);
+
 // Free text (notes, reasons, addresses) - whitespace-tidied only. Never
 // re-cased: "DO NOT STACK" and a typed paragraph both mean what they say.
 export const freeText = (s) => String(s ?? '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
@@ -81,7 +86,31 @@ export const zUpper = (z, max = 60)  => z.preprocess(upper, z.string().min(1).ma
 export const zLower = (z, max = 120) => z.preprocess(lower, z.string().min(1).max(max));
 export const zText  = (z, max = 2000) => z.preprocess(freeText, z.string().max(max));
 
+// A selling price: never negative, never absurd, and stored to the centavo.
+// ₱12.345 used to be stored as typed; ₱1e308 was refused only by accident
+// further down. Unit COSTS (a gram of beans at ₱0.0125) need more precision
+// and do not use this.
+export const MONEY_MAX = 999_999_999.99;
+// The one money rounding rule - see lib/money.js.
+export const roundCentavo = (n) => roundMoney(n);
+export const zMoneyStrict = (z) => z.number().finite().min(0).max(MONEY_MAX).transform(roundCentavo);
 // Money that tolerates "1,500" from the UI but still rejects junk and negatives.
-export const zMoneyLoose = (z) => z.preprocess(toNumber, z.number().finite().min(0));
+export const zMoneyLoose = (z) => z.preprocess(toNumber, z.number().finite().min(0).max(MONEY_MAX).transform(roundCentavo));
 // For fields where a negative genuinely means something (adjustments, variance).
 export const zSignedLoose = (z) => z.preprocess(toNumber, z.number().finite());
+
+// A positive amount from a request body, to the centavo, or NaN when it is not
+// one: junk, zero, negative, Infinity, or above MONEY_MAX. For routes that read
+// req.body directly instead of through a Zod schema - parseFloat('1e400') is
+// Infinity, and `Infinity > 0` passed every old check.
+export const positiveMoney = (v) => {
+  const n = toNumber(v);
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 && n <= MONEY_MAX ? roundCentavo(n) : NaN;
+};
+// A positive quantity (base units can be fractional grams): finite, > 0, and
+// below a billion units, which no real count reaches.
+export const QTY_MAX = 1_000_000_000;
+export const positiveQty = (v) => {
+  const n = toNumber(v);
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 && n <= QTY_MAX ? n : NaN;
+};

@@ -1,7 +1,15 @@
 ﻿// users routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { newSecret, verifyCode, otpauthUrl, newBackupCodes, hashBackupCode } from '../lib/totp.js';
 import { captureError } from '../lib/errorLog.js';
+import { signApproval } from '../lib/approval.js';
+import { hasPermission } from '../lib/authz.js';
+
+// Pay and government numbers on a staff record. Every till lists staff by
+// name, but only someone who manages staff sees what they earn or their SSS /
+// TIN.
+const PRIVATE_STAFF_FIELDS = ['dailyRate', 'commissionRate', 'sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin'];
 
 export default function registerUsers(ctx) {
   const {
@@ -82,6 +90,7 @@ export default function registerUsers(ctx) {
     modifierGroupSchema,
     mkSeqRef,
     loginLimiter,
+    pinLimiter,
     orderLimiter,
     generalApiLimiter,
     runStartupTasks,
@@ -175,6 +184,8 @@ export default function registerUsers(ctx) {
     requireSuperOrAdmin,
     verifyOrderAuth,
     resolvePermissions,
+    requireUserAdmin,
+    guardStaffEscalation,
     PERMISSIONS,
     PERMISSION_KEYS,
     refreshCustomRolePerms,
@@ -188,7 +199,7 @@ app.get('/api/permissions', verifyToken, requireStaff, async (req, res) => {
 // Effective permissions for the caller - the client gates its UI on this.
 app.get('/api/users/me', verifyToken, requireStaff, async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('-password').lean();
+    const user = await User.findById(req.user._id).select('-password -pinHash -pinFailedCount -pinLockedUntil').lean();
     if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
     res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user) } });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
@@ -208,7 +219,8 @@ app.post('/api/roles', verifyToken, requireSuperAdmin, validate(roleSchema), asy
     const permissions = Array.isArray(req.body.permissions)
       ? req.body.permissions.filter((k) => PERMISSION_KEYS.has(k)) : [];
     const newRole = await Role.create({ name: req.body.name, permissions });
-    await refreshCustomRolePerms?.(); // new grants take effect on next login/refresh
+    await refreshCustomRolePerms?.();
+    emitToAll('permissionsChanged', { role: newRole.name });
     res.json({ success: true, role: newRole });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -221,9 +233,22 @@ app.patch('/api/roles/:id', verifyToken, requireSuperAdmin, async (req, res) => 
     const updates = {};
     if (req.body.name !== undefined) updates.name = String(req.body.name).trim();
     if (Array.isArray(req.body.permissions)) updates.permissions = req.body.permissions.filter((k) => PERMISSION_KEYS.has(k));
+    const before = await Role.findById(req.params.id).lean();
     const role = await Role.findByIdAndUpdate(req.params.id, updates, { returnDocument: 'after' });
     if (!role) return res.status(404).json({ success: false, error: 'Role not found.' });
     await refreshCustomRolePerms?.();
+    // Everyone signed in re-reads their permissions at once - an owner who
+    // grants a head barista voids expects it to work now, not at the next
+    // session refresh up to 15 minutes later. (Changing one PERSON's role or
+    // permissions already ends their sessions - see PATCH /api/users/:id.)
+    emitToAll('permissionsChanged', { role: role.name });
+    // Everyone holding this role now has different permissions than their
+    // token says - end those tokens so they pick the change up at once.
+    if (updates.permissions || updates.name) {
+      const names = [before?.name, role.name].filter(Boolean).map(n => new RegExp(`^${escapeRegex(n)}$`, 'i'));
+      const holders = await User.find({ role: { $in: names } }, { _id: 1 }).lean();
+      for (const h of holders) await revokeUserSessions(h._id);
+    }
     res.json({ success: true, role });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -234,7 +259,152 @@ app.delete('/api/roles/:id', verifyToken, requireSuperAdmin, async (req, res) =>
   try {
     await Role.findByIdAndDelete(req.params.id);
     await refreshCustomRolePerms?.();
+    emitToAll('permissionsChanged', {});
     res.json({ success: true });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+
+// ── WHO IS AT THE SCREEN ─────────────────────────────────────────────────────
+// One tablet behind a bar, several people using it. Signing out and back in
+// with a password between drinks is friction nobody absorbs, so in practice
+// everything gets rung on whoever is still signed in - and Cashier Variance,
+// Commissions and the sale's own `cashier` all quietly follow the wrong person.
+// Nothing warns you, which is what makes it worse than an obvious bug.
+//
+// So identity works in two tiers, the way a shared POS terminal normally does:
+// the DEVICE is signed in once with a real password, and a short PIN says who
+// is ringing right now. The PIN only ever identifies; what that person may DO
+// still comes from their role, exactly as before. Switching issues a genuine
+// session for them, so every route downstream sees the right `req.user` with no
+// special handling anywhere.
+const PIN_RE = /^\d{4,6}$/;
+const PIN_MAX_ATTEMPTS = 5;
+const PIN_LOCK_MINUTES = 5;
+
+// Who can be switched to: staff with a PIN set. Names only - enough to show a
+// row to tap, and nothing that would help someone guess a code.
+app.get('/api/users/operators', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const users = await User.find({ pinHash: { $ne: '' } }, { name: 1, role: 1, userCode: 1 })
+      .sort({ name: 1 }).lean();
+    res.json({ success: true, operators: users.map(u => ({ _id: u._id, name: u.name, role: u.role, userCode: u.userCode })) });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// Hand the terminal to someone else.
+//
+// Requires an existing session: the device has to have been signed in properly
+// first. A PIN alone can never open a terminal from cold - it is the second
+// tier, not a replacement for the password.
+app.post('/api/users/switch', pinLimiter, verifyToken, requireStaff, async (req, res) => {
+  try {
+    const pin = String(req.body?.pin || '').trim();
+    const name = String(req.body?.name || '').trim();
+    if (!PIN_RE.test(pin)) return res.status(400).json({ success: false, error: 'Enter your 4 to 6 digit PIN.' });
+
+    // Named or not, the PIN is checked against a single account: PINs are
+    // unique (enforced when one is set), so a bare PIN identifies exactly one
+    // person, and tapping a name first simply narrows it sooner.
+    const candidates = name
+      ? await User.find({ name })
+      : await User.find({ pinHash: { $ne: '' } });
+
+    let matched = null;
+    for (const u of candidates) {
+      if (!u.pinHash) continue;
+      if (u.pinLockedUntil && u.pinLockedUntil > new Date()) continue;
+      if (await bcrypt.compare(pin, u.pinHash)) { matched = u; break; }
+    }
+
+    if (!matched) {
+      // A wrong PIN counts against the named account when one was given. With
+      // no name there is nobody to count it against, so the only defence is the
+      // rate limiter on the route itself.
+      if (name && candidates[0]?.pinHash) {
+        const u = candidates[0];
+        u.pinFailedCount = (u.pinFailedCount || 0) + 1;
+        if (u.pinFailedCount >= PIN_MAX_ATTEMPTS) {
+          u.pinLockedUntil = new Date(Date.now() + PIN_LOCK_MINUTES * 60000);
+          u.pinFailedCount = 0;
+        }
+        await u.save();
+        if (u.pinLockedUntil && u.pinLockedUntil > new Date()) {
+          return res.status(429).json({ success: false, error: `Too many wrong PINs. Try again in ${PIN_LOCK_MINUTES} minutes, or sign in with a password.` });
+        }
+      }
+      // 403, not 401: the person at the till is still signed in - only the PIN
+      // was wrong. The app treats any 401 as an expired session and signs the
+      // terminal out, so a single mistyped PIN used to lock out whoever was
+      // already working.
+      return res.status(403).json({ success: false, error: 'That PIN was not recognised.' });
+    }
+
+    // A PIN is a few digits typed at a shared till. An account that asked for
+    // two-step sign-in is not opened by one - or the second step would be worth
+    // nothing to anyone who has seen the PIN typed.
+    if (matched.totpEnabled) {
+      return res.status(403).json({ success: false, error: `${matched.name} uses two-step sign-in. Sign in with the password instead.` });
+    }
+    matched.pinFailedCount = 0;
+    matched.pinLockedUntil = null;
+    await matched.save();
+
+    const token = await issueSession(res, matched, { userAgent: req.headers['user-agent'] });
+    await logAudit(req, { action: 'switch-operator', entity: 'User', entityId: matched._id, after: { to: matched.name, from: req.user?.name || '' } });
+    res.json({
+      success: true, token,
+      user: { _id: matched._id, name: matched.name, userCode: matched.userCode, role: matched.role, permissions: resolvePermissions(matched) },
+    });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// A manager approving something the person at the screen may not do: a void, a
+// refund, a large discount. Without this the only way through is for the
+// manager to sign in fully at the counter, which is how a manager password ends
+// up known to everyone on the floor. Approving does NOT switch the terminal -
+// the barista stays signed in, and the approval is recorded against the manager.
+app.post('/api/users/authorize', pinLimiter, verifyToken, requireStaff, async (req, res) => {
+  try {
+    const pin = String(req.body?.pin || '').trim();
+    const permission = String(req.body?.permission || '').trim();
+    if (!PIN_RE.test(pin)) return res.status(400).json({ success: false, error: 'Enter the manager PIN.' });
+
+    const users = await User.find({ pinHash: { $ne: '' } });
+    let approver = null;
+    for (const u of users) {
+      if (u.pinLockedUntil && u.pinLockedUntil > new Date()) continue;
+      if (await bcrypt.compare(pin, u.pinHash)) { approver = u; break; }
+    }
+    // 403 for the same reason as the switch above: a wrong manager PIN must not
+    // sign out the cashier who asked for approval.
+    if (!approver) return res.status(403).json({ success: false, error: 'That PIN was not recognised.' });
+
+    // The PIN proves who they are; the role decides whether they may approve.
+    const allowed = approver.role === 'superadmin'
+      || !permission
+      || resolvePermissions(approver).includes(permission);
+    if (!allowed) {
+      return res.status(403).json({ success: false, error: `${approver.name} is not allowed to approve that.` });
+    }
+
+    // The record being approved, when there is one (an order id). The signed
+    // approval is bound to it, so it cannot be spent on a different record.
+    const target = String(req.body?.target || '').trim().slice(0, 64);
+    await logAudit(req, { action: 'authorize', entity: 'User', entityId: approver._id, after: { approver: approver.name, permission, target, requestedBy: req.user?.name || '' } });
+    res.json({
+      success: true,
+      approver: { _id: approver._id, name: approver.name, role: approver.role },
+      // What the action checks - see lib/approval.js. Only issued for a named
+      // permission: a blanket "a manager said yes" approves nothing.
+      ...(permission ? { approval: signApproval({ approver, permission, requestedBy: req.user?._id, target }) } : {}),
+    });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -244,13 +414,47 @@ app.post('/api/users/login', loginLimiter, validate(loginSchema), async (req, re
   try {
     const { name, password } = req.body;
     if (!name || !password) return res.status(400).json({ success: false, message: 'Name and password are required.' });
-    const user = await User.findOne({ name });
-    if (!user) return res.status(401).json({ success: false, message: 'Invalid name or password' });
+    // Every sign-in, and every failed one, goes to the audit trail: who, when,
+    // from where. It is how an owner sees an account being tried at 3 a.m., or
+    // a sign-in from a device nobody recognises. Never the password, typed or
+    // real. A failure to write it never blocks the sign-in itself.
+    const noteSignIn = (ok, who) => AuditLog.create({
+      userId: String(who || name || '').slice(0, 80) || '(blank)',
+      action: ok ? 'SIGN_IN' : 'SIGN_IN_FAILED',
+      targetReference: String(req.ip || '').slice(0, 60) || 'unknown',
+      details: { device: String(req.headers['user-agent'] || '').slice(0, 200) },
+    }).catch(() => {});
+    const user = await User.findOne({ name }).select('+totpSecret +totpBackupCodes');
+    if (!user) { await noteSignIn(false); return res.status(401).json({ success: false, message: 'Invalid name or password' }); }
     const isMatch = await bcrypt.compare(password, user.password);
+    if (isMatch && user.totpEnabled && user.totpSecret) {
+      // Two-step sign-in: the password was right, and that is only half of it.
+      // No session exists until the code is right too. `needsCode` is only
+      // ever said AFTER a correct password, so it gives nothing away to
+      // someone guessing names.
+      const code = String(req.body.code || '').trim();
+      // Answered 200, not 401: asking for the second step is not a failed
+      // attempt, and the sign-in limiter counts every 4xx against the whole
+      // shop's shared address. A WRONG code below is still a 401, and counted.
+      if (!code) return res.json({ success: false, needsCode: true, message: 'Enter the 6-digit code from your authenticator app.' });
+      let ok = verifyCode(user.totpSecret, code);
+      if (!ok) {
+        // A backup code, for a lost phone: good once, then gone.
+        const hash = hashBackupCode(code);
+        if ((user.totpBackupCodes || []).includes(hash)) {
+          const used = await User.updateOne({ _id: user._id, totpBackupCodes: hash }, { $pull: { totpBackupCodes: hash } });
+          ok = used.modifiedCount === 1;
+          if (ok) await logAudit(req, { action: 'two-step-backup-code-used', entity: 'User', entityId: user._id, after: { left: user.totpBackupCodes.length - 1 } }).catch(() => {});
+        }
+      }
+      if (!ok) { await noteSignIn(false, user.name); return res.status(401).json({ success: false, needsCode: true, message: 'That code is not right. Check the app and try the newest code.' }); }
+    }
     if (isMatch) {
       const token = await issueSession(res, user, { userAgent: req.headers['user-agent'] });
+      await noteSignIn(true, user.name);
       res.json({ success: true, token, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user) } });
     } else {
+      await noteSignIn(false, user.name);
       res.status(401).json({ success: false, message: 'Invalid name or password' });
     }
   } catch (err) {
@@ -309,15 +513,32 @@ app.post('/api/auth/logout', requireTrustedOrigin, async (req, res) => {
 
 app.get('/api/users', verifyToken, requireStaff, async (req, res) => {
   try {
-    const users = await User.find().select('-password').sort({ userCode: 1 });
-    res.json({ success: true, users });
+    // The PIN hash never leaves the server. A four digit code behind a hash is
+    // a few seconds of offline guessing, so shipping it to every till would
+    // hand over every operator identity in the shop. The screen only needs to
+    // know whether one is set.
+    const users = await User.find().select('-password -pinHash -pinFailedCount -pinLockedUntil').sort({ userCode: 1 }).lean();
+    const withPin = new Set(
+      (await User.find({ pinHash: { $ne: '' } }, { _id: 1 }).lean()).map(u => String(u._id)),
+    );
+    const seesPrivate = hasPermission(req.user, 'users.manage');
+    res.json({
+      success: true,
+      users: users.map((u) => {
+        const row = { ...u, hasPin: withPin.has(String(u._id)) };
+        if (!seesPrivate) for (const k of PRIVATE_STAFF_FIELDS) delete row[k];
+        return row;
+      }),
+    });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
-app.post('/api/users', verifyToken, requireSuperAdmin, validate(userCreateSchema), async (req, res) => {
+app.post('/api/users', verifyToken, requireUserAdmin, validate(userCreateSchema), async (req, res) => {
   try {
+    const denied = guardStaffEscalation(req.user, { role: req.body.role, permissions: req.body.permissions });
+    if (denied) return res.status(403).json({ success: false, error: denied });
     const existing = await User.findOne({ name: { $regex: new RegExp(`^${escapeRegex(req.body.name.trim())}$`, 'i') } });
     if (existing) return res.status(400).json({ success: false, error: 'User already exists' });
     
@@ -338,8 +559,12 @@ app.post('/api/users', verifyToken, requireSuperAdmin, validate(userCreateSchema
   }
 });
 
-app.put('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/users/:id', verifyToken, requireUserAdmin, async (req, res) => {
   try {
+    const target = await User.findById(req.params.id).select('role permissions').lean();
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+    const denied = guardStaffEscalation(req.user, { targetUser: target });
+    if (denied) return res.status(403).json({ success: false, error: denied });
     const updateData = { name: req.body.name };
 
     // Only hash and update the password if they actually typed a new one
@@ -347,7 +572,7 @@ app.put('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
       updateData.password = await bcrypt.hash(req.body.password, BCRYPT_ROUNDS);
     }
 
-    const updated = await User.findByIdAndUpdate(req.params.id, updateData, { returnDocument: 'after' }).select('-password');
+    const updated = await User.findByIdAndUpdate(req.params.id, updateData, { returnDocument: 'after' }).select('-password -pinHash -pinFailedCount -pinLockedUntil');
     if (updateData.password) await revokeUserSessions(req.params.id); // force re-login after password change
     res.json({ success: true, user: updated });
   } catch (err) {
@@ -355,10 +580,52 @@ app.put('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   }
 });
 
-app.patch('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.patch('/api/users/:id', verifyToken, requireUserAdmin, async (req, res) => {
   try {
     const { name, password, role, permissions, commissionRate } = req.body;
+    const target = await User.findById(req.params.id).select('role permissions').lean();
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+    const denied = guardStaffEscalation(req.user, { targetUser: target, role, permissions });
+    if (denied) return res.status(403).json({ success: false, error: denied });
     const updates = {};
+    // The statutory account numbers. Stored as typed - the agencies' formats
+    // differ and change, and a validator that guesses wrong would block a
+    // legitimate number rather than catch a wrong one.
+    for (const key of ['sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin', 'employeeNumber']) {
+      if (req.body[key] !== undefined) updates[key] = String(req.body[key] || '').trim().slice(0, 40);
+    }
+    if (req.body.dailyRate !== undefined) {
+      const rate = Number(req.body.dailyRate);
+      if (!Number.isFinite(rate) || rate < 0 || rate > 1_000_000) return res.status(400).json({ success: false, error: 'Daily rate must be a positive amount.' });
+      updates.dailyRate = Math.round(rate * 100) / 100;
+    }
+
+    // The terminal PIN. Empty clears it, which takes that person out of the
+    // switch list entirely.
+    if (req.body.pin !== undefined) {
+      const pin = String(req.body.pin || '').trim();
+      if (pin === '') {
+        updates.pinHash = '';
+        updates.pinFailedCount = 0;
+        updates.pinLockedUntil = null;
+      } else {
+        if (!/^\d{4,6}$/.test(pin)) {
+          return res.status(400).json({ success: false, error: 'A PIN is 4 to 6 digits.' });
+        }
+        // Unique, because a bare PIN has to identify exactly one person. Two
+        // people sharing 1234 would mean sales landing on whichever record was
+        // read first, which is the very problem this exists to solve.
+        const others = await User.find({ _id: { $ne: req.params.id }, pinHash: { $ne: '' } }, { pinHash: 1, name: 1 });
+        for (const o of others) {
+          if (await bcrypt.compare(pin, o.pinHash)) {
+            return res.status(409).json({ success: false, error: `That PIN is already used by ${o.name}. Pick another.` });
+          }
+        }
+        updates.pinHash = await bcrypt.hash(pin, BCRYPT_ROUNDS);
+        updates.pinFailedCount = 0;
+        updates.pinLockedUntil = null;
+      }
+    }
     if (name) updates.name = name.trim();
     if (role) updates.role = role;
     if (Array.isArray(permissions)) updates.permissions = permissions.filter((k) => PERMISSION_KEYS.has(k));
@@ -375,14 +642,19 @@ app.patch('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => 
     // Any privilege change (password/role/permissions) revokes sessions → re-login
     // so the new permission set is minted into a fresh token.
     if (updates.password || updates.role || updates.permissions) await revokeUserSessions(req.params.id);
-    res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user), commissionRate: user.commissionRate } });
+    res.json({ success: true, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user), commissionRate: user.commissionRate, dailyRate: user.dailyRate || 0, sssNumber: user.sssNumber, philhealthNumber: user.philhealthNumber, pagibigNumber: user.pagibigNumber, tin: user.tin, employeeNumber: user.employeeNumber, hasPin: !!user.pinHash } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
-app.delete('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/users/:id', verifyToken, requireUserAdmin, async (req, res) => {
   try {
+    // Delete stays idempotent (a missing id is not an error, as before); the
+    // escalation guard only has something to check when the account exists.
+    const target = await User.findById(req.params.id).select('role permissions').lean();
+    const denied = target ? guardStaffEscalation(req.user, { targetUser: target }) : null;
+    if (denied) return res.status(403).json({ success: false, error: denied });
     await User.findByIdAndDelete(req.params.id);
     await revokeUserSessions(req.params.id); // kill any active sessions for the deleted account
     res.json({ success: true });
@@ -393,6 +665,83 @@ app.delete('/api/users/:id', verifyToken, requireSuperAdmin, async (req, res) =>
 
 // Staff self-service password change (any authenticated user, no superadmin required)
 // Requires current password for verification - prevents session hijacking.
+// ── TWO-STEP SIGN-IN ─────────────────────────────────────────────────────────
+// A person turns it on for their own account: scan a QR code into an
+// authenticator app, type the code it shows to prove it worked, and keep the
+// backup codes. From then on signing in takes the password AND the app's code.
+//
+// Getting back in without the phone: a backup code (each works once), or the
+// owner switching it off for them (reset, below). The owner's own way back is
+// their backup codes - which is why turning it on shows them and says to keep
+// them somewhere other than the phone.
+const twoStepIssuer = () => process.env.BUSINESS_NAME || process.env.VITE_BUSINESS_NAME || 'Semivra';
+
+app.get('/api/users/me/two-step', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const me = await User.findById(req.user._id).select('+totpBackupCodes').lean();
+    if (!me) return res.status(404).json({ success: false, error: 'User not found.' });
+    res.json({ success: true, enabled: !!me.totpEnabled, backupCodesLeft: me.totpEnabled ? (me.totpBackupCodes || []).length : 0 });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// Step 1: a new secret, shown as a QR code. Nothing changes about signing in
+// until step 2 proves the app really has it.
+app.post('/api/users/me/two-step/setup', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const me = await User.findById(req.user._id);
+    if (!me) return res.status(404).json({ success: false, error: 'User not found.' });
+    if (me.totpEnabled) return res.status(409).json({ success: false, error: 'Two-step sign-in is already on. Turn it off first to set it up again.' });
+    const secret = newSecret();
+    await User.updateOne({ _id: me._id }, { $set: { totpPending: secret } });
+    res.json({ success: true, secret, otpauthUrl: otpauthUrl({ secret, account: me.name, issuer: twoStepIssuer() }) });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// Step 2: the code the app shows. Right, and it is on; the backup codes are
+// returned here, once, and only their hashes are kept.
+app.post('/api/users/me/two-step/enable', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const me = await User.findById(req.user._id).select('+totpPending');
+    if (!me) return res.status(404).json({ success: false, error: 'User not found.' });
+    if (me.totpEnabled) return res.status(409).json({ success: false, error: 'Two-step sign-in is already on.' });
+    if (!me.totpPending) return res.status(400).json({ success: false, error: 'Start the setup again.' });
+    if (!verifyCode(me.totpPending, req.body?.code)) return res.status(400).json({ success: false, error: 'That code is not right. Check the app shows this account and try the newest code.' });
+    const codes = newBackupCodes();
+    await User.updateOne({ _id: me._id }, { $set: { totpEnabled: true, totpSecret: me.totpPending, totpPending: '', totpBackupCodes: codes.map(hashBackupCode) } });
+    await logAudit(req, { action: 'two-step-enabled', entity: 'User', entityId: me._id, after: { name: me.name } });
+    res.json({ success: true, backupCodes: codes });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// Turning it off takes the password again: a till left signed in must not be
+// enough to remove the second step from someone's account.
+app.post('/api/users/me/two-step/disable', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const me = await User.findById(req.user._id);
+    if (!me) return res.status(404).json({ success: false, error: 'User not found.' });
+    if (!req.body?.password || !(await bcrypt.compare(String(req.body.password), me.password))) return res.status(401).json({ success: false, error: 'Your password is incorrect.' });
+    await User.updateOne({ _id: me._id }, { $set: { totpEnabled: false, totpSecret: '', totpPending: '', totpBackupCodes: [] } });
+    await logAudit(req, { action: 'two-step-disabled', entity: 'User', entityId: me._id, after: { name: me.name, by: 'self' } });
+    res.json({ success: true });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// The way back for someone who lost their phone and their backup codes: the
+// owner switches it off for them, proving who they are with their own
+// password. Owner only - it removes a lock from somebody else's account.
+app.post('/api/users/:id/two-step/reset', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(String(req.params.id))) return res.status(404).json({ success: false, error: 'User not found.' });
+    const me = await User.findById(req.user._id);
+    if (!me || !req.body?.confirmPassword || !(await bcrypt.compare(String(req.body.confirmPassword), me.password))) return res.status(401).json({ success: false, error: 'Your password is incorrect.' });
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
+    await User.updateOne({ _id: target._id }, { $set: { totpEnabled: false, totpSecret: '', totpPending: '', totpBackupCodes: [] } });
+    await logAudit(req, { action: 'two-step-disabled', entity: 'User', entityId: target._id, after: { name: target.name, by: me.name } });
+    res.json({ success: true, name: target.name });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 app.patch('/api/users/me/password', verifyToken, requireStaff, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
@@ -413,7 +762,10 @@ app.patch('/api/users/me/password', verifyToken, requireStaff, async (req, res) 
     // Invalidate all existing sessions (other devices), then re-issue one for the
     // current device so the user who just changed their password stays logged in here.
     await revokeUserSessions(user._id);
-    const token = await issueSession(res, user, { userAgent: req.headers['user-agent'] });
+    // Re-read: revoking bumped tokenVersion, and a token minted from the copy
+    // loaded above would carry the old version and be refused immediately.
+    const fresh = await User.findById(user._id);
+    const token = await issueSession(res, fresh, { userAgent: req.headers['user-agent'] });
 
     await AuditLog.create({
       userId: user.name,

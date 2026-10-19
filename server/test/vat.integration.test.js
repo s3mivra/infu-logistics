@@ -14,9 +14,15 @@ let ctx, app, staffTok, superTok, vatProd, exemptProd;
 const setSetting = (key, value) =>
   request(app).patch(`/api/settings/${key}`).set('Authorization', `Bearer ${superTok}`).send({ value });
 
-const placeOrder = (items) =>
-  request(app).post('/api/orders').set('Authorization', `Bearer ${staffTok}`)
+// The server prices lines from the product record, not from the body, so
+// each product is set to the price the line asks for before ordering.
+const placeOrder = async (items) => {
+  for (const it of items) {
+    await mongoose.model('Product').updateOne({ _id: it.productId }, { $set: { basePrice: it.price } });
+  }
+  return request(app).post('/api/orders').set('Authorization', `Bearer ${staffTok}`)
     .send({ items, table: 'Takeout', paymentMethod: 'Cash' });
+};
 
 const line = (p, price, qty = 1) => ({ productId: String(p._id), name: p.name, price, quantity: qty });
 
@@ -160,14 +166,31 @@ describe('switching VAT on restamps orders already open', () => {
 });
 
 describe('percentage tax is mutually exclusive with VAT', () => {
-  it('reports itself inapplicable while VAT is on', async () => {
+  it('reports itself inapplicable while VAT is on and the range holds no non-VAT sale', async () => {
     await setSetting('vatEnabled', true);
     const res = await request(app)
-      .get('/api/reports/percentage-tax?start=2020-01-01&end=2030-01-01')
+      .get('/api/reports/percentage-tax?start=2020-01-01&end=2020-01-31')
       .set('Authorization', `Bearer ${superTok}`);
     expect(res.status).toBe(200);
     expect(res.body.notApplicable).toBe(true);
     expect(res.body.taxDue).toBe(0);
+  });
+
+  it('still taxes sales made before VAT registration, and never a VAT sale', async () => {
+    await setSetting('vatEnabled', true);
+    // Earlier in this file a sale was completed while VAT was off (vatRate 0);
+    // it owes the 3% even though VAT is on today.
+    const Order = mongoose.model('Order');
+    const nonVat = await Order.find({ status: 'Completed', vatRate: { $in: [0, null] }, isComplimentary: { $ne: true } }).lean();
+    expect(nonVat.length).toBeGreaterThan(0);
+    const vatSale = await Order.create({ orderNumber: 'VAT-ONLY-1', businessType: nonVat[0].businessType, status: 'Completed', total: 5000, subtotal: 5000, vatRate: 0.12, vatAmount: 535.71, items: [] });
+    const res = await request(app)
+      .get('/api/reports/percentage-tax?start=2020-01-01&end=2030-01-01')
+      .set('Authorization', `Bearer ${superTok}`);
+    expect(res.body.notApplicable).toBeUndefined();
+    const expected = nonVat.reduce((s, o) => s + (o.total || 0) - (o.refundedAmount || 0), 0);
+    expect(res.body.netCollected).toBeCloseTo(expected, 2);
+    await Order.deleteOne({ _id: vatSale._id });
   });
 
   it('computes normally once VAT is off again', async () => {

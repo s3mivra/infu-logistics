@@ -2,8 +2,15 @@
 // Models/helpers/middleware live in server.js and arrive via ctx.
 // See the BillSchema comment in server.js for the source:'PO' vs 'Manual'
 // distinction that drives when the A/P journal entry actually posts.
+import { sheetDay, SHEET_DATE_HELP } from '../lib/sheetDate.js';
+import { findLinkablePo, linkImportedBill, syncLinkedPo } from '../lib/billPoLink.js';
 import { captureError } from '../lib/errorLog.js';
+import { INPUT_VAT } from '../lib/vatPosting.js';
+import { loadVatConfig } from '../lib/vatSettings.js';
 
+import { atomic } from '../lib/atomicRoute.js';
+import { threeWayMatch, normalizeInvoiceNo } from '../lib/threeWayMatch.js';
+import { hasPermission } from '../lib/authz.js';
 export default function registerBills(ctx) {
   const {
     app,
@@ -19,9 +26,12 @@ export default function registerBills(ctx) {
     BUSINESS_TYPE,
     Bill,
     BILL_STATUSES,
+    PurchaseOrder,
+    Settings,
     Supplier,
     JournalEntry,
     CheckVoucher,
+    issueCheckVoucher,
     AuditLog,
     emitToMgr,
     verifyToken,
@@ -35,6 +45,23 @@ export default function registerBills(ctx) {
   const canPostAcct = [requireStaff, requirePermission('accounting.manage')];
 
   const money = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+  // Has this supplier already billed us under this invoice number? A rejected
+  // bill does not count - it was never going to be paid. Returns the bill.
+  const duplicateInvoice = async (supplierId, invoiceNo, exceptId = null) => {
+    const key = normalizeInvoiceNo(invoiceNo);
+    if (!key) return null;
+    return Bill.findOne({
+      supplierId, supplierInvoiceKey: key, status: { $ne: 'Rejected' },
+      ...(exceptId ? { _id: { $ne: exceptId } } : {}),
+    }, { billNumber: 1, status: 1 }).lean();
+  };
+  const duplicateMessage = (dupe, invoiceNo) =>
+    `The supplier's invoice ${invoiceNo} is already on bill ${dupe.billNumber} (${dupe.status}). The same invoice cannot be paid twice.`;
+  // Cash, bank and e-wallet: the accounts money can actually be paid out of or
+  // received into. Shared by bill payment and the supplier-credit refund, so
+  // the two cannot disagree about what counts as a real account.
+  const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
 
   // ── LIST ─────────────────────────────────────────────────────────────────────
   // GET /api/bills?status=Pending&supplierId=...
@@ -78,9 +105,106 @@ export default function registerBills(ctx) {
 
   // ── CREATE (manual bill - no PO backing it) ─────────────────────────────────
   // POST /api/bills { supplierId, description, amount, dueDate, expenseAccountCode }
+  // ── REPEATING BILLS ──────────────────────────────────────────────────────────
+  // Entered once; each month's bill is raised as Pending for approval, by the
+  // button on the Bills page or on its own once a day (see the timer below).
+  const RecurringBill = mongoose.model('RecurringBill');
+  const monthKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const raiseRecurringBills = async (scope, actorName) => {
+    const month = monthKey();
+    const due = await RecurringBill.find({ businessType: BUSINESS_TYPE, ...scope, isActive: true, lastMonth: { $ne: month } });
+    const raised = [];
+    for (const r of due) {
+      // Claimed first, so two runs at once cannot both raise the same month.
+      const claimed = await RecurringBill.findOneAndUpdate({ _id: r._id, lastMonth: { $ne: month } }, { $set: { lastMonth: month } });
+      if (!claimed) continue;
+      const [y, m] = month.split('-').map(Number);
+      const billNumber = await mkSeqRef('BILL');
+      await Bill.create({
+        businessType: BUSINESS_TYPE, ...scope, billNumber,
+        supplierId: r.supplierId, supplierName: r.supplierName, source: 'Manual',
+        description: `${r.description} - ${month}`.slice(0, 500), amount: r.amount,
+        expenseAccountCode: r.expenseAccountCode,
+        dueDate: new Date(y, m - 1, Math.min(28, Math.max(1, r.dayOfMonth || 1)), 12),
+        createdBy: actorName || 'Repeating bill',
+      });
+      raised.push({ billNumber, supplier: r.supplierName, description: r.description, amount: r.amount });
+    }
+    return raised;
+  };
+
+  app.get('/api/recurring-bills', verifyToken, ...canViewAcct, async (req, res) => {
+    try {
+      const rows = await RecurringBill.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }).sort({ supplierName: 1, description: 1 }).lean();
+      res.json({ success: true, rows, month: monthKey() });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  app.post('/api/recurring-bills', verifyToken, ...canPostAcct, async (req, res) => {
+    try {
+      const { supplierId, description, amount, expenseAccountCode, dayOfMonth } = req.body || {};
+      if (!supplierId || !mongoose.Types.ObjectId.isValid(supplierId)) return res.status(400).json({ success: false, error: 'Pick the supplier.' });
+      const supplier = await Supplier.findOne({ _id: supplierId, ...tenantScope(req) }).lean();
+      if (!supplier) return res.status(404).json({ success: false, error: 'Supplier not found.' });
+      const amt = money(amount);
+      if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Enter the monthly amount.' });
+      if (!String(description || '').trim()) return res.status(400).json({ success: false, error: 'Say what it is for.' });
+      if (!expenseAccountCode || !acctMeta(expenseAccountCode)) return res.status(400).json({ success: false, error: 'Pick the account it is charged to.' });
+      const row = await RecurringBill.create({
+        businessType: BUSINESS_TYPE, ...tenantScope(req),
+        supplierId: supplier._id, supplierName: supplier.name, description: String(description).trim().slice(0, 200),
+        amount: amt, expenseAccountCode, dayOfMonth: Math.min(28, Math.max(1, parseInt(dayOfMonth, 10) || 1)),
+        createdBy: req.user?.name || '',
+      });
+      await logAudit(req, { action: 'create', entity: 'RecurringBill', entityId: row._id, after: { supplier: supplier.name, description: row.description, amount: amt } });
+      res.json({ success: true, row });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  app.patch('/api/recurring-bills/:id', verifyToken, ...canPostAcct, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const row = await RecurringBill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+      if (!row) return res.status(404).json({ success: false, error: 'Not found' });
+      const { isActive, amount, dayOfMonth } = req.body || {};
+      if (typeof isActive === 'boolean') row.isActive = isActive;
+      if (amount !== undefined) { const amt = money(amount); if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Enter the monthly amount.' }); row.amount = amt; }
+      if (dayOfMonth !== undefined) row.dayOfMonth = Math.min(28, Math.max(1, parseInt(dayOfMonth, 10) || 1));
+      await row.save();
+      res.json({ success: true, row });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  app.delete('/api/recurring-bills/:id', verifyToken, ...canPostAcct, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const gone = await RecurringBill.findOneAndDelete({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+      if (!gone) return res.status(404).json({ success: false, error: 'Not found' });
+      await logAudit(req, { action: 'delete', entity: 'RecurringBill', entityId: gone._id, before: { supplier: gone.supplierName, description: gone.description } });
+      res.json({ success: true });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  // Raise this month's, now. Bills raised earlier this month are not raised again.
+  app.post('/api/recurring-bills/raise', verifyToken, ...canPostAcct, async (req, res) => {
+    try {
+      const raised = await raiseRecurringBills(tenantScope(req), req.user?.name);
+      if (raised.length) await logAudit(req, { action: 'raise', entity: 'RecurringBill', entityId: 'month', after: { month: monthKey(), count: raised.length } });
+      res.json({ success: true, raised, month: monthKey() });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  // On its own, once a day: this month's repeating bills appear as Pending
+  // without anyone having to remember. Not in tests - a timer must not outlive them.
+  if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
+    const tick = () => raiseRecurringBills({}, 'Repeating bill').catch(() => {});
+    setTimeout(tick, 60 * 1000).unref?.();
+    setInterval(tick, 24 * 60 * 60 * 1000).unref?.();
+  }
+
   app.post('/api/bills', verifyToken, ...canPostAcct, async (req, res) => {
     try {
-      const { supplierId, description, amount, dueDate, expenseAccountCode } = req.body || {};
+      const { supplierId, description, amount, dueDate, expenseAccountCode, claimInputVat, supplierInvoiceNo } = req.body || {};
       if (!supplierId || !mongoose.Types.ObjectId.isValid(supplierId)) {
         return res.status(400).json({ success: false, error: 'A valid supplier is required.' });
       }
@@ -95,6 +219,11 @@ export default function registerBills(ctx) {
 
       const supplier = await Supplier.findOne({ _id: supplierId, ...tenantScope(req) }).lean();
       if (!supplier) return res.status(404).json({ success: false, error: 'Supplier not found.' });
+      const invoiceNo = String(supplierInvoiceNo || '').trim().slice(0, 60);
+      if (invoiceNo) {
+        const dupe = await duplicateInvoice(supplier._id, invoiceNo);
+        if (dupe) return res.status(409).json({ success: false, error: duplicateMessage(dupe, invoiceNo), duplicateOf: dupe.billNumber });
+      }
 
       const billNumber = await mkSeqRef('BILL');
       const bill = await Bill.create({
@@ -108,10 +237,12 @@ export default function registerBills(ctx) {
         amount: amt,
         expenseAccountCode,
         dueDate: dueDate ? new Date(dueDate) : null,
+        claimInputVat: claimInputVat === true,
+        ...(invoiceNo ? { supplierInvoiceNo: invoiceNo, supplierInvoiceKey: normalizeInvoiceNo(invoiceNo) } : {}),
         createdBy: req.user?.name || '',
       });
 
-      await logAudit(req, { action: 'create', entity: 'Bill', entityId: bill._id, after: { billNumber, supplierId, amount: amt } });
+      await logAudit(req, { action: 'create', entity: 'Bill', entityId: bill._id, after: { billNumber, supplierId, amount: amt, supplierInvoiceNo: invoiceNo } });
       res.json({ success: true, bill });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
@@ -141,7 +272,7 @@ export default function registerBills(ctx) {
       const suppliers = await Supplier.find(tenantScope(req), { name: 1 }).lean();
       const byName = new Map(suppliers.map(s => [String(s.name || '').toLowerCase().trim(), s]));
 
-      const created = [];
+      const created = [], poNotes = [];
       const skipped = [];
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i] || {};
@@ -165,18 +296,30 @@ export default function registerBills(ctx) {
             throw new Error(`"${accountCode || '(blank)'}" is not an account. Give the expense or asset account this bill should be charged to.`);
           }
 
+          const invoiceNo = String(r.supplierInvoiceNo ?? r['Invoice No'] ?? '').trim().slice(0, 60);
+          if (invoiceNo) {
+            const dupe = await duplicateInvoice(supplier._id, invoiceNo);
+            if (dupe) throw new Error(duplicateMessage(dupe, invoiceNo));
+          }
+
           const rawDue = r.dueDate ?? r['Due Date'] ?? r.due;
-          const dueDate = rawDue ? new Date(rawDue) : null;
-          if (dueDate && Number.isNaN(dueDate.getTime())) throw new Error('Invalid due date.');
+          const dueDay = sheetDay(rawDue);
+          if (dueDay === null) throw new Error(`"${rawDue}" is not a due date. ${SHEET_DATE_HELP}`);
+          const dueDate = dueDay ? new Date(dueDay) : null;
 
           const billNumber = await mkSeqRef('BILL');
-          await Bill.create({
+          const made = await Bill.create({
             businessType: BUSINESS_TYPE, ...tenantScope(req),
             billNumber, supplierId: supplier._id, supplierName: supplier.name,
             source: 'Manual', description: description.slice(0, 500), amount: amt,
-            expenseAccountCode: accountCode, dueDate,
+            expenseAccountCode: accountCode, dueDate, imported: true,
+            poNumber: String(r.poNumber ?? r['PO No'] ?? '').trim().slice(0, 60),
+            ...(invoiceNo ? { supplierInvoiceNo: invoiceNo, supplierInvoiceKey: normalizeInvoiceNo(invoiceNo) } : {}),
             createdBy: req.user?.name || '',
           });
+          // A PO number that is an order here links for real, and closes it.
+          const poNote = await linkImportedBill(mongoose, made, tenantScope(req));
+          if (poNote) poNotes.push(poNote);
           created.push({ row: i + 1, billNumber, supplier: supplier.name, amount: amt });
         } catch (e) {
           skipped.push({ row: i + 1, error: e.message, data: r });
@@ -185,7 +328,7 @@ export default function registerBills(ctx) {
 
       await logAudit(req, { action: 'import', entity: 'Bill', entityId: 'bulk', after: { created: created.length, skipped: skipped.length } });
       res.json({
-        success: true, created: created.length, skipped, bills: created,
+        success: true, created: created.length, skipped, bills: created, problems: poNotes,
         totalAmount: Math.round(created.reduce((s, b) => s + b.amount, 0) * 100) / 100,
         // Said plainly, because "imported" reads as "done" otherwise.
         note: 'Imported as Pending. Nothing has posted to the ledger - approve each bill to book the payable.',
@@ -198,28 +341,125 @@ export default function registerBills(ctx) {
   // (DR expenseAccountCode / CR 220000 Accounts Payable) - see the BillSchema
   // comment in server.js. For source:'PO' bills the JE already posted at
   // receipt; this is a pure sign-off with no new posting.
-  app.post('/api/bills/:id/approve', verifyToken, ...canPostAcct, async (req, res) => {
+  // ── RECORD THE SUPPLIER'S INVOICE (three-way match) ──────────────────────
+  // Received goods post their payable at receipt; this is where the supplier's
+  // own invoice meets it. For a PO bill the invoice is compared with the PO
+  // price of what arrived and with what receiving booked; for a manual bill,
+  // with the bill's amount. Re-recording replaces the previous attempt, so a
+  // corrected invoice can be entered after an exception.
+  app.post('/api/bills/:id/invoice', verifyToken, ...canPostAcct, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const bill = await Bill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+      if (!bill) return res.status(404).json({ success: false, error: 'Not found' });
+      if (bill.status !== 'Pending') return res.status(409).json({ success: false, error: `The invoice is matched before approval; this bill is already ${bill.status}.` });
+      const invoiceNo = String(req.body?.supplierInvoiceNo || '').trim().slice(0, 60);
+      if (!invoiceNo) return res.status(400).json({ success: false, error: "Enter the supplier's invoice number." });
+      const invoiceAmount = money(req.body?.invoiceAmount);
+      if (!(invoiceAmount > 0) || invoiceAmount > 999_999_999.99) return res.status(400).json({ success: false, error: 'Enter the invoice total.' });
+      const invoiceDate = req.body?.invoiceDate ? new Date(req.body.invoiceDate) : null;
+      if (invoiceDate && Number.isNaN(invoiceDate.getTime())) return res.status(400).json({ success: false, error: 'Invalid invoice date.' });
+      const dupe = await duplicateInvoice(bill.supplierId, invoiceNo, bill._id);
+      if (dupe) return res.status(409).json({ success: false, error: duplicateMessage(dupe, invoiceNo), duplicateOf: dupe.billNumber });
+
+      const po = bill.purchaseOrderId && bill.source === 'PO' ? await PurchaseOrder.findById(bill.purchaseOrderId).lean() : null;
+      const result = threeWayMatch({ po, receivedValue: bill.amount, invoiceAmount, delivery: bill.deliveryLines });
+      bill.supplierInvoiceNo = invoiceNo;
+      bill.supplierInvoiceKey = normalizeInvoiceNo(invoiceNo);
+      bill.supplierInvoiceAmount = invoiceAmount;
+      bill.supplierInvoiceDate = invoiceDate;
+      bill.match = { ...result, checkedBy: req.user?.name || '', checkedAt: new Date(), acceptedBy: '', acceptReason: '', varianceJournalRef: '' };
+      await bill.save();
+      await logAudit(req, { action: 'match', entity: 'Bill', entityId: bill._id, after: { billNumber: bill.billNumber, invoiceNo, invoiceAmount, status: result.status, issues: result.issues.map(i => i.code) } });
+      res.json({ success: true, bill, match: bill.match });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  app.post('/api/bills/:id/approve', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const bill = await Bill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
       if (!bill) return res.status(404).json({ success: false, error: 'Not found' });
       if (bill.status !== 'Pending') return res.status(409).json({ success: false, error: `Only a Pending bill can be approved (this one is ${bill.status}).` });
 
+      // A typed-in bill linked to an order that has not been received yet: the
+      // delivery is what books this payable (and brings the stock in), so
+      // approving it first would book it twice.
+      if (bill.source === 'Manual' && bill.purchaseOrderId) {
+        const linkedPo = await PurchaseOrder.findById(bill.purchaseOrderId).lean();
+        if (linkedPo && ['Ordered', 'Processing'].includes(linkedPo.status)) {
+          return res.status(409).json({ success: false, error: `This bill is linked to ${linkedPo.poNumber}, which has not been received yet. Receive the order first - the bill then follows that delivery. (If no delivery is coming, take the PO number off the bill.)` });
+        }
+      }
+
+      // Three-way match gate: a bill for received goods is released for
+      // payment only once the supplier's invoice agrees with the PO and the
+      // receipt. An exception is accepted only by someone who may approve
+      // price changes, with a reason - and the difference is booked.
+      if (bill.source === 'PO') {
+        const m = bill.match || {};
+        if (!m.status || m.status === 'Unmatched') {
+          return res.status(409).json({ success: false, error: "Record the supplier's invoice first - a bill for received goods is paid only once the invoice matches the PO and the receipt.", needsInvoice: true });
+        }
+        if (m.status === 'Exception') {
+          const reason = String(req.body?.acceptReason || '').trim();
+          if (req.body?.acceptVariance !== true) {
+            return res.status(409).json({ success: false, error: `The invoice does not match: ${(m.issues || []).map(i => i.text).join(' ')} Return it to procurement, or accept the difference.`, matchException: true });
+          }
+          if (!hasPermission(req.user, 'pricing.approve')) return res.status(403).json({ success: false, error: 'Accepting a price difference needs the "Approve price, cost & credit-limit changes" permission.' });
+          if (!reason) return res.status(400).json({ success: false, error: 'Say why the difference is accepted.' });
+          const variance = money(m.variance);
+          if (Math.abs(variance) >= 0.01) {
+            // The payable becomes what the supplier actually invoiced.
+            const reference = await mkSeqRef('PPV');
+            const amt = Math.abs(variance);
+            const lines = variance > 0
+              ? [{ accountCode: '525000', accountName: 'Purchase Price Variance', debit: amt, credit: 0 },
+                 { accountCode: '220000', accountName: 'Accounts Payable', debit: 0, credit: amt }]
+              : [{ accountCode: '220000', accountName: 'Accounts Payable', debit: amt, credit: 0 },
+                 { accountCode: '525000', accountName: 'Purchase Price Variance', debit: 0, credit: amt }];
+            assertBalanced(lines, reference);
+            await JournalEntry.create({
+              date: new Date(), reference,
+              description: `Invoice ${bill.supplierInvoiceNo} vs receipt on ${bill.billNumber} (${bill.poNumber || 'PO'}): ${variance > 0 ? 'over' : 'under'} by ₱${amt.toFixed(2)} - accepted by ${req.user?.name || ''}: ${reason}`,
+              lines, totalDebit: amt, totalCredit: amt,
+              supplierId: String(bill.supplierId), supplierName: bill.supplierName,
+            });
+            bill.amount = money(bill.amount + variance);
+            bill.match.varianceJournalRef = reference;
+            emitToMgr('erpUpdated');
+          }
+          bill.match.status = 'Accepted';
+          bill.match.acceptedBy = req.user?.name || '';
+          bill.match.acceptReason = reason.slice(0, 500);
+        }
+      }
+
       if (bill.source === 'Manual') {
         const expMeta = acctMeta(bill.expenseAccountCode);
         if (!expMeta) return res.status(400).json({ success: false, error: 'This bill\'s expense account no longer exists - cannot post.' });
         const reference = await mkSeqRef('BILL-APR');
+        // VAT charged by a VAT-registered supplier is creditable, not a cost:
+        // it comes out of the expense and is held in 170300 until it is offset
+        // against output VAT on the return.
+        const vatCfg = await loadVatConfig(Settings);
+        const inputVat = bill.claimInputVat && vatCfg.enabled
+          ? money(bill.amount - bill.amount / (1 + vatCfg.rate))
+          : 0;
+        const netCost = money(bill.amount - inputVat);
         const lines = [
-          { accountCode: bill.expenseAccountCode, accountName: expMeta.name, debit: bill.amount, credit: 0 },
+          { accountCode: bill.expenseAccountCode, accountName: expMeta.name, debit: netCost, credit: 0 },
+          ...(inputVat > 0 ? [{ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: inputVat, credit: 0 }] : []),
           { accountCode: '220000', accountName: 'Accounts Payable', debit: 0, credit: bill.amount },
         ];
         assertBalanced(lines, reference);
         await JournalEntry.create({
           date: new Date(), reference,
-          description: `Bill approved: ${bill.description} (${bill.billNumber})`,
+          description: `Bill approved: ${bill.description} (${bill.billNumber})${inputVat > 0 ? ` [input VAT ₱${inputVat.toFixed(2)}]` : ''}`,
           lines, totalDebit: bill.amount, totalCredit: bill.amount,
           supplierId: String(bill.supplierId), supplierName: bill.supplierName,
         });
+        bill.inputVatAmount = inputVat;
         bill.journalEntryRef = reference;
         emitToMgr('erpUpdated');
       }
@@ -232,7 +472,7 @@ export default function registerBills(ctx) {
       await logAudit(req, { action: 'approve', entity: 'Bill', entityId: bill._id, after: { billNumber: bill.billNumber, approvedBy: bill.approvedBy } });
       res.json({ success: true, bill });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
-  });
+  }));
 
   // ── REJECT ───────────────────────────────────────────────────────────────────
   // Note: for source:'PO' bills, rejecting does NOT reverse the receipt's
@@ -254,6 +494,8 @@ export default function registerBills(ctx) {
       bill.rejectedAt = new Date();
       bill.rejectionReason = reason.trim().slice(0, 500);
       await bill.save();
+      // A rejected bill no longer holds its purchase order closed.
+      if (bill.purchaseOrderId && bill.source !== 'PO') await syncLinkedPo(mongoose, bill.purchaseOrderId);
 
       await logAudit(req, { action: 'reject', entity: 'Bill', entityId: bill._id, after: { billNumber: bill.billNumber, reason: bill.rejectionReason } });
       res.json({ success: true, bill });
@@ -262,6 +504,46 @@ export default function registerBills(ctx) {
 
   // ── SCHEDULE PAYMENT ─────────────────────────────────────────────────────────
   // PATCH /api/bills/:id/schedule { scheduledPaymentDate }  (null clears it)
+  // The purchase order a bill was for, written on afterwards - for a payable
+  // carried in from the old books, or typed in by hand. When the number is a
+  // purchase order in this app the two are linked for real: the bill becomes
+  // that order's payable, and the order can no longer be received (which
+  // would raise a second payable and count the stock twice). A number that is
+  // not an order here is kept as a reference. Moves no money and no stock.
+  // A bill the app raised from one of its own POs keeps the number it has.
+  app.patch('/api/bills/:id/po-number', verifyToken, ...canPostAcct, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const bill = await Bill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+      if (!bill) return res.status(404).json({ success: false, error: 'Not found' });
+      if (bill.source === 'PO') return res.status(409).json({ success: false, error: `This bill came from ${bill.poNumber || 'a purchase order'} - its PO number cannot be changed.` });
+      // Linking by hand is for payables carried in from before - through the
+      // setup workbook. A purchase made in the app gets its bill, already
+      // linked, by receiving the order.
+      if (!bill.imported && bill.source !== 'Opening') {
+        return res.status(409).json({ success: false, error: 'A PO number can be added by hand only to a payable carried in through the setup workbook. For a purchase made here, receive the purchase order - its bill is raised and linked for you.' });
+      }
+      const before = bill.poNumber || '';
+      const wanted = String(req.body?.poNumber ?? '').trim().slice(0, 60);
+      const { po, error, status } = await findLinkablePo(mongoose, { wanted, bill, scope: tenantScope(req) });
+      if (error) return res.status(status).json({ success: false, error });
+      const oldPoId = bill.purchaseOrderId ? String(bill.purchaseOrderId) : '';
+      bill.poNumber = po ? po.poNumber : wanted;
+      bill.purchaseOrderId = po ? po._id : null;
+      await bill.save();
+      // The order it is now linked to closes on its own: its goods and its debt
+      // are already in the books, so there is nothing left to receive.
+      // Closed if this bill is already in the books, left open if it is still
+      // pending (its delivery is yet to be received) - see lib/billPoLink.js.
+      if (po) await syncLinkedPo(mongoose, po._id);
+      // The order it was linked to before reopens, unless another payable
+      // from the books still holds it closed.
+      if (oldPoId && oldPoId !== String(po?._id || '')) await syncLinkedPo(mongoose, oldPoId);
+      await logAudit(req, { action: 'update', entity: 'Bill', entityId: bill._id, before: { poNumber: before }, after: { poNumber: bill.poNumber, linked: !!po } });
+      res.json({ success: true, bill, linked: !!po });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
   app.patch('/api/bills/:id/schedule', verifyToken, ...canPostAcct, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
@@ -294,7 +576,7 @@ export default function registerBills(ctx) {
   //
   // Every payment - full, partial, or with an overpay split - issues a
   // Check Voucher, the actual paper trail for the disbursement.
-  app.post('/api/bills/:id/pay', verifyToken, ...canPostAcct, async (req, res) => {
+  app.post('/api/bills/:id/pay', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const bill = await Bill.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
@@ -306,7 +588,6 @@ export default function registerBills(ctx) {
       const outstanding = money(bill.amount - (bill.paidAmount || 0));
       if (outstanding <= 0) return res.status(409).json({ success: false, error: 'This bill is already fully paid.' });
 
-      const isCashLike = (c) => /^(111|112|113)/.test(String(c || ''));
       const { amount, payFromAccount, referenceNumber } = req.body || {};
       const paidAmt = money(amount !== undefined && amount !== null && amount !== '' ? amount : outstanding);
       if (!paidAmt || paidAmt <= 0) return res.status(400).json({ success: false, error: 'Amount must be positive.' });
@@ -334,14 +615,10 @@ export default function registerBills(ctx) {
         supplierId: String(bill.supplierId), supplierName: bill.supplierName,
       });
 
-      const voucherNumber = await mkSeqRef('CV');
-      const voucher = await CheckVoucher.create({
-        businessType: BUSINESS_TYPE, ...tenantScope(req),
-        branchCode: await currentBranchCode(),
-        voucherNumber, payeeType: 'supplier', payeeId: String(bill.supplierId), payeeName: bill.supplierName,
-        amount: paidAmt, purpose: 'bill-payment', sourceAccount: srcCode, sourceAccountName: srcName,
-        referenceNumber: referenceNumber || '', billId: bill._id, journalEntryRef: reference,
-        issuedBy: req.user?.name || '',
+      const voucher = await issueCheckVoucher(req, {
+        payeeType: 'supplier', payeeId: String(bill.supplierId), payeeName: bill.supplierName,
+        amount: paidAmt, purpose: 'bill-payment', sourceAccount: srcCode,
+        referenceNumber, billId: bill._id, journalEntryRef: reference,
       });
 
       bill.paidAmount = money((bill.paidAmount || 0) + applied);
@@ -351,7 +628,7 @@ export default function registerBills(ctx) {
       bill.paymentReference = referenceNumber || '';
       bill.payments.push({
         amount: paidAmt, payFromAccount: srcCode, referenceNumber: referenceNumber || '',
-        checkVoucherRef: voucherNumber, journalRef: reference, paidBy: req.user?.name || '',
+        checkVoucherRef: voucher?.voucherNumber || '', journalRef: reference, paidBy: req.user?.name || '',
       });
       await bill.save();
 
@@ -364,7 +641,7 @@ export default function registerBills(ctx) {
 
       await AuditLog.create({
         userId: req.user?.name || 'System', action: 'BILL_PAID', targetReference: bill.billNumber,
-        details: { amount: paidAmt, applied, overpay, payFromAccount: srcCode, referenceNumber: referenceNumber || '', voucherNumber, supplierId: String(bill.supplierId), recordedBy: req.user?.name },
+        details: { amount: paidAmt, applied, overpay, payFromAccount: srcCode, referenceNumber: referenceNumber || '', voucherNumber: voucher?.voucherNumber || '', supplierId: String(bill.supplierId), recordedBy: req.user?.name },
       });
       emitToMgr('erpUpdated');
       res.json({ success: true, bill, voucher, overpay });
@@ -372,13 +649,13 @@ export default function registerBills(ctx) {
       log.error({ err }, 'POST /api/bills/:id/pay failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
 
   // ── SUPPLIER CREDIT: apply to a bill ────────────────────────────────────────
   // Reclassifies stored supplier credit (160100, an asset - they owe it to
   // us) directly against a bill's outstanding balance. No cash moves; this is
   // purely "use what they already owe us instead of paying more cash out."
-  app.post('/api/suppliers/:id/credit/apply', verifyToken, ...canPostAcct, async (req, res) => {
+  app.post('/api/suppliers/:id/credit/apply', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Supplier not found.' });
       const supplier = await Supplier.findOne({ _id: req.params.id, ...tenantScope(req) });
@@ -432,5 +709,66 @@ export default function registerBills(ctx) {
       log.error({ err }, 'POST /api/suppliers/:id/credit/apply failed');
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
-  });
+  }));
+
+  // ── SUPPLIER CREDIT: take it back in cash ───────────────────────────────────
+  // The other way a supplier credit ends. Applying it to the next bill was the
+  // only option, so a credit held against a supplier you have stopped buying
+  // from sat on the balance sheet forever with no way to clear it.
+  //
+  // This is money coming IN - they are returning what we overpaid - so it is a
+  // receipt, not a disbursement. It deliberately issues no check voucher: a
+  // voucher documents money leaving a cash account, and nothing leaves here.
+  app.post('/api/suppliers/:id/credit/refund', verifyToken, ...canPostAcct, atomic(mongoose, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const supplier = await Supplier.findOne({ _id: req.params.id, ...tenantScope(req) });
+      if (!supplier) return res.status(404).json({ success: false, error: 'Supplier not found.' });
+
+      const available = money(supplier.creditBalance);
+      if (available <= 0) return res.status(409).json({ success: false, error: 'This supplier holds no credit to refund.' });
+
+      const { amount, referenceNumber, note, intoAccount } = req.body || {};
+      const requested = money(amount !== undefined && amount !== null && amount !== '' ? amount : available);
+      if (!requested || requested <= 0) return res.status(400).json({ success: false, error: 'Amount must be positive.' });
+      if (requested > available + 0.01) {
+        return res.status(400).json({ success: false, error: `Only P${available.toFixed(2)} of credit is available.` });
+      }
+
+      // Where the money landed. Anything that is not a cash/bank/e-wallet
+      // account would put the receipt somewhere it cannot be reconciled from.
+      const destCode = (acctMeta(intoAccount) && isCashLike(intoAccount)) ? intoAccount : '111000';
+      const destName = acctMeta(destCode)?.name || 'Cash on Hand';
+
+      const reference = await mkSeqRef('SUP-CR-REFUND');
+      const lines = [
+        { accountCode: destCode, accountName: destName, debit: requested, credit: 0 },
+        { accountCode: '160100', accountName: acctMeta('160100')?.name || 'Supplier Credit Balance (Overpayments)', debit: 0, credit: requested },
+      ];
+      assertBalanced(lines, reference);
+      await JournalEntry.create({
+        date: new Date(), reference,
+        description: `Supplier credit refunded by ${supplier.name}${referenceNumber ? ` [ref: ${referenceNumber}]` : ''}${note ? ` - ${note}` : ''}`,
+        lines, totalDebit: requested, totalCredit: requested,
+        supplierId: String(supplier._id), supplierName: supplier.name,
+      });
+
+      supplier.creditBalance = money(available - requested);
+      supplier.creditHistory.push({
+        type: 'refunded', amount: requested, reference,
+        note: note || `Refunded into ${destName}`, by: req.user?.name || '',
+      });
+      await supplier.save();
+
+      await AuditLog.create({
+        userId: req.user?.name || 'System', action: 'SUPPLIER_CREDIT_REFUNDED', targetReference: supplier.name,
+        details: { amount: requested, intoAccount: destCode, referenceNumber: referenceNumber || '', remaining: supplier.creditBalance, recordedBy: req.user?.name },
+      });
+      emitToMgr('erpUpdated');
+      res.json({ success: true, reference, supplier: { _id: supplier._id, creditBalance: supplier.creditBalance } });
+    } catch (err) {
+      log.error({ err }, 'POST /api/suppliers/:id/credit/refund failed');
+      (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+    }
+  }));
 }

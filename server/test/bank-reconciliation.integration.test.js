@@ -8,6 +8,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+// Fixture resets may clear journal entries, which are otherwise append-only.
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -43,7 +45,7 @@ const openRec = (statementBalance, statementDate = '2026-03-31') =>
     .send({ accountCode: BANK, statementDate, statementBalance });
 
 beforeEach(async () => {
-  for (const n of ['JournalEntry', 'BankReconciliation', 'Settings']) await M(n).deleteMany({});
+  for (const n of ['JournalEntry', 'BankReconciliation', 'Settings']) await withLedgerMaintenance(() => M(n).deleteMany({}));
   await enable(true);
 });
 

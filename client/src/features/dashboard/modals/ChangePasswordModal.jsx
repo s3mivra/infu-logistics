@@ -8,15 +8,15 @@ export default function ChangePasswordModal() {
   if (!(changePwModal)) return null;
 
   return (
-      <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
-        <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-4">
+      <div className="fixed inset-0 z-[9999] flex justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in overflow-y-auto">
+        <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-4 my-auto">
           <div className="flex justify-between items-center">
             <h2 className="text-lg font-black text-fg uppercase tracking-wider">Change Password</h2>
             <button onClick={() => { setChangePwModal(false); setChangePwError(''); setChangePwForm({ currentPassword: '', newPassword: '', confirmPassword: '' }); }}
               className="text-fg/70 hover:text-fg text-xl font-bold">✕</button>
           </div>
           {changePwError && (
-            <div className="bg-red-900/30 border border-red-500/40 rounded-xl px-4 py-3 text-xs text-red-300 font-bold">{changePwError}</div>
+            <div className="bg-red-900/30 border border-red-500/40 rounded-xl px-4 py-3 text-xs text-danger font-bold">{changePwError}</div>
           )}
           {[
             ['Current Password', 'currentPassword', 'Your existing password'],
@@ -28,7 +28,7 @@ export default function ChangePasswordModal() {
               <input type="password" value={changePwForm[field]}
                 onChange={e => setChangePwForm(p => ({ ...p, [field]: e.target.value }))}
                 placeholder={hint}
-                className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-fg outline-none focus:border-brand/60 placeholder-white/20 text-sm"
+                className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-fg outline-none focus:border-brand/60 placeholder-fg/70 text-sm"
               />
             </div>
           ))}

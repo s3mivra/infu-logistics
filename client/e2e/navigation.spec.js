@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { login } from './helpers.js';
+import { login, openSettings } from './helpers.js';
 
 // Whole-dashboard smoke: open every tab and assert each lazy chunk mounts and no
 // runtime/console errors occur anywhere. Catches broken tabs, failed lazy-loads,
@@ -10,11 +10,13 @@ const TABS = [
   'Procurement',
   'Clients',
   'Menu Setup',
+  'Owner Overview',
   'Analytics',
   'Reports',
   'Ledger',
   'Pricing Control',
   'Shifts & Cash',
+  'Approvals',
   'Audit Report',
   'Fixed Assets',
   'Production',
@@ -37,7 +39,10 @@ test('every dashboard tab opens without runtime errors', async ({ page }) => {
     // alert badge (e.g. "Inventory & Stock 2"), so their accessible name depends
     // on current stock. Matching the start of the label keeps this test about
     // navigation instead of about how much stock happens to be low.
-    const name = new RegExp('^' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    // The same tab is "Catalog Setup" on a logistics deployment.
+    const name = label === 'Menu Setup'
+      ? /^(Menu|Catalog) Setup/
+      : new RegExp('^' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
     await page.getByRole('button', { name }).first().click();
     // Lazy tab chunk finished mounting once the Suspense "Loading…" fallback is gone.
     await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
@@ -81,7 +86,7 @@ test('the optional accounting modules open once they are switched on', async ({ 
 
   await login(page);
 
-  await page.getByRole('button', { name: /^Settings/ }).first().click();
+  await openSettings(page);
   await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
 
   // The card only renders for a superadmin, which is who we are logged in as.
@@ -135,4 +140,60 @@ test('the optional accounting modules open once they are switched on', async ({ 
     !/favicon|manifest|service ?worker|net::ERR|Failed to load resource|the server responded with a status of 4/i.test(e)
   );
   expect(real, `Console/runtime errors on the optional modules:\n${real.join('\n')}`).toHaveLength(0);
+});
+
+// Approvals used to be a page under Ledger -> Setup. It has its own sidebar
+// entry now, and opens by itself - none of the Ledger's page tabs around it.
+// The screens changed most recently, opened and clicked through: a render
+// crash in any of them would otherwise only be found by a person.
+test('the Sales report shows each of its four views', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await login(page);
+  await page.getByRole('button', { name: 'Reports', exact: true }).first().click();
+  await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
+  await expect(page.getByRole('tablist', { name: 'How to show the sales' })).toBeVisible();
+  for (const view of ['Daily', 'Orders', 'Detailed', 'Summary']) {
+    await page.getByRole('tab', { name: view, exact: true }).click();
+    await expect(page.getByRole('tab', { name: view, exact: true })).toHaveAttribute('aria-selected', 'true');
+    await page.waitForTimeout(300);
+  }
+  expect(errors, errors.join('\n')).toHaveLength(0);
+});
+
+test('a check voucher can be started by hand, and Analytics shows the reorder forecast', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await login(page);
+  await page.getByRole('button', { name: 'Reports', exact: true }).first().click();
+  await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
+  // Report pages are grouped; Check Vouchers sits under Payable.
+  await page.getByRole('button', { name: 'Payable', exact: true }).first().click();
+  await page.getByRole('button', { name: /^Check Vouchers/ }).first().click();
+  await page.getByRole('button', { name: '+ New voucher' }).click();
+  await expect(page.getByRole('heading', { name: 'New check voucher' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Issue voucher' })).toBeDisabled();
+
+  await page.getByRole('button', { name: 'Analytics', exact: true }).first().click();
+  await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
+  await expect(page.getByRole('heading', { name: /Reorder Forecast/i })).toBeVisible({ timeout: 20000 });
+  expect(errors, errors.join('\n')).toHaveLength(0);
+});
+
+test('Approvals opens on its own, and is no longer under Ledger', async ({ page }) => {
+  await login(page);
+
+  await page.getByRole('button', { name: /^Approvals/ }).first().click();
+  await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
+  await expect(page.getByRole('heading', { name: /Approvals/ })).toBeVisible();
+  await expect(page.getByText(/Requisition slips and revolving fund spends/i)).toBeVisible();
+  // The Ledger's own page tabs are not drawn in this mode.
+  await expect(page.getByRole('button', { name: /^Trial Balance/ })).toHaveCount(0);
+
+  await page.getByRole('button', { name: /^Ledger/ }).first().click();
+  await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
+  await page.getByRole('button', { name: /^Setup/ }).first().click();
+  await expect(page.getByRole('button', { name: /^Backdate Sale/ })).toBeVisible();
+  // One Approvals button on the page: the sidebar's. Not a second one in Setup.
+  await expect(page.getByRole('button', { name: /^Approvals/ })).toHaveCount(1);
 });

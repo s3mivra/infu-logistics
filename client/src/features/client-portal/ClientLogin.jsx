@@ -2,10 +2,11 @@
 import { useNavigate } from 'react-router-dom';
 import { Package, Eye, EyeOff, AlertCircle, Loader2, LogIn } from 'lucide-react';
 import { saveSession, loadSession, clientIdOf } from './clientSession';
+import LegalLinks from '../../shared/LegalLinks';
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
+import { API_URL } from '../../shared/apiBase.js';
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Semivra').toUpperCase();
 
 export default function ClientLogin() {
@@ -74,7 +75,7 @@ export default function ClientLogin() {
             aria-label="Username"
             value={form.username}
             onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
-            className="w-full bg-white border border-white/10 focus:border-brand text-black placeholder-black/30 px-4 py-3 rounded-xl outline-none transition text-sm font-medium"
+            className="w-full bg-white border border-white/10 focus:border-brand text-black placeholder-gray-500 px-4 py-3 rounded-xl outline-none transition text-sm font-medium"
             required
             autoFocus
             autoComplete="username"
@@ -86,7 +87,7 @@ export default function ClientLogin() {
               aria-label="Password"
               value={form.password}
               onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-              className="w-full bg-white border border-white/10 focus:border-brand text-black placeholder-black/30 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
+              className="w-full bg-white border border-white/10 focus:border-brand text-black placeholder-gray-500 px-4 py-3 pr-12 rounded-xl outline-none transition text-sm tracking-widest"
               required
               autoComplete="current-password"
             />
@@ -109,6 +110,7 @@ export default function ClientLogin() {
           {loading ? <Loader2 size={15} className="animate-spin" /> : <LogIn size={15} />}
           {loading ? 'Signing in…' : 'Sign In'}
         </button>
+        <LegalLinks lead="By signing in you agree to our" className="mt-4" />
       </form>
     </div>
   );

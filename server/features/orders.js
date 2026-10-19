@@ -1,14 +1,33 @@
 ﻿// orders routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { resolveCreditLimit, checkCreditAvailable, arBalance } from '../lib/credit.js';
-import { title } from '../lib/normalize.js';
+import { resolveCreditLimit, checkCreditAvailable, arBalance, isFullySettled, isReceivableStatus } from '../lib/credit.js';
+import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
+import { title, partyName, MONEY_MAX, roundCentavo } from '../lib/normalize.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
+import { releaseCancelledOrderNumber, releaseCancelledOrderNumbers } from '../lib/orderNumbers.js';
 import { captureError } from '../lib/errorLog.js';
+import { seriesPrefix, normalizePrefix } from '../lib/docSeries.js';
 import { loadTierContext, resolveEffectiveDiscountPercent } from '../lib/discounts.js';
-import { resolveTierPercent } from '../lib/priceTiers.js';
+import { resolveTierPercent, resolveTierUnitPrice } from '../lib/priceTiers.js';
+import { buildSalePriceMap, saleUnitPrice, activeSalesQuery } from '../lib/salePricing.js';
+import { saleRevenueLines, vatShare, vatFromInclusive, deliveryFeeVat, OUTPUT_VAT } from '../lib/vatPosting.js';
+import { loadVatConfig as loadVatConfigShared } from '../lib/vatSettings.js';
+import { isAnonymousCustomerName } from '../lib/customerName.js';
+// Action permissions. Each route below changes data, and was guarded only by
+// "is staff" - so a plain staff account could, through the API, do what the
+// permission catalogue reserves for a role that holds the matching
+// .manage key (see lib/authz.js PERMISSIONS). `permit` is the same
+// requirePermission the context hands out, imported under a short name so
+// it reads the same in every file.
+import { requirePermission as permit, requireAnyPermission as permitAny, hasPermission } from '../lib/authz.js';
+import { checkApproval, orderIsPaid } from '../lib/approval.js';
+import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 
+import { atomic } from '../lib/atomicRoute.js';
+import { stockMovesFrom, movesToReturn, hasStockMoves, roundQty } from '../lib/stockMoves.js';
+import { readNegativeStockMode, saleStockFilter, blockedNote, flagBelowZero } from '../lib/negativeStock.js';
 export default function registerOrders(ctx) {
   const {
     app,
@@ -110,6 +129,9 @@ export default function registerOrders(ctx) {
     Product,
     ComboSchema,
     Combo,
+    Sale,
+    Quotation,
+    hasPermission,
     OrderSchema,
     Order,
     QRSessionSchema,
@@ -162,6 +184,7 @@ export default function registerOrders(ctx) {
     AuditLogSchema,
     AuditLog,
     CheckVoucher,
+    issueCheckVoucher,
     DiscountSchema,
     Discount,
     EODRecordSchema,
@@ -192,6 +215,7 @@ export default function registerOrders(ctx) {
     requireSuperOrAdmin,
     requirePermission,
     verifyOrderAuth,
+    requireAnyPermission,
   } = ctx;
 
 // Small randomized backoff between WriteConflict retries on the completion/
@@ -217,6 +241,68 @@ async function runWithStatsRetry(onceFn, req, res) {
     await statsRetryDelay(attempt);
   }
 }
+
+// The registered receipt serial, issued as the sale completes: an unfinished or
+// cancelled order never had a receipt, and spending a serial on one would leave
+// a gap in the series that has to be explained to an examiner.
+//
+// Deliberately NOT inside the completion transaction. The counter is a single
+// document every completing sale touches, and adding it to a transaction that
+// already contends on the stats counters made two tills completing at the same
+// instant collide often enough to exhaust the retries and fail the sale. It
+// runs after the commit instead, as its own atomic increment, so a serial is
+// spent only by a sale that really did complete.
+// A delivery receipt for what just left, numbered after the save committed
+// (like the OR) so a retried transaction never burns a number. Logistics only:
+// a café hands the goods over the counter.
+const issueDeliveryReceipt = async (order, lines) => {
+  if (BUSINESS_TYPE !== 'log' || !order?._id || !lines?.length) return '';
+  try {
+    const drNumber = await mkSeqRef('DR');
+    await Order.updateOne({ _id: order._id }, { $set: { drNumber }, $push: { deliveryReceipts: { drNumber, at: new Date(), lines } } });
+    order.drNumber = drNumber;
+    return drNumber;
+  } catch (err) { log.error({ err }, 'delivery receipt numbering failed'); return ''; }
+};
+const drLine = (it, index, qty) => ({ index, name: it.name, itemCode: it.productCode || '', qty });
+
+const assignOrNumber = async (order, attempt = 1) => {
+  if (!order || order.orNumber || order.isComplimentary) return order?.orNumber || '';
+  try {
+    const [prefixRow, startRow] = await Promise.all([
+      Settings.findOne({ key: 'orPrefix' }).lean(),
+      Settings.findOne({ key: 'orStartNumber' }).lean(),
+    ]);
+    // Normalised through the same registry as every other series, so a prefix
+    // typed as "OR-" and one typed as "OR" both print OR-00001251.
+    const prefix = normalizePrefix(prefixRow?.value, 'OR');
+    const start = Math.max(0, parseInt(startRow?.value, 10) || 0);
+    const counter = await Counter.findOneAndUpdate(
+      { _id: 'OR-SERIAL' },
+      { $inc: { seq: 1 } },
+      { upsert: true, returnDocument: 'after' },
+    );
+    const orNumber = `${prefix}-${String(start + (counter?.seq || 0)).padStart(8, '0')}`;
+    // Guarded on the field still being empty, so a concurrent writer can never
+    // stamp a second number over the first.
+    const wrote = await Order.updateOne({ _id: order._id, $or: [{ orNumber: '' }, { orNumber: { $exists: false } }] }, { $set: { orNumber } });
+    if (wrote.modifiedCount > 0) { order.orNumber = orNumber; return orNumber; }
+    const fresh = await Order.findById(order._id, { orNumber: 1 }).lean();
+    order.orNumber = fresh?.orNumber || '';
+    // Nobody else stamped one either, so the write simply did not land - the
+    // serial just taken is spent, and another attempt takes the next one.
+    if (!order.orNumber && attempt < 3) return assignOrNumber(order, attempt + 1);
+    return order.orNumber;
+  } catch (err) {
+    // The sale itself is already committed and a completed order is immutable,
+    // so nothing downstream will get another chance at this - but failing the
+    // sale over a receipt number would be far worse than a receipt that has to
+    // be numbered by hand. Logged loudly so it is not silent.
+    console.error('[OR SERIAL] could not assign a receipt number:', err?.message || err);
+    captureError?.(null, err);
+    return '';
+  }
+};
 
 // Is this a MongoDB transaction error worth retrying (another writer collided
 // with us on the same document) rather than a real failure? Shared by every
@@ -291,7 +377,35 @@ async function applyStatsDelta(order, sign, session) {
 // directly and silently doing nothing. Every one of those sites now resolves
 // through here first instead of trusting ing.invId - falls back to a live
 // name match, returns null (same as "unresolvable" today) if neither hits.
+// Which recipe an add-on takes, for a sale AND for every path that puts a
+// sale back - void, refund, partial refund. They used to resolve it five times
+// over, each on its own, which is how a reversal can return less than the sale
+// took. One rule now:
+//   1. the product's own recipe for that add-on, when it carries one - an
+//      extra shot can be a different amount on a different drink;
+//   2. a modifier option ("Milk: Oat") from the product's modifier groups;
+//   3. the add-on's own recipe, set once in Menu Setup's Add-Ons. The copy a
+//      product keeps when an add-on is attached is created empty, so without
+//      this an extra shot never took any coffee.
+async function resolveAddOnRecipe(product, addOnName, session) {
+  const name = String(addOnName || '');
+  const own = product?.addOns?.find(a => a.name === name)?.recipe;
+  if (own?.length) return own;
+  if (name.includes(': ')) {
+    const [grpName, optName] = name.split(': ');
+    const grp = (product?.modifierGroups || []).find(g => g && g.name === grpName);
+    return grp?.options?.find(o => o.name === optName)?.recipe || [];
+  }
+  const addOn = await AddOn.findOne({ name }, { recipe: 1 }).session(session ?? null).lean();
+  return addOn?.recipe || [];
+}
+
 async function resolveIngInvId(ing, session) {
+  // A non-stock ingredient never resolves to inventory, whatever it is called.
+  // Without this the name fallback below would silently start deducting the day
+  // somebody happened to create a stock item called "FILTERED WATER" - the
+  // recipe would not have changed, but every sale would begin draining it.
+  if (ing?.nonStock) return null;
   if (ing?.invId) {
     const byId = await Inventory.findById(ing.invId, { _id: 1 }).session(session);
     if (byId) return ing.invId;
@@ -309,22 +423,10 @@ async function resolveIngInvId(ing, session) {
 //
 // Absent settings mean a non-VAT business, which is how every install behaved
 // before VAT existed - so an untouched system keeps its current totals exactly.
-async function loadVatConfig() {
-  const [enabledRow, rateRow, orderRow, inclusiveRow] = await Promise.all([
-    Settings.findOne({ key: 'vatEnabled' }).lean(),
-    Settings.findOne({ key: 'vatRate' }).lean(),
-    Settings.findOne({ key: 'scPwdOrder' }).lean(),
-    Settings.findOne({ key: 'vatInclusive' }).lean(),
-  ]);
-  return {
-    enabled: enabledRow?.value === true || enabledRow?.value === 'true',
-    rate: normaliseVatRate(rateRow?.value, DEFAULT_VAT_RATE),
-    scPwdOrder: orderRow?.value === 'discount-first' ? 'discount-first' : 'vat-first',
-    // Default true: absent setting means the Philippine retail default, which is
-    // also how every order booked before this option existed was priced.
-    inclusive: inclusiveRow ? inclusiveRow.value !== false && inclusiveRow.value !== 'false' : true,
-  };
-}
+// VAT configuration lives in lib/vatSettings.js - shared with the backdated
+// sale path and the VAT return, so every posting reads one set of rules.
+const loadVatConfig = () => loadVatConfigShared(Settings);
+
 
 // Repeat-walk-in auto-promotion: a POS sale with a real (non-"Guest") customerName
 // that isn't already tied to a ClientAccount. Once the same name has 3 Completed
@@ -337,7 +439,9 @@ async function maybePromoteWalkInClient(order) {
   try {
     if (order.clientAccountId || order.placedByClient) return;
     const name = (order.customerName || '').trim();
-    if (!name || name.toLowerCase() === 'guest') return;
+    // A stand-in ("Guest", "Walk-in") is not a customer, so it is never counted
+    // towards promotion - see lib/customerName.js for what went wrong without it.
+    if (isAnonymousCustomerName(name)) return;
 
     const nameRegex = new RegExp(`^${escapeRegex(name)}$`, 'i');
 
@@ -392,7 +496,11 @@ app.get('/api/orders', verifyToken, requireStaff, async (req, res) => {
       const [orders, total] = await Promise.all([query, Order.countDocuments(baseFilter)]);
       return res.json({ success: true, orders, total, page: pageNum, limit: limitNum });
     }
-    const orders = await query;
+    // Unpaginated callers (the live order board) get the most recent 2,000.
+    // The end-of-day archive keeps the active set far below that; the cap is
+    // what stops a register left un-archived for months from returning its
+    // whole history in one response.
+    const orders = await query.limit(2000);
     res.json({ success: true, orders });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -427,13 +535,13 @@ app.get('/api/orders/archives', verifyToken, requireSuperAdmin, async (req, res)
 // ── PARKED ORDERS / OPEN TABS ────────────────────────────────────────────────
 // IMPORTANT: these literal paths MUST be registered before '/api/orders/:id',
 // otherwise Express matches ':id' first and treats "parked"/"park" as an order id.
-app.post('/api/orders/park', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/orders/park', verifyToken, requireStaff, permit('pos.use'), async (req, res) => {
   try {
     const { items, customerName, table, orderNotes, guestCount } = req.body;
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ success: false, error: 'Cannot park an empty cart.' });
     const subtotal = items.reduce((s, i) => s + ((i.price || 0) + (i.selectedAddOns || []).reduce((a, x) => a + Number(x.price || 0), 0)) * (i.quantity || 1), 0);
     const year = new Date().getFullYear();
-    const orderNumber = await generateNextSequence(Order, `ORD-${year}`, 'orderNumber');
+    const orderNumber = await generateNextSequence(Order, `ORD-${year}`, 'orderNumber', 'ORD');
     const parked = await Order.create({
       orderNumber, items, customerName: customerName || 'Guest', table: table || 'Dine-In',
       orderNotes: (orderNotes || '').trim().slice(0, 300), guestCount: Math.max(1, parseInt(guestCount) || 1),
@@ -450,7 +558,7 @@ app.get('/api/orders/parked', verifyToken, requireStaff, async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.delete('/api/orders/parked/:id', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/orders/parked/:id', verifyToken, requireStaff, permit('pos.use'), async (req, res) => {
   try {
     const order = await Order.findOne({ _id: req.params.id, isParked: true });
     if (!order) return res.status(404).json({ success: false, error: 'Parked order not found.' });
@@ -466,14 +574,30 @@ app.get('/api/orders/:id', async (req, res) => {
     // Access control: staff/admin and authenticated clients get the full document.
     // Anonymous callers (QR status polling) get a PII-SAFE projection so order ids
     // can't be enumerated to harvest customer phone / delivery address.
+    // "Privileged" used to mean any valid token with a role - and a client
+    // portal token has one ("client"). So one signed-in customer could read
+    // any other customer's whole order, phone and delivery address included,
+    // by its id. Staff see every order in full; a client sees their OWN in
+    // full and anyone else's the way an anonymous visitor would.
     let isPrivileged = false;
     try {
       const raw = req.headers.authorization?.replace(/^Bearer /, '') || '';
-      if (raw) { const d = jwt.verify(raw, process.env.JWT_SECRET); if (d?.role) isPrivileged = true; }
+      if (raw) {
+        const d = jwt.verify(raw, process.env.JWT_SECRET);
+        const isClient = d?.aud === 'client' || String(d?.role || '').toLowerCase() === 'client';
+        if (isClient) {
+          const clientId = String(d.clientId || d._id || '');
+          isPrivileged = !!clientId && !!(await Order.exists({ _id: req.params.id, clientId }));
+        } else if (d?.role) {
+          isPrivileged = true;
+        }
+      }
     } catch { /* invalid/expired token → treat as anonymous */ }
     const safeProjection = {
       orderNumber: 1, status: 1, dispatchStatus: 1, isParked: 1, table: 1,
-      total: 1, customerName: 1, createdAt: 1, scheduledTime: 1,
+      // No customerName: an order id is all an anonymous caller has, and the
+      // QR status page shows the order, never who placed it.
+      total: 1, createdAt: 1, scheduledTime: 1,
       'items.name': 1, 'items.quantity': 1, 'items.itemStatus': 1, 'items.department': 1,
     };
     const order = await Order.findById(req.params.id, isPrivileged ? undefined : safeProjection);
@@ -484,6 +608,247 @@ app.get('/api/orders/:id', async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+// Per-line discount and VAT classification for a set of order lines, from the
+// product records and the buyer's client/segment/tier context. Shared by order
+// creation and order amendment so an amended line is priced by exactly the
+// same rules it was first rung up under - a quantity cut that drops below a
+// bulk break loses that break, and nothing else changes.
+const buildLinePricing = async (req, items, { buyerClientId = '', buyerSegments = [] } = {}) => {
+  const _prodIds = items.map(i => i.productId).filter(Boolean);
+  const _prodNames = items.map(i => i.name).filter(Boolean);
+  const _discProds = await Product.find(
+    { $or: [{ _id: { $in: _prodIds } }, { name: { $in: _prodNames } }] },
+    { _id: 1, name: 1, basePrice: 1, discountPercent: 1, clientDiscounts: 1, segmentDiscounts: 1, bulkBreaks: 1, clientBulkBreaks: 1, vatExempt: 1 }
+  ).lean();
+  const _discById = new Map(_discProds.map(p => [String(p._id), p]));
+  const _discByName = new Map(_discProds.map(p => [p.name, p]));
+  // The buyer's price-tier context, and the per-product discount decision
+  // itself, both come from the shared resolver (lib/discounts.js) - the
+  // SAME function the pre-checkout price display (products.js) uses, so a
+  // buyer is never shown one price and charged a different one.
+  const { tierDefaultPct: _tierDefaultPct, perProductTiers: _perProductTiers } = await loadTierContext({
+    PriceTier, businessType: BUSINESS_TYPE, tenantScope, req, buyerSegments: buyerSegments,
+  });
+  const productDiscPct = (item) => {
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    return resolveEffectiveDiscountPercent(p, {
+      buyerClientId: buyerClientId, buyerSegments: buyerSegments,
+      tierDefaultPct: _tierDefaultPct, perProductTiers: _perProductTiers,
+    });
+  };
+  // Quantity-break bulk pricing, independent of clientDiscounts/segmentDiscounts
+  // above - combined via Math.max where it's applied, never stacked.
+  const bulkQtyDiscPct = (item) => {
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    const breaks = p?.bulkBreaks || [];
+    if (!breaks.length) return 0;
+    const qty = Number(item.quantity || 0);
+    const qualifying = breaks.filter(b => qty >= Number(b.minQty || 0));
+    if (!qualifying.length) return 0;
+    return Math.max(0, Math.min(100, Math.max(...qualifying.map(b => Number(b.percent || 0)))));
+  };
+  // Per-CLIENT quantity breaks, unlike bulkQtyDiscPct above which applies to
+  // any buyer. These are quoted as a real PRICE ("once you order 50+, it's
+  // PHP 180 each"), not a discount percent, so the tier's price is converted
+  // to an equivalent percent-off-basePrice here - same conversion PriceTier's
+  // per_product mode already does - and then combined into the same Math.max
+  // as every other discount. A buyer who isn't this named client never sees it.
+  const clientBulkQtyDiscPct = (item) => {
+    if (!buyerClientId) return 0;
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    const breaks = (p?.clientBulkBreaks || []).filter(b => String(b.clientId) === String(buyerClientId));
+    if (!breaks.length) return 0;
+    const qty = Number(item.quantity || 0);
+    const qualifying = breaks.filter(b => qty >= Number(b.minQty || 0));
+    if (!qualifying.length) return 0;
+    const base = Number(p?.basePrice) || 0;
+    if (base <= 0) return 0;
+    // The best (lowest) quoted price among qualifying tiers, converted to
+    // the discount percent that would produce it.
+    const bestPrice = Math.max(0, Math.min(...qualifying.map(b => Math.max(0, Number(b.price) || 0))));
+    return Math.max(0, Math.min(100, +(100 - (bestPrice / base) * 100).toFixed(4)));
+  };
+  // TIER-scoped quantity breaks - unlike clientBulkQtyDiscPct above (one
+  // named client) and bulkQtyDiscPct (any buyer), this applies to every
+  // client tagged into a per_product tier the buyer belongs to. "Anyone in
+  // Kape Sinukuan Price who orders 20+ of this pays ₱550 each." resolveTier
+  // Percent already knows how to pick the better of the tier's flat rate and
+  // a qualifying break (lib/priceTiers.js) - this just supplies the
+  // quantity it needs, which the static pricing table never has.
+  const tierBulkQtyDiscPct = (item) => {
+    if (!_perProductTiers.length) return 0;
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    if (!p) return 0;
+    const qty = Number(item.quantity || 0);
+    const pcts = _perProductTiers.map(t => resolveTierPercent(p, t, qty)).filter(v => v !== null);
+    return pcts.length ? Math.max(0, Math.min(100, Math.max(...pcts))) : 0;
+  };
+
+  // Server-authoritative VAT classification, same rule as the discount lookup:
+  // never trust a client-supplied flag, resolve it from the product record.
+  const productIsExempt = (item) => {
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    return p?.vatExempt === true;
+  };
+  const linePercent = (item) => Math.max(productDiscPct(item), bulkQtyDiscPct(item), clientBulkQtyDiscPct(item), tierBulkQtyDiscPct(item));
+  // The buyer's exact tier price for a line sold at the product's own price
+  // (not a size) - see resolveTierUnitPrice. Used when an order is amended.
+  const tierUnitPrice = (item) => {
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    if (!p || item.name !== p.name) return null;
+    return resolveTierUnitPrice(p, _perProductTiers, { buyerClientId, qty: Number(item.quantity || 0) });
+  };
+  const listPriceOf = (item) => {
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    return p ? Number(p.basePrice) || 0 : null;
+  };
+  return { linePercent, productIsExempt, tierUnitPrice, listPriceOf };
+};
+
+// Unit prices come from the catalogue, never from the request.
+//
+// The POS, the client portal and the public QR menu all send a `price` on each
+// line because that is what they display - and until this existed, the order
+// was charged exactly that. Anyone holding a portal login or a table QR could
+// post a ₱1 sack. Every line is now re-priced from the records:
+//
+//   combo line        the combo's own price
+//   product line      the size price if a size was picked, else the active
+//                     sale price, else the base price
+//   add-ons           the product's own add-on, a global add-on, or a
+//                     "Group: Option" modifier choice - by name
+//   accepted quote    a client ordering what they accepted pays the quoted
+//                     price for that product (and no discount on top of it -
+//                     the quote already is the agreed number)
+//
+// A line that matches nothing in the catalogue is a staff-entered open item
+// and keeps its price when staff ring it up; from a client or a QR menu it is
+// refused. Returns { error } or { quoteIds } (quotations to link to the order).
+const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, tierBuyerId = '', tierBuyerSegments = [] }) => {
+  const Sale = mongoose.model('Sale');
+  const Quotation = mongoose.model('Quotation');
+  const ids = [...new Set(items.map(i => String(i.productId || '')).filter(id => mongoose.Types.ObjectId.isValid(id)))];
+  const names = [...new Set(items.filter(i => !i.productId).map(i => i.name).filter(Boolean))];
+  const [prods, combos, globalAddOns, groups, sales, quotes] = await Promise.all([
+    Product.find({ $or: [{ _id: { $in: ids } }, { name: { $in: names } }] }, { name: 1, basePrice: 1, baseSize: 1, sizes: 1, addOns: 1, isArchived: 1, isAvailable: 1, clientDiscounts: 1, clientBulkBreaks: 1 }).lean(),
+    Combo.find({ _id: { $in: ids } }, { name: 1, price: 1 }).lean(),
+    AddOn.find({}, { name: 1, price: 1 }).lean(),
+    ModifierGroup.find({}, { name: 1, options: 1 }).lean(),
+    Sale.find(activeSalesQuery()).lean(),
+    selfService && buyerClientId
+      ? Quotation.find({ clientAccountId: String(buyerClientId), status: 'Accepted', $or: [{ orderId: null }, { orderId: { $exists: false } }] }).lean()
+      : [],
+  ]);
+  const prodById = new Map(prods.map(p => [String(p._id), p]));
+  const prodByName = new Map(prods.map(p => [p.name, p]));
+  const comboById = new Map(combos.map(c => [String(c._id), c]));
+  const { map: saleMap } = buildSalePriceMap(sales);
+
+  // Accepted, not-yet-ordered quote lines this client may order at the quoted price.
+  const quoted = new Map(); // key (productId or name) -> { price, quoteId }
+  for (const q of quotes) {
+    if (q.validUntil && new Date(q.validUntil) < new Date()) continue;
+    for (const l of (q.lines || [])) {
+      if (l.quotedPrice == null) continue;
+      const key = l.productId ? `id:${l.productId}` : `name:${l.name}`;
+      quoted.set(key, { price: Number(l.quotedPrice), quoteId: String(q._id) });
+    }
+  }
+  // The buyer's per-product tiers - a tier's set price is the unit price (priceTiers.js).
+  const { perProductTiers: markupTiers } = tierBuyerSegments.length
+    ? await loadTierContext({ PriceTier, businessType: BUSINESS_TYPE, tenantScope, req, buyerSegments: tierBuyerSegments })
+    : { perProductTiers: [] };
+  const quoteIds = new Set();
+  // Self-service lines always take the catalogue price. Staff at the till may
+  // ring up a different one (a negotiated price, a quote read off paper) - it
+  // stands, but every such override is returned so it lands in the audit log.
+  const overrides = [];
+  const setPrice = (target, label, catalogue) => {
+    const entered = Number(target.price);
+    if (selfService || !Number.isFinite(entered)) { target.price = catalogue; return; }
+    if (Math.abs(entered - catalogue) > 0.005) overrides.push({ item: label, catalogue, charged: entered });
+  };
+
+  const addOnPrice = (product, addOnName) => {
+    const own = (product?.addOns || []).find(a => a.name === addOnName);
+    if (own) return Number(own.price) || 0;
+    const global = globalAddOns.find(a => a.name === addOnName);
+    if (global) return Number(global.price) || 0;
+    for (const g of groups) {
+      const prefix = `${g.name}: `;
+      if (addOnName.startsWith(prefix)) {
+        const opt = (g.options || []).find(o => o.name === addOnName.slice(prefix.length));
+        if (opt) return Number(opt.price) || 0;
+      }
+    }
+    return null;
+  };
+
+  for (const item of items) {
+    const qKey = item.productId ? `id:${item.productId}` : `name:${item.name}`;
+    if (quoted.has(qKey)) {
+      const hit = quoted.get(qKey);
+      item.price = hit.price;
+      item.selectedAddOns = [];
+      item._quoted = true;
+      quoteIds.add(hit.quoteId);
+      continue;
+    }
+    if (item.isCombo) {
+      const combo = comboById.get(String(item.productId));
+      if (!combo) {
+        if (selfService) return { error: `The combo "${item.name}" is no longer available.` };
+        continue;
+      }
+      item.listPrice = Number(combo.price) || 0;
+      setPrice(item, item.name, Number(combo.price) || 0);
+      continue;
+    }
+    const product = item.productId ? prodById.get(String(item.productId)) : prodByName.get(item.name);
+    if (!product) {
+      if (selfService) return { error: `"${item.name}" is not on the menu.` };
+      continue; // staff open item - keeps its entered price
+    }
+    if (selfService && (product.isArchived || product.isAvailable === false)) {
+      return { error: `${product.name} is not available right now.` };
+    }
+    // A size is identified by sizeName, or by the "Name (Size)" label the POS builds.
+    const sizeName = item.sizeName
+      || ((item.name || '').startsWith(`${product.name} (`) && item.name.endsWith(')') ? item.name.slice(product.name.length + 2, -1) : '');
+    const size = sizeName ? (product.sizes || []).find(s => s.name === sizeName) : null;
+    // The menu offers the base size as its own choice ("Regular", or the
+    // product's baseSize) - that is the base price, not an extra size.
+    const isBaseSize = sizeName && !size && (sizeName === (product.baseSize || 'Regular') || sizeName === 'Regular');
+    if (sizeName && !size && !isBaseSize && selfService) return { error: `${product.name} does not come in ${sizeName}.` };
+    const sale = saleUnitPrice(product, saleMap[String(product._id)]);
+    // A tier's set price is this buyer's exact price for the product itself
+    // (not a size, and not while it is on sale) - no percent comes off it.
+    const tierUnit = !size && sale == null
+      ? resolveTierUnitPrice(product, markupTiers, { buyerClientId: tierBuyerId, qty: Number(item.quantity) || 0 })
+      : null;
+    item.listPrice = size ? Number(size.price) || 0 : (Number(product.basePrice) || 0);
+    if (tierUnit != null) {
+      item._tierPriced = true;
+      // A till that sent the plain list price has not negotiated anything -
+      // the buyer's tier price applies. A different typed price still stands.
+      if (Math.abs(Number(item.price) - (Number(product.basePrice) || 0)) < 0.005) item.price = tierUnit;
+    }
+    setPrice(item, item.name, size ? Number(size.price) || 0 : (sale != null ? sale : (tierUnit ?? (Number(product.basePrice) || 0))));
+
+    if ((item.selectedAddOns || []).length) {
+      for (const a of item.selectedAddOns) {
+        const price = addOnPrice(product, a.name);
+        if (price == null) {
+          if (selfService) return { error: `The option "${a.name}" is not available for ${product.name}.` };
+          continue;
+        }
+        setPrice(a, `${item.name} + ${a.name}`, price);
+      }
+    }
+  }
+  return { quoteIds: [...quoteIds], overrides };
+};
 
 app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
   // Declared outside the try block on purpose: the E11000 handler in catch{}
@@ -506,7 +871,8 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // folded into `total`. Every delivery order's recorded total therefore
     // undercounted by exactly the fee, which is why it never reconciled
     // against what was actually collected/quoted.
-    const deliveryFee = Math.max(0, Number(req.body.deliveryFee) || 0);
+    // Bounded and rounded: Infinity or a 3-decimal fee used to reach the books.
+    const deliveryFee = roundCentavo(Math.min(MONEY_MAX, Math.max(0, Number(req.body.deliveryFee) || 0)));
     const deliveryAddress = String(req.body.deliveryAddress || '').trim().slice(0, 300);
     const customerPhone = String(req.body.customerPhone || '').trim().slice(0, 40);
     const scheduledTime = String(req.body.scheduledTime || '').trim().slice(0, 40);
@@ -516,7 +882,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // statements and delivery receipts, and it is the key that repeat walk-ins
     // are matched on - so "acme trading corp" and "ACME Trading Corp" must not
     // become two different customers, nor go onto a printed DR in lower case.
-    if (typeof customerName === 'string' && customerName.trim()) customerName = title(customerName);
+    if (typeof customerName === 'string' && customerName.trim()) customerName = partyName(customerName);
 
     // Block QR-originated orders when kitchen has toggled off (staff POS unaffected)
     if (req.qrSession) {
@@ -537,19 +903,78 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // JWT identity is canonical and can't be overridden client-side).
     let onBehalfClientId = '';
     let onBehalfSegments = [];
+    let buyerRep = '';   // the client's assigned salesperson, if any
     if (!isClientOrder && req.body.clientAccountId) {
       try {
         const cli = await ClientAccount.findById(req.body.clientAccountId).lean();
-        if (cli && cli.isActive) { onBehalfClientId = String(cli._id); onBehalfSegments = cli.segments || []; }
+        if (cli && cli.isActive) { onBehalfClientId = String(cli._id); onBehalfSegments = cli.segments || []; buyerRep = cli.assignedSalesperson || ''; }
       } catch { /* invalid id - ignore, fall back to default discount */ }
     }
 
     // SC/PWD is a property of the SALE, not of the business's VAT registration -
     // the cashier marks it per order and the POS already sends the flag. A non-VAT
     // business still labels the discount SC/PWD; it simply has no VAT to strip.
-    const isVatExempt = req.body.isVatExempt === true;
+    let isVatExempt = req.body.isVatExempt === true;
+
+    // Order-level discounts, SC/PWD and complimentary are the cashier's call,
+    // never the buyer's. A QR diner or a client-portal account used to be able
+    // to send discountPercent: 100 or isComplimentary: true and have it booked.
+    // Their prices and product/client discounts are resolved server-side below;
+    // anything order-level they send is dropped.
+    const selfServiceOrder = isClientOrder || req.user?.aud === 'client' || !!req.qrSession;
+    // A salesperson named at the till must be someone on the staff list - the
+    // Commissions report pays by this name.
+    if (!selfServiceOrder && req.body.salesperson) {
+      const name = String(req.body.salesperson).trim().slice(0, 100);
+      // Only the owner credits a sale to someone else; everyone else sells as themselves.
+      if (String(req.user?.role || '').toLowerCase() !== 'superadmin' && name !== cashier) {
+        return res.status(403).json({ success: false, error: 'Only the owner can choose the salesperson.' });
+      }
+      if (!(await User.exists({ name }))) return res.status(400).json({ success: false, error: `"${name}" is not on the staff list.` });
+    }
+    if (selfServiceOrder) {
+      discountPercent = 0;
+      discountFlat = 0;
+      isComplimentary = false;
+      isVatExempt = false;
+    } else if (isComplimentary === true && !hasPermission(req.user, 'orders.comp')) {
+      return res.status(403).json({ success: false, error: 'Forbidden: missing permission "orders.comp".' });
+    }
+    isComplimentary = isComplimentary === true;
+    discountPercent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
+    discountFlat = Math.min(MONEY_MAX, Math.max(0, Number(discountFlat) || 0));
+
+    // An order rung up while the tablet was offline is replayed when the WiFi
+    // returns, and it belongs to the day it was TAKEN: replayed after midnight
+    // it used to land on the next business day's report, EOD and shift. The
+    // claimed time is honoured only for a staff replay (it carries the queue's
+    // idempotency key), only within the last 72 hours, and never into a day
+    // that has been closed (EOD locked or period closed) - those fall back to
+    // now, exactly as before.
+    let placedAt = null;
+    const claimedAt = req.body.placedAt ? new Date(req.body.placedAt) : null;
+    if (claimedAt && !selfServiceOrder && idempotencyKey && !Number.isNaN(claimedAt.getTime())) {
+      const age = Date.now() - claimedAt.getTime();
+      if (age > 0 && age <= 72 * 60 * 60 * 1000) {
+        const eod = await EODRecord.findOne({ dateString: businessDateStr(claimedAt) }).lean();
+        const closed = eod?.status === 'LOCKED' || await periodLockFor(claimedAt);
+        if (!closed) placedAt = claimedAt;
+      }
+    }
     // FIX 1: Safely default to Takeout if the table is null or empty
     if (!table) table = 'Takeout';
+
+    // A counter-only product is not on the QR menu, and a QR order cannot carry
+    // one either - a saved page or an edited request must not get around it.
+    // Checked BEFORE the session is burned below, so a refused order leaves
+    // the customer's session alive to fix their cart and send again.
+    if (req.qrSession && Array.isArray(items)) {
+      const ids = items.map(i => i?.productId).filter(id => mongoose.Types.ObjectId.isValid(id));
+      const hidden = ids.length ? await Product.find({ _id: { $in: ids }, showOnQr: false }, { name: 1 }).lean() : [];
+      if (hidden.length) {
+        return res.status(400).json({ success: false, error: `${hidden.map(h => h.name).join(', ')} can only be ordered at the counter.` });
+      }
+    }
 
     // Kill QR session - already validated by verifyOrderAuth; burn it before processing to prevent replay
     if (req.qrSession) {
@@ -558,17 +983,43 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     }
 
     if (!items || items.length === 0) {
-      throw new Error("Cart is empty");
+      throw Object.assign(new Error("Cart is empty"), { status: 400 });
     }
 
     for (const item of items) {
       if (!item.quantity || item.quantity <= 0) {
-        throw new Error(`Invalid quantity for item: ${item.name || item.productId}`);
+        throw Object.assign(new Error(`Invalid quantity for item: ${item.name || item.productId}`), { status: 400 });
       }
-      if (item.price === undefined || item.price < 0) {
-        throw new Error(`Invalid price for item: ${item.name || item.productId}`);
+      if (!Number.isFinite(Number(item.quantity)) || Number(item.quantity) > 100000) {
+        throw Object.assign(new Error(`Invalid quantity for item: ${item.name || item.productId}`), { status: 400 });
+      }
+      // Logistics sells whole packs - the same rule the amend route applies.
+      // 1.5 cartons would take 1.5 packs of stock that cannot physically leave.
+      if (BUSINESS_TYPE === 'log' && !Number.isInteger(Number(item.quantity))) {
+        throw Object.assign(new Error(`Whole units only for ${item.name || item.productId}.`), { status: 400 });
+      }
+      // A print name is the till's to set (see the Order schema) - never a
+      // client's or a QR menu's.
+      item.printName = (isClientOrder || req.qrSession) ? '' : String(item.printName || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+      item.listPrice = null;   // set from the catalogue below, never taken from the request
+      if (item.price === undefined || !(Number(item.price) >= 0)) {
+        throw Object.assign(new Error(`Invalid price for item: ${item.name || item.productId}`), { status: 400 });
       }
     }
+
+    // Re-price every line from the catalogue (see resolveCatalogPrices).
+    const _tierBuyerId = isClientOrder ? String(req.user.clientId || req.user._id || '') : (onBehalfClientId || '');
+    let _tierBuyerSegments = onBehalfSegments;
+    if (isClientOrder && _tierBuyerId) {
+      try { _tierBuyerSegments = (await ClientAccount.findById(_tierBuyerId, { segments: 1 }).lean())?.segments || []; }
+      catch { _tierBuyerSegments = []; }
+    }
+    const priced = await resolveCatalogPrices(req, items, {
+      selfService: isClientOrder || !!req.qrSession,
+      buyerClientId: isClientOrder ? String(req.user.clientId || req.user._id || '') : '',
+      tierBuyerId: _tierBuyerId, tierBuyerSegments: _tierBuyerSegments,
+    });
+    if (priced.error) return res.status(400).json({ success: false, error: priced.error });
 
     // Authoritative department stamping - look up each product's category and resolve to Kitchen/Bar.
     // Combos resolve from their component products: all-Bar → Bar, otherwise Kitchen.
@@ -620,14 +1071,6 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // Per-product (and optional per-client) discount lookup. Server-authoritative -
     // never trust a client-side discount field. If the buyer is a logged-in client
     // and the product has a matching clientDiscounts entry, that override wins.
-    const _prodIds = items.map(i => i.productId).filter(Boolean);
-    const _prodNames = items.map(i => i.name).filter(Boolean);
-    const _discProds = await Product.find(
-      { $or: [{ _id: { $in: _prodIds } }, { name: { $in: _prodNames } }] },
-      { _id: 1, name: 1, basePrice: 1, discountPercent: 1, clientDiscounts: 1, segmentDiscounts: 1, bulkBreaks: 1, clientBulkBreaks: 1, vatExempt: 1 }
-    ).lean();
-    const _discById = new Map(_discProds.map(p => [String(p._id), p]));
-    const _discByName = new Map(_discProds.map(p => [p.name, p]));
     // Buyer identity for per-client discount resolution. Authenticated client
     // wins; otherwise we fall back to the admin-on-behalf clientAccountId.
     const _buyerClientId = isClientOrder
@@ -640,71 +1083,12 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     let _buyerSegments = onBehalfSegments;
     if (isClientOrder && _buyerClientId) {
       try {
-        const buyerAcct = await ClientAccount.findById(_buyerClientId, { segments: 1 }).lean();
+        const buyerAcct = await ClientAccount.findById(_buyerClientId, { segments: 1, assignedSalesperson: 1 }).lean();
         _buyerSegments = buyerAcct?.segments || [];
+        buyerRep = buyerAcct?.assignedSalesperson || '';
       } catch { /* ignore - no segment discount applies */ }
     }
-    // The buyer's price-tier context, and the per-product discount decision
-    // itself, both come from the shared resolver (lib/discounts.js) - the
-    // SAME function the pre-checkout price display (products.js) uses, so a
-    // buyer is never shown one price and charged a different one.
-    const { tierDefaultPct: _tierDefaultPct, perProductTiers: _perProductTiers } = await loadTierContext({
-      PriceTier, businessType: BUSINESS_TYPE, tenantScope, req, buyerSegments: _buyerSegments,
-    });
-    const productDiscPct = (item) => {
-      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
-      return resolveEffectiveDiscountPercent(p, {
-        buyerClientId: _buyerClientId, buyerSegments: _buyerSegments,
-        tierDefaultPct: _tierDefaultPct, perProductTiers: _perProductTiers,
-      });
-    };
-    // Quantity-break bulk pricing, independent of clientDiscounts/segmentDiscounts
-    // above - combined via Math.max where it's applied, never stacked.
-    const bulkQtyDiscPct = (item) => {
-      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
-      const breaks = p?.bulkBreaks || [];
-      if (!breaks.length) return 0;
-      const qty = Number(item.quantity || 0);
-      const qualifying = breaks.filter(b => qty >= Number(b.minQty || 0));
-      if (!qualifying.length) return 0;
-      return Math.max(0, Math.min(100, Math.max(...qualifying.map(b => Number(b.percent || 0)))));
-    };
-    // Per-CLIENT quantity breaks, unlike bulkQtyDiscPct above which applies to
-    // any buyer. These are quoted as a real PRICE ("once you order 50+, it's
-    // PHP 180 each"), not a discount percent, so the tier's price is converted
-    // to an equivalent percent-off-basePrice here - same conversion PriceTier's
-    // per_product mode already does - and then combined into the same Math.max
-    // as every other discount. A buyer who isn't this named client never sees it.
-    const clientBulkQtyDiscPct = (item) => {
-      if (!_buyerClientId) return 0;
-      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
-      const breaks = (p?.clientBulkBreaks || []).filter(b => String(b.clientId) === String(_buyerClientId));
-      if (!breaks.length) return 0;
-      const qty = Number(item.quantity || 0);
-      const qualifying = breaks.filter(b => qty >= Number(b.minQty || 0));
-      if (!qualifying.length) return 0;
-      const base = Number(p?.basePrice) || 0;
-      if (base <= 0) return 0;
-      // The best (lowest) quoted price among qualifying tiers, converted to
-      // the discount percent that would produce it.
-      const bestPrice = Math.max(0, Math.min(...qualifying.map(b => Math.max(0, Number(b.price) || 0))));
-      return Math.max(0, Math.min(100, +(100 - (bestPrice / base) * 100).toFixed(4)));
-    };
-    // TIER-scoped quantity breaks - unlike clientBulkQtyDiscPct above (one
-    // named client) and bulkQtyDiscPct (any buyer), this applies to every
-    // client tagged into a per_product tier the buyer belongs to. "Anyone in
-    // Kape Sinukuan Price who orders 20+ of this pays ₱550 each." resolveTier
-    // Percent already knows how to pick the better of the tier's flat rate and
-    // a qualifying break (lib/priceTiers.js) - this just supplies the
-    // quantity it needs, which the static pricing table never has.
-    const tierBulkQtyDiscPct = (item) => {
-      if (!_perProductTiers.length) return 0;
-      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
-      if (!p) return 0;
-      const qty = Number(item.quantity || 0);
-      const pcts = _perProductTiers.map(t => resolveTierPercent(p, t, qty)).filter(v => v !== null);
-      return pcts.length ? Math.max(0, Math.min(100, Math.max(...pcts))) : 0;
-    };
+    const { linePercent, productIsExempt } = await buildLinePricing(req, items, { buyerClientId: _buyerClientId, buyerSegments: _buyerSegments });
 
     // Per-item pass resolves only the PRODUCT-level discounts. Order-level
     // discount and VAT are settled afterwards in one place, because with
@@ -713,12 +1097,6 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     let totalProductDisc = 0;
     let baseAfterProductDisc = 0;
     let exemptAfterProductDisc = 0;
-    // Server-authoritative VAT classification, same rule as the discount lookup:
-    // never trust a client-supplied flag, resolve it from the product record.
-    const productIsExempt = (item) => {
-      const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
-      return p?.vatExempt === true;
-    };
     const validatedItems = items.map(item => {
       item.hasDiscount = true;
       // Calculate Add-Ons Total
@@ -730,7 +1108,9 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       // client/segment/default rate with any qualifying bulk-quantity break
       // (universal, tier-wide, or client-specific), taking whichever is
       // higher (never stacked).
-      const prodPct = Math.max(productDiscPct(item), bulkQtyDiscPct(item), clientBulkQtyDiscPct(item), tierBulkQtyDiscPct(item));
+      // A quoted price, or a tier's set price, is the agreed number - no
+      // discount comes off it.
+      const prodPct = (item._quoted || item._tierPriced) ? 0 : linePercent(item);
       const prodDisc = +(itemBase * prodPct / 100).toFixed(2);
       item.productDiscountPercent = prodPct;
       totalProductDisc += prodDisc;
@@ -760,16 +1140,28 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
         });
 
     totalDiscount = +(totalProductDisc + vatResult.discount).toFixed(2);
-    totalVat = vatResult.vatAmount;
     const vatRate = vatResult.rate;
+    // A delivery charge is generally part of gross receipts and VATable, but
+    // some businesses bill it as a pass-through of a courier's own fee. The
+    // answer is a setting, stamped on the order so a later change of mind never
+    // restates a receipt already issued.
+    const feeVatRow = await Settings.findOne({ key: 'deliveryFeeVatable' }).lean();
+    const feeIsVatable = vatCfg.enabled && (feeVatRow?.value === true || feeVatRow?.value === 'true');
+    const feeVat = deliveryFeeVat({
+      deliveryFeeVatable: feeIsVatable, vatRate, deliveryFee,
+      isVatInclusive: vatCfg.inclusive,
+    });
+    totalVat = +(vatResult.vatAmount + feeVat).toFixed(2);
     // Delivery fee is a flat pass-through add-on, not part of the sale being
     // taxed/discounted - added after VAT/discount resolve, same as every
     // export/report that already shows it as its own line item below the
     // subtotal (see printBillingStatement etc. client-side).
-    const finalTotal = +(vatResult.total + deliveryFee).toFixed(2);
+    // Under exclusive pricing a VATable fee carries its VAT on top, the same
+    // way the goods do; inclusive pricing already has it inside the fee.
+    const finalTotal = +(vatResult.total + deliveryFee + (vatCfg.inclusive === false ? feeVat : 0)).toFixed(2);
 
     const currentYear = new Date().getFullYear();
-    const orderNumber = await generateNextSequence(Order, `ORD-${currentYear}`, 'orderNumber');
+    const orderNumber = await generateNextSequence(Order, `ORD-${currentYear}`, 'orderNumber', 'ORD');
 
     // Generate a billing number (monthly-reset: YYYY-MM-XXXX) for every order, both
     // business types.
@@ -782,7 +1174,23 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
         { $inc: { seq: 1 } },
         { upsert: true, returnDocument: 'after' }
       );
-      billingNumber = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${billingCounter.seq.toString().padStart(4, '0')}`;
+      const billingLabel = await seriesPrefix(Settings, 'BIL');
+      billingNumber = `${billingLabel}-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${billingCounter.seq.toString().padStart(4, '0')}`;
+    }
+
+    let serviceFields = {};
+    if (BUSINESS_TYPE === 'fb') {
+      const modeOn = (await Settings.findOne({ key: 'serviceModeEnabled' }).lean())?.value === true;
+      if (modeOn) {
+        const asked = String(req.body.serviceMode || '').toLowerCase();
+        // Not said: a delivery or a "Takeout" counter sale is take-out, a
+        // table is dine-in.
+        const leaves = /take\s*-?\s*out|delivery|grab|panda|lalamove|pickup/i.test(String(table || ''));
+        const mode = asked === 'dine-in' || asked === 'take-out' ? asked : (leaves ? 'take-out' : 'dine-in');
+        serviceFields = { serviceMode: mode, useBarCups: mode === 'dine-in' };
+      } else if (!selfServiceOrder && req.body.useBarCups === true) {
+        serviceFields = { useBarCups: true };
+      }
     }
 
     // Resolve payment method: client pre-set → body override → default Cash
@@ -828,6 +1236,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // immediately and can never grow the receivable. Checked here, after the
     // total is server-authoritative and before anything is written, so a
     // rejected order leaves no partial state behind.
+    let creditOverride = null;   // set when an approver lets an over-limit sale through
     const creditClientId = _buyerClientId;
     if (creditClientId && resolvedPaymentMethod !== 'Cash' && !isComplimentary && finalTotal > 0) {
       const [modeRow, globalRow, client] = await Promise.all([
@@ -861,20 +1270,24 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
           ],
           status: { $nin: ['Cancelled', 'Voided', 'Refunded', 'Parked'] },
           isParked: { $ne: true },
-          paymentMethod: { $ne: 'Cash' },
+          paymentMethod: AR_PAYMENT_METHOD_FILTER,
           isComplimentary: { $ne: true },
           arSettled: { $ne: true },
-        }, { total: 1, arPaidAmount: 1 }).lean();
+        }, { total: 1, arPaidAmount: 1, refundedAmount: 1 }).lean();
         // Partial collections free up credit headroom immediately - a client who
         // has paid down half an invoice should not still be blocked for its full value.
         const outstanding = openRows.reduce((s, r) => s + arBalance(r), 0);
         const check = checkCreditAvailable({ limit, outstanding, orderTotal: finalTotal });
         if (!check.allowed) {
-          return res.status(409).json({
-            success: false,
-            error: `Credit limit reached. Limit ₱${check.limit.toFixed(2)}, already owing ₱${check.outstanding.toFixed(2)}, available ₱${check.available.toFixed(2)}.`,
-            creditLimit: check,
-          });
+          const override = creditOverrideFor(req, creditClientId);
+          if (!override) {
+            return res.status(409).json({
+              success: false,
+              error: `Credit limit reached. Limit ₱${check.limit.toFixed(2)}, already owing ₱${check.outstanding.toFixed(2)}, available ₱${check.available.toFixed(2)}.`,
+              creditLimit: check, needsCreditApproval: true, clientId: String(creditClientId),
+            });
+          }
+          creditOverride = creditOverrideRecord(override, { limit: check.limit, outstanding: check.outstanding, orderTotal: finalTotal });
         }
       }
     }
@@ -885,11 +1298,12 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       subtotal: totalGross,
       vatRate: vatRate,
       vatAmount: totalVat,
-      vatableSales: vatResult.vatableSales,
+      vatableSales: +(vatResult.vatableSales + (feeVat > 0 ? deliveryFee - (vatCfg.inclusive === false ? 0 : feeVat) : 0)).toFixed(2),
       vatExemptSales: vatResult.vatExemptSales,
       // Stamped so this receipt can always be re-derived, even after the setting changes.
       scPwdOrder: vatCfg.scPwdOrder,
       isVatInclusive: vatCfg.inclusive,
+      deliveryFeeVatable: feeIsVatable && deliveryFee > 0,
       discountPercent: isComplimentary ? 0 : discountPercent,
       discount: totalDiscount,
       total: finalTotal,
@@ -914,10 +1328,35 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       ...(billingNumber && { billingNumber }),
       ...(isClientOrder && { clientId: req.user._id || req.user.clientId || '', clientUsername: req.user.username || '' }),
       ...(idempotencyKey && { idempotencyKey }),
+      ...(placedAt && { createdAt: placedAt }),
+      // Wholesale when the buyer is a wholesale account; staff may also say so.
+      channel: (!selfServiceOrder && ['Retail', 'Wholesale'].includes(req.body.channel)) ? req.body.channel
+        : ((_buyerSegments || []).some(s => /wholesale/i.test(String(s))) ? 'Wholesale' : 'Retail'),
+      salesperson: String((!selfServiceOrder && req.body.salesperson) || buyerRep || (selfServiceOrder ? '' : cashier) || '').trim().slice(0, 100),
+      ...(creditOverride && { creditOverride }),
       ...(paymentsInput?.length > 0 && { payments: paymentsInput }),
+      // Dine-in in the bar's own cups (cafe). With "Dine-in / Take-out" on
+      // (Menu Setup) every order says which it is - the customer on the QR
+      // menu included - and dine-in means the shop's own cups. With it off it
+      // stays the till's own switch, never a customer's.
+      ...serviceFields,
       ...(paymentReference && { paymentReference }),
       ...(paymentCheckDate && { paymentCheckDate }),
     });
+
+    // An accepted quote is used up by the order placed against it.
+    if (priced.overrides?.length) {
+      await logAudit(req, {
+        action: 'priceOverride', entity: 'Order', entityId: newOrder._id,
+        after: { orderNumber: newOrder.orderNumber, cashier, overrides: priced.overrides },
+      });
+    }
+    if (priced.quoteIds?.length) {
+      await mongoose.model('Quotation').updateMany(
+        { _id: { $in: priced.quoteIds } },
+        { $set: { orderId: newOrder._id, orderNumber: newOrder.orderNumber } },
+      );
+    }
 
     emitToOps('newOrder', newOrder);
     res.json({ success: true, order: newOrder });
@@ -931,6 +1370,12 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       const existingOrder = await Order.findOne({ idempotencyKey });
       if (existingOrder) return res.status(200).json({ success: true, order: existingOrder, message: "Duplicate prevented." });
     }
+    // A refusal about the ORDER (bad quantity, an item not on the menu, a
+    // quotation already used) is the caller's to fix, so it goes back as a 400
+    // with its reason. Only a genuine fault stays a 500.
+    if (error?.status >= 400 && error.status < 500) {
+      return res.status(error.status).json({ success: false, error: error.message });
+    }
     console.error("Order Creation Error:", error);
     captureError(req, error);
     res.status(500).json({ success: false, error: 'Order failed' });
@@ -938,7 +1383,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
 });
 
 // --- COMPLIMENTARY: APPLY ---
-app.put('/api/orders/:id/complimentary', verifyToken, requireStaff, async (req, res) => {
+app.put('/api/orders/:id/complimentary', verifyToken, requireStaff, permit('orders.comp'), async (req, res) => {
   try {
     const { reasonType, reasonNote, approvedBy, forEmployee } = req.body;
     if (!reasonType) return res.status(400).json({ success: false, error: 'reasonType is required' });
@@ -976,7 +1421,7 @@ app.put('/api/orders/:id/complimentary', verifyToken, requireStaff, async (req, 
 });
 
 // --- COMPLIMENTARY: REMOVE ---
-app.delete('/api/orders/:id/complimentary', verifyToken, requireStaff, async (req, res) => {
+app.delete('/api/orders/:id/complimentary', verifyToken, requireStaff, permit('orders.comp'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found' });
@@ -1005,7 +1450,292 @@ app.delete('/api/orders/:id/complimentary', verifyToken, requireStaff, async (re
   }
 });
 
-app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
+// Recompute an order's money fields from its lines, using the VAT rate, SC/PWD
+// basis and order discount stamped on the order itself. Shared by the status
+// route and order amendment.
+const recomputeOrderTotals = (order) => {
+  // --- BULLETPROOF MATH RECALCULATION ---
+  let totalGross = 0;
+  let lineDiscTotal = 0;
+  let baseAfterLineDisc = 0;
+  let discountableBase = 0;
+  let exemptBase = 0;
+
+  order.items.forEach(item => {
+    const price = item.price || 0;
+    const qty = item.quantity || 1;
+    const addOnTotal = (item.selectedAddOns || []).reduce((sum, a) => sum + Number(a.price || 0), 0);
+    const itemBase = (price + addOnTotal) * qty;
+
+    totalGross += itemBase;
+    const getsDiscount = item.hasDiscount !== false;
+    // Effective per-line discount: MAX of the server-resolved per-product /
+    // per-client discount (productDiscountPercent, set at order create) and
+    // the cashier per-item override (discountPercent). The MAX guarantees a
+    // status change can never silently strip a buyer's negotiated rate.
+    const prodPct = Number(item.productDiscountPercent || 0);
+    const cashierPct = Number(item.discountPercent || 0);
+    const linePct = Math.max(prodPct, cashierPct);
+    const lineDisc = +(itemBase * linePct / 100).toFixed(2);
+
+    lineDiscTotal += lineDisc;
+    baseAfterLineDisc += itemBase - lineDisc;
+    if (item.vatExempt === true) exemptBase += itemBase - lineDisc;
+    // A line already carrying its own discount, or one the cashier excluded,
+    // is not eligible for the order-wide percentage on top.
+    if (linePct === 0 && getsDiscount) discountableBase += itemBase;
+  });
+
+  // Rate and SC/PWD basis come from the ORDER, not from current settings -
+  // editing a historical order must not re-price it under a rule that was
+  // adopted afterwards.
+  const editVat = order.isComplimentary
+    ? { total: 0, vatAmount: 0, vatableSales: 0, vatExemptSales: 0,
+        discount: +baseAfterLineDisc.toFixed(2), rate: Number(order.vatRate || 0) }
+    : computeOrderVat({
+        grossInclusive: baseAfterLineDisc,
+        discountableGross: discountableBase,
+        exemptGross: exemptBase,
+        discountPercent: Number(order.discountPercent || 0),
+        vatEnabled: Number(order.vatRate || 0) > 0,
+        vatRate: Number(order.vatRate || 0),
+        isVatExempt: !!order.isVatExempt,
+        scPwdOrder: order.scPwdOrder === 'discount-first' ? 'discount-first' : 'vat-first',
+        vatInclusive: order.isVatInclusive !== false,
+      });
+
+  order.subtotal = Number(totalGross.toFixed(2));
+  order.discount = Number((lineDiscTotal + editVat.discount).toFixed(2));
+  const feeVat = deliveryFeeVat(order);
+  order.vatAmount = Number((editVat.vatAmount + feeVat).toFixed(2));
+  order.vatableSales = Number((editVat.vatableSales + (feeVat > 0 ? (Number(order.deliveryFee) || 0) - (order.isVatInclusive === false ? 0 : feeVat) : 0)).toFixed(2));
+  order.vatExemptSales = Number(editVat.vatExemptSales.toFixed(2));
+  // The delivery fee sits outside VAT and discounts (see order creation) and
+  // must survive every recalculation - it used to be dropped here, so a
+  // delivery order lost its fee the moment its status changed.
+  order.total = Number((editVat.total + (Number(order.deliveryFee) || 0)
+    + (order.isVatInclusive === false ? feeVat : 0)).toFixed(2));
+};
+
+// --- AMEND: correct an order's lines before it is completed ---
+// The professional line between "edit" and "refund": until an order is
+// Completed nothing has posted - no stock left, no revenue, no receivable - so
+// changing what was ordered is a correction to a sales order, not a change to
+// the books. It is done in place, with a required reason and a kept history.
+// Once Completed, the order is an invoice and only refunds may change it.
+//
+// Body: { changes: [{ index, quantity }], adds: [{ productId, quantity }], reason }.
+// quantity 0 removes a line. An added product already on the order (same
+// product, no add-ons) just raises that line's quantity. Changed and added
+// lines are priced by the same rules as order creation, so cutting below a
+// bulk break loses that break. Products that need a size or option picked
+// (required modifier groups) cannot be added here - that is a new order.
+const AMEND_BLOCKED = ['Completed', 'Cancelled', 'Voided', 'Refunded', 'Partially Fulfilled'];
+app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('orders.manage'), async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Order not found.' });
+    const order = await Order.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+
+    if (order.status === 'Completed') return res.status(409).json({ success: false, error: 'Completed orders cannot be amended. Use a refund for returned or excess items.' });
+    if (AMEND_BLOCKED.includes(order.status)) return res.status(409).json({ success: false, error: `A ${String(order.status).toLowerCase()} order cannot be amended.` });
+    if (order.isParked) return res.status(409).json({ success: false, error: 'Resume the parked order and change it in the cart.' });
+    if ((order.items || []).some(i => (i.fulfilledQty || 0) > 0) || (order.depositRemaining || 0) > 0) {
+      return res.status(409).json({ success: false, error: 'Part of this order was already fulfilled. Use Drop Remaining for the undelivered units.' });
+    }
+    if ((order.payments || []).length > 0) return res.status(409).json({ success: false, error: 'This order already has split payments recorded. Cancel it and place a corrected order.' });
+
+    const reason = String(req.body?.reason || '').trim().slice(0, 300);
+    if (!reason) return res.status(400).json({ success: false, error: 'A reason is required to amend an order.' });
+
+    const changes = Array.isArray(req.body?.changes) ? req.body.changes : [];
+    const wholeUnits = BUSINESS_TYPE === 'log';
+    const wanted = new Map();
+    for (const ch of changes) {
+      const idx = Number(ch?.index);
+      const qty = Number(ch?.quantity);
+      if (!Number.isInteger(idx) || !order.items[idx]) return res.status(400).json({ success: false, error: 'One of the changed lines does not exist on this order.' });
+      if (!Number.isFinite(qty) || qty < 0 || (wholeUnits && !Number.isInteger(qty))) {
+        return res.status(400).json({ success: false, error: `Invalid quantity for ${order.items[idx].name}.` });
+      }
+      if (qty !== Number(order.items[idx].quantity)) wanted.set(idx, qty);
+    }
+
+    // New products. Priced from the product record, never from the request.
+    const adds = Array.isArray(req.body?.adds) ? req.body.adds : [];
+    const newLines = [];
+    if (adds.length) {
+      const ids = adds.map(a => String(a?.productId || ''));
+      if (ids.some(id => !mongoose.Types.ObjectId.isValid(id))) return res.status(400).json({ success: false, error: 'One of the added products does not exist.' });
+      const [prods, cats] = await Promise.all([
+        Product.find({ _id: { $in: ids } }, { name: 1, basePrice: 1, category: 1, productCode: 1, isAvailable: 1, isArchived: 1, modifierGroups: 1 }).lean(),
+        Category.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }, { name: 1, department: 1 }).lean(),
+      ]);
+      const byId = new Map(prods.map(p => [String(p._id), p]));
+      const deptOf = new Map(cats.map(c => [c.name, c.department]));
+      const defaultDept = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
+      for (const a of adds) {
+        const p = byId.get(String(a.productId));
+        const qty = Number(a?.quantity);
+        if (!p || p.isArchived) return res.status(400).json({ success: false, error: 'One of the added products does not exist.' });
+        if (p.isAvailable === false) return res.status(400).json({ success: false, error: `${p.name} is not available.` });
+        if ((p.modifierGroups || []).length) return res.status(400).json({ success: false, error: `${p.name} needs options picked - add it as a new order.` });
+        if (!Number.isFinite(qty) || qty <= 0 || (wholeUnits && !Number.isInteger(qty))) return res.status(400).json({ success: false, error: `Invalid quantity for ${p.name}.` });
+        const same = order.items.findIndex(it => String(it.productId) === String(p._id) && !it.isCombo && !(it.selectedAddOns || []).length);
+        if (same >= 0) {
+          wanted.set(same, (wanted.has(same) ? wanted.get(same) : Number(order.items[same].quantity)) + qty);
+        } else {
+          newLines.push({
+            productId: String(p._id), productCode: p.productCode, name: p.name, price: Number(p.basePrice) || 0, listPrice: Number(p.basePrice) || 0,
+            quantity: qty, department: deptOf.get(p.category) || defaultDept, itemStatus: 'Received',
+          });
+        }
+      }
+    }
+
+    if (wanted.size === 0 && newLines.length === 0) return res.status(400).json({ success: false, error: 'Nothing was changed.' });
+    const kept = order.items.filter((it, i) => (wanted.has(i) ? wanted.get(i) : it.quantity) > 0);
+    if (kept.length === 0 && newLines.length === 0) return res.status(400).json({ success: false, error: 'An order needs at least one line. Cancel the order instead.' });
+
+    // Re-price only the changed lines, as the original buyer.
+    const buyerClientId = String(order.clientId || order.clientAccountId || '');
+    let buyerSegments = [];
+    if (buyerClientId && mongoose.Types.ObjectId.isValid(buyerClientId)) {
+      const acct = await ClientAccount.findById(buyerClientId, { segments: 1 }).lean();
+      buyerSegments = acct?.segments || [];
+    }
+    const changedLines = [...wanted.keys()].map(i => ({ productId: order.items[i].productId, name: order.items[i].name, quantity: wanted.get(i) }));
+    const { linePercent, productIsExempt, tierUnitPrice, listPriceOf } = await buildLinePricing(req, [...changedLines, ...newLines], { buyerClientId, buyerSegments });
+
+    const totalBefore = Number(order.total) || 0;
+    const changeLog = [];
+    for (const [i, qty] of wanted) {
+      const it = order.items[i];
+      changeLog.push({ name: it.name, from: Number(it.quantity), to: qty });
+      it.quantity = qty;
+      if (qty > 0 && !it.isCombo) {
+        // A line at the product's own price follows the buyer's tier price
+        // exactly; anything else (a size, a sale, a negotiated price) keeps
+        // its price and is re-discounted as before.
+        const line = { productId: it.productId, name: it.name, quantity: qty };
+        const tu = tierUnitPrice(line);
+        const list = listPriceOf(line);
+        const atOwnPrice = list != null && (Math.abs(Number(it.price) - list) < 0.005 || (tu != null && Math.abs(Number(it.price) - tu) < 0.005));
+        if (tu != null && atOwnPrice) { it.price = tu; it.productDiscountPercent = 0; }
+        else it.productDiscountPercent = linePercent(line);
+      }
+    }
+    for (const line of newLines) {
+      changeLog.push({ name: line.name, from: 0, to: line.quantity });
+      const tu = tierUnitPrice(line);
+      order.items.push(tu != null
+        ? { ...line, price: tu, productDiscountPercent: 0, vatExempt: productIsExempt(line) }
+        : { ...line, productDiscountPercent: linePercent(line), vatExempt: productIsExempt(line) });
+    }
+    order.items = order.items.filter(it => it.quantity > 0);
+    order.markModified('items');
+    recomputeOrderTotals(order);
+
+    const math = validateOrderMath(order);
+    if (!math.valid) return res.status(400).json({ success: false, error: `SYSTEM AUDIT REJECTED: ${math.error}` });
+
+    // Growing an on-account order spends more credit - the same gate as creation.
+    const totalAfter = Number(order.total) || 0;
+    if (totalAfter > totalBefore + 0.005 && buyerClientId && order.paymentMethod !== 'Cash' && !order.isComplimentary) {
+      const refusal = await creditRefusal({ buyerClientId, excludeId: order._id, orderTotal: totalAfter });
+      if (refusal) {
+        const override = creditOverrideFor(req, buyerClientId);
+        if (!override) return res.status(409).json({ success: false, error: refusal, needsCreditApproval: true, clientId: buyerClientId });
+        order.creditOverride = creditOverrideRecord(override, { orderTotal: totalAfter });
+      }
+    }
+
+    // Cash already tendered at Preparing: the change due follows the new total.
+    if (order.amountTendered) order.changeDue = Number(Math.max(0, order.amountTendered - totalAfter).toFixed(2));
+
+    order.revision = (order.revision || 0) + 1;
+    order.amendments.push({ revision: order.revision, by: req.user?.name || '', reason, totalBefore, totalAfter, changes: changeLog });
+    await order.save();
+
+    await logAudit(req, {
+      action: 'amend', entity: 'Order', entityId: order._id,
+      after: { orderNumber: order.orderNumber, revision: order.revision, reason, totalBefore, totalAfter, changes: changeLog },
+    });
+    emitToOps('orderUpdated', order.toObject());
+    res.json({
+      success: true, order,
+      ...(order.amountTendered && order.amountTendered < totalAfter ? { shortBy: Number((totalAfter - order.amountTendered).toFixed(2)) } : {}),
+    });
+  } catch (err) {
+    console.error('POST /api/orders/:id/amend failed', err);
+    captureError(req, err);
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
+// Would this order put its client over their credit limit? -> an error message,
+// or null when it fits (or the client has no limit). Exposure is every other
+// committed, non-cash, unsettled order of theirs - the A/R report's definition,
+// the same one order creation uses.
+// An over-limit sale on account needs an approver: either a manager's PIN
+// approval for this client (POST /api/users/authorize, permission
+// credit.approve, target = the client id - good for two minutes, for the
+// person who asked), or the seller's own explicit override when they hold
+// credit.approve. Returns { approvedBy } or null.
+function creditOverrideFor(req, clientId) {
+  if (req.user?.aud === 'client' || String(req.user?.role || '').toLowerCase() === 'client') return null;
+  const token = req.body?.creditApproval;
+  const ok = token ? checkApproval(token, { permission: 'credit.approve', requestedBy: req.user?._id, target: String(clientId) }) : null;
+  if (ok) return { approvedBy: ok.approverName };
+  if (req.body?.creditOverride === true && hasPermission(req.user, 'credit.approve')) return { approvedBy: req.user?.name || '' };
+  return null;
+}
+const creditOverrideRecord = (who, numbers = {}) => ({
+  approvedBy: who.approvedBy, approvedAt: new Date(),
+  limit: numbers.limit ?? null, outstanding: numbers.outstanding ?? null, orderTotal: numbers.orderTotal ?? null,
+});
+
+// Where a refund comes back out of. A sale paid one way is credited to the
+// account it was debited to, as always. A SPLIT sale was partly cash and
+// partly a receivable: the refund first takes down what is still owed, and
+// only the rest is money handed back from the drawer - crediting the whole
+// refund to the receivable would leave the client "owed" cash that the books
+// still showed in the till. Call BEFORE adding this refund to refundedAmount.
+function refundCreditLines(order, amt) {
+  const one = debitAccountFor(order.paymentMethod);
+  if (!((order.payments || []).length >= 2)) return [{ accountCode: one.code, accountName: one.name, debit: 0, credit: amt }];
+  const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const owed = Math.max(0, r2((order.total || 0) - (order.arPaidAmount || 0) - (order.refundedAmount || 0)));
+  const fromReceivable = Math.min(r2(amt), owed);
+  const fromCash = r2(amt - fromReceivable);
+  const lines = [];
+  if (fromReceivable > 0) lines.push({ accountCode: '120000', accountName: 'Accounts Receivable', debit: 0, credit: fromReceivable });
+  if (fromCash > 0) lines.push({ accountCode: '111000', accountName: 'Cash on Hand', debit: 0, credit: fromCash });
+  return lines;
+}
+
+async function creditRefusal({ buyerClientId, excludeId, orderTotal }) {
+  if (!buyerClientId) return null;
+  const [modeRow, globalRow, client] = await Promise.all([
+    Settings.findOne({ key: 'creditLimitMode' }).lean(),
+    Settings.findOne({ key: 'globalCreditLimit' }).lean(),
+    mongoose.Types.ObjectId.isValid(buyerClientId) ? ClientAccount.findById(buyerClientId).lean() : null,
+  ]);
+  const limit = resolveCreditLimit({ mode: modeRow?.value, globalLimit: globalRow?.value, clientLimit: client?.creditLimit });
+  if (limit === null) return null;
+  const openRows = await Order.find({
+    businessType: BUSINESS_TYPE, _id: { $ne: excludeId },
+    $or: [{ clientAccountId: buyerClientId }, { clientId: buyerClientId }],
+    status: { $nin: ['Cancelled', 'Voided', 'Refunded', 'Parked'] },
+    isParked: { $ne: true }, paymentMethod: { $ne: 'Cash' }, isComplimentary: { $ne: true }, arSettled: { $ne: true },
+  }, { total: 1, arPaidAmount: 1, refundedAmount: 1 }).lean();
+  const outstanding = openRows.reduce((sum, r) => sum + arBalance(r), 0);
+  const credit = checkCreditAvailable({ limit, outstanding, orderTotal });
+  if (credit.allowed) return null;
+  return `Credit limit reached. Limit ₱${credit.limit.toFixed(2)}, other orders owing ₱${credit.outstanding.toFixed(2)}, this order would be ₱${Number(orderTotal).toFixed(2)}.`;
+}
+
+app.put('/api/orders/:id', verifyToken, requireStaff, permitAny('pos.use', 'orders.manage'), async (req, res) => {
   await runWithStatsRetry(completeOrderOnce, req, res);
 });
 
@@ -1017,12 +1747,96 @@ app.put('/api/orders/:id', verifyToken, requireStaff, async (req, res) => {
 // the correct fix, the same trade void/refund already make elsewhere in this
 // file. Validation paths `return res.status(...)`, a truthy Response object -
 // only the explicit `true` retry signal from the catch block counts.
+// Give back stock a sale took, exactly as recorded on the order
+// (lib/stockMoves.js). Each item gets its quantity back at the cost it left
+// at, and its average cost is re-blended in the same atomic update, so the
+// stock value keeps agreeing with the Inventory account the journal credits.
+// Returns the value given back (what the COGS reversal should be).
+// asBatch: record the returned goods as their own expiry batch even on an
+// item that tracks none - what a partial refund and an exchange always did.
+// A sale that left items below zero (warn mode, lib/negativeStock.js): tell
+// the managers' screens, and keep it in the audit log. After the commit, so a
+// sale that rolled back raises nothing.
+const alertBelowZero = (req, order, items = order?.belowZeroItems) => {
+  const list = (items || []).map(x => ({ invId: x.invId, itemName: x.itemName, balanceAfter: x.balanceAfter }));
+  if (!list.length) return;
+  emitToMgr('stockBelowZero', { orderId: String(order._id), orderNumber: order.orderNumber, items: list });
+  logAudit(req, { action: 'sold_below_zero', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, items: list } })
+    .catch((err) => captureError(req, err));
+};
+
+const restoreStockMoves = async (moves, { session, reference, remarks, asBatch = false }) => {
+  let value = 0;
+  const cards = [];
+  for (const m of moves) {
+    const restored = await Inventory.findOneAndUpdate(
+      { _id: m.invId },
+      [{ $set: {
+        unitCost: { $cond: [
+          { $gt: [{ $add: [{ $max: ['$stockQty', 0] }, m.qty] }, 0] },
+          { $divide: [
+            { $add: [{ $multiply: [{ $max: ['$stockQty', 0] }, { $ifNull: ['$unitCost', 0] }] }, m.qty * m.unitCost] },
+            { $add: [{ $max: ['$stockQty', 0] }, m.qty] },
+          ] },
+          m.unitCost,
+        ] },
+        stockQty: { $round: [{ $add: ['$stockQty', m.qty] }, 6] },
+      } }],
+      { session, returnDocument: 'after', updatePipeline: true },
+    );
+    if (!restored) continue;   // the item was deleted since; nothing to put back
+    if (asBatch || (restored.expiryBatches || []).length > 0) {
+      restored.expiryBatches = addBatch(restored.expiryBatches || [], { qty: m.qty, receivedAt: new Date(), reference, unitCost: m.unitCost });
+      restored.expiryDate = soonestExpiry(restored.expiryBatches);
+      await restored.save({ session });
+    }
+    value += m.qty * m.unitCost;
+    cards.push({
+      inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+      reference, qtyChange: m.qty, balanceAfter: restored.stockQty, unitCost: m.unitCost, remarks,
+    });
+  }
+  if (cards.length) await StockCard.insertMany(cards, { session });
+  return +value.toFixed(2);
+};
+
+// An exchange folds its swap into the order total (total += new - returned)
+// and also logs the return in refundHistory. A partial refund leaves the total
+// alone and adds to refundedAmount. Mixing the two used to count an exchange's
+// return twice: a replacement could never be refunded ("already fully
+// refunded"), and a refund's share was measured against lines already swapped
+// away. These give both routes the same view: the gross of what is still on
+// the order, and what has been paid back outside exchanges.
+const exchangedQtyByLine = (order) => {
+  const m = new Map();
+  for (const h of order.refundHistory || []) {
+    if (!String(h.reason || '').startsWith('EXCHANGE:')) continue;
+    for (const it of h.items || []) m.set(Number(it.itemIndex), (m.get(Number(it.itemIndex)) || 0) + (Number(it.qty) || 0));
+  }
+  return m;
+};
+const liveGross = (order, addOnTotal) => {
+  const gone = exchangedQtyByLine(order);
+  return order.items.reduce((s, it, i) => s + ((Number(it.price) || 0) + addOnTotal(it)) * Math.max(0, (Number(it.quantity) || 0) - (gone.get(i) || 0)), 0);
+};
+
 const completeOrderOnce = async (req, res, mayRetry) => {
   const session = await mongoose.startSession();
   session.startTransaction();
+  // Audit rows are written only once the transaction has committed. They are
+  // outside it, so writing them inline meant a write-conflict retry of this
+  // whole handler logged the same cancel/status change twice.
+  const pendingAudits = [];
 
   try {
     const { status, discountPercent, isVatExempt, paymentMethod, discountType, discountedIndices, items, amountTendered } = req.body;
+    // Who the SC/PWD discount belongs to. Sent from the register beside the
+    // discount itself; '' clears it when the discount is taken back off.
+    const scPwd = {
+      name: req.body.scPwdName !== undefined ? String(req.body.scPwdName).trim().slice(0, 120) : undefined,
+      id: req.body.scPwdIdNumber !== undefined ? String(req.body.scPwdIdNumber).trim().slice(0, 40) : undefined,
+      kind: req.body.scPwdKind !== undefined ? String(req.body.scPwdKind).trim().slice(0, 20) : undefined,
+    };
     const putPaymentReference = String(req.body.paymentReference || '').trim().slice(0, 60);
     
     const order = await Order.findById(req.params.id).session(session);
@@ -1043,6 +1857,52 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       return res.status(400).json({ success: false, error: 'Completed orders are immutable. Use the void workflow for cancellations.' });
     }
 
+    // Dine-in in the bar's own cups, or take-out cups after all - decided any
+    // time up to the moment the order is completed, which is when stock moves.
+    if (typeof req.body.useBarCups === 'boolean' && BUSINESS_TYPE === 'fb') {
+      order.useBarCups = req.body.useBarCups;
+      // Kept in step when the order carries the dine-in / take-out answer.
+      if (order.serviceMode) order.serviceMode = req.body.useBarCups ? 'dine-in' : 'take-out';
+    }
+
+    if (status !== undefined) {
+      // The generic update may only move an order along its normal life.
+      // Voided and Refunded have their own routes that capture a reason and
+      // reverse stock and the ledger; this route used to accept any string at
+      // all, so a staff token could set "Voided" and skip all of it. Status has
+      // no schema enum, which is why the list lives here. (Cancelling a PAID
+      // order is handled just below, with manager approval.)
+      const PUT_STATUSES = new Set(['Pending', 'Preparing', 'Ready', 'Completed', 'Cancelled']);
+      if (!PUT_STATUSES.has(status)) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ success: false, error: `An order cannot be set to "${status}" here. Use the void or refund action.` });
+      }
+    }
+
+    // Deleting (cancelling) a PAID order. An unpaid ticket is a typo anyone at
+    // the till may fix. Once money has been taken, cancelling it takes that
+    // sale out of the drawer's expected cash - the oldest way to pocket a sale
+    // - so it needs someone allowed to void orders, or a manager's approval
+    // for this very order (lib/approval.js).
+    let cancelApprovedBy = null;
+    if (status === 'Cancelled' && previousStatus !== 'Cancelled' && orderIsPaid(order)) {
+      if (hasPermission(req.user, 'orders.delete')) {
+        cancelApprovedBy = req.user?.name || null;
+      } else {
+        const ok = checkApproval(req.body?.approval, { permission: 'orders.delete', requestedBy: req.user?._id, target: String(order._id) });
+        if (!ok) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(403).json({
+            success: false, needsApproval: 'orders.delete',
+            error: 'This order was already paid. Deleting it needs a manager - enter a manager PIN.',
+          });
+        }
+        cancelApprovedBy = ok.approverName;
+      }
+    }
+
     if (status) {
       order.status = status;
       // Attribution: when an order moves to Cancelled, stamp who did it from
@@ -1051,10 +1911,77 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       if (status === 'Cancelled' && previousStatus !== 'Cancelled') {
         order.cancelledBy = req.user?.name || 'system';
         order.cancelledAt = new Date();
-        await logAudit(req, { action: 'cancel', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, cancelledBy: order.cancelledBy } });
+        if (cancelApprovedBy) order.cancelApprovedBy = cancelApprovedBy;
+        const cancelAudit = {
+          orderNumber: order.orderNumber, cancelledBy: order.cancelledBy,
+          paid: orderIsPaid(order), ...(cancelApprovedBy ? { approvedBy: cancelApprovedBy } : {}),
+        };
+        pendingAudits.push(() => logAudit(req, { action: 'cancel', entity: 'Order', entityId: order._id, after: cancelAudit }));
       }
     }
+    // ── SPLIT PAYMENT ──────────────────────────────────────────────────────
+    // Paid in parts at the till - some cash, the rest by transfer, check or on
+    // account. Each part is debited to its own account when the sale posts
+    // (see the engine below); what was handed over in cash is recorded as
+    // already paid, so only the rest stays on the client's receivable.
+    let splitParts = null, splitReceivable = null;
+    if (paymentMethod === 'Split' && !order.isComplimentary && status !== 'Cancelled') {
+      const refuse = async (msg) => { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: msg }); };
+      const centavo = (n) => Math.round((Number(n) || 0) * 100) / 100;
+      splitParts = (Array.isArray(req.body.payments) ? req.body.payments : []).map(p => {
+        const part = { method: String(p?.method || '').trim().slice(0, 60), amount: centavo(p?.amount) };
+        if (part.method.toUpperCase() === 'CHECK') {
+          part.reference = String(p?.reference || '').trim().slice(0, 60);
+          const d = p?.checkDate ? new Date(p.checkDate) : null;
+          part.checkDate = d && !Number.isNaN(d.getTime()) ? d : null;
+        }
+        return part;
+      }).filter(p => p.method && p.method !== 'Split' && p.amount > 0);
+      if (splitParts.length < 2) return refuse('A split payment needs at least two parts.');
+      const paid = centavo(splitParts.reduce((sum, p) => sum + p.amount, 0));
+      if (Math.abs(paid - centavo(order.total)) > 0.01) return refuse(`The split payments add up to ${paid.toFixed(2)}, but the order is ${centavo(order.total).toFixed(2)}.`);
+      if (splitParts.some(p => p.method.toUpperCase() === 'CHECK' && !p.reference)) return refuse('A check number is required for the part paid by check.');
+      if (splitParts.some(p => p.method.toUpperCase() === 'QR') && !putPaymentReference && !order.paymentReference) return refuse('A payment reference number is required for the part paid by QR.');
+      if ((order.arPayments || []).length) return refuse('A collection was already recorded on this order - its payment can no longer be changed.');
+      const inHand = centavo(splitParts.filter(p => debitAccountFor(p.method).code === '111000').reduce((sum, p) => sum + p.amount, 0));
+      splitReceivable = centavo(paid - inHand);
+    }
+
+    // Moving an order off cash at payment time - "not paid yet", or any tender
+    // that is collected later - is where it starts to count against the
+    // client's credit. Created as cash, it was never checked, so check now.
+    // A split payment only counts for the part not handed over in cash.
+    const buyerClientId = String(order.clientId || order.clientAccountId || '');
+    if (paymentMethod && paymentMethod !== 'Cash' && (order.paymentMethod || 'Cash') === 'Cash'
+        && buyerClientId && !order.isComplimentary && status !== 'Cancelled' && (splitReceivable === null || splitReceivable > 0)) {
+      const refusal = await creditRefusal({ buyerClientId, excludeId: order._id, orderTotal: splitReceivable ?? (Number(order.total) || 0) });
+      const override = refusal ? creditOverrideFor(req, buyerClientId) : null;
+      if (refusal && !override) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(409).json({ success: false, error: refusal, needsCreditApproval: true, clientId: buyerClientId });
+      }
+      if (override) order.creditOverride = creditOverrideRecord(override, { orderTotal: Number(order.total) || 0 });
+    }
     if (paymentMethod && !order.isComplimentary) order.paymentMethod = paymentMethod;
+    if (splitParts) {
+      if (splitReceivable <= 0) {
+        // Every part was cash in hand: that is simply a cash sale.
+        order.paymentMethod = 'Cash'; order.payments = []; order.arPaidAmount = 0;
+      } else {
+        order.payments = splitParts;
+        order.arPaidAmount = Math.round((Number(order.total) - splitReceivable) * 100) / 100;
+        const checks = splitParts.filter(p => p.reference);
+        if (checks.length && !putPaymentReference) {
+          order.paymentReference = checks.map(p => p.reference).join(', ').slice(0, 60);
+          const dated = checks.find(p => p.checkDate);
+          if (dated) order.paymentCheckDate = dated.checkDate;
+        }
+      }
+    } else if (paymentMethod && paymentMethod !== 'Split' && !order.isComplimentary && (order.payments || []).length && !(order.arPayments || []).length && previousStatus !== 'Completed') {
+      // Paid again as a single tender: the earlier split no longer applies.
+      order.payments = []; order.arPaidAmount = 0;
+    }
 
     // Same rule as order creation: a check or a QR payment is unreconcilable
     // without its number, and the POS settles a tender through THIS route
@@ -1064,6 +1991,10 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       const putTender = String(paymentMethod || order.paymentMethod || '').trim().toUpperCase();
       const existingRef = putPaymentReference || order.paymentReference || '';
       if ((putTender === 'CHECK' || putTender === 'QR') && !existingRef) {
+        // Every refusal in here closes the transaction it opened; a bare return
+        // left the session open, holding its connection until it timed out.
+        await session.abortTransaction();
+        session.endSession();
         return res.status(400).json({
           success: false,
           error: putTender === 'CHECK'
@@ -1074,7 +2005,11 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       if (putPaymentReference) order.paymentReference = putPaymentReference;
       if (req.body.paymentCheckDate) {
         const d = new Date(req.body.paymentCheckDate);
-        if (Number.isNaN(d.getTime())) return res.status(400).json({ success: false, error: 'Invalid check date.' });
+        if (Number.isNaN(d.getTime())) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({ success: false, error: 'Invalid check date.' });
+        }
         order.paymentCheckDate = d;
       }
     }
@@ -1087,13 +2022,13 @@ const completeOrderOnce = async (req, res, mayRetry) => {
           if (incomingItem.itemStatus !== undefined) order.items[index].itemStatus = incomingItem.itemStatus;
           if (incomingItem.selectedAddOns !== undefined) order.items[index].selectedAddOns = incomingItem.selectedAddOns; 
           // NEW: Listen for the isolated discount from the frontend!
-          if (incomingItem.discountPercent !== undefined) order.items[index].discountPercent = incomingItem.discountPercent; 
+          if (incomingItem.discountPercent !== undefined) order.items[index].discountPercent = Math.min(100, Math.max(0, Number(incomingItem.discountPercent) || 0));
         }
       });
       order.markModified('items');
     }
 
-    if (discountPercent !== undefined) order.discountPercent = discountPercent;
+    if (discountPercent !== undefined) order.discountPercent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
     if (isVatExempt !== undefined) order.isVatExempt = isVatExempt;
     if (discountType !== undefined) order.discountType = discountType;
 
@@ -1112,6 +2047,10 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         order.discountType = 'None';
     }
 
+    if (scPwd.name !== undefined) order.scPwdName = scPwd.name;
+    if (scPwd.id !== undefined) order.scPwdIdNumber = scPwd.id;
+    if (scPwd.kind !== undefined) order.scPwdKind = scPwd.kind;
+
     if (discountedIndices !== undefined) {
       order.items.forEach((item, idx) => {
         item.hasDiscount = discountedIndices.includes(idx);
@@ -1119,62 +2058,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       order.markModified('items'); 
     }
 
-    // --- BULLETPROOF MATH RECALCULATION ---
-    let totalGross = 0;
-    let lineDiscTotal = 0;
-    let baseAfterLineDisc = 0;
-    let discountableBase = 0;
-    let exemptBase = 0;
-
-    order.items.forEach(item => {
-      const price = item.price || 0;
-      const qty = item.quantity || 1;
-      const addOnTotal = (item.selectedAddOns || []).reduce((sum, a) => sum + Number(a.price || 0), 0);
-      const itemBase = (price + addOnTotal) * qty;
-
-      totalGross += itemBase;
-      const getsDiscount = item.hasDiscount !== false;
-      // Effective per-line discount: MAX of the server-resolved per-product /
-      // per-client discount (productDiscountPercent, set at order create) and
-      // the cashier per-item override (discountPercent). The MAX guarantees a
-      // status change can never silently strip a buyer's negotiated rate.
-      const prodPct = Number(item.productDiscountPercent || 0);
-      const cashierPct = Number(item.discountPercent || 0);
-      const linePct = Math.max(prodPct, cashierPct);
-      const lineDisc = +(itemBase * linePct / 100).toFixed(2);
-
-      lineDiscTotal += lineDisc;
-      baseAfterLineDisc += itemBase - lineDisc;
-      if (item.vatExempt === true) exemptBase += itemBase - lineDisc;
-      // A line already carrying its own discount, or one the cashier excluded,
-      // is not eligible for the order-wide percentage on top.
-      if (linePct === 0 && getsDiscount) discountableBase += itemBase;
-    });
-
-    // Rate and SC/PWD basis come from the ORDER, not from current settings -
-    // editing a historical order must not re-price it under a rule that was
-    // adopted afterwards.
-    const editVat = order.isComplimentary
-      ? { total: 0, vatAmount: 0, vatableSales: 0, vatExemptSales: 0,
-          discount: +baseAfterLineDisc.toFixed(2), rate: Number(order.vatRate || 0) }
-      : computeOrderVat({
-          grossInclusive: baseAfterLineDisc,
-          discountableGross: discountableBase,
-          exemptGross: exemptBase,
-          discountPercent: Number(order.discountPercent || 0),
-          vatEnabled: Number(order.vatRate || 0) > 0,
-          vatRate: Number(order.vatRate || 0),
-          isVatExempt: !!order.isVatExempt,
-          scPwdOrder: order.scPwdOrder === 'discount-first' ? 'discount-first' : 'vat-first',
-          vatInclusive: order.isVatInclusive !== false,
-        });
-
-    order.subtotal = Number(totalGross.toFixed(2));
-    order.discount = Number((lineDiscTotal + editVat.discount).toFixed(2));
-    order.vatAmount = Number(editVat.vatAmount.toFixed(2));
-    order.vatableSales = Number(editVat.vatableSales.toFixed(2));
-    order.vatExemptSales = Number(editVat.vatExemptSales.toFixed(2));
-    order.total = Number(editVat.total.toFixed(2));
+    recomputeOrderTotals(order);
 
     // Cash tendered - only for cash orders transitioning to Preparing
     if (status === 'Preparing' && amountTendered !== undefined && (order.paymentMethod === 'Cash' || paymentMethod === 'Cash')) {
@@ -1195,9 +2079,29 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       return res.status(400).json({ success: false, error: `SYSTEM AUDIT REJECTED: ${validation.error}` });
     }
 
+    // An SC/PWD discount is granted against a named cardholder's ID, and both
+    // the 20% and the VAT exemption hang off it. Recorded here rather than
+    // asked for later, because after the customer has walked out nobody can
+    // supply it - and an examiner disallows the discount that has no name on
+    // it. Only enforced as the sale completes: a cashier can apply the
+    // discount, then fill the card details in before taking payment.
+    if (status === 'Completed' && wasNotCompleted && order.discountType === 'SC/PWD' && !order.isComplimentary) {
+      if (!String(order.scPwdName || '').trim() || !String(order.scPwdIdNumber || '').trim()) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({
+          success: false,
+          error: 'An SC/PWD discount needs the cardholder\'s name and ID number on the sale.',
+          needsScPwdId: true,
+        });
+      }
+    }
+
+    if (status === 'Completed' && wasNotCompleted) order.completedAt = new Date();
+
     // --- POS GUARDRAIL: CHECK IF EOD IS LOCKED ---
     if (status === 'Completed' && wasNotCompleted) {
-      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+      const todayStr = businessDateStr();
       const currentEOD = await EODRecord.findOne({ dateString: todayStr }).session(session);
       
       if (currentEOD && currentEOD.status === 'LOCKED') {
@@ -1215,9 +2119,16 @@ const completeOrderOnce = async (req, res, mayRetry) => {
     // --- THE STRICT ERP ENGINE ---
     if (status === 'Completed' && wasNotCompleted && !wasPartiallyFulfilled) {
       log.info(`\n[ERP ENGINE] Processing Order: ${order.orderNumber}...`);
+      // Stock held for this order is released the instant before it is
+      // deducted: a client's own reservation must never block the sale it was
+      // made for, and holding it a moment longer would fail the availability
+      // check on every line below.
+      await ctx.releaseReservationsForOrder?.(order._id, { by: req.user?.name || '', session });
       let totalCogs = 0;
       const stockCardBatch = [];
       const depletedInvIds = new Set(); // track inventory items that hit 0 for auto-unavailable
+      // Below zero: warn (go through, flagged) or block (lib/negativeStock.js).
+      const belowZeroMode = await readNegativeStockMode(Settings, session);
 
       // BULK PRE-FETCH all products for this order in 2 queries (fix N+1)
       const itemProductIds = order.items.map(i => i.productId).filter(Boolean);
@@ -1230,8 +2141,30 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       productsById.forEach(p => productMap.set(String(p._id), p));
       productsByName.forEach(p => productMap.set(`name:${p.name}`, p));
 
-      for (const item of order.items) {
-        if (item.price === undefined || item.quantity === undefined) return { valid: false, error: "Line item missing price or quantity." };
+      // Served in the bar's own cups (cafe): the take-out packaging in each
+      // recipe - cup, lid, straw - stays on the shelf. What each line WOULD
+      // have taken is kept on the line, so it can still be taken if the
+      // customer leaves with the drink (POST /api/orders/:id/take-out).
+      const barCupIds = (BUSINESS_TYPE === 'fb' && order.useBarCups)
+        ? new Set((await Inventory.find({ businessType: BUSINESS_TYPE, takeoutPackaging: true }, { _id: 1 }).session(session).lean()).map(i => String(i._id)))
+        : null;
+      // What a dine-in order leaves on the shelf: stock flagged as take-out
+      // packaging, and any recipe line ticked "take-out only" on its product.
+      const staysForDineIn = (invId, ing) => !!barCupIds && (barCupIds.has(String(invId)) || ing?.takeoutOnly === true);
+      const keptOnShelf = new Map();   // lineIndex -> Map(invId -> { invId, name, qty per unit })
+      const keepOnShelf = (lineIndex, invId, name, perUnit) => {
+        if (!keptOnShelf.has(lineIndex)) keptOnShelf.set(lineIndex, new Map());
+        const packs = keptOnShelf.get(lineIndex);
+        const key = String(invId);
+        const prev = packs.get(key);
+        packs.set(key, { invId: key, name: prev?.name || name || '', qty: roundQty((prev?.qty || 0) + (Number(perUnit) || 0)) });
+      };
+
+      for (const [lineIndex, item] of order.items.entries()) {
+        if (item.price === undefined || item.quantity === undefined) {
+          await session.abortTransaction(); session.endSession();
+          return res.status(400).json({ success: false, error: 'Line item missing price or quantity.' });
+        }
 
         // COMBO / BUNDLE: deduct each component product's recipe.
         if (item.isCombo && Array.isArray(item.comboItems) && item.comboItems.length) {
@@ -1251,17 +2184,18 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               if (linkInv) {
                 const deductQty = (comp.quantity || 1) * item.quantity * baseUnitsPerSale(compProduct, linkInv);
                 const updated = await Inventory.findOneAndUpdate(
-                  { _id: linkInv._id, stockQty: { $gte: deductQty } },
+                  saleStockFilter(linkInv._id, deductQty, belowZeroMode),
                   { $inc: { stockQty: -deductQty } },
                   { session, returnDocument: 'after' }
                 );
                 if (!updated) {
                   await session.abortTransaction(); session.endSession();
-                  return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for combo "${item.name}": [${linkInv.itemName}] would drop below zero.` });
+                  return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for combo "${item.name}": [${linkInv.itemName}] would drop below zero.${blockedNote(belowZeroMode)}` });
                 }
                 stockCardBatch.push({
                   inventoryId: updated._id, itemName: updated.itemName, type: 'Sale',
                   reference: mkRef('', order.orderNumber), qtyChange: -deductQty, balanceAfter: updated.stockQty,
+                  unitCost: updated.unitCost || 0, lineIndex,
                   remarks: `Sold via Combo (${item.name} → ${comp.name})`
                 });
                 totalCogs += (linkInv.unitCost * deductQty);
@@ -1272,15 +2206,16 @@ const completeOrderOnce = async (req, res, mayRetry) => {
             for (const ing of compRecipe) {
               const invId = await resolveIngInvId(ing, session);
               if (!invId) continue;
+              if (staysForDineIn(invId, ing)) { keepOnShelf(lineIndex, invId, ing.name, ing.qty * (comp.quantity || 1)); continue; }
               const deductQty = (ing.qty * (comp.quantity || 1) * item.quantity);
               const invItem = await Inventory.findOneAndUpdate(
-                { _id: invId, stockQty: { $gte: deductQty } },
+                saleStockFilter(invId, deductQty, belowZeroMode),
                 { $inc: { stockQty: -deductQty } },
                 { session, returnDocument: 'after' }
               );
               if (!invItem) {
                 await session.abortTransaction(); session.endSession();
-                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for combo "${item.name}": [${ing.name || invId}] would drop below zero.` });
+                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for combo "${item.name}": [${ing.name || invId}] would drop below zero.${blockedNote(belowZeroMode)}` });
               }
               if (invItem.expiryBatches?.length > 0) {
                 const r = consumeBatches(invItem.expiryBatches, deductQty);
@@ -1290,6 +2225,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               stockCardBatch.push({
                 inventoryId: invItem._id, itemName: invItem.itemName, type: 'Sale',
                 reference: mkRef('', order.orderNumber), qtyChange: -deductQty, balanceAfter: invItem.stockQty,
+                unitCost: invItem.unitCost || 0, lineIndex,
                 remarks: `Sold via Combo (${item.name} → ${comp.name})`
               });
               totalCogs += (invItem.unitCost * deductQty);
@@ -1324,18 +2260,19 @@ const completeOrderOnce = async (req, res, mayRetry) => {
           if (linkInv) {
             const deductQty = item.quantity * baseUnitsPerSale(product, linkInv);
             const updated = await Inventory.findOneAndUpdate(
-              { _id: linkInv._id, stockQty: { $gte: deductQty } },
+              saleStockFilter(linkInv._id, deductQty, belowZeroMode),
               { $inc: { stockQty: -deductQty } },
               { session, returnDocument: 'after' }
             );
             if (!updated) {
               await session.abortTransaction();
               session.endSession();
-              return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Cannot fulfill order. [${linkInv.itemName}] would drop below zero. Please receive stock in the Procurement tab first.` });
+              return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Cannot fulfill order. [${linkInv.itemName}] would drop below zero. Please receive stock in the Procurement tab first.${blockedNote(belowZeroMode)}` });
             }
             stockCardBatch.push({
               inventoryId: updated._id, itemName: updated.itemName, type: 'Sale',
               reference: mkRef('', order.orderNumber), qtyChange: -deductQty, balanceAfter: updated.stockQty,
+              unitCost: updated.unitCost || 0, lineIndex,
               remarks: `Sold (${item.name})`
             });
             totalCogs += (linkInv.unitCost * deductQty);
@@ -1346,9 +2283,10 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         for (const ing of recipeToUse) {
           const invId = await resolveIngInvId(ing, session);
           if (!invId) continue;
+          if (staysForDineIn(invId, ing)) { keepOnShelf(lineIndex, invId, ing.name, ing.qty); continue; }
           const deductQty = (ing.qty * item.quantity);
           const invItem = await Inventory.findOneAndUpdate(
-            { _id: invId, stockQty: { $gte: deductQty } },
+            saleStockFilter(invId, deductQty, belowZeroMode),
             { $inc: { stockQty: -deductQty } },
             { session, returnDocument: 'after' }
           );
@@ -1363,7 +2301,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
             const missing = await Inventory.findById(invId).lean();
             await session.abortTransaction();
             session.endSession();
-            return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Cannot fulfill order. [${missing?.itemName || ing.name}] would drop below zero. Please receive stock in the Procurement tab first.` });
+            return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Cannot fulfill order. [${missing?.itemName || ing.name}] would drop below zero. Please receive stock in the Procurement tab first.${blockedNote(belowZeroMode)}` });
           }
           stockCardBatch.push({
             inventoryId: invItem._id,
@@ -1372,6 +2310,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
             reference: mkRef('', order.orderNumber),
             qtyChange: -deductQty,
             balanceAfter: invItem.stockQty,
+            unitCost: invItem.unitCost || 0, lineIndex,
             remarks: `Sold via ${item.name}`
           });
           totalCogs += (invItem.unitCost * deductQty);
@@ -1381,19 +2320,15 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         for (const selectedAddOn of (item.selectedAddOns || [])) {
           // Resolve the recipe from either a product add-on OR a modifier-group option.
           // Modifier selections are stored as "Group name: Option name".
-          let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
-          if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
-            const [grpName, optName] = selectedAddOn.name.split(': ');
-            const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
-            resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
-          }
+          const resolvedRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
           if (resolvedRecipe && resolvedRecipe.length) {
             for (const ing of resolvedRecipe) {
               const invId = await resolveIngInvId(ing, session);
               if (!invId) continue;
+              if (staysForDineIn(invId, ing)) { keepOnShelf(lineIndex, invId, ing.name, ing.qty); continue; }
               const deductQty = (ing.qty * item.quantity);
               const invItem = await Inventory.findOneAndUpdate(
-                { _id: invId, stockQty: { $gte: deductQty } },
+                saleStockFilter(invId, deductQty, belowZeroMode),
                 { $inc: { stockQty: -deductQty } },
                 { session, returnDocument: 'after' }
               );
@@ -1406,11 +2341,12 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               if (!invItem) {
                 await session.abortTransaction();
                 session.endSession();
-                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Add-on [${ing.name || invId}] drops below zero.` });
+                return res.status(400).json({ success: false, error: `INSUFFICIENT STOCK: Add-on [${ing.name || invId}] drops below zero.${blockedNote(belowZeroMode)}` });
               }
               stockCardBatch.push({
                 inventoryId: invItem._id, itemName: invItem.itemName, type: 'Sale',
                 reference: mkRef('', order.orderNumber), qtyChange: -deductQty, balanceAfter: invItem.stockQty,
+                unitCost: invItem.unitCost || 0, lineIndex,
                 remarks: `Sold via Add-on (${selectedAddOn.name})`
               });
               totalCogs += (invItem.unitCost * deductQty);
@@ -1432,16 +2368,31 @@ const completeOrderOnce = async (req, res, mayRetry) => {
               { 'addOns.recipe.invId': { $in: ids } },
             ],
           },
-          { $set: { isAvailable: false } }
+          // Flagged as automatic so lib/autoRestore.js puts it back once
+          // the ingredient is restocked.
+          { $set: { isAvailable: false, autoUnavailable: true } }
         );
         emitToAll('menuUpdated');
         log.info({ depletedInvIds: ids }, 'Auto-marked products unavailable due to depleted stock');
       }
 
       // Batch-insert all stock card entries in one round-trip
+      // Lines that left an item below zero are flagged, and the order keeps the list.
+      const belowZeroItems = [];
+      for (const c of stockCardBatch) flagBelowZero(c, belowZeroItems);
+      order.belowZeroItems = belowZeroItems;
       if (stockCardBatch.length > 0) {
         await StockCard.insertMany(stockCardBatch, { session });
       }
+      // What this sale took, for a void or refund to give back exactly.
+      order.stockMoves = stockMovesFrom(stockCardBatch);
+      // The take-out packaging each line left on the shelf (bar cups).
+      for (const [lineIndex, packs] of keptOnShelf) {
+        const line = order.items[lineIndex];
+        line.barCupPack = [...packs.values()].filter(p => p.qty > 0);
+        line.barCupQty = line.barCupPack.length ? (Number(line.quantity) || 0) : 0;
+      }
+      if (keptOnShelf.size) order.markModified('items');
 
       const reference = mkRef('', order.orderNumber);
       const lines = [];
@@ -1464,15 +2415,33 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         const payRows = (order.payments?.length > 0)
           ? order.payments
           : [{ method: order.paymentMethod || 'Cash', amount: order.total }];
+        // A discount or an item change after the split was taken leaves parts
+        // that no longer add up to the order - say so, rather than fail to post.
+        const partsSum = Math.round(payRows.reduce((sum, p) => sum + (Number(p.amount) || 0), 0) * 100) / 100;
+        if (order.payments?.length > 0 && Math.abs(partsSum - order.total) > 0.011) {
+          await session.abortTransaction(); session.endSession();
+          return res.status(409).json({ success: false, error: `The order is now ₱${Number(order.total).toFixed(2)} but its split payment adds up to ₱${partsSum.toFixed(2)}. Take the payment again.` });
+        }
         for (const p of payRows) {
           const acct = debitAccountFor(p.method);
           lines.push({ accountCode: acct.code, accountName: acct.name, debit: p.amount, credit: 0 });
         }
         lines.push({ accountCode: '430000', accountName: 'Sales Discounts', debit: order.discount || 0, credit: 0 });
 
-        // Non-VAT: gross receipts = net collected + discount (no VAT separation)
+        // Gross receipts = net collected + discount. When the business is
+        // VAT-registered, the VAT inside that gross belongs to the BIR, not to
+        // revenue - see lib/vatPosting.js. A delivery fee is a pass-through,
+        // not part of the sale being taxed.
         const grossSalesAmount = order.total + (order.discount || 0);
-        lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: grossSalesAmount });
+        const feeVatOnSale = deliveryFeeVat(order);
+        const feeGross = +((order.deliveryFee || 0) + (order.isVatInclusive === false ? feeVatOnSale : 0)).toFixed(2);
+        const saleGross = +(grossSalesAmount - feeGross).toFixed(2);
+        if (feeGross > 0) {
+          // The service itself, net of whatever VAT it carried.
+          lines.push({ accountCode: '420000', accountName: 'Service Sales', debit: 0, credit: +(feeGross - feeVatOnSale).toFixed(2) });
+          if (feeVatOnSale > 0) lines.push({ accountCode: OUTPUT_VAT.code, accountName: OUTPUT_VAT.name, debit: 0, credit: feeVatOnSale });
+        }
+        lines.push(...saleRevenueLines({ gross: saleGross, vatAmount: +((order.vatAmount || 0) - feeVatOnSale).toFixed(2) }));
 
         if (totalCogs > 0) {
           lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: totalCogs, credit: 0 });
@@ -1519,19 +2488,43 @@ const completeOrderOnce = async (req, res, mayRetry) => {
 
     // FIX: Removed the array brackets and {session} to prevent Mongoose crash
     if (status && status !== previousStatus) {
-      await AuditLog.create({
+      const statusAudit = {
         userId: req.user ? req.user.name : 'System',
         action: `ORDER_${status.toUpperCase()}`,
         targetReference: order.orderNumber,
         details: { previousStatus, newStatus: status, total: order.total, method: paymentMethod }
-      });
+      };
+      pendingAudits.push(() => AuditLog.create(statusAudit));
     }
 
     await order.save({ session }); 
     await session.commitTransaction();
     session.endSession();
 
+    for (const write of pendingAudits) {
+      try { await write(); } catch (err) { captureError(req, err); }
+    }
+
+    // A cancelled order holding the latest number gives it back for the next
+    // order and is kept as <number>-X (lib/orderNumbers.js).
+    if (status === 'Cancelled' && previousStatus !== 'Cancelled') {
+      try {
+        const freed = await releaseCancelledOrderNumber(order._id);
+        if (freed) order.orderNumber = freed.renamedTo;
+      } catch (err) { captureError(req, err); }
+    }
+
+    // The receipt's own serial, now that the sale is definitely committed.
+    if (status === 'Completed' && wasNotCompleted) await assignOrNumber(order);
+    if (status === 'Completed' && wasNotCompleted) {
+      const delivered = new Map();
+      for (const dr of order.deliveryReceipts || []) for (const l of dr.lines || []) delivered.set(l.index, (delivered.get(l.index) || 0) + (Number(l.qty) || 0));
+      const rest = (order.items || []).map((it, i) => drLine(it, i, (Number(it.quantity) || 0) - (delivered.get(i) || 0))).filter(l => l.qty > 0);
+      await issueDeliveryReceipt(order, rest);
+    }
+
     emitToOps('orderUpdated', order);
+    if (status === 'Completed' && wasNotCompleted) alertBelowZero(req, order);
     // Push menuUpdated so CustomerMenu instantly re-fetches products and recomputes
     // stockAvailable - catches the moment an ingredient hits zero during service.
     if (status === 'Completed') emitToAll('menuUpdated');
@@ -1574,7 +2567,7 @@ app.post('/api/orders/:id/unvoid', verifyToken, requireSuperAdmin, async (req, r
       }
 
       // Same day-close and period guards the void itself respects.
-      const orderDateStr = new Date(order.createdAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+      const orderDateStr = businessDateStr(order.createdAt);
       const eodRecord = await EODRecord.findOne({ dateString: orderDateStr }).session(session ?? null);
       if (eodRecord?.status === 'LOCKED') {
         throw Object.assign(new Error(`EOD locked for ${orderDateStr}. Cannot un-void after the day is closed.`), { httpStatus: 403 });
@@ -1657,9 +2650,144 @@ app.post('/api/orders/:id/unvoid', verifyToken, requireSuperAdmin, async (req, r
 // bare 500 on a VOID - a money action they then had to guess about. Mirrors the
 // retry the restock route already does. Only retried when nothing has been sent
 // yet, so a validation response is never re-sent.
-app.post('/api/orders/:id/void', verifyToken, requireSuperAdmin, async (req, res) => {
+// Voiding a completed sale reverses its books and its stock. It belongs to
+// whoever holds "Void / delete orders" - the permission says so, and it is how
+// an owner hands voids to a head barista or a manager. It used to be hard-wired
+// to the superadmin, so granting that permission did nothing for a completed
+// order. Un-voiding stays superadmin-only: it re-posts a sale someone reversed.
+// ── MADE TAKE-OUT AFTER ALL ──────────────────────────────────────────────────
+// POST /api/orders/:id/take-out  { lines?: [{ index, qty }] }
+//
+// A dine-in drink served in the bar's cups took no take-out packaging when the
+// order was completed. The customer does not finish it and leaves with it: the
+// cup, lid and straw it would have used come off the shelf NOW, for as many
+// drinks as are named (all that are left, when none are). They are added to
+// the order's stock moves - so a later void or refund gives them back too - and
+// their cost is booked as cost of goods sold, dated today, when they were used.
+app.post('/api/orders/:id/take-out', verifyToken, requireStaff, permitAny('pos.use', 'orders.manage'), async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  const stop = async (code, error) => { await session.abortTransaction(); session.endSession(); return res.status(code).json({ success: false, error }); };
+  try {
+    if (!mongoose.Types.ObjectId.isValid(String(req.params.id))) return stop(404, 'Order not found.');
+    const order = await Order.findById(req.params.id).session(session);
+    if (!order) return stop(404, 'Order not found.');
+    if (order.status !== 'Completed') return stop(400, 'This order is not completed yet - switch "Bar cups" off on the order instead.');
+
+    const wanted = Array.isArray(req.body?.lines)
+      ? new Map(req.body.lines.map(l => [Number(l?.index), Math.floor(Number(l?.qty) || 0)]))
+      : null;
+    const reference = await mkSeqRef('TAKEOUT');
+    const belowZeroMode = await readNegativeStockMode(Settings, session);
+    const cards = [];
+    const made = [];
+    let cogs = 0;
+    for (const [lineIndex, item] of order.items.entries()) {
+      const left = Number(item.barCupQty) || 0;
+      const packs = item.barCupPack || [];
+      if (!(left > 0) || !packs.length) continue;
+      const n = wanted ? Math.min(left, wanted.get(lineIndex) || 0) : left;
+      if (!(n > 0)) continue;
+      for (const p of packs) {
+        const deductQty = roundQty((Number(p.qty) || 0) * n);
+        if (!(deductQty > 0) || !mongoose.Types.ObjectId.isValid(String(p.invId))) continue;
+        const inv = await Inventory.findOneAndUpdate(
+          saleStockFilter(p.invId, deductQty, belowZeroMode),
+          { $inc: { stockQty: -deductQty } },
+          { session, returnDocument: 'after' },
+        );
+        if (!inv) return stop(400, `Not enough ${p.name || 'take-out packaging'} in stock to make this take-out.${blockedNote(belowZeroMode)}`);
+        if (inv.expiryBatches?.length > 0) {
+          const r = consumeBatches(inv.expiryBatches, deductQty);
+          inv.expiryBatches = r.batches; inv.expiryDate = soonestExpiry(r.batches);
+          await inv.save({ session });
+        }
+        cards.push({
+          inventoryId: inv._id, itemName: inv.itemName, type: 'Sale', reference,
+          qtyChange: -deductQty, balanceAfter: inv.stockQty, unitCost: inv.unitCost || 0, lineIndex,
+          remarks: `Made take-out (${item.name}) - ${order.orderNumber}`,
+        });
+        cogs += (inv.unitCost || 0) * deductQty;
+      }
+      item.barCupQty = left - n;
+      made.push({ index: lineIndex, name: item.name, qty: n });
+    }
+    // Nothing on the shelf to take: the drinks were already in take-out cups
+    // (bar cups off), or the products have no take-out packaging set up. The
+    // customer is still leaving with them - that is recorded, and nothing in
+    // stock or the books moves, because nothing more was used.
+    if (!made.length) {
+      const stillInBarCups = order.items.some(it => (Number(it.barCupQty) || 0) > 0);
+      if (stillInBarCups) return stop(400, 'Tick the drinks that are being taken out.');
+      // Only a dine-in order can be taken out afterwards; a take-out or delivery
+      // order already left with its cups.
+      const NOT_DINE_IN = ['Takeout', 'Grab Delivery', 'Foodpanda', 'Manual Delivery', 'Pickup', 'Lalamove'];
+      if (order.serviceMode === 'take-out' || NOT_DINE_IN.includes(order.table)) return stop(400, 'This was already a take-out order.');
+      if (order.takenOutAt) return stop(409, 'This order was already marked as taken out.');
+      order.takenOutAt = new Date();
+      order.takenOutBy = req.user?.name || '';
+      await order.save({ session });
+      await session.commitTransaction();
+      session.endSession();
+      try { await logAudit(req, { action: 'take-out', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, recordOnly: true } }); } catch (err) { captureError(req, err); }
+      emitToOps('orderUpdated', order);
+      return res.json({
+        success: true, order, made: [], cost: 0, recordOnly: true,
+        note: order.useBarCups
+          ? 'Marked as taken out. These drinks have no take-out cup set up in Menu Setup, so nothing was taken from stock.'
+          : 'Marked as taken out. They were already in take-out cups, so nothing more was taken from stock.',
+      });
+    }
+
+    const takeOutBelowZero = [];
+    for (const c of cards) flagBelowZero(c, takeOutBelowZero);
+    if (cards.length) await StockCard.insertMany(cards, { session });
+    if (!order.takenOutAt) { order.takenOutAt = new Date(); order.takenOutBy = req.user?.name || ''; }
+    order.stockMoves = [...(order.stockMoves || []).map(m => (m.toObject ? m.toObject() : m)), ...stockMovesFrom(cards)];
+    order.markModified('items');
+    if (takeOutBelowZero.length) order.belowZeroItems = [...(order.belowZeroItems || []).filter(x => !takeOutBelowZero.some(r => r.invId === x.invId)), ...takeOutBelowZero];
+    await order.save({ session });
+
+    cogs = +cogs.toFixed(2);
+    if (cogs > 0) {
+      await JournalEntry.create([{
+        reference,
+        description: `Take-out packaging for ${order.orderNumber} (served dine-in, taken out after)`,
+        lines: [
+          { accountCode: '510000', accountName: 'Cost of Goods Sold', debit: cogs, credit: 0 },
+          { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: cogs },
+        ],
+        totalDebit: cogs, totalCredit: cogs,
+      }], { session });
+    }
+    await session.commitTransaction();
+    session.endSession();
+    try { await logAudit(req, { action: 'take-out', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, made, cost: cogs } }); } catch (err) { captureError(req, err); }
+    emitToOps('orderUpdated', order);
+    if (cogs > 0) emitToMgr('erpUpdated');
+    alertBelowZero(req, order, takeOutBelowZero);
+    res.json({ success: true, order, made, cost: cogs });
+  } catch (err) {
+    try { await session.abortTransaction(); } catch { /* already ended */ }
+    session.endSession();
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+app.post('/api/orders/:id/void', verifyToken, requireStaff, permit('orders.delete'), async (req, res) => {
   await runWithStatsRetry(voidOrderOnce, req, res);
 });
+
+// Every product an order touches, in ONE query. Void, refund and exchange
+// used to look each line's product up separately inside the transaction -
+// one round trip per line, holding the transaction (and its locks) open the
+// whole time. An id that is not a valid ObjectId is simply absent, as a
+// deleted product already was.
+const loadProductsById = async (ids, session) => {
+  const valid = [...new Set((ids || []).map(String).filter((id) => mongoose.Types.ObjectId.isValid(id)))];
+  const docs = valid.length ? await Product.find({ _id: { $in: valid } }).populate('modifierGroups').session(session ?? null) : [];
+  return new Map(docs.map((p) => [String(p._id), p]));
+};
 
 const voidOrderOnce = async (req, res, mayRetry) => {
   const session = await mongoose.startSession();
@@ -1681,7 +2809,7 @@ const voidOrderOnce = async (req, res, mayRetry) => {
         return res.status(400).json({ success: false, error: 'Only completed orders can be voided.' });
     }
 
-    const orderDateStr = new Date(order.createdAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    const orderDateStr = businessDateStr(order.createdAt);
     const eodRecord = await EODRecord.findOne({ dateString: orderDateStr }).session(session);
     if (eodRecord?.status === 'LOCKED') {
       await session.abortTransaction(); session.endSession();
@@ -1702,12 +2830,42 @@ const voidOrderOnce = async (req, res, mayRetry) => {
     const cashAccountName = _cashAcct.name;
 
     const lines = [];
+    // A sale costed from a figure alone (a backdated or imported sale that took
+    // no stock - account 139000) gives that cost back the way it was booked;
+    // there are no stock moves to return it through.
+    const heldCost = Math.round((Number(order.costPosted) || 0) * 100) / 100;
+    if (heldCost > 0) {
+      lines.push({ accountCode: '139000', accountName: 'Cost of Sales Awaiting Stock Count', debit: heldCost, credit: 0 });
+      lines.push({ accountCode: '510000', accountName: 'Cost of Goods Sold', debit: 0, credit: heldCost });
+      order.costPosted = 0;
+    }
     // Non-VAT: gross receipts = net collected + discount (no VAT separation)
     const grossSalesAmount = order.total + (order.discount || 0);
 
     if (!order.isComplimentary) {
-      lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: grossSalesAmount, credit: 0 });
-      lines.push({ accountCode: cashAccount, accountName: cashAccountName, debit: 0, credit: order.total });
+      const feeVatOnSale = deliveryFeeVat(order);
+      const feeGross = +((order.deliveryFee || 0) + (order.isVatInclusive === false ? feeVatOnSale : 0)).toFixed(2);
+      const saleGross = +(grossSalesAmount - feeGross).toFixed(2);
+      if (feeGross > 0) {
+        lines.push({ accountCode: '420000', accountName: 'Service Sales', debit: +(feeGross - feeVatOnSale).toFixed(2), credit: 0 });
+        if (feeVatOnSale > 0) lines.push({ accountCode: OUTPUT_VAT.code, accountName: OUTPUT_VAT.name, debit: feeVatOnSale, credit: 0 });
+      }
+      lines.push(...saleRevenueLines({ gross: saleGross, vatAmount: +((order.vatAmount || 0) - feeVatOnSale).toFixed(2), side: 'debit' }));
+      const voidParts = (order.payments || []).filter(p => Number(p.amount) > 0);
+      const partsTotal = Math.round(voidParts.reduce((sum, p) => sum + Number(p.amount), 0) * 100) / 100;
+      if (voidParts.length >= 2 && Math.abs(partsTotal - order.total) < 0.011) {
+        // A split sale debited one account per part; reverse it the same way.
+        const byAcct = new Map();
+        for (const p of voidParts) {
+          const a = debitAccountFor(p.method);
+          const row = byAcct.get(a.code) || { accountCode: a.code, accountName: a.name, debit: 0, credit: 0 };
+          row.credit = Math.round((row.credit + Number(p.amount)) * 100) / 100;
+          byAcct.set(a.code, row);
+        }
+        lines.push(...byAcct.values());
+      } else {
+        lines.push({ accountCode: cashAccount, accountName: cashAccountName, debit: 0, credit: order.total });
+      }
       if (order.discount > 0) lines.push({ accountCode: '430000', accountName: 'Sales Discounts', debit: 0, credit: order.discount });
     } else {
       // Reverse the complimentary revenue recognition: DR 4000 / CR 5300 at selling price
@@ -1719,75 +2877,53 @@ const voidOrderOnce = async (req, res, mayRetry) => {
     }
 
     let totalCogs = 0;
-    for (const item of order.items) {
-      let product = await Product.findById(item.productId).populate('modifierGroups').session(session);
-      if (!product) continue;
+    if (hasStockMoves(order)) {
+      // Give back exactly what the sale took, at the cost it was taken at.
+      const moves = movesToReturn(order);
+      totalCogs = reason === 'Restock'
+        ? await restoreStockMoves(moves, { session, reference: mkRef('VOID', order.orderNumber), remarks: `Voided (${reason})` })
+        : +moves.reduce((sum, m) => sum + m.value, 0).toFixed(2);
+    } else {
+      // An order from before stock moves were recorded: rebuilt from the recipe.
+      const voidProducts = await loadProductsById(order.items.map(i => i.productId), session);
+      for (const item of order.items) {
+        let product = voidProducts.get(String(item.productId)) || null;
+        if (!product) continue;
 
-      let recipeToUse = product.baseRecipe || [];
-      const sizeMatch = item.name.match(/\(([^)]+)\)$/);
-      if (sizeMatch) {
-        const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
-        if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
-      }
+        let recipeToUse = product.baseRecipe || [];
+        const sizeMatch = item.name.match(/\(([^)]+)\)$/);
+        if (sizeMatch) {
+          const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
+          if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
+        }
 
-      // LOGISTICS 1:1 FALLBACK - mirror the sale: reverse the linked stocked good.
-      if (!recipeToUse.some(r => r.invId)) {
-        const linkInv = await resolveLinkedInventory(product, item.productCode, session);
-        if (linkInv) {
-          const qtyUsed = item.quantity * baseUnitsPerSale(product, linkInv);
-          if (reason === 'Restock') {
-            const restored = await Inventory.findOneAndUpdate(
-              { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, returnDocument: 'after' }
-            );
-            if (restored) {
-              totalCogs += (restored.unitCost * qtyUsed);
-              await StockCard.create([{
-                inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
-                reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty, remarks: `Voided (${reason})`
-              }], { session });
+        // LOGISTICS 1:1 FALLBACK - mirror the sale: reverse the linked stocked good.
+        if (!recipeToUse.some(r => r.invId)) {
+          const linkInv = await resolveLinkedInventory(product, item.productCode, session);
+          if (linkInv) {
+            const qtyUsed = item.quantity * baseUnitsPerSale(product, linkInv);
+            if (reason === 'Restock') {
+              const restored = await Inventory.findOneAndUpdate(
+                { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, returnDocument: 'after' }
+              );
+              if (restored) {
+                totalCogs += (restored.unitCost * qtyUsed);
+                await StockCard.create([{
+                  inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+                  reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty, remarks: `Voided (${reason})`
+                }], { session });
+              }
+            } else {
+              totalCogs += (linkInv.unitCost * qtyUsed);
             }
-          } else {
-            totalCogs += (linkInv.unitCost * qtyUsed);
           }
         }
-      }
 
-      for (const ing of recipeToUse) {
-        const invId = await resolveIngInvId(ing, session);
-        if (!invId) continue;
-        const qtyUsed = ing.qty * item.quantity;
-
-        if (reason === 'Restock') {
-          const restored = await Inventory.findOneAndUpdate(
-            { _id: invId },
-            { $inc: { stockQty: qtyUsed } },
-            { session, returnDocument: 'after' }
-          );
-          if (!restored) continue;
-          totalCogs += (restored.unitCost * qtyUsed);
-          await StockCard.create([{
-            inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
-            reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty, remarks: `Voided (${reason})`
-          }], { session });
-        } else {
-          const invItem = await Inventory.findById(invId).session(session);
-          if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
-        }
-      }
-
-      for (const selectedAddOn of (item.selectedAddOns || [])) {
-        // Resolve recipe from product add-on OR modifier-group option (symmetric with sale deduction)
-        let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
-        if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
-          const [grpName, optName] = selectedAddOn.name.split(': ');
-          const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
-          resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
-        }
-        if (!resolvedRecipe?.length) continue;
-        for (const ing of resolvedRecipe) {
+        for (const ing of recipeToUse) {
           const invId = await resolveIngInvId(ing, session);
           if (!invId) continue;
           const qtyUsed = ing.qty * item.quantity;
+
           if (reason === 'Restock') {
             const restored = await Inventory.findOneAndUpdate(
               { _id: invId },
@@ -1798,12 +2934,39 @@ const voidOrderOnce = async (req, res, mayRetry) => {
             totalCogs += (restored.unitCost * qtyUsed);
             await StockCard.create([{
               inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
-              reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty,
-              remarks: `Voided Add-on (${selectedAddOn.name}) (${reason})`
+              reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty, remarks: `Voided (${reason})`
             }], { session });
           } else {
             const invItem = await Inventory.findById(invId).session(session);
             if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
+          }
+        }
+
+        for (const selectedAddOn of (item.selectedAddOns || [])) {
+          // Resolve recipe from product add-on OR modifier-group option (symmetric with sale deduction)
+          const resolvedRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
+          if (!resolvedRecipe?.length) continue;
+          for (const ing of resolvedRecipe) {
+            const invId = await resolveIngInvId(ing, session);
+            if (!invId) continue;
+            const qtyUsed = ing.qty * item.quantity;
+            if (reason === 'Restock') {
+              const restored = await Inventory.findOneAndUpdate(
+                { _id: invId },
+                { $inc: { stockQty: qtyUsed } },
+                { session, returnDocument: 'after' }
+              );
+              if (!restored) continue;
+              totalCogs += (restored.unitCost * qtyUsed);
+              await StockCard.create([{
+                inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+                reference: mkRef('VOID', order.orderNumber), qtyChange: qtyUsed, balanceAfter: restored.stockQty,
+                remarks: `Voided Add-on (${selectedAddOn.name}) (${reason})`
+              }], { session });
+            } else {
+              const invItem = await Inventory.findById(invId).session(session);
+              if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
+            }
           }
         }
       }
@@ -1872,15 +3035,23 @@ const voidOrderOnce = async (req, res, mayRetry) => {
   return false;
 };
 
-app.post('/api/orders/archive', verifyToken, requireStaff, async (req, res) => {
+// Needs orders.delete, not orders.manage: closing the day cancels every
+// unfinished order, paid ones included - the same power as deleting a paid
+// order, so it takes the same permission. (The midnight auto-close runs on the
+// server and is unaffected; the button for this is on a superadmin-only screen.)
+app.post('/api/orders/archive', verifyToken, requireStaff, permit('orders.delete'), async (req, res) => {
   try {
     // 1. Force any hanging order to Cancelled - includes Ready (made but never
     //    handed over) and Parked (held unpaid tabs). Parked orders also lose the
     //    isParked flag so they don't linger in the parked list.
+    const openFilter = { status: { $in: ['Pending', 'Preparing', 'Ready', 'Parked'] }, isArchived: false };
+    const closingIds = (await Order.find(openFilter, { _id: 1 }).lean()).map(o => o._id);
     await Order.updateMany(
-      { status: { $in: ['Pending', 'Preparing', 'Ready', 'Parked'] }, isArchived: false },
+      { _id: { $in: closingIds } },
       { $set: { status: 'Cancelled', isParked: false, cancelledBy: req.user?.name || 'EOD Sweep', cancelledAt: new Date() } }
     );
+    // The latest numbers among them go back for tomorrow's first orders.
+    try { await releaseCancelledOrderNumbers(closingIds); } catch (err) { captureError(req, err); }
 
     // 2. Sweep completed/cancelled/voided orders into the archive.
     //    Reserved and Partially Fulfilled stay open - they carry over to the next day.
@@ -1912,18 +3083,20 @@ app.post('/api/orders/archive', verifyToken, requireStaff, async (req, res) => {
 // The journal entry is dated on the deposit date, because that is when the
 // asset account actually moved.
 // ============================================================
-app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/orders/:id/settle-ar', verifyToken, requireStaff, requirePermission('ar.collect'), atomic(mongoose, async (req, res) => {
   try {
     const {
       amount, paymentMethod, note, referenceNumber, collectionDate, depositDate, collectedBy,
       checkNumber, checkDate, checkBank, checkDrawer,
     } = req.body;
+    // One check spread over several sales: the same group on every part.
+    const checkGroup = String(req.body.checkGroup || '').trim().slice(0, 60);
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
     if (order.paymentMethod === 'Cash')
       return res.status(400).json({ success: false, error: 'Cash sales do not require A/R settlement (already booked to Cash on Hand).' });
     if (order.arSettled) return res.status(400).json({ success: false, error: 'Order already settled.' });
-    if (order.status !== 'Completed') return res.status(400).json({ success: false, error: 'Order must be Completed before settlement.' });
+    if (!isReceivableStatus(order.status)) return res.status(400).json({ success: false, error: 'Order must be Completed before settlement.' });
 
     const amt = Math.round((parseFloat(amount) || 0) * 100) / 100;
     if (!amt || amt <= 0) return res.status(400).json({ success: false, error: 'Settlement amount must be > 0.' });
@@ -1987,6 +3160,8 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
         arPayments: { $elemMatch: {
           checkNumber: chequeNo,
           checkStatus: { $nin: ['Bounced'] },
+          // The other parts of this same check are not a double entry.
+          ...(checkGroup ? { checkGroup: { $ne: checkGroup } } : {}),
           ...(checkBank ? { checkBank: String(checkBank).trim() } : {}),
         } },
       }, { orderNumber: 1 }).lean();
@@ -2013,7 +3188,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
 
     const paidBefore = Math.round((Number(order.arPaidAmount) || 0) * 100) / 100;
     const paidAfter = Math.round((paidBefore + applied) * 100) / 100;
-    const fullySettled = paidAfter >= (Number(order.total) || 0) - 0.01;
+    const fullySettled = isFullySettled({ ...order.toObject?.() ?? order, arPaidAmount: paidAfter });
     const seq = (order.arPayments?.length || 0) + 1;
 
     // Sequence the reference so a second collection on the same order doesn't
@@ -2066,6 +3241,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
         checkBank: String(checkBank || '').trim(),
         checkDrawer: String(checkDrawer || '').trim(),
         checkStatus: 'On Hand',
+        checkGroup,
       } : {}),
     });
     order.arPaidAmount = paidAfter;
@@ -2090,20 +3266,21 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireSuperAdmin, async (req
     } catch { /* audit is non-fatal */ }
 
     emitToMgr('erpUpdated');
+    await logAudit(req, { action: 'settle', entity: 'Receivable', entityId: order.orderNumber, after: { balance: arBalance(order), fullySettled, overpay } });
     emitToOps('orderUpdated', order.toObject());
     res.json({ success: true, order, balance: arBalance(order), fullySettled, overpay, clientCreditBalance: overpayClient?.creditBalance });
   } catch (err) {
     log.error({ err }, 'A/R settlement failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // --- CLIENT CREDIT: apply to an order's A/R balance --------------------------
 // Reclassifies stored client credit (260100, a liability - we owe it to
 // them) directly against an order's outstanding A/R. No cash moves; this is
 // purely "use what they're already owed instead of collecting more cash."
 // Same gate as settle-ar - both actually move AR/credit balances.
-app.post('/api/client-accounts/:id/credit/apply', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/client-accounts/:id/credit/apply', verifyToken, requireStaff, requirePermission('ar.collect'), atomic(mongoose, async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Client not found.' });
     const client = await ClientAccount.findOne({ _id: req.params.id, ...tenantScope(req) });
@@ -2138,7 +3315,7 @@ app.post('/api/client-accounts/:id/credit/apply', verifyToken, requireSuperAdmin
     const seq = (order.arPayments?.length || 0) + 1;
     order.arPayments.push({ amount: requested, paymentMethod: 'Client Credit', referenceNumber: referenceNumber || `Credit applied (was ${reference})`, journalRef: reference, recordedBy: req.user?.name || '' });
     order.arPaidAmount = Math.round(((order.arPaidAmount || 0) + requested) * 100) / 100;
-    order.arSettled = order.arPaidAmount >= (order.total || 0) - 0.01;
+    order.arSettled = isFullySettled(order);
     if (order.arSettled) { order.arSettledAt = new Date(); order.arSettledAmount = order.arPaidAmount; order.arSettledMethod = 'Client Credit'; }
     await order.save();
 
@@ -2154,14 +3331,14 @@ app.post('/api/client-accounts/:id/credit/apply', verifyToken, requireSuperAdmin
     log.error({ err }, 'POST /api/client-accounts/:id/credit/apply failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // --- CLIENT CREDIT: refund out via Check Voucher -----------------------------
 // The client's stored credit is real money we owe them - this is how it
 // actually leaves: a real disbursement, with the same paper trail (Check
 // Voucher) a supplier payment gets, rather than sitting as an invisible
 // liability forever.
-app.post('/api/client-accounts/:id/credit/refund', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/client-accounts/:id/credit/refund', verifyToken, requireStaff, requirePermission('ar.collect'), atomic(mongoose, async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Client not found.' });
     const client = await ClientAccount.findOne({ _id: req.params.id, ...tenantScope(req) });
@@ -2189,28 +3366,24 @@ app.post('/api/client-accounts/:id/credit/refund', verifyToken, requireSuperAdmi
       lines, totalDebit: requested, totalCredit: requested,
     });
 
-    const voucherNumber = await mkSeqRef('CV');
-    const voucher = await CheckVoucher.create({
-      businessType: BUSINESS_TYPE, ...tenantScope(req),
-        branchCode: await currentBranchCode(),
-      voucherNumber, payeeType: 'client', payeeId: String(client._id), payeeName: client.name,
-      amount: requested, purpose: 'client-credit-refund', sourceAccount: srcCode, sourceAccountName: srcName,
-      referenceNumber: referenceNumber || '', notes: notes || '', journalEntryRef: reference,
-      issuedBy: req.user?.name || '',
+    const voucher = await issueCheckVoucher(req, {
+      payeeType: 'client', payeeId: String(client._id), payeeName: client.name,
+      amount: requested, purpose: 'client-credit-refund', sourceAccount: srcCode,
+      referenceNumber, notes, journalEntryRef: reference,
     });
 
     client.creditBalance = Math.round((client.creditBalance - requested) * 100) / 100;
     client.creditHistory.push({ type: 'refunded', amount: requested, reference, note: notes || 'Refunded to client', by: req.user?.name || '' });
     await client.save();
 
-    await logAudit(req, { action: 'refund-credit', entity: 'ClientAccount', entityId: client._id, after: { amount: requested, voucherNumber } });
+    await logAudit(req, { action: 'refund-credit', entity: 'ClientAccount', entityId: client._id, after: { amount: requested, voucherNumber: voucher?.voucherNumber || '' } });
     emitToMgr('erpUpdated');
     res.json({ success: true, voucher, client: { _id: client._id, creditBalance: client.creditBalance } });
   } catch (err) {
     log.error({ err }, 'POST /api/client-accounts/:id/credit/refund failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // --- A/R PAYMENT HISTORY for one order ---------------------------------------
 // Every collection posted against this receivable, oldest first, with the
@@ -2220,7 +3393,7 @@ app.get('/api/orders/:id/ar-payments', verifyToken, requireStaff, requirePermiss
   try {
     const order = await Order.findById(req.params.id, {
       orderNumber: 1, customerName: 1, total: 1, paymentMethod: 1, createdAt: 1,
-      arPaidAmount: 1, arPayments: 1, arSettled: 1, arDueDate: 1, arTermsDays: 1,
+      arPaidAmount: 1, refundedAmount: 1, arPayments: 1, arSettled: 1, arDueDate: 1, arTermsDays: 1,
     }).lean();
     if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
 
@@ -2248,7 +3421,7 @@ app.get('/api/orders/:id/ar-payments', verifyToken, requireStaff, requirePermiss
 
 // --- PARTIAL DELIVERY ROUTE ---
 // Sets status to 'Partially Delivered' without triggering ERP (inventory deduction deferred to Completed)
-app.post('/api/orders/:id/partial-delivery', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/orders/:id/partial-delivery', verifyToken, requireStaff, permit('orders.manage'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
@@ -2273,7 +3446,7 @@ app.post('/api/orders/:id/partial-delivery', verifyToken, requireStaff, async (r
 //   • 'full'    - collect the whole remaining goods value now; the not-yet-fulfilled
 //                 portion is held as Customer Deposits and recognized as revenue on
 //                 later rounds (no new charge then).
-app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/orders/:id/partial-fulfill', verifyToken, requireStaff, permit('orders.manage'), async (req, res) => {
   await runWithStatsRetry(partialFulfillOnce, req, res);
 });
 
@@ -2331,6 +3504,11 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     };
 
     // Units to fulfill this round per line, clamped to what's still outstanding.
+    // Units are counted whole: half a carton cannot leave the warehouse.
+    if ((fulfill || []).some(f => !Number.isInteger(Number(f.qty)) || Number(f.qty) < 0)) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'Fulfil whole units only.' });
+    }
     const wantMap = new Map((fulfill || []).map(f => [Number(f.index), Math.max(0, Number(f.qty) || 0)]));
     const deltas = [];
     let grossValue = 0, discountValue = 0, netValue = 0;
@@ -2347,18 +3525,25 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     const deltaValue = netValue; // net cash collectible for this round
     if (deltas.length === 0 || deltaValue <= 0) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: 'Nothing to fulfill this round.' }); }
 
-    // Deduct inventory + COGS for the units fulfilled now. Handles combos (deduct
-    // each component's stock) and normal logistics 1:1 lines.
+    // Deduct inventory + COGS for the units fulfilled now, the way a full sale
+    // does: combos per component, a normal line by its recipe and add-ons, and
+    // the logistics 1:1 link only for a product with no recipe.
     let totalCogs = 0; const stockCardBatch = [];
-    const deductInv = async (invId, qty, label) => {
+    const belowZeroMode = await readNegativeStockMode(Settings, session);
+    const deductInv = async (invId, qty, label, lineIndex) => {
       const upd = await Inventory.findOneAndUpdate(
-        { _id: invId, stockQty: { $gte: qty } },
+        saleStockFilter(invId, qty, belowZeroMode, { respectReserved: false }),
         { $inc: { stockQty: -qty } },
         { session, returnDocument: 'after' }
       );
-      if (!upd) { await session.abortTransaction(); session.endSession(); res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for ${label}.` }); return null; }
+      if (!upd) { await session.abortTransaction(); session.endSession(); res.status(400).json({ success: false, error: `INSUFFICIENT STOCK for ${label}.${blockedNote(belowZeroMode)}` }); return null; }
+      if ((upd.expiryBatches || []).length > 0) {
+        const r = consumeBatches(upd.expiryBatches, qty);
+        upd.expiryBatches = r.batches; upd.expiryDate = soonestExpiry(r.batches);
+        await upd.save({ session });
+      }
       totalCogs += (upd.unitCost || 0) * qty;
-      stockCardBatch.push({ inventoryId: upd._id, itemName: upd.itemName, type: 'Sale', reference: mkRef('', order.orderNumber), qtyChange: -qty, balanceAfter: upd.stockQty, remarks: label });
+      stockCardBatch.push({ inventoryId: upd._id, itemName: upd.itemName, type: 'Sale', reference: mkRef('', order.orderNumber), qtyChange: -qty, balanceAfter: upd.stockQty, unitCost: upd.unitCost || 0, lineIndex, remarks: label });
       return upd;
     };
     for (const { i, want } of deltas) {
@@ -2374,7 +3559,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
             const linkInv = await resolveLinkedInventory(compProduct, compProduct.productCode, session);
             if (linkInv) {
               const deduct = (comp.quantity || 1) * want * baseUnitsPerSale(compProduct, linkInv);
-              if (!(await deductInv(linkInv._id, deduct, `Partial fulfillment combo (${it.name} → ${comp.name})`))) return;
+              if (!(await deductInv(linkInv._id, deduct, `Partial fulfillment combo (${it.name} → ${comp.name})`, i))) return;
             }
             continue;
           }
@@ -2382,31 +3567,71 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
             const invId = await resolveIngInvId(ing, session);
             if (!invId) continue;
             const deduct = ing.qty * (comp.quantity || 1) * want;
-            if (!(await deductInv(invId, deduct, `Partial fulfillment combo (${it.name} → ${comp.name})`))) return;
+            if (!(await deductInv(invId, deduct, `Partial fulfillment combo (${it.name} → ${comp.name})`, i))) return;
           }
         }
         continue;
       }
-      // NORMAL line: logistics 1:1 link.
+      // NORMAL line: its recipe (the size's, when it has one) and its add-ons.
+      // Only a product with no recipe falls back to the 1:1 stock link. This
+      // used to take the 1:1 link alone, so a product whose stock is reached
+      // through its recipe - a bundle, anything named apart from its stock
+      // item - left the warehouse without a single unit coming off.
       const product = it.productId
         ? await Product.findById(it.productId).session(session)
-        : await Product.findOne({ name: it.name }).session(session);
-      const linkInv = await resolveLinkedInventory(product, it.productCode, session);
-      if (!linkInv) continue;
-      const deduct = want * baseUnitsPerSale(product, linkInv);
-      if (!(await deductInv(linkInv._id, deduct, `Partial fulfillment (${it.name})`))) return;
+        : await Product.findOne({ name: it.name.replace(/\s*\(.*?\)\s*/g, '').trim() }).session(session);
+      if (!product) continue;
+      let recipeToUse = product.baseRecipe || [];
+      const sizeMatch = it.name.match(/\(([^)]+)\)$/);
+      if (sizeMatch) {
+        const sizeObj = product.sizes?.find(sz => sz.name === sizeMatch[1]);
+        if (sizeObj?.recipe?.length) recipeToUse = sizeObj.recipe;
+      }
+      if (!recipeToUse.some(r => r.invId)) {
+        const linkInv = await resolveLinkedInventory(product, it.productCode, session);
+        if (linkInv) {
+          const deduct = want * baseUnitsPerSale(product, linkInv);
+          if (!(await deductInv(linkInv._id, deduct, `Partial fulfillment (${it.name})`, i))) return;
+        }
+      }
+      for (const ing of recipeToUse) {
+        const invId = await resolveIngInvId(ing, session);
+        if (!invId) continue;
+        if (!(await deductInv(invId, ing.qty * want, `Partial fulfillment (${it.name})`, i))) return;
+      }
+      for (const selectedAddOn of (it.selectedAddOns || [])) {
+        const addOnRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
+        for (const ing of addOnRecipe || []) {
+          const invId = await resolveIngInvId(ing, session);
+          if (!invId) continue;
+          if (!(await deductInv(invId, ing.qty * want, `Partial fulfillment add-on (${selectedAddOn.name})`, i))) return;
+        }
+      }
     }
+    const roundBelowZero = [];
+    for (const c of stockCardBatch) flagBelowZero(c, roundBelowZero);
+    if (roundBelowZero.length) order.belowZeroItems = [...(order.belowZeroItems || []).filter(x => !roundBelowZero.some(r => r.invId === x.invId)), ...roundBelowZero];
     if (stockCardBatch.length) await StockCard.insertMany(stockCardBatch, { session });
+    // Each round adds what it took to the order's record (Order.stockMoves).
+    order.stockMoves = [...(order.stockMoves || []), ...stockMovesFrom(stockCardBatch)];
 
     const goodsTotal = +order.items.reduce((s, it) => s + lineUnit(it).net * (it.quantity || 0), 0).toFixed(2);
     const cash = debitAccountFor(paymentMethod || order.paymentMethod || 'Cash');
     const lines = [];
 
+    // Prepaid, not-yet-delivered value is a customer deposit. It lives in
+    // 260200 Customer Advances / Deposits - the same account the Advances
+    // screen uses - so all money held for customers shows in one place. Orders
+    // that started a deposit before this carry on in 260000 until it clears,
+    // so each deposit is released from the account it was booked to.
+    const depAcct = order.depositAccount || ((order.depositRemaining || 0) > 0.005 ? '260000' : '260200');
+    const depName = depAcct === '260200' ? 'Customer Advances / Deposits' : 'Customer Deposits';
+
     // 1) Recognize revenue already prepaid (from the deposit) first.
     const fromDeposit = +Math.min(order.depositRemaining || 0, deltaValue).toFixed(2);
     if (fromDeposit > 0) {
-      lines.push({ accountCode: '260000', accountName: 'Customer Deposits', debit: fromDeposit, credit: 0 });
-      lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: fromDeposit });
+      lines.push({ accountCode: depAcct, accountName: depName, debit: fromDeposit, credit: 0 });
+      lines.push(...saleRevenueLines({ gross: fromDeposit, vatAmount: vatShare(order, fromDeposit) }));
       order.depositRemaining = +(order.depositRemaining - fromDeposit).toFixed(2);
     }
 
@@ -2417,10 +3642,11 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
       const remainingUnpaid = +(goodsTotal - (order.amountPaid || 0)).toFixed(2);
       const collectNow = mode === 'full' ? remainingUnpaid : needRevenue;
       lines.push({ accountCode: cash.code, accountName: cash.name, debit: collectNow, credit: 0 });
-      lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: needRevenue });
+      lines.push(...saleRevenueLines({ gross: needRevenue, vatAmount: vatShare(order, needRevenue) }));
       const toDeposit = +(collectNow - needRevenue).toFixed(2);
       if (toDeposit > 0.005) {
-        lines.push({ accountCode: '260000', accountName: 'Customer Deposits', debit: 0, credit: toDeposit });
+        lines.push({ accountCode: depAcct, accountName: depName, debit: 0, credit: toDeposit });
+        order.depositAccount = depAcct;
         order.depositRemaining = +((order.depositRemaining || 0) + toDeposit).toFixed(2);
       }
       order.amountPaid = +((order.amountPaid || 0) + collectNow).toFixed(2);
@@ -2437,7 +3663,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     //    Discounts, exactly like a normal completed sale. Cash already reflects net.
     if (discountValue > 0.005) {
       lines.push({ accountCode: '430000', accountName: 'Sales Discounts', debit: discountValue, credit: 0 });
-      lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: discountValue });
+      lines.push(...saleRevenueLines({ gross: discountValue, vatAmount: vatShare(order, discountValue) }));
     }
 
     // Uniform reference: every posting for an order shares the order number (the
@@ -2456,6 +3682,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     order.markModified('items');
     const allFulfilled = order.items.every(it => (it.fulfilledQty || 0) >= (it.quantity || 0));
     order.status = allFulfilled ? 'Completed' : 'Partially Fulfilled';
+    if (allFulfilled) order.completedAt = new Date();
     if (paymentMethod) order.paymentMethod = paymentMethod;
     // Keep the evidence with the order, same as a full sale does.
     if (partialRef) order.paymentReference = partialRef;
@@ -2470,8 +3697,10 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
 
     await session.commitTransaction();
     session.endSession();
+    await issueDeliveryReceipt(order, deltas.map(({ i, want }) => drLine(order.items[i], i, want)));
     emitToMgr('erpUpdated');
     emitToOps('orderUpdated', order);
+    alertBelowZero(req, order, roundBelowZero);
     res.json({ success: true, order });
     if (allFulfilled) maybePromoteWalkInClient(order);
   } catch (err) {
@@ -2491,7 +3720,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
 // the dropped units carry NO ledger entries because they were never fulfilled.
 // The one money movement is refunding any prepaid-but-undelivered deposit
 // (only possible when an earlier batch was paid in 'full' mode).
-app.post('/api/orders/:id/drop-remaining', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/orders/:id/drop-remaining', verifyToken, requireStaff, permit('orders.manage'), async (req, res) => {
   await runWithStatsRetry(dropRemainingOnce, req, res);
 });
 
@@ -2522,8 +3751,9 @@ const dropRemainingOnce = async (req, res, mayRetry) => {
     if ((order.depositRemaining || 0) > 0.005) {
       const cash = debitAccountFor(order.paymentMethod || 'Cash');
       const refund = +order.depositRemaining.toFixed(2);
+      const depAcct = order.depositAccount || '260000';
       const lines = [
-        { accountCode: '260000', accountName: 'Customer Deposits', debit: refund, credit: 0 },
+        { accountCode: depAcct, accountName: depAcct === '260200' ? 'Customer Advances / Deposits' : 'Customer Deposits', debit: refund, credit: 0 },
         { accountCode: cash.code, accountName: cash.name, debit: 0, credit: refund },
       ];
       const reference = order.orderNumber;
@@ -2543,6 +3773,7 @@ const dropRemainingOnce = async (req, res, mayRetry) => {
     order.droppedBy = req.user?.name || 'system';
     order.droppedAt = new Date();
     order.status = 'Completed';
+    order.completedAt = new Date();
     // Same reasoning as partial-fulfill's final round: this is this order's one
     // and only transition into 'Completed', counted against the now-shrunk
     // (fulfilled-only) items/total computed just above.
@@ -2567,7 +3798,7 @@ const dropRemainingOnce = async (req, res, mayRetry) => {
 };
 
 // ── REFUND FLOW ───────────────────────────────────────────────────────────────
-app.post('/api/orders/:id/refund', verifyToken, requireSuperOrAdmin, async (req, res) => {
+app.post('/api/orders/:id/refund', verifyToken, requireStaff, requirePermission('orders.refund'), async (req, res) => {
   await runWithStatsRetry(refundOnce, req, res);
 });
 
@@ -2586,10 +3817,9 @@ const refundOnce = async (req, res, mayRetry) => {
     const amt = parseFloat(refundAmount) || order.total;
     if (amt <= 0 || amt > order.total + 0.01) return res.status(400).json({ success: false, error: `Refund amount must be between ₱0.01 and ₱${order.total.toFixed(2)}.` });
     const reference = mkRef('REFUND', order.orderNumber);
-    const creditAcct = debitAccountFor(order.paymentMethod);
     const lines = [
-      { accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: amt,  credit: 0   },
-      { accountCode: creditAcct.code, accountName: creditAcct.name,  debit: 0,    credit: amt },
+      ...saleRevenueLines({ gross: amt, vatAmount: vatShare(order, amt), side: 'debit' }),
+      ...refundCreditLines(order, amt),
     ];
 
     // --- INVENTORY / COGS REVERSAL ---
@@ -2601,73 +3831,78 @@ const refundOnce = async (req, res, mayRetry) => {
     const invAction = inventoryAction === 'Restock' || inventoryAction === 'Spoilage' ? inventoryAction : 'None';
     if (isFullRefund && invAction !== 'None' && !order.isComplimentary) {
       let totalCogs = 0;
-      for (const item of order.items) {
-        const product = await Product.findById(item.productId).populate('modifierGroups').session(session);
-        if (!product) continue;
+      if (hasStockMoves(order)) {
+        // Give back exactly what the sale took, at the cost it was taken at.
+        const moves = movesToReturn(order);
+        totalCogs = invAction === 'Restock'
+          ? await restoreStockMoves(moves, { session, reference, remarks: `Refunded (Restock): ${order.orderNumber}` })
+          : +moves.reduce((sum, m) => sum + m.value, 0).toFixed(2);
+      } else {
+        // An order from before stock moves were recorded: rebuilt from the recipe.
+        const refundProducts = await loadProductsById(order.items.map(i => i.productId), session);
+        for (const item of order.items) {
+          const product = refundProducts.get(String(item.productId)) || null;
+          if (!product) continue;
 
-        let recipeToUse = product.baseRecipe || [];
-        const sizeMatch = item.name.match(/\(([^)]+)\)$/);
-        if (sizeMatch) {
-          const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
-          if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
-        }
+          let recipeToUse = product.baseRecipe || [];
+          const sizeMatch = item.name.match(/\(([^)]+)\)$/);
+          if (sizeMatch) {
+            const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
+            if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
+          }
 
-        // LOGISTICS 1:1 FALLBACK - product has no recipe: reverse the linked stocked good.
-        if (!recipeToUse.some(r => r.invId)) {
-          const linkInv = await resolveLinkedInventory(product, item.productCode, session);
-          if (linkInv) {
-            const qtyUsed = item.quantity * baseUnitsPerSale(product, linkInv);
-            if (invAction === 'Restock') {
-              const restored = await Inventory.findOneAndUpdate(
-                { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, returnDocument: 'after' }
-              );
-              if (restored) {
+          // LOGISTICS 1:1 FALLBACK - product has no recipe: reverse the linked stocked good.
+          if (!recipeToUse.some(r => r.invId)) {
+            const linkInv = await resolveLinkedInventory(product, item.productCode, session);
+            if (linkInv) {
+              const qtyUsed = item.quantity * baseUnitsPerSale(product, linkInv);
+              if (invAction === 'Restock') {
+                const restored = await Inventory.findOneAndUpdate(
+                  { _id: linkInv._id }, { $inc: { stockQty: qtyUsed } }, { session, returnDocument: 'after' }
+                );
+                if (restored) {
+                  totalCogs += (restored.unitCost * qtyUsed);
+                  await StockCard.create([{
+                    inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
+                    reference, qtyChange: qtyUsed, balanceAfter: restored.stockQty,
+                    remarks: `Refunded (Restock): ${item.name}`
+                  }], { session });
+                }
+              } else {
+                totalCogs += (linkInv.unitCost * qtyUsed);
+              }
+            }
+          }
+
+          // Collect every ingredient line: base recipe + add-on / modifier-option recipes.
+          const recipes = [{ recipe: recipeToUse, label: item.name }];
+          for (const selectedAddOn of (item.selectedAddOns || [])) {
+            const resolvedRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
+            if (resolvedRecipe?.length) recipes.push({ recipe: resolvedRecipe, label: `Add-on (${selectedAddOn.name})` });
+          }
+
+          for (const { recipe, label } of recipes) {
+            for (const ing of recipe) {
+              const invId = await resolveIngInvId(ing, session);
+              if (!invId) continue;
+              const qtyUsed = ing.qty * item.quantity;
+              if (invAction === 'Restock') {
+                const restored = await Inventory.findOneAndUpdate(
+                  { _id: invId },
+                  { $inc: { stockQty: qtyUsed } },
+                  { session, returnDocument: 'after' }
+                );
+                if (!restored) continue;
                 totalCogs += (restored.unitCost * qtyUsed);
                 await StockCard.create([{
                   inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
                   reference, qtyChange: qtyUsed, balanceAfter: restored.stockQty,
-                  remarks: `Refunded (Restock): ${item.name}`
+                  remarks: `Refunded (Restock): ${label}`
                 }], { session });
+              } else {
+                const invItem = await Inventory.findById(invId).session(session);
+                if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
               }
-            } else {
-              totalCogs += (linkInv.unitCost * qtyUsed);
-            }
-          }
-        }
-
-        // Collect every ingredient line: base recipe + add-on / modifier-option recipes.
-        const recipes = [{ recipe: recipeToUse, label: item.name }];
-        for (const selectedAddOn of (item.selectedAddOns || [])) {
-          let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
-          if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
-            const [grpName, optName] = selectedAddOn.name.split(': ');
-            const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
-            resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
-          }
-          if (resolvedRecipe?.length) recipes.push({ recipe: resolvedRecipe, label: `Add-on (${selectedAddOn.name})` });
-        }
-
-        for (const { recipe, label } of recipes) {
-          for (const ing of recipe) {
-            const invId = await resolveIngInvId(ing, session);
-            if (!invId) continue;
-            const qtyUsed = ing.qty * item.quantity;
-            if (invAction === 'Restock') {
-              const restored = await Inventory.findOneAndUpdate(
-                { _id: invId },
-                { $inc: { stockQty: qtyUsed } },
-                { session, returnDocument: 'after' }
-              );
-              if (!restored) continue;
-              totalCogs += (restored.unitCost * qtyUsed);
-              await StockCard.create([{
-                inventoryId: restored._id, itemName: restored.itemName, type: 'Adjustment',
-                reference, qtyChange: qtyUsed, balanceAfter: restored.stockQty,
-                remarks: `Refunded (Restock): ${label}`
-              }], { session });
-            } else {
-              const invItem = await Inventory.findById(invId).session(session);
-              if (invItem) totalCogs += (invItem.unitCost * qtyUsed);
             }
           }
         }
@@ -2696,6 +3931,9 @@ const refundOnce = async (req, res, mayRetry) => {
     await applyStatsDelta(order, -1, session);
     order.transactionType = 'REFUND';
     order.status = 'Refunded';
+    // What has been credited back, so nothing downstream keeps treating the
+    // face value as money still owed.
+    order.refundedAmount = Math.round((((order.refundedAmount || 0) + amt)) * 100) / 100;
     order.voidReason = `REFUND: ${reason}`;
     await order.save({ session });
     await AuditLog.create({ userId: req.user?.name, action: 'ORDER_REFUNDED', targetReference: order.orderNumber, details: { reason, refundAmount: amt, inventoryAction: isFullRefund ? invAction : 'None (partial)', refundedBy: req.user?.name } });
@@ -2727,7 +3965,7 @@ const refundOnce = async (req, res, mayRetry) => {
 // carried through proportionally, never recomputed. Capped against what's
 // already been refunded across prior partial passes so the running total can
 // never exceed the order's collected amount.
-app.post('/api/orders/:id/partial-refund', verifyToken, requireSuperOrAdmin, async (req, res) => {
+app.post('/api/orders/:id/partial-refund', verifyToken, requireStaff, requirePermission('orders.refund'), async (req, res) => {
   await runWithStatsRetry(partialRefundOnce, req, res);
 });
 
@@ -2769,11 +4007,11 @@ const partialRefundOnce = async (req, res, mayRetry) => {
 
     // Proportional revenue share (see comment above) - never re-derives VAT/discount.
     const addOnTotal = (it) => (it.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
-    const orderGross = order.items.reduce((s, it) => s + ((Number(it.price) || 0) + addOnTotal(it)) * (Number(it.quantity) || 0), 0);
+    const orderGross = liveGross(order, addOnTotal);
     const refundGross = validatedItems.reduce((s, { qty, item }) => s + ((Number(item.price) || 0) + addOnTotal(item)) * qty, 0);
     const fraction = orderGross > 0 ? refundGross / orderGross : 0;
     const baseForRefund = order.isComplimentary ? (order.subtotal || 0) : (order.total || 0);
-    const alreadyRefunded = (order.refundHistory || []).reduce((s, r) => s + (r.amount || 0), 0);
+    const alreadyRefunded = Number(order.refundedAmount) || 0;   // exchanges are already netted into order.total
     const remainingRefundable = +(baseForRefund - alreadyRefunded).toFixed(2);
     if (remainingRefundable <= 0.005) return await fail(400, 'This order has already been fully refunded.');
     const refundAmount = Math.max(0, Math.min(+(baseForRefund * fraction).toFixed(2), remainingRefundable));
@@ -2785,9 +4023,8 @@ const partialRefundOnce = async (req, res, mayRetry) => {
         lines.push({ accountCode: '410000', accountName: 'Sales Revenue', debit: refundAmount, credit: 0 });
         lines.push({ accountCode: '540000', accountName: 'Complimentary Expense', debit: 0, credit: refundAmount });
       } else {
-        const creditAcct = debitAccountFor(order.paymentMethod);
-        lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: refundAmount, credit: 0 });
-        lines.push({ accountCode: creditAcct.code, accountName: creditAcct.name, debit: 0, credit: refundAmount });
+        lines.push(...saleRevenueLines({ gross: refundAmount, vatAmount: vatShare(order, refundAmount), side: 'debit' }));
+        lines.push(...refundCreditLines(order, refundAmount));
       }
     }
 
@@ -2795,12 +4032,21 @@ const partialRefundOnce = async (req, res, mayRetry) => {
     const invAction = inventoryAction === 'Restock' || inventoryAction === 'Spoilage' ? inventoryAction : 'None';
     let totalCogs = 0;
     const refundedItemsLog = [];
+    const partialRefundProducts = await loadProductsById(validatedItems.map(v => v.item.productId), session);
     for (const { itemIndex, qty, item } of validatedItems) {
       refundedItemsLog.push({ itemIndex, name: item.name, qty });
       item.refundedQty = +((Number(item.refundedQty) || 0) + qty).toFixed(6);
       if (invAction === 'None') continue;
+      if (hasStockMoves(order)) {
+        // This line's share of exactly what the sale took, at its cost then.
+        const moves = movesToReturn(order, [{ lineIndex: itemIndex, qty }]);
+        totalCogs += invAction === 'Restock'
+          ? await restoreStockMoves(moves, { session, reference, remarks: `Partial refund (Restock): ${item.name}`, asBatch: true })
+          : moves.reduce((sum, m) => sum + m.value, 0);
+        continue;
+      }
 
-      const product = await Product.findById(item.productId).populate('modifierGroups').session(session);
+      const product = partialRefundProducts.get(String(item.productId)) || null;
       if (!product) continue;
       let recipeToUse = product.baseRecipe || [];
       const sizeMatch = item.name.match(/\(([^)]+)\)$/);
@@ -2843,12 +4089,7 @@ const partialRefundOnce = async (req, res, mayRetry) => {
       // Base recipe + every selected add-on/modifier-option recipe.
       const recipes = [{ recipe: recipeToUse, label: item.name }];
       for (const selectedAddOn of (item.selectedAddOns || [])) {
-        let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
-        if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
-          const [grpName, optName] = selectedAddOn.name.split(': ');
-          const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
-          resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
-        }
+        const resolvedRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
         if (resolvedRecipe?.length) recipes.push({ recipe: resolvedRecipe, label: `Add-on (${selectedAddOn.name})` });
       }
       for (const { recipe, label } of recipes) {
@@ -2885,6 +4126,18 @@ const partialRefundOnce = async (req, res, mayRetry) => {
 
     // Only once every unit of every line has been refunded does the order
     // become terminally 'Refunded' - same stats treatment as a full refund.
+    // Credited back off the sale. A partial refund leaves the order Completed
+    // and its `total` untouched, so this is the only record that the debt is
+    // now smaller - every A/R view nets it off.
+    order.refundedAmount = Math.round((((order.refundedAmount || 0) + refundAmount)) * 100) / 100;
+    // Paying off what is left settles the invoice: a refund can make an already
+    // part-paid invoice fully settled without another peso arriving.
+    if (!order.arSettled && order.paymentMethod !== 'Cash' && isFullySettled(order)) {
+      order.arSettled = true;
+      order.arSettledAt = new Date();
+      order.arSettledAmount = order.arPaidAmount || 0;
+    }
+
     const nowFullyRefunded = order.items.every(it => (Number(it.refundedQty) || 0) >= (Number(it.quantity) || 0) - 1e-6);
     if (nowFullyRefunded) {
       await applyStatsDelta(order, -1, session);
@@ -2922,7 +4175,7 @@ const partialRefundOnce = async (req, res, mayRetry) => {
 // prorated against anything). Whichever is bigger, the customer pays the
 // difference or gets it back - never both a refund AND a separate charge.
 // v1 scope: replacement items are base-product only (no size/add-on picker).
-app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (req, res) => {
+app.post('/api/orders/:id/exchange', verifyToken, requireStaff, requirePermission('orders.refund'), async (req, res) => {
   const session = await mongoose.startSession();
   const fail = async (status, error) => {
     await session.abortTransaction(); session.endSession();
@@ -2956,39 +4209,56 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
 
     // --- Validate the replacement side + resolve each product ---
     const validatedNew = [];
+    const exchangeNewProducts = await loadProductsById(newItems.map(x => x.productId), session);
     for (const n of newItems) {
       const qty = Number(n.quantity);
       if (!Number.isFinite(qty) || qty <= 0) return await fail(400, 'Replacement quantity must be greater than zero.');
-      const product = await Product.findById(n.productId).populate('modifierGroups').session(session);
+      const product = exchangeNewProducts.get(String(n.productId)) || null;
       if (!product) return await fail(400, `Replacement product ${n.productId} not found.`);
       validatedNew.push({ product, qty });
     }
 
     // --- Money: returned value (proportional, same as partial-refund) ---
     const addOnTotal = (it) => (it.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
-    const orderGross = order.items.reduce((s, it) => s + ((Number(it.price) || 0) + addOnTotal(it)) * (Number(it.quantity) || 0), 0);
+    const orderGross = liveGross(order, addOnTotal);
     const returnGross = validatedReturns.reduce((s, { qty, item }) => s + ((Number(item.price) || 0) + addOnTotal(item)) * qty, 0);
     const returnFraction = orderGross > 0 ? returnGross / orderGross : 0;
     const baseForRefund = order.isComplimentary ? (order.subtotal || 0) : (order.total || 0);
-    const alreadyRefunded = (order.refundHistory || []).reduce((s, r) => s + (r.amount || 0), 0);
+    const alreadyRefunded = Number(order.refundedAmount) || 0;   // exchanges are already netted into order.total
     const remainingRefundable = Math.max(0, +(baseForRefund - alreadyRefunded).toFixed(2));
     const returnValue = Math.max(0, Math.min(+(baseForRefund * returnFraction).toFixed(2), remainingRefundable));
 
     // --- Money: replacement charge - a real new sale, not prorated ---
-    const newCharge = +validatedNew.reduce((s, { product, qty }) => s + (Number(product.basePrice) || 0) * qty, 0).toFixed(2);
+    const listCharge = +validatedNew.reduce((s, { product, qty }) => s + (Number(product.basePrice) || 0) * qty, 0).toFixed(2);
+    // Under EXCLUSIVE pricing a product's price is its NET price and VAT is
+    // added on top, so the replacement has to carry VAT the same way the
+    // original sale did - charging the list price alone would hand over goods
+    // with the VAT unbilled. Inclusive pricing already has the VAT inside.
+    const exclusiveVat = (order.isVatInclusive === false && (order.vatRate || 0) > 0)
+      ? +(listCharge * order.vatRate).toFixed(2)
+      : 0;
+    const newCharge = +(listCharge + exclusiveVat).toFixed(2);
     const netDelta = +(newCharge - returnValue).toFixed(2); // >0 customer owes more, <0 customer gets money back
 
     const reference = await mkSeqRef('EXCHANGE');
     const lines = [];
     const creditAcct = debitAccountFor(order.paymentMethod);
+    // Two halves, posted separately rather than netted: goods went back (a
+    // reversal carrying the VAT the original sale charged) and other goods went
+    // out (a sale carrying VAT of its own). Netting them first would hide both,
+    // and under exclusive pricing would reverse VAT that was never collected.
+    if (returnValue > 0.005) {
+      lines.push(...saleRevenueLines({ gross: returnValue, vatAmount: vatShare(order, returnValue), side: 'debit' }));
+    }
+    if (newCharge > 0.005) {
+      const newVat = exclusiveVat || vatFromInclusive(newCharge, order.vatRate, order.isVatInclusive);
+      lines.push(...saleRevenueLines({ gross: newCharge, vatAmount: newVat }));
+    }
     if (Math.abs(netDelta) > 0.005) {
-      if (netDelta > 0) {
-        lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: 0, credit: netDelta });
-        lines.push({ accountCode: creditAcct.code, accountName: creditAcct.name, debit: netDelta, credit: 0 });
-      } else {
-        lines.push({ accountCode: '410000', accountName: 'Sales Revenue (Non-VAT)', debit: -netDelta, credit: 0 });
-        lines.push({ accountCode: creditAcct.code, accountName: creditAcct.name, debit: 0, credit: -netDelta });
-      }
+      // Money back on a split sale comes off what is still owed first, then
+      // out of cash - the same rule a refund follows (refundCreditLines).
+      if (netDelta > 0) lines.push({ accountCode: creditAcct.code, accountName: creditAcct.name, debit: netDelta, credit: 0 });
+      else lines.push(...refundCreditLines(order, +(-netDelta).toFixed(2)));
     }
 
     // --- Inventory / COGS - return side (reuses the exact restock mechanism partial-refund uses) ---
@@ -3012,11 +4282,20 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
         remarks: `Exchange return (${invAction}): ${label}`,
       }], { session });
     };
+    const exchangeReturnProducts = await loadProductsById(validatedReturns.map(v => v.item.productId), session);
     for (const { itemIndex, qty, item } of validatedReturns) {
       returnedItemsLog.push({ itemIndex, name: item.name, qty });
       item.refundedQty = +((Number(item.refundedQty) || 0) + qty).toFixed(6);
       if (invAction === 'None') continue;
-      const product = await Product.findById(item.productId).populate('modifierGroups').session(session);
+      if (hasStockMoves(order)) {
+        // This line's share of exactly what the sale took, at its cost then.
+        const moves = movesToReturn(order, [{ lineIndex: itemIndex, qty }]);
+        returnCogs += invAction === 'Restock'
+          ? await restoreStockMoves(moves, { session, reference, remarks: `Exchange return (Restock): ${item.name}`, asBatch: true })
+          : moves.reduce((sum, m) => sum + m.value, 0);
+        continue;
+      }
+      const product = exchangeReturnProducts.get(String(item.productId)) || null;
       if (!product) continue;
       let recipeToUse = product.baseRecipe || [];
       const sizeMatch = item.name.match(/\(([^)]+)\)$/);
@@ -3034,12 +4313,7 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
       }
       const recipes = [{ recipe: recipeToUse, label: item.name }];
       for (const selectedAddOn of (item.selectedAddOns || [])) {
-        let resolvedRecipe = product.addOns?.find(a => a.name === selectedAddOn.name)?.recipe;
-        if (!resolvedRecipe && selectedAddOn.name.includes(': ')) {
-          const [grpName, optName] = selectedAddOn.name.split(': ');
-          const grp = (product.modifierGroups || []).find(g => g && g.name === grpName);
-          resolvedRecipe = grp?.options?.find(o => o.name === optName)?.recipe;
-        }
+        const resolvedRecipe = await resolveAddOnRecipe(product, selectedAddOn.name, session);
         if (resolvedRecipe?.length) recipes.push({ recipe: resolvedRecipe, label: `Add-on (${selectedAddOn.name})` });
       }
       for (const { recipe, label } of recipes) {
@@ -3059,24 +4333,31 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
     // --- Inventory / COGS - replacement side: a REAL deduction, like a normal sale ---
     let newCogs = 0;
     const newItemsLog = [];
+    // What the replacements take, against the lines they are added as - so a
+    // later return of a replacement gives back exactly this (Order.stockMoves).
+    const replacementMoves = [];
+    let replacementLine = order.items.length;
+    const belowZeroMode = await readNegativeStockMode(Settings, session);
+    const exchangeBelowZero = [];
     const deduct = async (invId, qtyUsed, label) => {
       const updated = await Inventory.findOneAndUpdate(
-        { _id: invId, stockQty: { $gte: qtyUsed } },
+        saleStockFilter(invId, qtyUsed, belowZeroMode, { respectReserved: false }),
         { $inc: { stockQty: -qtyUsed } },
         { session, returnDocument: 'after' }
       );
-      if (!updated) throw Object.assign(new Error(`Insufficient stock for "${label}".`), { httpStatus: 400 });
+      if (!updated) throw Object.assign(new Error(`Insufficient stock for "${label}".${blockedNote(belowZeroMode)}`), { httpStatus: 400 });
       if (updated.expiryBatches?.length > 0) {
         const r = consumeBatches(updated.expiryBatches, qtyUsed);
         updated.expiryBatches = r.batches; updated.expiryDate = soonestExpiry(r.batches);
         await updated.save({ session });
       }
       newCogs += (updated.unitCost || 0) * qtyUsed;
-      await StockCard.create([{
+      replacementMoves.push({ invId: String(updated._id), qty: +qtyUsed.toFixed(6), unitCost: updated.unitCost || 0, lineIndex: replacementLine });
+      await StockCard.create([flagBelowZero({
         inventoryId: updated._id, itemName: updated.itemName, type: 'Sale',
-        reference, qtyChange: -qtyUsed, balanceAfter: updated.stockQty,
+        reference, qtyChange: -qtyUsed, balanceAfter: updated.stockQty, unitCost: updated.unitCost || 0,
         remarks: `Exchange replacement: ${label}`,
-      }], { session });
+      }, exchangeBelowZero)], { session });
     };
     // Department resolution mirrors order-creation's category → department lookup.
     const defaultDept = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
@@ -3103,6 +4384,13 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
         itemStatus: 'Received', selectedAddOns: [],
       });
       newItemsLog.push({ productId: String(product._id), name: product.name, qty });
+      replacementLine += 1;
+    }
+    // Only an order that already records its stock moves gets these added: for
+    // an older order, a partial record would make a later full reversal skip
+    // the original lines (it would trust the record and find only these).
+    if (hasStockMoves(order) && replacementMoves.length) {
+      order.stockMoves = [...order.stockMoves, ...replacementMoves];
     }
 
     if (returnCogs > 0.005 || newCogs > 0.005) {
@@ -3131,6 +4419,7 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
       reference, at: new Date(), by: req.user?.name || '', reason: `EXCHANGE: ${reason}`,
       inventoryAction: invAction, items: returnedItemsLog, amount: returnValue,
     });
+    if (exchangeBelowZero.length) order.belowZeroItems = [...(order.belowZeroItems || []).filter(x => !exchangeBelowZero.some(r => r.invId === x.invId)), ...exchangeBelowZero];
     await order.save({ session });
     await AuditLog.create({
       userId: req.user?.name, action: 'ORDER_EXCHANGED', targetReference: order.orderNumber,
@@ -3138,6 +4427,7 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
     });
     await session.commitTransaction(); session.endSession();
     emitToOps('orderUpdated', order); emitToMgr('erpUpdated');
+    alertBelowZero(req, order, exchangeBelowZero);
     res.json({ success: true, order, returnValue, newCharge, netDelta });
   } catch (err) {
     await session.abortTransaction(); session.endSession();
@@ -3148,7 +4438,7 @@ app.post('/api/orders/:id/exchange', verifyToken, requireSuperOrAdmin, async (re
 });
 
 // --- DISPATCH STATUS UPDATE ---
-app.patch('/api/orders/:id/dispatch', verifyToken, requireStaff, async (req, res) => {
+app.patch('/api/orders/:id/dispatch', verifyToken, requireStaff, permit('orders.manage'), async (req, res) => {
   try {
     const { dispatchStatus } = req.body;
     const order = await Order.findByIdAndUpdate(req.params.id, { dispatchStatus }, { returnDocument: 'after' });

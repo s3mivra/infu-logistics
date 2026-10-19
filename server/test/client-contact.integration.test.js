@@ -56,3 +56,40 @@ describe('client contact fields', () => {
     expect(c.phone).toBe('0999-000-1111');
   });
 });
+
+// A VAT-registered BUYER needs their own registered details on the invoice, or
+// they cannot claim the input VAT they paid. Blank for ordinary customers.
+describe('VAT-registered customers', () => {
+  it('stores the registered name, TIN and address, and lets them be cleared', async () => {
+    const created = await auth('post', '/api/client-accounts', superTok).send({
+      username: 'vatbuyer', password: 'secret123', name: 'Vat Buyer Co',
+      isVatRegistered: true, tin: '123-456-789-00000',
+      registeredName: 'VAT BUYER TRADING CORPORATION', registeredAddress: '12 Ayala Ave, Makati City',
+    });
+    expect(created.status).toBe(200);
+
+    const ClientAccount = (await import('mongoose')).default.model('ClientAccount');
+    let saved = await ClientAccount.findById(created.body.client._id).lean();
+    expect(saved).toMatchObject({
+      isVatRegistered: true, tin: '123-456-789-00000',
+      registeredName: 'VAT BUYER TRADING CORPORATION', registeredAddress: '12 Ayala Ave, Makati City',
+    });
+
+    const patched = await auth('patch', `/api/client-accounts/${created.body.client._id}`, superTok)
+      .send({ isVatRegistered: false, tin: '' });
+    expect(patched.status).toBe(200);
+    saved = await ClientAccount.findById(created.body.client._id).lean();
+    expect(saved.isVatRegistered).toBe(false);
+    expect(saved.tin).toBe('');
+  });
+
+  it('defaults to not registered, with no TIN', async () => {
+    const res = await auth('post', '/api/client-accounts', superTok).send({
+      username: 'plainbuyer', password: 'secret123', name: 'Plain Buyer',
+    });
+    const ClientAccount = (await import('mongoose')).default.model('ClientAccount');
+    const saved = await ClientAccount.findById(res.body.client._id).lean();
+    expect(saved.isVatRegistered).toBe(false);
+    expect(saved.tin).toBe('');
+  });
+});

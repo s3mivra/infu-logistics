@@ -1,7 +1,7 @@
 ﻿// client-portal routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { title, lower } from '../lib/normalize.js';
+import { title, partyName, lower } from '../lib/normalize.js';
 
 // A credit limit of 0 means "cash only" and must survive as 0, while '' / null
 // mean "no limit set". Truthiness would collapse those two into one.
@@ -18,7 +18,10 @@ const parseTermsDays = (v) => {
   return Number.isFinite(n) && n >= 0 ? n : null;
 };
 
+import { releaseCancelledOrderNumber } from '../lib/orderNumbers.js';
 import { captureError } from '../lib/errorLog.js';
+import { splitUpdate } from '../lib/changeApproval.js';
+import { hasPermission, requirePermission } from '../lib/authz.js';
 
 export default function registerClientPortal(ctx) {
   const {
@@ -156,6 +159,7 @@ export default function registerClientPortal(ctx) {
     User,
     ClientAccountSchema,
     ClientAccount,
+    ChangeRequest,
     RefreshSessionSchema,
     RefreshSession,
     RoleSchema,
@@ -193,8 +197,17 @@ export default function registerClientPortal(ctx) {
     verifyOrderAuth,
   } = ctx;
 
+// Clients sign in to a logistics business only. A cafe's customers order from
+// the table QR code and have no account, so there the sign-in, the invitation
+// and onboarding links and the client password reset do not exist - on the
+// server too, not just hidden on the screens. Client records themselves (a
+// name to bill, a balance owed) are still kept by both.
+const clientLoginOnly = (req, res, next) => (BUSINESS_TYPE === 'log'
+  ? next()
+  : res.status(404).json({ success: false, error: 'Client sign-in is not part of this app.' }));
+
 // Client login - returns a short-lived JWT with role='client' and pre-set paymentMethod
-app.post('/api/client-auth/login', loginLimiter, async (req, res) => {
+app.post('/api/client-auth/login', clientLoginOnly, loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ success: false, error: 'Username and password are required.' });
@@ -230,7 +243,7 @@ app.get('/api/client/orders', verifyClientToken, async (req, res) => {
     const orders = await Order.find(
       { clientId: String(clientId) },
       // orderNotes is the client's own text - it belongs on their order slip.
-      { orderNumber: 1, billingNumber: 1, status: 1, total: 1, items: 1, paymentMethod: 1, createdAt: 1, transactionType: 1, clientReceived: 1, orderNotes: 1 }
+      { orderNumber: 1, billingNumber: 1, orNumber: 1, status: 1, total: 1, items: 1, paymentMethod: 1, createdAt: 1, transactionType: 1, clientReceived: 1, orderNotes: 1, revision: 1, 'amendments.revision': 1, 'amendments.at': 1, 'amendments.reason': 1, 'amendments.changes': 1 }
     ).sort({ createdAt: -1 }).limit(30).lean();
     res.json({ success: true, orders });
   } catch (err) {
@@ -272,6 +285,11 @@ app.post('/api/client/orders/:id/cancel', verifyClientToken, async (req, res) =>
     }
     order.status = 'Cancelled';
     await order.save();
+    // The latest number goes back for the next order (lib/orderNumbers.js).
+    try {
+      const freed = await releaseCancelledOrderNumber(order._id);
+      if (freed) order.orderNumber = freed.renamedTo;
+    } catch (err) { captureError(req, err); }
     emitToOps('orderUpdated', order);
     emitToMgr('erpUpdated');
     res.json({ success: true, order });
@@ -292,6 +310,19 @@ const ownClient = async (req) => {
   return ClientAccount.findById(clientId);
 };
 
+const ownDeposits = async (me) => {
+  if (!ctx.Advance) return { balance: 0, items: [] };
+  const rows = await ctx.Advance.find({
+    businessType: BUSINESS_TYPE, clientId: String(me._id), type: 'customer',
+    status: { $in: ['Open', 'Partially Liquidated'] },
+  }, { advanceNumber: 1, amount: 1, liquidatedAmount: 1, purpose: 1, date: 1 }).sort({ date: -1 }).lean();
+  const items = rows.map(a => ({
+    number: a.advanceNumber, purpose: a.purpose || '', date: a.date,
+    amount: a.amount, remaining: Math.round((a.amount - (a.liquidatedAmount || 0)) * 100) / 100,
+  }));
+  return { balance: Math.round(items.reduce((s, i) => s + i.remaining, 0) * 100) / 100, items };
+};
+
 app.get('/api/client/profile', verifyClientToken, async (req, res) => {
   try {
     const me = await ownClient(req);
@@ -302,6 +333,9 @@ app.get('/api/client/profile', verifyClientToken, async (req, res) => {
       // Whether this buyer is quoted before they buy. The portal reads it to
       // decide whether the cart asks for a price or places an order.
       requiresQuote: me.requiresQuote === true,
+      // Deposits they have paid ahead of an order, still unused. Staff apply
+      // them to an order; the client only sees the balance and each deposit.
+      deposits: await ownDeposits(me),
     } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -377,10 +411,21 @@ app.post('/api/client/password', verifyClientToken, async (req, res) => {
   }
 });
 
-// CRUD for client accounts - superadmin only
-app.get('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res) => {
+// CRUD for client accounts - superadmin only. Reading the list is also open to
+// the till (pos.use / orders.view): the POS customer picker and the invoice's
+// bill-to need it. Staff get only those fields - no contact details, credit
+// settings or login name.
+const TILL_CLIENT_FIELDS = { name: 1, clientCode: 1, paymentMethod: 1, isActive: 1, isAffiliate: 1, segments: 1, assignedSalesperson: 1,
+  requiresQuote: 1, isVatRegistered: 1, registeredName: 1, tin: 1, registeredAddress: 1, createdAt: 1 };
+app.get('/api/client-accounts', verifyToken, requireStaff, async (req, res) => {
   try {
-    const clients = await ClientAccount.find({}, { password: 0 }).sort({ createdAt: -1 });
+    const isSuper = String(req.user?.role || '').toLowerCase() === 'superadmin';
+    if (!isSuper && !hasPermission(req.user, 'pos.use') && !hasPermission(req.user, 'orders.view')) {
+      return res.status(403).json({ success: false, error: 'Forbidden: missing permission "pos.use".' });
+    }
+    const clients = isSuper
+      ? await ClientAccount.find({}, { password: 0 }).sort({ createdAt: -1 })
+      : await ClientAccount.find({ isActive: { $ne: false } }, TILL_CLIENT_FIELDS).sort({ name: 1 }).lean();
     res.json({ success: true, clients });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -437,20 +482,36 @@ const cleanEmail = (v) => {
 };
 const cleanPhone = (v) => String(v ?? '').trim().slice(0, 40);
 
-app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res) => {
+// clients.create. With no username and password the client gets an onboarding
+// link and sets their own login - the only way staff below superadmin can add
+// one. Choosing a login for a client, and the credit line and terms, stay
+// superadmin (credit otherwise goes through the credit-request approval).
+app.post('/api/client-accounts', verifyToken, requireStaff, requirePermission('clients.create'), async (req, res) => {
   try {
-    const { username, password, name, paymentMethod, creditLimit, creditTermsDays, segments, phone, email, contactNotes, requiresQuote } = req.body;
+    const isSuper = String(req.user?.role || '').toLowerCase() === 'superadmin';
+    const { username, password, name, paymentMethod, segments, phone, email, contactNotes, requiresQuote, isVatRegistered, tin, registeredName, registeredAddress } = req.body;
+    const creditLimit = isSuper ? req.body.creditLimit : null;
+    const creditTermsDays = isSuper ? req.body.creditTermsDays : null;
     // Usernames are stored lowercase so "KasaLokal" and "kasalokal" are the same
     // account - mixed case here is the classic duplicate-login bug.
-    const cleanUsername = lower(username);
-    const cleanName = title(name);
-    if (!cleanUsername || !password || !cleanName) {
-      return res.status(400).json({ success: false, error: 'username, password, and name are required.' });
+    let cleanUsername = lower(username);
+    const cleanName = partyName(name);
+    if (!cleanName) return res.status(400).json({ success: false, error: 'Client name is required.' });
+    const withLogin = !!(cleanUsername || password);
+    if (withLogin && !isSuper) return res.status(403).json({ success: false, error: "Only the owner sets a client's login. Leave it blank - the client sets their own on the link." });
+    if (withLogin && (!cleanUsername || !password)) return res.status(400).json({ success: false, error: 'Give both a username and a password, or neither.' });
+    if (await ClientAccount.exists({ name: { $regex: `^${escapeRegex(cleanName)}$`, $options: 'i' } })) {
+      return res.status(409).json({ success: false, error: `"${cleanName}" already exists.` });
     }
-    const exists = await ClientAccount.findOne({ username: cleanUsername });
-    if (exists) return res.status(409).json({ success: false, error: 'Username already taken.' });
-    const hashed = await bcrypt.hash(password, BCRYPT_ROUNDS);
-    const cleanSegments = Array.isArray(segments) ? [...new Set(segments.map(s => String(s).trim()).filter(Boolean))] : [];
+    if (withLogin) {
+      const exists = await ClientAccount.findOne({ username: cleanUsername });
+      if (exists) return res.status(409).json({ success: false, error: 'Username already taken.' });
+    }
+    const hashed = await bcrypt.hash(withLogin ? String(password) : crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
+    // A sign-in link only where clients sign in (see clientLoginOnly).
+    const token = withLogin || BUSINESS_TYPE !== 'log' ? null : crypto.randomBytes(24).toString('hex');
+    // A price tier changes what the client pays - the owner's call, like credit.
+    const cleanSegments = isSuper && Array.isArray(segments) ? [...new Set(segments.map(s => String(s).trim()).filter(Boolean))] : [];
     // Standard customer ID format: CUS-1000-A0000 ("1000" is a fixed segment;
     // "A0000" is the zero-padded sequence - same "prefix-A + digits" convention
     // used for client/product codes elsewhere, just with the fixed segment folded
@@ -458,8 +519,11 @@ app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res
     const clientCode = await generateNextSequence(ClientAccount, 'CUS-1000', 'clientCode');
     const emailVal = cleanEmail(email);
     if (emailVal === null) return res.status(400).json({ success: false, error: 'Email is not a valid address.' });
-    const client = await ClientAccount.create({ clientCode, username: cleanUsername, password: hashed, name: cleanName, paymentMethod: paymentMethod || 'Cash', creditLimit: parseCreditLimit(creditLimit), creditTermsDays: parseTermsDays(creditTermsDays), segments: cleanSegments, phone: cleanPhone(phone), email: emailVal, contactNotes: String(contactNotes ?? '').trim().slice(0, 1000), requiresQuote: requiresQuote === true });
-    res.json({ success: true, client: { _id: client._id, clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, creditLimit: client.creditLimit, creditTermsDays: client.creditTermsDays, segments: client.segments, phone: client.phone, email: client.email, contactNotes: client.contactNotes } });
+    if (!withLogin) cleanUsername = `_pending_${clientCode.toLowerCase()}`;
+    const client = await ClientAccount.create({ clientCode, username: cleanUsername, password: hashed,
+      ...(token ? { onboardingToken: token, onboardingTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) } : {}), name: cleanName, paymentMethod: paymentMethod || 'Cash', creditLimit: parseCreditLimit(creditLimit), creditTermsDays: parseTermsDays(creditTermsDays), segments: cleanSegments, phone: cleanPhone(phone), email: emailVal, contactNotes: String(contactNotes ?? '').trim().slice(0, 1000), requiresQuote: requiresQuote === true, isVatRegistered: isVatRegistered === true, tin: String(tin ?? '').trim().slice(0, 30), registeredName: String(registeredName ?? '').trim().slice(0, 200), registeredAddress: String(registeredAddress ?? '').trim().slice(0, 300) });
+    await logAudit(req, { action: 'create', entity: 'ClientAccount', entityId: client._id, after: { clientCode, name: cleanName } });
+    res.json({ success: true, ...(token ? { onboardingPath: `/client-onboard/${token}` } : {}), client: { _id: client._id, clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, creditLimit: client.creditLimit, creditTermsDays: client.creditTermsDays, segments: client.segments, phone: client.phone, email: client.email, contactNotes: client.contactNotes } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -478,7 +542,7 @@ app.post('/api/client-accounts', verifyToken, requireSuperAdmin, async (req, res
 // - and hands back a link per client. Nobody can log in until they have used
 // theirs.
 const CLIENT_IMPORT_MAX_ROWS = 500;
-app.post('/api/client-accounts/import', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/client-accounts/import', verifyToken, requireStaff, requirePermission('clients.create'), async (req, res) => {
   try {
     const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
     if (rows.length === 0) return res.status(400).json({ success: false, error: 'No rows to import.' });
@@ -495,7 +559,7 @@ app.post('/api/client-accounts/import', verifyToken, requireSuperAdmin, async (r
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i] || {};
       try {
-        const cleanName = title(r.name ?? r.Name ?? '');
+        const cleanName = partyName(r.name ?? r.Name ?? '');
         if (!cleanName) throw new Error('Client name is required.');
         if (seen.has(cleanName.toLowerCase())) throw new Error(`"${cleanName}" already exists.`);
         seen.add(cleanName.toLowerCase());
@@ -524,8 +588,8 @@ app.post('/api/client-accounts/import', verifyToken, requireSuperAdmin, async (r
           phone: cleanPhone(r.phone ?? r.Phone ?? ''),
           email: emailVal,
           contactNotes: String(r.contactNotes ?? r.Notes ?? '').trim().slice(0, 1000),
-          onboardingToken: token,
-          onboardingTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          // A sign-in link only where clients sign in (see clientLoginOnly).
+          ...(BUSINESS_TYPE === 'log' ? { onboardingToken: token, onboardingTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) } : {}),
         });
 
         created.push({
@@ -533,7 +597,7 @@ app.post('/api/client-accounts/import', verifyToken, requireSuperAdmin, async (r
           // The operator sends this on; it is the only way into the account.
           // The route the app actually serves - see App.jsx. Getting this
           // wrong hands the operator a list of links that all 404.
-          onboardingPath: `/client-onboard/${token}`,
+          ...(BUSINESS_TYPE === 'log' ? { onboardingPath: `/client-onboard/${token}` } : {}),
         });
       } catch (e) {
         skipped.push({ row: i + 1, error: e.message, data: r });
@@ -543,24 +607,52 @@ app.post('/api/client-accounts/import', verifyToken, requireSuperAdmin, async (r
     await logAudit(req, { action: 'import', entity: 'ClientAccount', entityId: 'bulk', after: { created: created.length, skipped: skipped.length } });
     res.json({
       success: true, created: created.length, skipped, clients: created,
-      note: 'No passwords were set. Each client has a 7-day onboarding link and picks their own username and password.',
+      note: BUSINESS_TYPE === 'log'
+        ? 'No passwords were set. Each client has a 7-day onboarding link and picks their own username and password.'
+        : 'Added as customers to bill. A cafe has no client sign-in, so no links were made.',
     });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
-app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.patch('/api/client-accounts/:id', verifyToken, requireStaff, requirePermission('clients.edit'), async (req, res) => {
   try {
-    const { username, password, name, paymentMethod, isActive, creditLimit, creditTermsDays, segments, phone, email, contactNotes, requiresQuote } = req.body;
+    const { username, password, name, paymentMethod, isActive, creditLimit, creditTermsDays, segments, phone, email, contactNotes, requiresQuote, isVatRegistered, tin, registeredName, registeredAddress, assignedSalesperson } = req.body;
+    if (!mongoose.Types.ObjectId.isValid(String(req.params.id))) return res.status(404).json({ success: false, error: 'Client account not found.' });
     const update = {};
+    // clients.edit is for everyday details. Three things on this record are
+    // more than that, and each keeps the guard it has everywhere else:
+    //   the login      - a new password is the owner's reset, with their own
+    //                    password re-entered (reset-password below)
+    //   the credit line - an approver's decision (credit-request below)
+    //   the price tier  - whoever manages tiers
+    // Without these, anyone who could correct a phone number could also sign
+    // in as the client, or raise their credit limit past its approval.
+    const isSuper = String(req.user?.role || '').toLowerCase() === 'superadmin';
+    if (!isSuper) {
+      if (password || username) return res.status(403).json({ success: false, error: "Only the owner can change a client's username or password." });
+      if ((creditLimit !== undefined || creditTermsDays !== undefined) && !hasPermission(req.user, 'pricing.approve')) {
+        return res.status(403).json({ success: false, error: 'A credit limit or payment terms change needs approval - send it as a credit request.' });
+      }
+      if (Array.isArray(segments) && !hasPermission(req.user, 'pricing.tiers')) {
+        return res.status(403).json({ success: false, error: "Changing a client's price tier needs the price tiers permission." });
+      }
+    }
     // Which buyers are quoted before they buy. Sent explicitly so it can be
     // switched off again, not just on.
     if (typeof requiresQuote === 'boolean') update.requiresQuote = requiresQuote;
+    // A VAT-registered buyer's invoice details. Sent explicitly so they can be
+    // cleared again; without a TIN their invoice cannot support an input-VAT claim.
+    if (typeof isVatRegistered === 'boolean') update.isVatRegistered = isVatRegistered;
+    if (tin !== undefined) update.tin = String(tin ?? '').trim().slice(0, 30);
+    if (registeredName !== undefined) update.registeredName = String(registeredName ?? '').trim().slice(0, 200);
+    if (registeredAddress !== undefined) update.registeredAddress = String(registeredAddress ?? '').trim().slice(0, 300);
     if (username) update.username = lower(username);
-    if (name) update.name = title(name);
+    if (name) update.name = partyName(name);
     if (paymentMethod) update.paymentMethod = paymentMethod;
     if (typeof isActive === 'boolean') update.isActive = isActive;
+    if (typeof req.body.isAffiliate === 'boolean') update.isAffiliate = req.body.isAffiliate;
     // Sent explicitly (including '' / null to clear it back to "no limit").
     if (creditLimit !== undefined) update.creditLimit = parseCreditLimit(creditLimit);
     if (creditTermsDays !== undefined) update.creditTermsDays = parseTermsDays(creditTermsDays);
@@ -573,14 +665,62 @@ app.patch('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req
       update.email = emailVal;
     }
     if (contactNotes !== undefined) update.contactNotes = String(contactNotes ?? '').trim().slice(0, 1000);
-    if (password) update.password = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    if (assignedSalesperson !== undefined) update.assignedSalesperson = String(assignedSalesperson ?? '').trim().slice(0, 100);
+    if (password) { update.password = await bcrypt.hash(password, BCRYPT_ROUNDS); update.sessionsValidFrom = new Date(); }
+    const before = await ClientAccount.findById(req.params.id, { creditLimit: 1, creditTermsDays: 1, clientCode: 1, name: 1 }).lean();
     const client = await ClientAccount.findByIdAndUpdate(req.params.id, { $set: update }, { returnDocument: 'after', select: '-password' });
     if (!client) return res.status(404).json({ success: false, error: 'Client account not found.' });
+    // A credit line changed directly (by a superadmin) lands in the same trail
+    // an approved request does - it used to leave no record at all.
+    for (const [field, action] of [['creditLimit', 'CLIENT_CREDIT_LIMIT_CHANGED'], ['creditTermsDays', 'CLIENT_CREDIT_TERMS_CHANGED']]) {
+      if (field in update && String(before?.[field] ?? '') !== String(update[field] ?? '')) {
+        await AuditLog.create({ userId: req.user?.name || 'System', action, targetReference: client.clientCode || String(client._id),
+          details: { name: client.name, field, oldValue: before?.[field] ?? null, newValue: update[field] ?? null, approvedBy: req.user?.name || '', viaApproval: false } }).catch(() => {});
+      }
+    }
     res.json({ success: true, client });
   } catch (err) {
     if (err.code === 11000) return res.status(409).json({ success: false, error: 'Username already taken.' });
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
+});
+
+// A change to a client's credit line, asked for by someone who keeps the
+// books but may not set it. It is filed for an approver (pricing.approve) in
+// the same queue as price changes; someone who holds that permission applies
+// it at once, recorded the same way.
+app.post('/api/client-accounts/:id/credit-request', verifyToken, requireStaff, requirePermission('accounting.manage'), async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Client account not found.' });
+    const existing = await ClientAccount.findById(req.params.id).lean();
+    if (!existing) return res.status(404).json({ success: false, error: 'Client account not found.' });
+    const update = {};
+    if (req.body?.creditLimit !== undefined) update.creditLimit = parseCreditLimit(req.body.creditLimit);
+    if (req.body?.creditTermsDays !== undefined) update.creditTermsDays = parseTermsDays(req.body.creditTermsDays);
+    if (!Object.keys(update).length) return res.status(400).json({ success: false, error: 'Give the new credit limit or terms.' });
+    const reason = String(req.body?.reason || '').trim().slice(0, 300);
+    if (!reason) return res.status(400).json({ success: false, error: 'Say why - the approver reads it.' });
+    const canApprove = hasPermission(req.user, 'pricing.approve');
+    const { apply, pending } = splitUpdate({ entity: 'ClientAccount', existing, update, canApprove });
+    if (canApprove && Object.keys(apply).length) {
+      await ClientAccount.updateOne({ _id: existing._id }, { $set: apply });
+      for (const [field, action] of [['creditLimit', 'CLIENT_CREDIT_LIMIT_CHANGED'], ['creditTermsDays', 'CLIENT_CREDIT_TERMS_CHANGED']]) {
+        if (field in apply && String(existing[field] ?? '') !== String(apply[field] ?? '')) {
+          await AuditLog.create({ userId: req.user?.name || 'System', action, targetReference: existing.clientCode || String(existing._id),
+            details: { name: existing.name, field, oldValue: existing[field] ?? null, newValue: apply[field] ?? null, reason, approvedBy: req.user?.name || '', viaApproval: false } }).catch(() => {});
+        }
+      }
+      return res.json({ success: true, applied: true });
+    }
+    if (!pending.length) return res.json({ success: true, applied: false, message: 'That is already the current credit line.' });
+    const changeRequest = await ChangeRequest.create({
+      businessType: BUSINESS_TYPE, ...tenantScope(req),
+      entity: 'ClientAccount', entityId: String(existing._id), entityName: existing.name || '',
+      changes: pending, reason, requestedBy: req.user?.name || '',
+    });
+    emitToMgr?.('mgrAlert', { kind: 'changeRequest', ref: existing.name, message: `${req.user?.name || 'Someone'} requested a credit change for ${existing.name}: ${pending.map(c => `${c.label} ${c.oldValue ?? 'none'} -> ${c.newValue ?? 'none'}`).join(', ')}.` });
+    res.status(202).json({ success: true, applied: false, changeRequest, message: 'Sent for approval.' });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // A client's password is bcrypt-hashed - there is no "reveal the existing
@@ -598,7 +738,7 @@ function generateClientPassword(length = 12) {
   return out;
 }
 
-app.post('/api/client-accounts/:id/reset-password', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/client-accounts/:id/reset-password', clientLoginOnly, verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const confirmPassword = String(req.body?.confirmPassword || '');
     if (!confirmPassword) return res.status(400).json({ success: false, error: 'Re-enter your own password to confirm.' });
@@ -613,6 +753,7 @@ app.post('/api/client-accounts/:id/reset-password', verifyToken, requireSuperAdm
 
     const newPassword = generateClientPassword();
     client.password = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    client.sessionsValidFrom = new Date();   // whoever was signed in with the old one is signed out
     await client.save();
 
     await logAudit(req, { action: 'reset_password', entity: 'ClientAccount', entityId: client._id, after: { username: client.username } });
@@ -623,11 +764,70 @@ app.post('/api/client-accounts/:id/reset-password', verifyToken, requireSuperAdm
   }
 });
 
+// ── Client links, to copy ─────────────────────────────────────────────────────
+// For the office: every client's portal sign-in link, and the onboarding link
+// an admin has already issued, while it is still valid. Nothing here creates,
+// renews or changes a link - an onboarding link sets the client's username and
+// password, so issuing one stays with the superadmin (onboard-link above).
+app.get('/api/client-accounts/links', clientLoginOnly, verifyToken, requireStaff, requirePermission('clients.links'), async (req, res) => {
+  try {
+    const now = new Date();
+    const clients = await ClientAccount.find({}, { name: 1, clientCode: 1, username: 1, isActive: 1, onboardingToken: 1, onboardingTokenExpiresAt: 1 })
+      .sort({ name: 1 }).lean();
+    res.json({
+      success: true,
+      signInPath: '/client-login',
+      clients: clients.map(c => {
+        const live = c.onboardingToken && c.onboardingTokenExpiresAt && c.onboardingTokenExpiresAt > now;
+        return {
+          _id: c._id, name: c.name, clientCode: c.clientCode || '',
+          // A placeholder (_pos_…, _pending_…) cannot be typed at a login box.
+          hasLogin: !!c.username && !String(c.username).startsWith('_'), isActive: c.isActive !== false,
+          onboardingPath: live ? `/client-onboard/${c.onboardingToken}` : null,
+          onboardingExpiresAt: live ? c.onboardingTokenExpiresAt : null,
+        };
+      }),
+    });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ── New client from a name only ───────────────────────────────────────────────
+// Needs clients.invite: creates the client with just a name and
+// returns its 7-day onboarding link. The client sets their own username and
+// password when they redeem it, so the office never chooses a login. Nothing
+// else (credit line, terms, payment method) can be set here.
+app.post('/api/client-accounts/invite', clientLoginOnly, verifyToken, requireStaff, requirePermission('clients.invite'), async (req, res) => {
+  try {
+    // The name is optional: left blank, the client types their own when they
+    // open the link, and until then the account shows under a placeholder.
+    const typedName = partyName(req.body?.name ?? '');
+    if (typedName && await ClientAccount.exists({ name: { $regex: `^${escapeRegex(typedName)}$`, $options: 'i' } })) {
+      return res.status(409).json({ success: false, error: `"${typedName}" already exists.` });
+    }
+    const clientCode = await generateNextSequence(ClientAccount, 'CUS-1000', 'clientCode');
+    const cleanName = typedName || `NEW CLIENT ${clientCode}`;
+    const password = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
+    const token = crypto.randomBytes(24).toString('hex');
+    const client = await ClientAccount.create({
+      clientCode, username: `_pending_${clientCode.toLowerCase()}`, password, name: cleanName,
+      namePending: !typedName,
+      onboardingToken: token,
+      onboardingTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+    await logAudit(req, { action: 'onboard_link_created', entity: 'ClientAccount', entityId: client._id, after: { clientCode, name: cleanName, namePending: !typedName } });
+    res.json({ success: true, client: { _id: client._id, clientCode, name: cleanName, namePending: !typedName, onboardingPath: `/client-onboard/${token}` } });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 // ── Self-service onboarding link (#10) ────────────────────────────────────────
 // Generate: superadmin-only, from the Command Center. The client then opens
 // the link with NO auth at all (that's the point - they don't have a login
 // yet), fills in their own details, and sets their own username/password.
-app.post('/api/client-accounts/:id/onboard-link', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/client-accounts/:id/onboard-link', clientLoginOnly, verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const client = await ClientAccount.findById(req.params.id);
     if (!client) return res.status(404).json({ success: false, error: 'Client account not found.' });
@@ -644,19 +844,20 @@ app.post('/api/client-accounts/:id/onboard-link', verifyToken, requireSuperAdmin
 
 // Public - no auth. The token itself IS the proof of authorization (mailed/
 // handed to the client directly), same trust model as a password-reset link.
-app.get('/api/client-onboard/:token', async (req, res) => {
+app.get('/api/client-onboard/:token', clientLoginOnly, async (req, res) => {
   try {
-    const client = await ClientAccount.findOne({ onboardingToken: req.params.token }, { name: 1, clientCode: 1, phone: 1, email: 1, onboardingTokenExpiresAt: 1 });
+    const client = await ClientAccount.findOne({ onboardingToken: req.params.token }, { name: 1, namePending: 1, clientCode: 1, phone: 1, email: 1, onboardingTokenExpiresAt: 1 });
     if (!client || !client.onboardingTokenExpiresAt || client.onboardingTokenExpiresAt < new Date()) {
       return res.status(404).json({ success: false, error: 'This link is invalid or has expired. Ask the shop to send you a new one.' });
     }
-    res.json({ success: true, client: { name: client.name, clientCode: client.clientCode, phone: client.phone, email: client.email } });
+    // A placeholder name is not shown: the client is asked for their own.
+    res.json({ success: true, client: { name: client.namePending ? '' : client.name, nameRequired: !!client.namePending, clientCode: client.clientCode, phone: client.phone, email: client.email } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
 
-app.post('/api/client-onboard/:token', async (req, res) => {
+app.post('/api/client-onboard/:token', clientLoginOnly, async (req, res) => {
   try {
     const client = await ClientAccount.findOne({ onboardingToken: req.params.token });
     if (!client || !client.onboardingTokenExpiresAt || client.onboardingTokenExpiresAt < new Date()) {
@@ -665,18 +866,33 @@ app.post('/api/client-onboard/:token', async (req, res) => {
     const { name, phone, email, username, password } = req.body || {};
     const cleanUsername = lower(username);
     if (!cleanUsername || !password) return res.status(400).json({ success: false, error: 'Username and password are required.' });
-    if (String(password).length < 6) return res.status(400).json({ success: false, error: 'Password must be at least 6 characters.' });
-    const clash = await ClientAccount.findOne({ username: cleanUsername, _id: { $ne: client._id } });
+    // The same rules as changing them later in the portal.
+    if (String(password).length < 8) return res.status(400).json({ success: false, error: 'Password must be at least 8 characters.' });
+    if (cleanUsername.length < 3 || cleanUsername.length > 40) return res.status(400).json({ success: false, error: 'Username must be 3-40 characters.' });
+    if (!/^[a-z0-9][a-z0-9._-]*$/.test(cleanUsername)) return res.status(400).json({ success: false, error: 'Username may use letters, digits, dot, dash and underscore only, and must start with a letter or digit.' });
+    // Whatever its case: sign-in ignores case, so two accounts differing only
+    // by case could not be told apart at the login box.
+    const clash = await ClientAccount.findOne({ username: { $regex: `^${escapeRegex(cleanUsername)}$`, $options: 'i' }, _id: { $ne: client._id } });
     if (clash) return res.status(409).json({ success: false, error: 'That username is already taken - pick another.' });
     const emailVal = cleanEmail(email);
     if (emailVal === null) return res.status(400).json({ success: false, error: 'Email is not a valid address.' });
 
-    if (name && title(name)) client.name = title(name);
+    const newName = partyName(name ?? '');
+    if (client.namePending && !newName) return res.status(400).json({ success: false, error: 'Please enter your name or business name.' });
+    if (newName && newName !== client.name) {
+      // The name is how the shop finds this account - two accounts under one
+      // name could not be told apart on an invoice or a statement.
+      const taken = await ClientAccount.exists({ _id: { $ne: client._id }, name: { $regex: `^${escapeRegex(newName)}$`, $options: 'i' } });
+      if (taken) return res.status(409).json({ success: false, error: 'An account with that name already exists. Add something to tell yours apart (a branch or location), or ask the shop.' });
+      client.name = newName;
+    }
+    if (newName) client.namePending = false;
     if (phone !== undefined) client.phone = cleanPhone(phone);
     client.email = emailVal;
     client.username = cleanUsername;
     client.password = await bcrypt.hash(String(password), BCRYPT_ROUNDS);
     client.source = 'portal'; // now has a real, usable login
+    client.sessionsValidFrom = new Date();   // a login issued again ends the sessions of the old one
     client.onboardingToken = null;
     client.onboardingTokenExpiresAt = null;
     await client.save();
@@ -687,9 +903,29 @@ app.post('/api/client-onboard/:token', async (req, res) => {
   }
 });
 
-app.delete('/api/client-accounts/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+// clients.delete - only a client with no history. Orders, deposits, quotes,
+// reservations and a store-credit balance all point at the account; deleting
+// it would leave them naming nobody. Deactivate one of those instead.
+app.delete('/api/client-accounts/:id', verifyToken, requireStaff, requirePermission('clients.delete'), async (req, res) => {
   try {
-    await ClientAccount.findByIdAndDelete(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(String(req.params.id))) return res.status(404).json({ success: false, error: 'Client account not found.' });
+    const client = await ClientAccount.findById(req.params.id).lean();
+    if (!client) return res.status(404).json({ success: false, error: 'Client account not found.' });
+    const id = String(client._id);
+    const M = (n) => mongoose.model(n);
+    const [orders, advances, reservations, quotes] = await Promise.all([
+      M('Order').exists({ $or: [{ clientId: id }, { clientAccountId: id }] }),
+      M('Advance').exists({ clientId: id }),
+      M('Reservation').exists({ clientId: id }),
+      M('Quotation').exists({ clientAccountId: client._id }),
+    ]);
+    const why = [orders && 'orders', advances && 'deposits', reservations && 'reservations', quotes && 'quotations',
+      Math.abs(Number(client.creditBalance) || 0) > 0.004 && 'a credit balance'].filter(Boolean);
+    if (why.length) {
+      return res.status(409).json({ success: false, error: `${client.name} has ${why.join(', ')} - it can't be deleted. Deactivate it instead.` });
+    }
+    await ClientAccount.deleteOne({ _id: client._id });
+    await logAudit(req, { action: 'delete', entity: 'ClientAccount', entityId: client._id, before: { clientCode: client.clientCode, name: client.name } });
     res.json({ success: true });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));

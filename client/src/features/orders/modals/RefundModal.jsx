@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useDashboard } from '../../dashboard/DashboardContext';
+import SearchSelect from '../../../shared/ui/SearchSelect';
 
 // Extracted from AdminDashboard. Reads shared dashboard state via
 // useDashboard() rather than props - see DashboardContext.
@@ -61,14 +62,14 @@ export default function RefundModal() {
           const remaining = remainingOf(item);
           if (remaining <= 0) return (
             <div key={idx} className="flex items-center justify-between gap-2 bg-page-bg/50 border border-gray-800 rounded-lg px-3 py-2 opacity-40">
-              <span className="text-xs font-bold text-fg/75 truncate">{item.name}</span>
+              <span className="text-xs font-bold text-fg/75 truncate" title={String((item.name) ?? '')}>{item.name}</span>
               <span className="text-[10px] text-fg/70 font-bold uppercase shrink-0">Fully refunded</span>
             </div>
           );
           return (
             <div key={idx} className="flex items-center justify-between gap-2 bg-page-bg border border-gray-700 rounded-lg px-3 py-2">
               <div className="min-w-0">
-                <p className="text-xs font-bold text-fg truncate">{item.name}</p>
+                <p className="text-xs font-bold text-fg truncate" title={String((item.name) ?? '')}>{item.name}</p>
                 <p className="text-[10px] text-fg/70">
                   {remaining} of {item.quantity} refundable{Number(item.refundedQty) > 0 ? ` (${item.refundedQty} already refunded)` : ''} · ₱{Number(item.price || 0).toFixed(2)} ea
                 </p>
@@ -158,16 +159,15 @@ export default function RefundModal() {
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-[10px] text-fg/70 font-bold uppercase">Replacement Item(s) *</label>
                   <button type="button" onClick={() => setReplacements(r => [...r, { productId: '', qty: '1' }])}
-                    className="text-[10px] font-bold text-brand-text hover:text-brand/80">+ Add another</button>
+                    className="text-[10px] font-bold text-brand-text">+ Add another</button>
                 </div>
                 <div className="space-y-1.5">
                   {replacements.map((r, i) => (
                     <div key={i} className="flex items-center gap-1.5">
-                      <select value={r.productId} onChange={e => setReplacements(rs => rs.map((x, xi) => xi === i ? { ...x, productId: e.target.value } : x))}
-                        className="flex-1 min-w-0 bg-page-bg border border-gray-700 rounded-lg px-2 py-1.5 text-fg text-xs outline-none focus:border-brand/60">
-                        <option value="">- Pick item -</option>
-                        {sellableProducts.map(p => <option key={p._id} value={p._id}>{p.name} (₱{Number(p.basePrice||0).toFixed(2)})</option>)}
-                      </select>
+                      <SearchSelect value={r.productId} onChange={e => setReplacements(rs => rs.map((x, xi) => xi === i ? { ...x, productId: e.target.value } : x))}
+                        className="flex-1 min-w-0 bg-page-bg border border-gray-700 rounded-lg px-2 py-1.5 text-fg text-xs outline-none focus:border-brand/60"
+                        placeholder="Type to find an item"
+                        options={sellableProducts.map(p => ({ value: p._id, label: p.name, hint: `₱${Number(p.basePrice || 0).toFixed(2)}` }))} />
                       <input type="number" min="1" step="1" value={r.qty}
                         onChange={e => setReplacements(rs => rs.map((x, xi) => xi === i ? { ...x, qty: e.target.value } : x))}
                         className="w-14 bg-surface border border-gray-700 rounded-lg px-2 py-1.5 text-fg text-sm text-right font-bold tabular-nums outline-none focus:border-brand/60 shrink-0" />
@@ -196,7 +196,7 @@ export default function RefundModal() {
             <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Reason *</label>
             <textarea rows={2} value={refundForm.reason} onChange={e => setRefundForm(p=>({...p,reason:e.target.value}))}
               placeholder="e.g. Wrong order, product defect, customer complaint"
-              className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-fg text-sm outline-none focus:border-brand/60 resize-none placeholder-white/20" />
+              className="w-full bg-page-bg border border-gray-700 rounded-xl px-3 py-2.5 text-fg text-sm outline-none focus:border-brand/60 resize-none placeholder-fg/70" />
           </div>
 
           {mode === 'full' && (() => {
@@ -207,7 +207,7 @@ export default function RefundModal() {
           {mode === 'items' && <InventoryActionPicker hint='Applies only to the selected items/qty above - the rest of the order is untouched.' />}
           {mode === 'exchange' && <InventoryActionPicker hint="Applies to the returned item(s) above, if any. The replacement is always deducted from stock like a normal sale." />}
 
-          <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-2 text-xs text-red-300">
+          <div className="bg-red-900/20 border border-red-500/30 rounded-xl px-4 py-2 text-xs text-danger">
             {mode === 'full' && <>⚠ Returns ₱{(parseFloat(refundForm.refundAmount)||refundModal.total).toFixed(2)} to customer. Creates reversal journal entry. Cannot be undone.</>}
             {mode === 'items' && <>⚠ Refunds the selected item(s)/qty only. Creates a reversal journal entry. Cannot be undone, but the rest of the order can still be refunded later.</>}
             {mode === 'exchange' && <>⚠ Processes the return and the replacement together as one entry on this order. Cannot be undone.</>}

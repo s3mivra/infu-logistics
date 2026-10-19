@@ -13,6 +13,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+// Fixture resets may clear journal entries, which are otherwise append-only.
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
@@ -35,7 +37,7 @@ async function setBranch(code) {
 }
 
 beforeEach(async () => {
-  for (const n of ['Advance', 'CheckVoucher', 'JournalEntry']) await M(n).deleteMany({});
+  for (const n of ['Advance', 'CheckVoucher', 'JournalEntry']) await withLedgerMaintenance(() => M(n).deleteMany({}));
 });
 
 describe('advances record their branch', () => {

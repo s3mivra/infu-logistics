@@ -57,7 +57,7 @@ export default function PriceTierImportModal() {
               <div className="mt-2 max-h-24 overflow-y-auto space-y-0.5">
                 {t.rows.slice(0, 6).map(r => (
                   <div key={r.productId} className="flex justify-between text-[11px] text-fg/75">
-                    <span className="truncate pr-2">{r.name}</span>
+                    <span className="truncate pr-2" title={String((r.name) ?? '')}>{r.name}</span>
                     <span className="font-mono text-fg/70 shrink-0">₱{r.price.toFixed(2)}</span>
                   </div>
                 ))}

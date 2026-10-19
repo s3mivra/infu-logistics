@@ -6,6 +6,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, superTok;
 const auth = (m, p, t) => request(app)[m](p).set('Authorization', `Bearer ${t}`);
@@ -21,7 +22,8 @@ afterAll(async () => { await ctx.stop(); });
 
 // Opening balances are once-per-business, so each test starts from a clean slate.
 async function clearOpenings() {
-  await mongoose.model('JournalEntry').deleteMany({ reference: /^OPEN-/ });
+  // Resetting the fixture is ledger maintenance; the ledger is otherwise append-only.
+  await withLedgerMaintenance(() => mongoose.model('JournalEntry').deleteMany({ reference: /^OPEN-/ }));
 }
 const post = (body) => auth('post', '/api/finance/opening-balances', superTok).send(body);
 const lineFor = (e, code) => e.lines.find(l => l.accountCode === code);

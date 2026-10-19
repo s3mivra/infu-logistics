@@ -1,11 +1,25 @@
 ﻿// inventory routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { title, upper } from '../lib/normalize.js';
+import { title, upper, positiveQty } from '../lib/normalize.js';
+import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
+import { INPUT_VAT } from '../lib/vatPosting.js';
+import { loadVatConfig } from '../lib/vatSettings.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
+import { basePerPack } from '../lib/units.js';
+import { stockCountModel, varianceLine } from '../lib/stockCount.js';
+import { applyPendingTierPrices } from '../lib/tierPriceImport.js';
+// Action permissions. Each route below changes data, and was guarded only by
+// "is staff" - so a plain staff account could, through the API, do what the
+// permission catalogue reserves for a role that holds the matching
+// .manage key (see lib/authz.js PERMISSIONS). `permit` is the same
+// requirePermission the context hands out, imported under a short name so
+// it reads the same in every file.
+import { requirePermission as permit, requireAnyPermission as permitAny } from '../lib/authz.js';
 
+import { atomic } from '../lib/atomicRoute.js';
 export default function registerInventory(ctx) {
   const {
     app,
@@ -110,6 +124,7 @@ export default function registerInventory(ctx) {
     QRSession,
     InventorySchema,
     Inventory,
+    issueCheckVoucher,
     StorageLocation,
     StockCategory,
     StockTransfer,
@@ -181,13 +196,15 @@ export default function registerInventory(ctx) {
     requireSuperAdmin,
     requireSuperOrAdmin,
     verifyOrderAuth,
+    requirePermission,
   } = ctx;
+  const StockCount = stockCountModel(mongoose);
 
 // --- 1. FETCH EOD STATUS & REAL MOVEMENTS ---
 app.get('/api/inventory/eod-data', verifyToken, requireStaff, async (req, res) => {
   try {
     // Get local date string (e.g., "2026-04-29")
-    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    const todayStr = businessDateStr();
     
     let eod = await EODRecord.findOne({ dateString: todayStr });
     if (!eod) eod = { status: 'OPEN', lockedAt: null };
@@ -217,39 +234,71 @@ app.get('/api/inventory/eod-data', verifyToken, requireStaff, async (req, res) =
 });
 
 // --- 2. SUBMIT & LOCK EOD ---
-app.post('/api/inventory/count', verifyToken, requireStaff, async (req, res) => {
+// Also the rolling count (Inventory -> Stock control): `rolling: true` counts
+// just the items sent, the same way, without closing the day - so it works
+// before or after the end-of-day count. Every item counted, either way, is
+// kept as a StockCount row (lib/stockCount.js) for the variance report.
+app.post('/api/inventory/count', verifyToken, requireStaff, permit('inventory.count'), async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    const todayStr = businessDateStr();
+    const rolling = req.body?.rolling === true;
     
     // STRICT CHECK: Is it already locked?
-    const existingEOD = await EODRecord.findOne({ dateString: todayStr }).session(session);
+    const existingEOD = rolling ? null : await EODRecord.findOne({ dateString: todayStr }).session(session);
     if (existingEOD && existingEOD.status === 'LOCKED') {
       await session.abortTransaction(); session.endSession();
       return res.status(403).json({ success: false, error: 'ALREADY_CLOSED: You cannot submit another EOD for today.' });
     }
 
-    const { counts, reasons, adminName } = req.body;
+    const { reasons, adminName } = req.body;
+    const counts = req.body?.counts && typeof req.body.counts === 'object' ? req.body.counts : {};
+    if (rolling && !Object.values(counts).some(v => v !== '' && v !== null && v !== undefined)) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'Enter at least one count.' });
+    }
+    if (Object.values(counts).some(v => v !== '' && v !== null && v !== undefined && !(Number.isFinite(Number(v)) && Number(v) >= 0))) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ success: false, error: 'Counts must be numbers of zero or more.' });
+    }
+    const countedBy = req.user?.name || adminName || 'Admin';
+    const countRows = [];
     const items = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }).session(session);
+    // Cost of goods sold already booked from imported totals (139000, a credit
+    // balance) for goods whose items were never taken. The goods this count
+    // finds missing are those first; only what is left is shrinkage.
+    const [awaitRow] = await JournalEntry.aggregate([
+      { $unwind: '$lines' }, { $match: { 'lines.accountCode': '139000' } },
+      { $group: { _id: null, n: { $sum: { $subtract: [{ $ifNull: ['$lines.credit', 0] }, { $ifNull: ['$lines.debit', 0] }] } } } },
+    ]).session(session);
+    let awaitingCount = Math.max(0, Math.round((awaitRow?.n || 0) * 100) / 100);
 
     for (const item of items) {
       if (counts[item._id] === undefined || counts[item._id] === '') continue; 
       
       const actualCount = Number(counts[item._id]);
       const variance = actualCount - item.stockQty;
+      const specificReason = reasons && reasons[item._id] ? reasons[item._id] : 'Unaccounted Variance';
+      const line = varianceLine({ expectedQty: item.stockQty, countedQty: actualCount, unitCost: item.unitCost });
+      const countRow = {
+        businessType: BUSINESS_TYPE, dateString: todayStr, inventoryId: String(item._id), itemName: item.itemName,
+        itemCode: item.itemCode || '', unit: item.unit || '', ...line, countedBy,
+        reason: line.variance !== 0 ? specificReason : '', kind: rolling ? 'rolling' : 'eod', reference: '',
+      };
+      countRows.push(countRow);
 
       if (variance !== 0) {
-        const specificReason = reasons && reasons[item._id] ? reasons[item._id] : 'Unaccounted Variance';
-        
         const eodAdjRef = await mkSeqRef('EOD-ADJ');
+        countRow.reference = eodAdjRef;
 
         await StockCard.create([{
           inventoryId: item._id, itemName: item.itemName, type: 'Adjustment',
           reference: eodAdjRef, qtyChange: variance, balanceAfter: actualCount,
           unitCost: item.unitCost || 0,
-          remarks: `EOD Audit: ${specificReason}`
+          // The end-of-day history report reads "EOD Audit:" lines only.
+          remarks: `${rolling ? 'Rolling count' : 'EOD Audit'}: ${specificReason}`
         }], { session });
 
         const valueAbs = Math.abs(variance) * item.unitCost;
@@ -258,12 +307,16 @@ app.post('/api/inventory/count', verifyToken, requireStaff, async (req, res) => 
           const reference = eodAdjRef;
 
           if (variance < 0) {
+            const sold = Math.min(Math.round(valueAbs * 100) / 100, awaitingCount);
+            awaitingCount = Math.round((awaitingCount - sold) * 100) / 100;
+            const lost = Math.round((valueAbs - sold) * 100) / 100;
+            const lines = [];
+            if (sold > 0) lines.push({ accountCode: '139000', accountName: 'Cost of Sales Awaiting Stock Count', debit: sold, credit: 0 });
+            if (lost > 0) lines.push({ accountCode: '535000', accountName: 'Spoilage, Variance & Waste Expense', debit: lost, credit: 0 });
+            lines.push({ accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: Math.round(valueAbs * 100) / 100 });
             await JournalEntry.create([{
-              reference, description: `Shrinkage (${specificReason}): ${item.itemName}`,
-              lines: [
-                { accountCode: '535000', accountName: 'Spoilage, Variance & Waste Expense', debit: valueAbs, credit: 0 },
-                { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: valueAbs }
-              ], totalDebit: valueAbs, totalCredit: valueAbs
+              reference, description: sold > 0 ? `Stock count: ${item.itemName} - sold (cost already booked)${lost > 0 ? ` and shrinkage (${specificReason})` : ''}` : `Shrinkage (${specificReason}): ${item.itemName}`,
+              lines, totalDebit: Math.round(valueAbs * 100) / 100, totalCredit: Math.round(valueAbs * 100) / 100,
             }], { session });
           } else {
             await JournalEntry.create([{
@@ -281,18 +334,22 @@ app.post('/api/inventory/count', verifyToken, requireStaff, async (req, res) => 
       await item.save({ session });
     }
 
-    // LOCK THE DAY
-    await EODRecord.findOneAndUpdate(
-      { dateString: todayStr },
-      { status: 'LOCKED', lockedAt: new Date(), lockedBy: adminName || 'Admin' },
-      { upsert: true, returnDocument: 'after', session }
-    );
+    if (countRows.length) await StockCount.insertMany(countRows, { session });
+
+    // LOCK THE DAY (the end-of-day count only)
+    if (!rolling) {
+      await EODRecord.findOneAndUpdate(
+        { dateString: todayStr },
+        { status: 'LOCKED', lockedAt: new Date(), lockedBy: adminName || 'Admin' },
+        { upsert: true, returnDocument: 'after', session }
+      );
+    }
 
     await session.commitTransaction();
     session.endSession();
 
     emitToMgr('erpUpdated');
-    res.json({ success: true, message: "End of day locked." });
+    res.json({ success: true, message: rolling ? `Counted ${countRows.length} item(s).` : "End of day locked.", counted: countRows.length });
 
   } catch (error) {
     await session.abortTransaction();
@@ -303,9 +360,9 @@ app.post('/api/inventory/count', verifyToken, requireStaff, async (req, res) => 
 });
 
 // --- UNLOCK / REOPEN EOD (ADMIN ONLY) ---
-app.post('/api/inventory/eod/reopen', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory/eod/reopen', verifyToken, requireStaff, permit('inventory.manage'), async (req, res) => {
   try {
-    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    const todayStr = businessDateStr();
     
     // Find today's lock
     const eod = await EODRecord.findOne({ dateString: todayStr });
@@ -340,7 +397,7 @@ app.get('/api/inventory/eod-history/:dateString/variance', verifyToken, requireS
     const { dateString } = req.params;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return res.status(400).json({ success: false, error: 'Invalid date.' });
     // dateString is a Manila calendar day (see toLocaleDateString(...,
-    // {timeZone:'Asia/Manila'}) in POST /api/inventory/count above) - an
+    // (in the business's own zone, as POST /api/inventory/count does) - an
     // explicit +08:00 offset here keeps the boundary correct regardless of
     // what timezone the server process itself runs in (naive T00:00:00
     // parsing used the SERVER's local zone, which silently missed every
@@ -360,7 +417,7 @@ app.get('/api/inventory/eod-history/:dateString/variance', verifyToken, requireS
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.get('/api/inventory/history/:id', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/inventory/history/:id', verifyToken, requireStaff, permit('inventory.view'), async (req, res) => {
   try {
     // Capped and lean: a busy item accumulates a row per sale, and hydrating
     // the whole lifetime of one ingredient to show a history panel is what
@@ -382,7 +439,7 @@ app.get('/api/inventory/history/:id', verifyToken, requireStaff, async (req, res
 // memory) the whole trading history of the business to print one day of it.
 // The range is now applied here, and the result is capped rather than
 // unbounded - a report is a window, not a dump.
-app.get('/api/inventory/history', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/inventory/history', verifyToken, requireStaff, permit('inventory.view'), async (req, res) => {
   try {
     const q = {};
     if (req.query.start || req.query.end) {
@@ -481,7 +538,7 @@ app.get('/api/stock-locations', verifyToken, requireStaff, async (req, res) => {
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.post('/api/stock-locations', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/stock-locations', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const name = title(String(req.body.name || '').trim());
     if (!name) return res.status(400).json({ success: false, error: 'Location name required.' });
@@ -492,7 +549,7 @@ app.post('/api/stock-locations', verifyToken, requireSuperAdmin, async (req, res
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.put('/api/stock-locations/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/stock-locations/:id', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const loc = await StorageLocation.findById(req.params.id);
     if (!loc) return res.status(404).json({ success: false, error: 'Location not found.' });
@@ -511,7 +568,7 @@ app.put('/api/stock-locations/:id', verifyToken, requireSuperAdmin, async (req, 
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.delete('/api/stock-locations/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/stock-locations/:id', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const loc = await StorageLocation.findById(req.params.id);
     if (!loc) return res.status(404).json({ success: false, error: 'Location not found.' });
@@ -530,7 +587,7 @@ app.get('/api/stock-categories', verifyToken, requireStaff, async (req, res) => 
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.post('/api/stock-categories', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/stock-categories', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const name = title(String(req.body.name || '').trim());
     if (!name) return res.status(400).json({ success: false, error: 'Category name required.' });
@@ -546,7 +603,7 @@ app.post('/api/stock-categories', verifyToken, requireSuperAdmin, async (req, re
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
-app.put('/api/stock-categories/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/stock-categories/:id', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const cat = await StockCategory.findById(req.params.id);
     if (!cat) return res.status(404).json({ success: false, error: 'Category not found.' });
@@ -583,7 +640,7 @@ app.put('/api/stock-categories/:id', verifyToken, requireSuperAdmin, async (req,
 // the per-row derive (never overwrites a prefix that's already set, and skips
 // a category whose derived prefix would collide with another category's).
 // Purely additive/non-destructive: never touches any item's own itemCode.
-app.post('/api/stock-categories/backfill-prefixes', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/stock-categories/backfill-prefixes', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const cats = await StockCategory.find({ businessType: BUSINESS_TYPE, $or: [{ prefix: '' }, { prefix: { $exists: false } }] });
     const results = { checked: cats.length, filled: [], skipped: [] };
@@ -634,7 +691,7 @@ app.post('/api/stock-categories/backfill-prefixes', verifyToken, requireSuperAdm
 // StockCards key off inventoryId (unaffected) and a past order line is a
 // booked record of what was sold under the code THAT DAY, which must stay
 // exactly as it was for the books to still reconcile.
-app.post('/api/stock-categories/:id/renumber', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/stock-categories/:id/renumber', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
@@ -704,7 +761,7 @@ app.post('/api/stock-categories/:id/renumber', verifyToken, requireSuperAdmin, a
   }
 });
 
-app.delete('/api/stock-categories/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/stock-categories/:id', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const cat = await StockCategory.findById(req.params.id);
     if (!cat) return res.status(404).json({ success: false, error: 'Category not found.' });
@@ -729,7 +786,7 @@ app.get('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => {
 });
 
 // Cross-location analytics: on-hand qty & value grouped by storage location.
-app.get('/api/stock-analytics/by-location', verifyToken, requireStaff, async (req, res) => {
+app.get('/api/stock-analytics/by-location', verifyToken, requireStaff, permit('inventory.view'), async (req, res) => {
   try {
     const items = await Inventory.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) },
       { itemName: 1, stockQty: 1, unitCost: 1, stockLocation: 1, unit: 1, lowStockThreshold: 1 }).lean();
@@ -752,7 +809,7 @@ app.get('/api/stock-analytics/by-location', verifyToken, requireStaff, async (re
 // expiryDate, or its productionDate for goods with no real expiry, e.g. beans);
 // omitted/null = FEFO/FPFO (oldest first) at release time - the default and
 // recommended choice.
-app.post('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/stock-transfers', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   try {
     const { fromItemId, toItemId, qtyBase, note, expiryDate } = req.body || {};
     if (!fromItemId || !toItemId) return res.status(400).json({ success: false, error: 'Source and destination items are required.' });
@@ -761,7 +818,16 @@ app.post('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => 
     if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ success: false, error: 'Transfer quantity must be greater than zero.' });
     const [from, to] = await Promise.all([Inventory.findById(fromItemId), Inventory.findById(toItemId)]);
     if (!from || !to) return res.status(404).json({ success: false, error: 'Source or destination item not found.' });
-    if (qty > (from.stockQty || 0) + 1e-6) return res.status(400).json({ success: false, error: `Only ${from.stockQty} ${from.unit || ''} on hand at source.` });
+    // qtyBase leaves one item and arrives at the other unchanged, so both must
+    // count in the same base unit: 500 g of beans is not 500 ml or 500 pieces.
+    const baseOf = (it) => String(it.unit || 'pcs').trim().toLowerCase();
+    if (baseOf(from) !== baseOf(to)) {
+      return res.status(400).json({ success: false, error: `${from.itemName} is counted in ${from.unit || 'pcs'} and ${to.itemName} in ${to.unit || 'pcs'} - a transfer needs both in the same unit.` });
+    }
+    if (baseOf(from) === 'pcs' && !Number.isInteger(qty)) return res.status(400).json({ success: false, error: 'Transfer whole pieces only.' });
+    // Stock held for a client's order is not free to move.
+    const free = (from.stockQty || 0) - (from.reservedQty || 0);
+    if (qty > free + 1e-6) return res.status(400).json({ success: false, error: `Only ${+free.toFixed(6)} ${from.unit || ''} free to move at source${from.reservedQty ? ` (${from.reservedQty} held for client orders)` : ''}.` });
     // Early feedback only - release() re-validates against stock as of that moment,
     // which is authoritative (this item's batches can change between request and release).
     let pinnedExpiry = null;
@@ -789,7 +855,7 @@ app.post('/api/stock-transfers', verifyToken, requireStaff, async (req, res) => 
 });
 
 // Approve (superadmin). Requested → Approved.
-app.post('/api/stock-transfers/:id/approve', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/stock-transfers/:id/approve', verifyToken, requireStaff, requirePermission('inventory.approve'), async (req, res) => {
   try {
     const t = await StockTransfer.findById(req.params.id);
     if (!t) return res.status(404).json({ success: false, error: 'Transfer not found.' });
@@ -803,7 +869,7 @@ app.post('/api/stock-transfers/:id/approve', verifyToken, requireSuperAdmin, asy
 });
 
 // Reject (superadmin) or cancel (staff, own request while still Requested).
-app.post('/api/stock-transfers/:id/reject', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/stock-transfers/:id/reject', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   try {
     const t = await StockTransfer.findById(req.params.id);
     if (!t) return res.status(404).json({ success: false, error: 'Transfer not found.' });
@@ -820,7 +886,7 @@ app.post('/api/stock-transfers/:id/reject', verifyToken, requireStaff, async (re
 
 // Release (staff): Approved → Released. Moves the quantity between the two items
 // inside a transaction and writes a StockCard row on each side.
-app.post('/api/stock-transfers/:id/release', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/stock-transfers/:id/release', verifyToken, requireStaff, requirePermission('inventory.manage'), async (req, res) => {
   const MAX_ATTEMPTS = 3;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const session = await mongoose.startSession();
@@ -833,7 +899,11 @@ app.post('/api/stock-transfers/:id/release', verifyToken, requireStaff, async (r
         const from = await Inventory.findById(t.fromItemId).session(session);
         const to = await Inventory.findById(t.toItemId).session(session);
         if (!from || !to) throw Object.assign(new Error('Source or destination item no longer exists.'), { httpStatus: 404 });
-        if (t.qtyBase > (from.stockQty || 0) + 1e-6) throw Object.assign(new Error(`Only ${from.stockQty} ${from.unit || ''} on hand at source now.`), { httpStatus: 400 });
+        if (String(from.unit || 'pcs').toLowerCase() !== String(to.unit || 'pcs').toLowerCase()) {
+          throw Object.assign(new Error(`${from.itemName} and ${to.itemName} are counted in different units - a transfer needs both in the same unit.`), { httpStatus: 400 });
+        }
+        const free = (from.stockQty || 0) - (from.reservedQty || 0);
+        if (t.qtyBase > free + 1e-6) throw Object.assign(new Error(`Only ${+free.toFixed(6)} ${from.unit || ''} free to move at source now.`), { httpStatus: 400 });
 
         from.stockQty = +(from.stockQty - t.qtyBase).toFixed(6);
         to.stockQty = +(to.stockQty + t.qtyBase).toFixed(6);
@@ -918,7 +988,7 @@ app.get('/api/inventory', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
-app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory', verifyToken, requireStaff, permit('inventory.manage'), atomic(mongoose, async (req, res) => {
   try {
     // Canonicalize first so the stored name is stable ("test milk" → "TEST MILK")
     // and the existing case-insensitive dup check compares like with like. Stock
@@ -943,6 +1013,17 @@ app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
     // provided - goods with no real expiry (roasted beans, etc.) date freshness by
     // production date instead.
     const purchRef = await mkSeqRef('INV-PURCH');
+    // Claimed input VAT comes out of the unit cost before the item is created,
+    // so stock is never carried at a price that includes creditable VAT.
+    const invVatCfg = await loadVatConfig(Settings);
+    let newItemInputVat = 0;
+    if (req.body.claimInputVat === true && invVatCfg.enabled && Number(req.body.unitCost) > 0) {
+      const grossUnit = Number(req.body.unitCost);
+      const netUnit = Math.round((grossUnit / (1 + invVatCfg.rate)) * 1e6) / 1e6;
+      newItemInputVat = Math.round((grossUnit - netUnit) * (Number(req.body.stockQty) || 0) * 100) / 100;
+      req.body.unitCost = netUnit;
+    }
+    delete req.body.claimInputVat;
     if ((req.body.expiryDate || req.body.productionDate) && req.body.stockQty > 0) {
       req.body.expiryBatches = [{
         qty: req.body.stockQty,
@@ -1009,18 +1090,43 @@ app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
       throw createErr;
     }
 
+    // The opening quantity is the item's first movement. Without this row the
+    // stock card started from nothing while the item held stock, so its
+    // history never added up to its balance.
+    if ((Number(newItem.stockQty) || 0) > 0) {
+      await StockCard.create({
+        inventoryId: newItem._id, itemName: newItem.itemName, type: 'Initial',
+        reference: `NEW-${newItem.itemCode || newItem._id}`, qtyChange: newItem.stockQty,
+        balanceAfter: newItem.stockQty, unitCost: newItem.unitCost || 0,
+        remarks: 'Opening stock (item created)',
+      });
+    }
+
     // --- AUTO-JOURNAL FOR PURCHASING INVENTORY ---
     const totalCost = newItem.stockQty * newItem.unitCost;
     if (totalCost > 0) {
       const reference = purchRef;
       const lines = [
         { accountCode: '130000', accountName: 'Inventory Asset', debit: totalCost, credit: 0 },
-        { accountCode: creditCode, accountName: creditName,   debit: 0, credit: totalCost }
+        ...(newItemInputVat > 0 ? [{ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: newItemInputVat, credit: 0 }] : []),
+        { accountCode: creditCode, accountName: creditName,   debit: 0, credit: totalCost + newItemInputVat }
       ];
       await JournalEntry.create({
         reference,
         description: `Purchased ${newItem.stockQty}${newItem.unit} of ${newItem.itemName}${isOnCredit ? ` on credit${supplierAttr.supplierName ? ` from ${supplierAttr.supplierName}` : ''}` : ''}${fund ? ` from ${fund.name}` : ''}`,
-        lines, totalDebit: totalCost, totalCredit: totalCost, ...supplierAttr,
+        lines, totalDebit: totalCost + newItemInputVat, totalCredit: totalCost + newItemInputVat, ...supplierAttr,
+      });
+      // Stock bought with money rather than on credit is a disbursement, and
+      // gets the same document as any other. Buying ON credit raises a payable
+      // and pays nobody yet, so the issuer declines it on the account alone.
+      await issueCheckVoucher(req, {
+        payeeType: supplierAttr.supplierId ? 'supplier' : 'other',
+        payeeId: supplierAttr.supplierId || '',
+        payeeName: supplierAttr.supplierName || newItem.itemName,
+        amount: totalCost + newItemInputVat, purpose: 'expense',
+        sourceAccount: creditCode, referenceNumber: reference,
+        notes: `Stock purchase: ${newItem.itemName}`,
+        journalEntryRef: reference,
       });
     }
 
@@ -1046,13 +1152,13 @@ app.post('/api/inventory', verifyToken, requireStaff, async (req, res) => {
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // --- INVENTORY REVALUATION: set book Inventory (130000) = actual on-hand value ---
 // Resolves negative/incorrect inventory caused by missing opening balance / purchases.
 // Offset defaults to Owner's Capital (opening contribution; no P&L impact); '530000'
 // books it as an Inventory Adjustment instead.
-app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, atomic(mongoose, async (req, res) => {
   try {
     const VALID = { '310000': "Owner's Capital", '530000': 'Inventory Adjustments' };
     const offCode = VALID[req.body.offsetAccount] ? req.body.offsetAccount : '310000';
@@ -1079,7 +1185,7 @@ app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, async (req, r
     emitToMgr('erpUpdated');
     res.json({ success: true, onHand, book, diff, offset: offCode, reference });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
-});
+}));
 
 // --- RESTOCK EXISTING INVENTORY (Weighted Average Cost, transactional) ---
 // The whole flow - read stockQty/unitCost, compute WAC, save the item, write
@@ -1087,7 +1193,7 @@ app.post('/api/inventory/revalue', verifyToken, requireSuperAdmin, async (req, r
 // transaction. Two simultaneous restocks of the same SKU now serialise on the
 // inventory document instead of racing the WAC math. Retries on transient
 // transient errors (WriteConflict / TransientTransactionError).
-app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory/restock/:id', verifyToken, requireStaff, permit('inventory.manage'), async (req, res) => {
   const {
     addedStock, totalCost, expiryDate, productionDate,
     creditAccount: rawCreditCode,
@@ -1098,13 +1204,22 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
     //   revolvingFundId         - receive out of a petty-cash/revolving fund;
     //     the fund's balance is actually drawn down, not just the COA account.
     supplierId, supplierName, revolvingFundId,
+    // VAT charged by a VAT-registered supplier, inside totalCost. Creditable,
+    // so the stock is valued NET of it and the VAT is held in 170300 - costing
+    // stock at the VAT-inclusive price would inflate COGS and lose the credit.
+    claimInputVat,
   } = req.body;
   const isAllowedParent = (c) => /^(111|112|113|220)/.test(String(c || ''));
   const resolved = acctMeta(rawCreditCode);
   let creditCode = (resolved && isAllowedParent(rawCreditCode)) ? rawCreditCode : '111000';
   let creditName = acctMeta(creditCode)?.name || 'Cash on Hand';
 
-  const cost = Number(totalCost) || 0;
+  const cost = Number(totalCost) || 0;          // what the supplier is paid, VAT included
+  const vatCfg = await loadVatConfig(Settings);
+  const inputVat = claimInputVat && vatCfg.enabled
+    ? Math.round((cost - cost / (1 + vatCfg.rate)) * 100) / 100
+    : 0;
+  const netCost = Math.round((cost - inputVat) * 100) / 100;   // what the stock is carried at
   const isOnCredit = String(creditCode).startsWith('220');
 
   // ── Revolving-fund funding ────────────────────────────────────────────────
@@ -1182,7 +1297,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
         // WAC (GAAP/IFRS). All values read inside the transaction - concurrent
         // restocks block on this document until commit.
         const currentTotalValue = item.stockQty * item.unitCost;
-        const newTotalValue = currentTotalValue + totalCost;
+        const newTotalValue = currentTotalValue + netCost;
         const newStockQty = item.stockQty + addedStock;
         const newUnitCost = newStockQty > 0 ? newTotalValue / newStockQty : 0;
 
@@ -1207,7 +1322,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
         await item.save({ session });
         savedItem = item;
 
-        const batchUnitCost = addedStock > 0 ? totalCost / addedStock : 0;
+        const batchUnitCost = addedStock > 0 ? netCost / addedStock : 0;
         await StockCard.create([{
           inventoryId: item._id,
           itemName: item.itemName,
@@ -1219,21 +1334,34 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
           remarks: 'Restocked inventory'
         }], { session });
 
-        if (totalCost > 0) {
+        if (cost > 0) {
           const lines = [
-            { accountCode: '130000', accountName: 'Inventory Asset', debit: totalCost, credit: 0 },
-            { accountCode: creditCode, accountName: creditName,      debit: 0, credit: totalCost }
+            { accountCode: '130000', accountName: 'Inventory Asset', debit: netCost, credit: 0 },
+            ...(inputVat > 0 ? [{ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: inputVat, credit: 0 }] : []),
+            { accountCode: creditCode, accountName: creditName,      debit: 0, credit: cost }
           ];
           await JournalEntry.create([{
             reference: rstRef,
             description: `Restocked ${addedStock}${item.unit} of ${item.itemName}${isOnCredit ? ` on credit${supplierAttr.supplierName ? ` from ${supplierAttr.supplierName}` : ''}` : ''}${fund ? ` from ${fund.name}` : ''}`,
-            lines, totalDebit: totalCost, totalCredit: totalCost,
+            lines, totalDebit: cost, totalCredit: cost,
             ...supplierAttr,
           }], { session });
         }
       });
 
       await recordFundDraw(savedItem, savedRef);
+      // Restocking with money rather than on credit is a disbursement. Issued
+      // once the stock and the entry have both landed, and declined by the
+      // issuer when it went on credit - nothing left a cash account then.
+      await issueCheckVoucher(req, {
+        payeeType: supplierAttr.supplierId ? 'supplier' : 'other',
+        payeeId: supplierAttr.supplierId || '',
+        payeeName: supplierAttr.supplierName || savedItem.itemName,
+        amount: cost, purpose: 'expense',
+        sourceAccount: creditCode, referenceNumber: savedRef,
+        notes: `Restock: ${savedItem.itemName}`,
+        journalEntryRef: savedRef,
+      });
       emitToMgr('erpUpdated');
       await logAudit(req, { action: 'restock', entity: 'Inventory', entityId: req.params.id, after: { addedStock, totalCost, creditCode, fund: fund?.name || null, supplier: supplierAttr.supplierName || null } });
       return res.json({ success: true, item: savedItem, fundedBy: fund ? { fundId: String(fund._id), name: fund.name } : null, onCredit: isOnCredit });
@@ -1257,7 +1385,7 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
           const item = await Inventory.findById(req.params.id);
           if (!item) { await releaseFundHold(); return res.status(404).json({ success: false, error: 'Item not found' }); }
           const currentTotalValue = item.stockQty * item.unitCost;
-          const newTotalValue = currentTotalValue + totalCost;
+          const newTotalValue = currentTotalValue + netCost;
           const newStockQty = item.stockQty + addedStock;
           const newUnitCost = newStockQty > 0 ? newTotalValue / newStockQty : 0;
           item.stockQty = newStockQty;
@@ -1268,16 +1396,29 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
             item.expiryDate = soonestExpiry(item.expiryBatches);
           }
           await item.save();
-          const batchUnitCost = addedStock > 0 ? totalCost / addedStock : 0;
+          const batchUnitCost = addedStock > 0 ? netCost / addedStock : 0;
           await StockCard.create({ inventoryId: item._id, itemName: item.itemName, type: 'Restock', reference: rstRef, qtyChange: addedStock, unitCost: batchUnitCost, balanceAfter: item.stockQty, remarks: 'Restocked inventory' });
-          if (totalCost > 0) {
+          if (cost > 0) {
             const lines = [
-              { accountCode: '130000', accountName: 'Inventory Asset', debit: totalCost, credit: 0 },
-              { accountCode: creditCode, accountName: creditName, debit: 0, credit: totalCost },
+              { accountCode: '130000', accountName: 'Inventory Asset', debit: netCost, credit: 0 },
+              ...(inputVat > 0 ? [{ accountCode: INPUT_VAT.code, accountName: INPUT_VAT.name, debit: inputVat, credit: 0 }] : []),
+              { accountCode: creditCode, accountName: creditName, debit: 0, credit: cost },
             ];
-            await JournalEntry.create({ reference: rstRef, description: `Restocked ${addedStock}${item.unit} of ${item.itemName}${isOnCredit ? ` on credit${supplierAttr.supplierName ? ` from ${supplierAttr.supplierName}` : ''}` : ''}${fund ? ` from ${fund.name}` : ''}`, lines, totalDebit: totalCost, totalCredit: totalCost, ...supplierAttr });
+            await JournalEntry.create({ reference: rstRef, description: `Restocked ${addedStock}${item.unit} of ${item.itemName}${isOnCredit ? ` on credit${supplierAttr.supplierName ? ` from ${supplierAttr.supplierName}` : ''}` : ''}${fund ? ` from ${fund.name}` : ''}`, lines, totalDebit: cost, totalCredit: cost, ...supplierAttr });
           }
           await recordFundDraw(item, rstRef);
+          // Restocking with money rather than on credit is a disbursement. Issued
+              // once the stock and the entry have both landed, and declined by the
+              // issuer when it went on credit - nothing left a cash account then.
+          await issueCheckVoucher(req, {
+            payeeType: supplierAttr.supplierId ? 'supplier' : 'other',
+            payeeId: supplierAttr.supplierId || '',
+            payeeName: supplierAttr.supplierName || item.itemName,
+            amount: cost, purpose: 'expense',
+            sourceAccount: creditCode, referenceNumber: rstRef,
+            notes: `Restock: ${item.itemName}`,
+            journalEntryRef: rstRef,
+          });
           emitToMgr('erpUpdated');
           await logAudit(req, { action: 'restock', entity: 'Inventory', entityId: req.params.id, after: { addedStock, totalCost, fallback: true, creditCode, fund: fund?.name || null, supplier: supplierAttr.supplierName || null } });
           return res.json({ success: true, item, fundedBy: fund ? { fundId: String(fund._id), name: fund.name } : null, onCredit: isOnCredit });
@@ -1296,14 +1437,15 @@ app.post('/api/inventory/restock/:id', verifyToken, requireStaff, async (req, re
   }
 });
 
-app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.put('/api/inventory/:id', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     // Whitelist editable fields - stockQty must NEVER be edited here
     // (would bypass StockCard audit trail and double-entry accounting).
     // Stock changes go through restock / spoilage / order-completion flows.
-    const allowed = ['itemName', 'unit', 'unitCost', 'lowStockThreshold', 'expiryDate', 'expiryWarnDays', 'displayUnit', 'unitMultiplier', 'srp', 'packSize', 'stockLocation', 'stockCategory'];
+    const allowed = ['itemName', 'unit', 'unitCost', 'lowStockThreshold', 'expiryDate', 'expiryWarnDays', 'displayUnit', 'unitMultiplier', 'srp', 'packSize', 'stockLocation', 'stockCategory', 'takeoutPackaging'];
     const update = {};
     for (const k of allowed) if (k in req.body) update[k] = req.body[k];
+    if ('takeoutPackaging' in update) update.takeoutPackaging = update.takeoutPackaging === true;
 
     // itemCode is a business key: in log mode the resale Product's productCode
     // equals it, so a rename must cascade or the two silently desync. Handled
@@ -1354,6 +1496,43 @@ app.put('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) =
     if ('expiryDate' in update) {
       if (update.expiryDate === null || update.expiryDate === '') update.expiryDate = null;
       else update.expiryDate = new Date(update.expiryDate);
+    }
+
+    // The BASE unit is what every quantity of this item is counted in: its
+    // stock, and every recipe line that takes from it. Picking a display unit
+    // of another kind in the edit dialog (kg -> L, kg -> pcs) also changes the
+    // base, and nothing converted anything: 1000 g of stock became 1000 pieces,
+    // and a latte's "18 g" of beans became 18 ml. A base change is allowed as a
+    // correction only while nothing is written in the old one.
+    if ('unit' in update) {
+      const before = await Inventory.findById(req.params.id, { unit: 1, itemName: 1, productionRecipe: 1 }).lean();
+      if (!before) return res.status(404).json({ success: false, error: 'Item not found.' });
+      const next = String(update.unit || '').trim();
+      if (!next) return res.status(400).json({ success: false, error: 'Unit required.' });
+      if (next !== before.unit) {
+        const id = String(req.params.id);
+        const scope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
+        const [prods, extras, groups, makes] = await Promise.all([
+          Product.find({ ...scope, $or: [{ 'baseRecipe.invId': id }, { 'sizes.recipe.invId': id }, { 'addOns.recipe.invId': id }] }, { name: 1 }).limit(6).lean(),
+          AddOn.find({ 'recipe.invId': id }, { name: 1 }).limit(6).lean(),
+          ModifierGroup.find({ 'options.recipe.invId': id }, { name: 1 }).limit(6).lean(),
+          Inventory.find({ ...scope, 'productionRecipe.invId': req.params.id }, { itemName: 1 }).limit(6).lean(),
+        ]);
+        const usedIn = [
+          ...prods.map(p => p.name), ...extras.map(a => `add-on ${a.name}`),
+          ...groups.map(g => `option group ${g.name}`), ...makes.map(i => `how ${i.itemName} is made`),
+        ];
+        if ((before.productionRecipe || []).length) usedIn.push(`its own production recipe`);
+        if (usedIn.length) {
+          return res.status(409).json({
+            success: false,
+            error: `${before.itemName} is counted in ${before.unit}, and recipes are written in ${before.unit}: ${usedIn.slice(0, 6).join(', ')}${usedIn.length > 6 ? '…' : ''}. `
+              + `Changing it to ${next} would make every one of them take the wrong amount. Pick a display unit of the same kind (for ${before.unit}: `
+              + `${before.unit === 'g' ? 'g or kg' : before.unit === 'ml' ? 'ml or L' : before.unit}), or take the item out of those recipes first.`,
+            usedIn,
+          });
+        }
+      }
     }
 
     const updatedItem = await Inventory.findByIdAndUpdate(req.params.id, update, { returnDocument: 'after' });
@@ -1419,11 +1598,11 @@ app.get('/api/inventory/expiring', verifyToken, requireStaff, async (req, res) =
 });
 
 // --- BATCH MANAGEMENT: add a new expiry (or production-date) batch manually ---
-app.post('/api/inventory/:id/batches', verifyToken, requireSuperAdmin, async (req, res) => {
+app.post('/api/inventory/:id/batches', verifyToken, requireStaff, requirePermission('inventory.setup'), atomic(mongoose, async (req, res) => {
   try {
     const { qty, expiryDate, productionDate, reference } = req.body;
-    const n = parseFloat(qty);
-    if (!n || n <= 0) return res.status(400).json({ success: false, error: 'qty must be > 0' });
+    const n = positiveQty(qty);
+    if (Number.isNaN(n)) return res.status(400).json({ success: false, error: 'qty must be a positive number.' });
     // At least one date is required - goods with no real expiry (roasted beans,
     // etc.) date freshness by production date instead.
     if (!expiryDate && !productionDate) return res.status(400).json({ success: false, error: 'expiryDate or productionDate required' });
@@ -1468,7 +1647,7 @@ app.post('/api/inventory/:id/batches', verifyToken, requireSuperAdmin, async (re
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // --- BATCH MANAGEMENT: correct a batch's expiry/production date by index
 // (use when an import or manual entry recorded the wrong date - e.g. a
@@ -1477,7 +1656,7 @@ app.post('/api/inventory/:id/batches', verifyToken, requireSuperAdmin, async (re
 // tagged with. Setting expiryDate clears productionDate and vice versa - a
 // batch is dated one way or the other, never both (mirrors every other
 // expiry/production entry point in the app).
-app.patch('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmin, async (req, res) => {
+app.patch('/api/inventory/:id/batches/:batchIdx', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
   try {
     const item = await Inventory.findById(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Item not found' });
@@ -1510,7 +1689,7 @@ app.patch('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmin
 });
 
 // --- BATCH MANAGEMENT: delete a specific batch by index (use when physical stock no longer matches) ---
-app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireStaff, requirePermission('inventory.setup'), atomic(mongoose, async (req, res) => {
   try {
     const item = await Inventory.findById(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Item not found' });
@@ -1519,12 +1698,19 @@ app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmi
       return res.status(400).json({ success: false, error: 'Invalid batch index.' });
     }
     const [removed] = item.expiryBatches.splice(idx, 1);
-    const removedQty = Number(removed?.qty || 0);
-    const unitCost   = Number(removed?.unitCost || item.unitCost || 0);
+    // What actually comes off: the batch, or what is left on hand if that is
+    // less. The stock card, the journal and the balance all use this one figure
+    // - the balance used to be floored at zero while the card and the journal
+    // still recorded the whole batch.
+    const onHand = Math.max(0, Number(item.stockQty || 0));
+    const removedQty = +Math.min(Number(removed?.qty || 0), onHand).toFixed(6);
+    // Valued at the item's average cost - the basis its stock value (and the
+    // Inventory account) carries - not the batch's own purchase cost.
+    const unitCost   = Number(item.unitCost || 0);
     item.expiryDate = soonestExpiry(item.expiryBatches);
     // Removing a batch means that stock is physically gone - decrement stockQty and
     // book it as a variance/write-off so the ledger and stock card stay truthful.
-    item.stockQty = +Math.max(0, Number(item.stockQty || 0) - removedQty).toFixed(4);
+    item.stockQty = +(Number(item.stockQty || 0) - removedQty).toFixed(6);
     await item.save();
 
     const delRef = await mkSeqRef('INV-BATCHDEL');
@@ -1551,10 +1737,10 @@ app.delete('/api/inventory/:id/batches/:batchIdx', verifyToken, requireSuperAdmi
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}));
 
 // --- PATCH expiry only (after a partial spoilage clears the expired batch) ---
-app.patch('/api/inventory/:id/expiry', verifyToken, requireStaff, async (req, res) => {
+app.patch('/api/inventory/:id/expiry', verifyToken, requireStaff, permit('inventory.manage'), async (req, res) => {
   try {
     const { expiryDate, expiryWarnDays } = req.body;
     const update = {};
@@ -1571,7 +1757,7 @@ app.patch('/api/inventory/:id/expiry', verifyToken, requireStaff, async (req, re
   }
 });
 
-app.delete('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res) => {
+app.delete('/api/inventory/:id', verifyToken, requireStaff, requirePermission('inventory.delete'), async (req, res) => {
   try {
     const item = await Inventory.findByIdAndDelete(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Item not found.' });
@@ -1593,11 +1779,39 @@ app.delete('/api/inventory/:id', verifyToken, requireSuperAdmin, async (req, res
 // - New items: created + booked as Inventory Adjustment Gain (4200)
 // Every row produces a StockCard entry + a balanced journal entry.
 // ============================================================
-app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, res) => {
+// The whole import is one transaction, which is what keeps a half-read sheet
+// from ever landing. The cost of that is that anything else touching the same
+// stock at that moment - a sale being rung up while the count goes in - makes
+// MongoDB refuse the transaction with a transient write conflict. The import
+// answered that with a 500 and threw the lot away, where the sale and restock
+// paths simply try again. It tries again now too: the transaction rolled back
+// cleanly, so a retry starts from exactly where the first attempt did.
+const IMPORT_TXN_ATTEMPTS = 4;
+const IMPORT_RETRY = Symbol('import-retry');
+const isTransientTxn = (err) => {
+  const msg = String(err?.errorLabels || err?.message || '');
+  return (err?.errorLabels || []).includes('TransientTransactionError') || /WriteConflict|Write conflict/i.test(msg);
+};
+
+app.post('/api/inventory/import', verifyToken, requireStaff, requirePermission('inventory.setup'), async (req, res) => {
+  for (let attempt = 1; attempt <= IMPORT_TXN_ATTEMPTS; attempt++) {
+    if (await runInventoryImport(req, res, attempt) !== IMPORT_RETRY) return;
+    // A little jitter, so two imports that collided do not collide again.
+    await new Promise(r => setTimeout(r, 40 * attempt + Math.floor(Math.random() * 60)));
+  }
+});
+
+async function runInventoryImport(req, res, attempt) {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
     const { items } = req.body;
+    // Carried in by the setup workbook alongside an opening balance sheet: the
+    // stock is registered item by item, but its value is already on that
+    // balance sheet as Inventory, so nothing posts - it would count twice.
+    // Books Health then compares the two. Superadmin only, like the route.
+    const opening = req.body?.opening === true;
+    const postEntry = opening ? async () => [] : (docs, opts) => JournalEntry.create(docs, opts);
     if (!Array.isArray(items) || items.length === 0) {
       await session.abortTransaction(); session.endSession();
       return res.status(400).json({ success: false, error: 'No rows in import payload.' });
@@ -1653,12 +1867,22 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
       // Stock item names are always ALL CAPS, matching the billing statement
       // convention - normalize here so a mixed-case sheet still comes in consistent.
       const itemName = upper(row.itemName || row.product || row.name || '');
-      // Category (and the linked Product/menu-setup sync it triggers below) is a
-      // logistics-only concept - an fb import brings in raw inventory data (stock,
-      // cost, expiry) only, and never touches menu setup even if the sheet has one.
-      const categoryName = BUSINESS_TYPE === 'log' ? String(row.category || '').trim() : '';
+      // The sheet's section header (COFFEE & TEA, POWDERS...) is the item's
+      // STOCK category, in both business types. It used to be discarded for fb,
+      // because category was tied to the menu-setup sync below - but that sync
+      // is its own switch (syncProduct, log-only). In fb, stock categories are a
+      // separate set from the menu's product categories, so storing one here
+      // never touches the menu; dropping it meant an fb import, including
+      // re-importing the app's own export, lost every item's category.
+      const categoryName = String(row.category || '').trim();
       if (categoryName) await resolveStockCategory(categoryName, itemCode);
       const srp = row.srp !== undefined && row.srp !== '' ? parseFloat(row.srp) : null;
+      // Warning level and storage place, as written by the app's own export.
+      // Absent or blank means "leave it as it is", never "reset to nothing".
+      const lowStockFromSheet = row.lowStockThreshold !== undefined && row.lowStockThreshold !== ''
+        && Number.isFinite(parseFloat(row.lowStockThreshold))
+        ? Math.max(0, parseFloat(row.lowStockThreshold)) : null;
+      const stockLocationFromSheet = String(row.stockLocation || '').trim().slice(0, 120);
       // In log mode the product IS the stocked good, so EVERY imported item gets a
       // linked Product (menu entry), with or without a category on the sheet - a
       // missing category falls back to a general bucket. fb never syncs products
@@ -1708,13 +1932,26 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
       // packSize 1. The client pre-parses the size out of the product name and sends
       // it here; if a caller sends the raw unparsed name instead, fall back to
       // parsing it here so the size is never silently dropped.
-      let packSizeFromExcel = row.packSize !== undefined && row.packSize !== '' ? parseFloat(row.packSize) : null;
-      if (packSizeFromExcel == null || Number.isNaN(packSizeFromExcel)) {
-        const m = itemName.match(/\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|l|ml|pcs|pc)\s*$/i);
+      // A loose piece count: the row's number is pieces, so the item is NOT a
+      // packed one, whatever an earlier import made it. See PIECES in the
+      // client's importSheets.js - "12oz ICED CUPS 50pcs | 104" is 104 cups.
+      let looseCount = row.looseCount === true;
+      let packSizeFromExcel = looseCount ? null
+        : (row.packSize !== undefined && row.packSize !== '' ? parseFloat(row.packSize) : null);
+      if (!looseCount && (packSizeFromExcel == null || Number.isNaN(packSizeFromExcel))) {
+        // Same rule as the client, for a caller that sends the raw name: a
+        // weight or volume in the name is a pack, a piece count only when the
+        // name says "/pack".
+        const m = itemName.match(/\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|l|ml|pcs|pc)(?:\s*\/\s*(pack|box|bag|sleeve|case|pk))?\s*$/i);
         if (m) {
           const raw = parseFloat(m[1]);
           const u = m[2].toLowerCase();
-          packSizeFromExcel = (u === 'g' || u === 'ml') ? raw / 1000 : raw; // → kg / L
+          if (u === 'pcs' || u === 'pc') {
+            if (m[3]) packSizeFromExcel = raw;
+            else looseCount = true;
+          } else {
+            packSizeFromExcel = (u === 'g' || u === 'ml') ? raw / 1000 : raw; // → kg / L
+          }
         }
       }
       if (packSizeFromExcel != null && (Number.isNaN(packSizeFromExcel) || packSizeFromExcel <= 0)) packSizeFromExcel = null;
@@ -1771,7 +2008,14 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         existing.displayUnit = displayUnit;
         existing.unitMultiplier = mult;
         if (baseUnit) existing.unit = baseUnit;
-        if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
+        if (looseCount) existing.packSize = null;
+        else if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
+        // SRP was parsed from the sheet and then never saved, so importing a
+        // price list - or moving stock between systems - dropped every
+        // selling price. A blank SRP cell leaves the current one alone.
+        if (srp != null && !Number.isNaN(srp) && srp > 0) existing.srp = srp;
+        if (lowStockFromSheet != null) existing.lowStockThreshold = lowStockFromSheet;
+        if (stockLocationFromSheet) existing.stockLocation = stockLocationFromSheet;
         if (categoryName && !existing.stockCategory) existing.stockCategory = categoryName;
 
         existing.expiryBatches = addBatch(existing.expiryBatches || [], {
@@ -1802,7 +2046,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
             { accountCode: '310000', accountName: "Owner's Capital", debit: 0, credit: valueImpact }
           ];
           assertBalanced(lines, `IMPORT-BATCH-${existing.itemName}`);
-          await JournalEntry.create([{
+          await postEntry([{
             reference: impRef,
             description: `Stock take import (new batch): ${existing.itemName} (+${newBaseQty.toFixed(2)} ${baseUnit} @ P${unitCostForThisLot.toFixed(4)})`,
             lines, totalDebit: valueImpact, totalCredit: valueImpact
@@ -1821,7 +2065,44 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           );
         }
       } else if (existing) {
+        // A loose count over an item an earlier import stored in packs.
+        //
+        // "12oz ICED CUPS 50pcs | 104" used to be read as 104 sleeves: 5,200
+        // cups at P0.064. Those were the right VALUE in the wrong unit. Taken
+        // as an ordinary recount, the row saw 5,096 cups vanish, booked them as
+        // spoilage at P0.064 - a P326 loss on the P&L that never happened - and
+        // then moved the cost to P3.20 without touching the books at all.
+        //
+        // So the stored stock is first re-expressed in pieces - quantity down
+        // by the pack, cost up by the same, value exactly unchanged, nothing to
+        // post - and only then is the row applied, as the recount it is. When
+        // the shelf matches, nothing is booked; when it does not, only the real
+        // difference is.
+        if (looseCount && existing.unit === 'pcs' && Number(existing.packSize) > 1) {
+          const pack = Number(existing.packSize);
+          const wasQty = existing.stockQty || 0;
+          const wasCost = existing.unitCost || 0;
+          existing.stockQty = +(wasQty / pack).toFixed(6);
+          existing.unitCost = +(wasCost * pack).toFixed(6);
+          existing.expiryBatches = (existing.expiryBatches || []).map(b => ({
+            ...(b.toObject ? b.toObject() : b),
+            qty: +((Number(b.qty) || 0) / pack).toFixed(6),
+            unitCost: +((Number(b.unitCost) || 0) * pack).toFixed(6),
+          }));
+          existing.packSize = null;
+          await StockCard.create([{
+            inventoryId: existing._id,
+            itemName: existing.itemName,
+            type: 'Unit Correction',
+            reference: impRef,
+            qtyChange: +(existing.stockQty - wasQty).toFixed(6),
+            balanceAfter: existing.stockQty,
+            unitCost: existing.unitCost,
+            remarks: `Counted in pieces, not packs of ${pack}: ${wasQty} at P${wasCost.toFixed(4)} is ${existing.stockQty} at P${existing.unitCost.toFixed(4)}. Value unchanged.`,
+          }], { session });
+        }
         const oldQty = existing.stockQty || 0;
+        const oldCost = existing.unitCost || 0;
         const diff = +(newBaseQty - oldQty).toFixed(6);
         // Gain/loss is a QUANTITY VARIANCE (physical count vs. book), so it must be
         // valued at the cost those units are CURRENTLY carried at on the books -
@@ -1844,7 +2125,14 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         existing.displayUnit = displayUnit;
         existing.unitMultiplier = mult;
         if (baseUnit) existing.unit = baseUnit;
-        if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
+        if (looseCount) existing.packSize = null;
+        else if (packSizeFromExcel != null) existing.packSize = packSizeFromExcel;
+        // SRP was parsed from the sheet and then never saved, so importing a
+        // price list - or moving stock between systems - dropped every
+        // selling price. A blank SRP cell leaves the current one alone.
+        if (srp != null && !Number.isNaN(srp) && srp > 0) existing.srp = srp;
+        if (lowStockFromSheet != null) existing.lowStockThreshold = lowStockFromSheet;
+        if (stockLocationFromSheet) existing.stockLocation = stockLocationFromSheet;
         if (categoryName && !existing.stockCategory) existing.stockCategory = categoryName;
 
         // Expiry batches:
@@ -1852,18 +2140,23 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
         //    batch with the +diff qty (only if diff > 0).
         //  - If diff < 0: FEFO/FPFO-consume the absolute diff from existing batches.
         //  - If diff > 0 and no date on Excel row: leave batches untouched (caller assumes existing batch still applies).
-        if (diff < 0) {
-          const r = consumeBatches(existing.expiryBatches || [], Math.abs(diff));
-          existing.expiryBatches = r.batches;
-        } else if (diff > 0 && (expiryFromExcel || productionFromExcel)) {
-          existing.expiryBatches = addBatch(existing.expiryBatches || [], {
-            qty: diff,
+        //  - BUT a row that carries a date is a count of what is on the shelf with
+        //    that date: the item's batches become exactly this row (and any repeat
+        //    rows of it further down add theirs). Recording only the +diff dropped
+        //    the date whenever the count matched or fell - so a sheet listing
+        //    "10, expires May" over "10, expires March" kept March.
+        if (expiryFromExcel || productionFromExcel) {
+          existing.expiryBatches = newBaseQty > 0 ? [{
+            qty: newBaseQty,
             expiryDate: expiryFromExcel ? new Date(expiryFromExcel) : null,
             productionDate: productionFromExcel ? new Date(productionFromExcel) : null,
             receivedAt: new Date(),
             reference: impRef,
-            unitCost: unitCostForValuation
-          });
+            unitCost: existing.unitCost || unitCostForValuation,
+          }] : [];
+        } else if (diff < 0) {
+          const r = consumeBatches(existing.expiryBatches || [], Math.abs(diff));
+          existing.expiryBatches = r.batches;
         }
         existing.expiryDate = soonestExpiry(existing.expiryBatches || []);
         await existing.save({ session });
@@ -1892,10 +2185,39 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
                 { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: valueImpact }
               ];
           assertBalanced(lines, `IMPORT-${existing.itemName}`);
-          await JournalEntry.create([{
+          await postEntry([{
             reference: impRef,
             description: `Stock take import: ${existing.itemName} (${diff >= 0 ? '+' : ''}${diff.toFixed(2)} ${baseUnit} @ P${unitCostForValuation.toFixed(4)})`,
             lines, totalDebit: valueImpact, totalCredit: valueImpact
+          }], { session });
+        }
+
+        // The books have to end where the stock ends. The variance above is
+        // valued at the cost the stock was carried at, on purpose (see
+        // unitCostForValuation); but when the row also set a NEW cost, what is
+        // left on the shelf is now carried at that cost and nothing had moved
+        // the books to match. The stock read one value and the ledger another,
+        // quietly, from then on. The difference is a revaluation, booked the way
+        // the Revalue tool books one: against Owner's Capital, not the P&L,
+        // because a price correction is not a trading loss or gain.
+        const postedVariance = (diff >= 0 ? 1 : -1) * valueImpact;
+        const revaluation = +(((existing.stockQty || 0) * (existing.unitCost || 0))
+          - (oldQty * oldCost) - postedVariance).toFixed(2);
+        if (Math.abs(revaluation) >= 0.01) {
+          const lines = revaluation > 0
+            ? [
+                { accountCode: '130000', accountName: 'Inventory Asset', debit: revaluation, credit: 0 },
+                { accountCode: '310000', accountName: "Owner's Capital", debit: 0, credit: revaluation },
+              ]
+            : [
+                { accountCode: '310000', accountName: "Owner's Capital", debit: -revaluation, credit: 0 },
+                { accountCode: '130000', accountName: 'Inventory Asset', debit: 0, credit: -revaluation },
+              ];
+          assertBalanced(lines, `IMPORT-REVAL-${existing.itemName}`);
+          await postEntry([{
+            reference: impRef,
+            description: `Stock take import: ${existing.itemName} revalued to P${(existing.unitCost || 0).toFixed(4)} per ${baseUnit} (was P${oldCost.toFixed(4)})`,
+            lines, totalDebit: Math.abs(revaluation), totalCredit: Math.abs(revaluation),
           }], { session });
         }
 
@@ -1919,7 +2241,9 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
               { upsert: true, returnDocument: 'after', session }
             );
             // Base recipe links the product to its OWN stock item (1:1).
-            const baseRecipe = [{ invId: existing._id, name: existing.itemName, qty: existing.unitMultiplier || mult, cost: existing.unitCost || 0, unit: existing.unit || baseUnit }];
+            // One unit sold is one pack of it (see basePerPack).
+            const perSale = basePerPack({ unitMultiplier: existing.unitMultiplier || mult, packSize: existing.packSize });
+            const baseRecipe = [{ invId: existing._id, name: existing.itemName, qty: perSale, packBase: perSale, cost: existing.unitCost || 0, unit: existing.unit || baseUnit }];
             // basePrice must never appear in both $set and $setOnInsert - Mongo
             // rejects an update that targets the same path from two operators.
             // A valid SRP always wins (goes in $set); only fall back to
@@ -1961,10 +2285,12 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
           stockQty: newBaseQty,
           unit: baseUnit,
           unitCost: newCostPerBase != null ? newCostPerBase : 0,
-          lowStockThreshold: 0,
+          lowStockThreshold: lowStockFromSheet != null ? lowStockFromSheet : 0,
+          ...(stockLocationFromSheet ? { stockLocation: stockLocationFromSheet } : {}),
           displayUnit,
           unitMultiplier: mult,
-          packSize: packSizeFromExcel,
+          packSize: looseCount ? null : packSizeFromExcel,
+          ...(srp != null && !Number.isNaN(srp) && srp > 0 ? { srp } : {}),
           expiryBatches: initialBatches,
           expiryDate: soonestExpiry(initialBatches),
           businessType: BUSINESS_TYPE,
@@ -1992,7 +2318,7 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
             { accountCode: '310000', accountName: "Owner's Capital", debit: 0, credit: valueImpact }
           ];
           assertBalanced(lines, `IMPORT-NEW-${item.itemName}`);
-          await JournalEntry.create([{
+          await postEntry([{
             reference: impRef,
             description: `Stock take import (new item): ${item.itemName} (${newBaseQty.toFixed(2)} ${baseUnit} @ P${item.unitCost.toFixed(4)})`,
             lines, totalDebit: valueImpact, totalCredit: valueImpact
@@ -2018,7 +2344,8 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
             // Explicitly link the product's base recipe to its OWN stock item (1:1),
             // so the menu shows the stock item as the base material and each sale
             // deducts it directly - no reliance on the code/name fallback.
-            const baseRecipe = [{ invId: item._id, name: item.itemName, qty: mult, cost: item.unitCost || 0, unit: baseUnit }];
+            const perSale = basePerPack({ unitMultiplier: mult, packSize: item.packSize });
+            const baseRecipe = [{ invId: item._id, name: item.itemName, qty: perSale, packBase: perSale, cost: item.unitCost || 0, unit: baseUnit }];
             await Product.create([{
               productCode: item.itemCode,
               name: item.itemName,
@@ -2031,7 +2358,8 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
             }], { session });
           } else if (productExists && !(productExists.baseRecipe || []).some(r => r.invId)) {
             // Existing menu entry with no linked stock - backfill the link.
-            const baseRecipe = [{ invId: item._id, name: item.itemName, qty: mult, cost: item.unitCost || 0, unit: baseUnit }];
+            const perSale = basePerPack({ unitMultiplier: mult, packSize: item.packSize });
+            const baseRecipe = [{ invId: item._id, name: item.itemName, qty: perSale, packBase: perSale, cost: item.unitCost || 0, unit: baseUnit }];
             productExists.baseRecipe = baseRecipe;
             await productExists.save({ session });
           }
@@ -2041,27 +2369,38 @@ app.post('/api/inventory/import', verifyToken, requireSuperAdmin, async (req, re
 
     await session.commitTransaction();
     session.endSession();
+    // Tier prices from a setup workbook wait for the products this import has
+    // just created (lib/tierPriceImport.js). A failure here must not undo a
+    // committed import - the prices stay waiting for the next one.
+    try {
+      const tierPrices = await applyPendingTierPrices({ PriceTier: mongoose.model('PriceTier'), Product, Settings: mongoose.model('Settings'), scope: { businessType: BUSINESS_TYPE, ...tenantScope(req) } });
+      if (tierPrices.applied) summary.tierPricesApplied = tierPrices.applied;
+    } catch (err) { log?.error?.({ err }, 'Waiting tier prices could not be applied'); }
     emitToMgr('erpUpdated');
     emitToAll('menuUpdated');
     res.json({ success: true, summary });
   } catch (err) {
-    await session.abortTransaction();
+    try { await session.abortTransaction(); } catch { /* already aborted by the driver */ }
     session.endSession();
+    if (isTransientTxn(err) && attempt < IMPORT_TXN_ATTEMPTS && !res.headersSent) {
+      log.warn({ attempt }, 'inventory import hit a transient write conflict; retrying');
+      return IMPORT_RETRY;
+    }
     log.error({ err }, 'inventory import failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
-});
+}
 
 // --- SPOILAGE / WASTE LOGGING ---
-app.post('/api/inventory/spoilage/:id', verifyToken, requireStaff, async (req, res) => {
+app.post('/api/inventory/spoilage/:id', verifyToken, requireStaff, permit('inventory.waste'), async (req, res) => {
   // Money/stock event - the stock write, the stock-card row, and the balanced
   // journal entry commit together. withOptionalTransaction keeps that guarantee
   // on a replica set and still runs (non-atomically, with a warning) on a
   // standalone MongoDB, so dev/e2e environments can exercise this path.
   try {
     const { qty, reason, note } = req.body;
-    const spoilQty = parseFloat(qty);
-    if (!spoilQty || spoilQty <= 0) return res.status(400).json({ success: false, error: 'Invalid quantity.' });
+    const spoilQty = positiveQty(qty);
+    if (Number.isNaN(spoilQty)) return res.status(400).json({ success: false, error: 'Invalid quantity.' });
     if (!reason) return res.status(400).json({ success: false, error: 'Reason is required.' });
 
     const item = await withOptionalTransaction(mongoose, async (session) => {

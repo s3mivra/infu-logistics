@@ -4,6 +4,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
+import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
 let ctx, app, superTok, staffTok, cat;
 
@@ -79,7 +80,8 @@ describe('vendor statement: opening balance -> entries -> closing balance', () =
         // than trying to guess its reference.
         const je = await mongoose.model('JournalEntry').findOne({ supplierId }).sort({ createdAt: -1 });
         je.date = date;
-        await je.save();
+        // Backdating a fixture is ledger maintenance; posted entries are append-only.
+        await withLedgerMaintenance(() => je.save());
       }
     };
 

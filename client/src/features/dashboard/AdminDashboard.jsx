@@ -1,7 +1,9 @@
 ﻿import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { io } from 'socket.io-client';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network, Factory, Landmark, Receipt } from 'lucide-react';
+import { socket, reconnectSocket } from '../../shared/staffSocket.js';
+import { broadcastRefresh } from '../../shared/refreshBus';
+import JustQr from '../qr/JustQr';
+import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network, Factory, Landmark, Receipt , BookOpen } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 import { usePwa } from '../../shared/usePwa';
 import { usePaymentMethods } from '../../shared/usePaymentMethods';
@@ -26,6 +28,9 @@ import RevolvingFundReplenishModal from '../ledger/modals/RevolvingFundReplenish
 import RefundModal from '../orders/modals/RefundModal';
 import NotificationBell from '../notifications/NotificationBell';
 import CommandPalette from './CommandPalette';
+import StaffGuide from './StaffGuide';
+import { GUIDE_SEEN_KEY, showsGuide } from '../../shared/staffGuide.js';
+import { visibleNavGroups, navLabel } from './navRegistry';
 import ShiftEndModal from '../shifts/modals/ShiftEndModal';
 import StockHistoryModal from '../inventory/modals/StockHistoryModal';
 import PriceHistoryModal from '../pricing/modals/PriceHistoryModal';
@@ -35,10 +40,21 @@ import MenuImportModal from '../products/modals/MenuImportModal';
 import PartialFulfillModal from '../orders/modals/PartialFulfillModal';
 import ClockModal from './modals/ClockModal';
 import ChangePasswordModal from './modals/ChangePasswordModal';
+import CashDrawerModal from './modals/CashDrawerModal';
+import {
+  normaliseInventoryRow, isCategoryHeaderCode, inventoryImportPayload,
+  groupMenuRows, menuImportPayload, isStockSheetHeader, isMenuSheetHeader,
+  parseSheetNumber, SHEET_PACK_SIZE_RE, isSectionRow, describeSheetColumns,
+} from '../../shared/importSheets';
+import { LEDGER_REPORT_SPEC, ledgerReportTable } from '../../shared/ledgerReport';
 import * as ui from '../../shared/ui';
+import { dateStr, monthStartStr, setClientBusinessTz, todayStr, yearStartStr } from '../../shared/businessDay.js';
+import { PACK_UNIT } from '../../shared/packUnit.js';
+import { setUpdateGuard } from '../../shared/autoUpdate.js';
 // Tabs are lazy-loaded so only the active tab's code ships on first dashboard
 // paint; the rest load on demand when the operator opens them.
 const AnalyticsTab  = lazy(() => import('../analytics/AnalyticsTab'));
+const OwnerOverview = lazy(() => import('../owner/OwnerOverview'));
 const OrdersTab     = lazy(() => import('../orders/OrdersTab'));
 const HistoryTab    = lazy(() => import('../orders/HistoryTab'));
 const InventoryTab  = lazy(() => import('../inventory/InventoryTab'));
@@ -47,6 +63,7 @@ const PricingTab    = lazy(() => import('../pricing/PricingTab'));
 const AuditTab      = lazy(() => import('../audit/AuditTab'));
 const ProductsTab   = lazy(() => import('../products/ProductsTab'));
 const ProcurementTab = lazy(() => import('../procurement/ProcurementTab'));
+const CostingTab = lazy(() => import('../costing/CostingTab'));
 const SettingsTab   = lazy(() => import('../settings/SettingsTab'));
 const ClientsTab    = lazy(() => import('../clients/ClientsTab'));
 const HubTab        = lazy(() => import('../hub/HubTab'));
@@ -55,6 +72,7 @@ const FixedAssetsTab = lazy(() => import('../fixed-assets/FixedAssetsTab'));
 const BankReconciliationTab = lazy(() => import('../finance-modules/BankReconciliationTab'));
 const WithholdingTaxTab = lazy(() => import('../finance-modules/WithholdingTaxTab'));
 const PayrollTab = lazy(() => import('../finance-modules/PayrollTab'));
+const TimeOffTab = lazy(() => import('../finance-modules/TimeOffTab'));
 const QuotationsTab = lazy(() => import('../quotations/QuotationsTab'));
 
 // Small fallback shown while a tab chunk loads.
@@ -65,13 +83,22 @@ const TabFallback = () => (
 );
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://192.168.100.2:5002';
-const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL || 'http://192.168.100.2:3000';
-const BUSINESS_TYPE = (import.meta.env.VITE_BUSINESS_TYPE || 'fb').toLowerCase();
+import { API_URL, FRONTEND_URL } from '../../shared/apiBase.js';
+import { useManagerApproval } from '../../shared/ManagerApproval.jsx';
+import makeZReading from './makeZReading.js';
+import makeSalesDocuments from './makeSalesDocuments.js';
+import makeTimeClock from './makeTimeClock.js';
+import makeRefunds from './makeRefunds.js';
+import makeCashDrawerSettings from './makeCashDrawerSettings.js';
+import makeReportFetchers from './makeReportFetchers.js';
+import makeUnitHelpers from './makeUnitHelpers.js';
+import makeReportExports from './makeReportExports.js';
+import makeFinanceFetchers from './makeFinanceFetchers.js';
+import { BUSINESS_TYPE, DEFAULT_DEPARTMENT, DELIVERY_METHODS, THANKS_LINE } from '../../shared/businessType.js';
+import makePdfExports from './makePdfExports.js';
 // fb categories route to Kitchen; log categories route to Logistics. Every
 // catForm reset/fallback must use this so a new category in log mode isn't
 // silently saved as 'Kitchen' (which no log routing station serves).
-const DEFAULT_DEPARTMENT = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
 
 // Lazy-load the PDF libraries (jspdf + jspdf-autotable, ~600KB) only when a PDF is
 // actually generated - keeps them out of the initial dashboard load. Cached after
@@ -104,26 +131,7 @@ const COMP_REASON_LABELS = {
 // verify the user's role and auto-place them in the right room (server-decided,
 // not client-declared - see io.use in server.js). The token is re-read on every
 // (re)connect, so a fresh token after a refresh is picked up automatically.
-const socket = io(API_URL, {
-  transports: ['websocket'],
-  upgrade: false,
-  auth: (cb) => {
-    try { cb({ token: auth.getToken?.() || '' }); }
-    catch { cb({ token: '' }); }
-  },
-});
-// A live WebSocket blocks the page from qualifying for the browser's
-// back-forward cache - Chrome can't freeze it with an open socket, so
-// navigating away and back (or opening/closing this tab's history entry)
-// just kills the connection mid-air, logging "Page entered Back-Forward
-// Cache" to the console instead of a clean close. Disconnect proactively
-// right before the page would be frozen, and reconnect if it's restored
-// from bfcache (pageshow fires with persisted:true) - same recovery the
-// existing 'connect' handler below already does after any other drop.
-if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', () => { try { socket.disconnect(); } catch { /* already gone */ } });
-  window.addEventListener('pageshow', (e) => { if (e.persisted) { try { socket.connect(); } catch { /* ignore */ } } });
-}
+// The live connection is shared with every staff screen - see shared/staffSocket.js.
 
 // New order arrives at kitchen - single sharp ding
 const playKitchenDing = () => {
@@ -168,7 +176,7 @@ const playReadyChime = () => {
   }
 };
 
-function MidnightCountdown() {
+function MidnightCountdown({ className, short = false } = {}) {
   const calc = () => {
     const now = new Date();
     const midnight = new Date();
@@ -177,14 +185,14 @@ function MidnightCountdown() {
     const h = Math.floor(d / 3600000).toString().padStart(2, '0');
     const m = Math.floor((d % 3600000) / 60000).toString().padStart(2, '0');
     const s = Math.floor((d % 60000) / 1000).toString().padStart(2, '0');
-    return `${h}h ${m}m ${s}s`;
+    return short ? `${h}h ${m}m` : `${h}h ${m}m ${s}s`;
   };
   const [t, setT] = useState(calc);
   useEffect(() => {
-    const id = setInterval(() => setT(calc()), 1000);
+    const id = setInterval(() => setT(calc()), short ? 30000 : 1000);
     return () => clearInterval(id);
   }, []);
-  return <span className="text-brand-text font-black text-xs">{t}</span>;
+  return <span className={className || 'text-brand-text font-black text-xs'}>{t}</span>;
 }
 
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Kasa Lokal').toUpperCase();
@@ -200,7 +208,7 @@ const pdfMoney = (n) => {
 
 export default function AdminDashboard() {
   // PWA runtime: connectivity, install prompt, offline order queue
-  const { isOnline, installable, install, queuedCount, refreshQueue, syncQueue } = usePwa();
+  const { isOnline, installable, install, queuedCount, refreshQueue, syncQueue, rejectedOrders, dismissRejected } = usePwa();
   const navigate = useNavigate(); // in-app (SPA) navigation - no full page reload
 
   const [paymentSelections, setPaymentSelections] = useState({});
@@ -271,6 +279,11 @@ export default function AdminDashboard() {
   const [expandedBatchRows, setExpandedBatchRows] = useState({}); // { [itemId]: bool }
 
   const [physicalCounts, setPhysicalCounts] = useState({});
+  // Which counts someone actually TYPED. Every other box follows the system
+  // figure live - see the prefill in InventoryTab. Kept here, beside the
+  // counts, because they must survive switching tabs mid-count: kept in the
+  // tab, leaving it and coming back would have wiped half a count.
+  const [countTouched, setCountTouched] = useState({});
   const [restockData, setRestockData] = useState({ addedStock: '', totalCost: '', creditAccount: '111000' });
   // --- ORDER SEARCH ---
   const [orderSearch, setOrderSearch] = useState('');
@@ -278,6 +291,16 @@ export default function AdminDashboard() {
   const [posNotes, setPosNotes] = useState('');
   // --- POS GUEST COUNT ---
   const [posGuestCount, setPosGuestCount] = useState(1);
+  // Cafe, dine-in: serve in the bar's own cups, so the take-out cup in the
+  // recipe stays on the shelf. Remembered on this till - a shop that always
+  // serves dine-in in its own cups sets it once.
+  const [posBarCups, setPosBarCupsState] = useState(() => {
+    try { return localStorage.getItem('posBarCups') === '1'; } catch { return false; }
+  });
+  const setPosBarCups = (on) => {
+    setPosBarCupsState(!!on);
+    try { localStorage.setItem('posBarCups', on ? '1' : '0'); } catch { /* private window - not remembered */ }
+  };
   // --- MODIFIER GROUPS ---
   const [modifierGroups, setModifierGroups] = useState([]);
   // --- MULTI-PAYMENT ---
@@ -321,11 +344,11 @@ export default function AdminDashboard() {
   // collectors brought in) or 'deposit' (what reached the bank, which is the
   // figure that ties to a bank statement).
   const [collectionReport, setCollectionReport] = useState(null);
-  const [collRange, setCollRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10),
-    end: new Date().toISOString().slice(0, 10),
+  const [collRange, setCollRange] = useState(() => ({
+    start: monthStartStr(),
+    end: todayStr(),
     basis: 'collection',
-  });
+  }));
   // --- CHECK REGISTER ---
   // Checks taken in against A/R, tracked On Hand -> Deposited -> Cleared, or
   // Bounced (which reverses the collection and reopens the invoice).
@@ -333,10 +356,10 @@ export default function AdminDashboard() {
   const [changeRequests, setChangeRequests] = useState([]);
   const [canApprovePricing, setCanApprovePricing] = useState(false);
   const [priceChangeLog, setPriceChangeLog] = useState(null);
-  const [priceLogRange, setPriceLogRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10),
-    end: new Date().toISOString().slice(0, 10),
-  });
+  const [priceLogRange, setPriceLogRange] = useState(() => ({
+    start: monthStartStr(),
+    end: todayStr(),
+  }));
   // Requests against the product whose history is open - shown alongside the
   // applied changes so "why is this still ₱250" is answered on the same screen.
   const [pricePending, setPricePending] = useState([]);
@@ -349,10 +372,10 @@ export default function AdminDashboard() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   });
   const [supplierPayments, setSupplierPayments] = useState(null);
-  const [supPayRange, setSupPayRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10),
-    end: new Date().toISOString().slice(0, 10),
-  });
+  const [supPayRange, setSupPayRange] = useState(() => ({
+    start: monthStartStr(),
+    end: todayStr(),
+  }));
   const [checkRegister, setCheckRegister] = useState(null);
   const [checkFilter, setCheckFilter] = useState('');
   const [bounceTarget, setBounceTarget] = useState(null);   // the check row being bounced
@@ -360,23 +383,23 @@ export default function AdminDashboard() {
   const [bounceSubmitting, setBounceSubmitting] = useState(false);
   // --- SALES BY PAYMENT ---
   const [salesByPayment, setSalesByPayment] = useState(null);
-  const [sbpRange, setSbpRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10),
-    end: new Date().toISOString().slice(0,10)
-  });
+  const [sbpRange, setSbpRange] = useState(() => ({
+    start: monthStartStr(),
+    end: todayStr()
+  }));
   // --- SUMMARY SALES (by channel: cash / e-wallet / bank / delivery) ---
   const [salesSummary, setSalesSummary] = useState(null);
-  const [sssRange, setSssRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10),
-    end: new Date().toISOString().slice(0,10)
-  });
+  const [sssRange, setSssRange] = useState(() => ({
+    start: monthStartStr(),
+    end: todayStr()
+  }));
   const [sssGroup, setSssGroup] = useState('order'); // 'order' | 'day'
   // --- SALES LINE ITEMS (one row per order item - item code + item detail) ---
   const [salesLineItems, setSalesLineItems] = useState(null);
-  const [sliRange, setSliRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10),
-    end: new Date().toISOString().slice(0,10)
-  });
+  const [sliRange, setSliRange] = useState(() => ({
+    start: monthStartStr(),
+    end: todayStr()
+  }));
   // --- REFUND ---
   const [refundModal, setRefundModal] = useState(null);
   const [refundForm, setRefundForm] = useState({ reason: '', refundAmount: '', inventoryAction: 'Restock' });
@@ -439,6 +462,8 @@ export default function AdminDashboard() {
   const [cashOnHand, setCashOnHand] = useState(0);
   // --- NEW LOGIN STATES ---
   const [loginForm, setLoginForm] = useState({ name: '', password: '' });
+  // The account has two-step sign-in on: the password was right, now the code.
+  const [loginNeedsCode, setLoginNeedsCode] = useState(false);
 
   // Add this near your other state variables
   const [invSubTab, setInvSubTab] = useState('live'); // 'live' or 'eod'
@@ -511,15 +536,28 @@ export default function AdminDashboard() {
   // shop that never runs a cash drawer can turn this off so login stops
   // asking for a number nobody is counting.
   const [requireCashShift, setRequireCashShift] = useState(true);
+  // On a shared drawer the float is declared once, by whoever opens up. Asking
+  // the second and third person of the morning for a starting cash amount
+  // invites them to type the same figure again, which is the exact double-count
+  // the shared drawer exists to prevent - so the field is hidden once the till
+  // is open, and their login simply joins the session.
+  const [sharedDrawer, setSharedDrawer] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   useEffect(() => {
     (async () => {
       try {
         const res = await fetch(`${API_URL}/api/settings/public`);
         const d = await res.json();
-        if (d.success) setRequireCashShift(d.requireCashShift !== false);
+        if (d.success) {
+          setRequireCashShift(d.requireCashShift !== false);
+          setSharedDrawer(d.sharedDrawer === true);
+          setDrawerOpen(d.drawerOpen === true);
+        }
       } catch { /* default stays required - the safer failure mode */ }
     })();
   }, []);
+  // True when this login must not be asked for a float.
+  const joiningOpenDrawer = sharedDrawer && drawerOpen;
   const [shiftEndModal, setShiftEndModal] = useState(false);
   const [shiftReconcile, setShiftReconcile] = useState({ actualCash: '', result: null });
   const [shiftEndLoading, setShiftEndLoading] = useState(false);
@@ -536,13 +574,53 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState([]); // Stores the employee list
 
   const [globalAddOns, setGlobalAddOns] = useState([]);
-  const [addOnForm, setAddOnForm] = useState({ name: '', price: '', category: 'Extras' });
+  // `recipe` is optional: what an extra takes from stock when it is sold -
+  // an extra shot takes coffee, boba takes boba. Left empty, the add-on only
+  // changes the price, as before.
+  const [addOnForm, setAddOnForm] = useState({ name: '', price: '', category: 'Extras', recipe: [] });
 
   // --- MANUAL POS STATES ---
   const [isPosOpen, setIsPosOpen] = useState(false);
+  // "Just QR" from the login screen - the ordering code with nobody signed in.
+  const [justQrOpen, setJustQrOpen] = useState(false);
   const [posCart, setPosCart] = useState([]);
   const [posSubmitting, setPosSubmitting] = useState(false); // disables Place Order while in flight
   const posSubmittingRef = useRef(false);                    // synchronous double-tap guard
+  // Over a client's credit limit, an approver releases the sale: their PIN here
+  // (useManagerApproval), or - if the person at the till may approve credit -
+  // their own confirmation. Returns the fields to resend with, or null.
+  const creditRelease = async (refusal) => {
+    if (!refusal?.needsCreditApproval) return null;
+    if (can('credit.approve')) {
+      const ok = await ui.confirm({ message: `${refusal.error}\n\nYou can approve credit. Release this sale anyway?`, confirmLabel: 'Approve & continue' });
+      return ok ? { creditOverride: true } : null;
+    }
+    const got = await requestApproval({
+      permission: 'credit.approve', target: refusal.clientId, title: 'Over the credit limit',
+      detail: `${refusal.error}\n\nSomeone who approves credit can release it with their PIN.`,
+    });
+    return got ? { creditApproval: got.approval } : null;
+  };
+  // Saves that write money or the catalogue: a second tap while the first is
+  // still in flight is dropped (the ref is synchronous, state is not), and
+  // busyForms lets the button say so. Returns false for a dropped tap.
+  const formInFlight = useRef({});
+  const [busyForms, setBusyForms] = useState({});
+  const onceAtATime = (key, fn) => async (...args) => {
+    if (formInFlight.current[key]) { args[0]?.preventDefault?.(); return false; }
+    formInFlight.current[key] = true;
+    setBusyForms((b) => ({ ...b, [key]: true }));
+    try { return await fn(...args); } finally {
+      formInFlight.current[key] = false;
+      setBusyForms((b) => ({ ...b, [key]: false }));
+    }
+  };
+  // What a reload would lose, for the updater that moves an installed till to
+  // a new version: a cart with something in it, or the register open. Read
+  // when the updater decides, so it always sees the current state.
+  const unsavedWorkRef = useRef(false);
+  unsavedWorkRef.current = posCart.length > 0 || isPosOpen || posSubmittingRef.current;
+  useEffect(() => { setUpdateGuard(() => unsavedWorkRef.current); return () => setUpdateGuard(null); }, []);
   const [posCategory, setPosCategory] = useState('All');
   const [posPage, setPosPage] = useState(1);
   const [posSearch, setPosSearch] = useState('');
@@ -551,11 +629,17 @@ export default function AdminDashboard() {
   // Optional client account link - when set, the order qualifies for that
   // client's per-product discount overrides on the server side.
   const [posClientId, setPosClientId] = useState('');
+  // Who the sale is credited to (Commissions). Blank = the client's assigned
+  // salesperson, else whoever rings it up - decided on the server.
+  const [posSalesperson, setPosSalesperson] = useState('');
+  const [salesStaff, setSalesStaff] = useState([]);
   // The selected client's resolved discount per product (clientDiscounts,
   // segmentDiscounts, AND price tiers - the same resolver orders.js uses at
   // checkout), so the POS cart shows their real price live instead of only
   // revealing it after the order is placed. { [productId]: percent }
   const [posBuyerDiscounts, setPosBuyerDiscounts] = useState({});
+  // A client whose tier price is ABOVE list pays that as the unit price.
+  const [posBuyerPrices, setPosBuyerPrices] = useState({});
   // Reserve-only mode: place order with status 'Reserved' (no payment yet).
   // Cashier later promotes Reserved → Pending (pay later) or Preparing (pay now).
   const [posReserveOnly, setPosReserveOnly] = useState(false);
@@ -594,24 +678,24 @@ export default function AdminDashboard() {
   // --- LEDGER SUB-TABS + FINANCE DATA ---
   const [ledgerSubTab, setLedgerSubTab] = useState('journal'); // 'journal' | 'pnl' | 'balance' | 'ar' | 'expenses'
   const [pnlData, setPnlData] = useState(null);
-  const [pnlRange, setPnlRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10),
-    end: new Date().toISOString().slice(0,10)
-  });
+  const [pnlRange, setPnlRange] = useState(() => ({
+    start: monthStartStr(),
+    end: todayStr()
+  }));
   // Monthly P&L (per-month columns + ratios; period & matrix views)
   const [pnlMonthly, setPnlMonthly] = useState(null);
-  const [pnlmRange, setPnlmRange] = useState({
-    start: new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10),
-    end: new Date().toISOString().slice(0,10)
-  });
+  const [pnlmRange, setPnlmRange] = useState(() => ({
+    start: yearStartStr(),
+    end: todayStr()
+  }));
   const [pnlmView, setPnlmView] = useState('period'); // 'period' | 'matrix'
   const [bsData, setBsData] = useState(null);
   // Monthly Balance Sheet (per-month-end columns + ratios; period & matrix views)
   const [bsMonthly, setBsMonthly] = useState(null);
-  const [bsmRange, setBsmRange] = useState({
-    start: new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10),
-    end: new Date().toISOString().slice(0,10)
-  });
+  const [bsmRange, setBsmRange] = useState(() => ({
+    start: yearStartStr(),
+    end: todayStr()
+  }));
   const [bsmView, setBsmView] = useState('period');
   const [arOutstanding, setArOutstanding] = useState({ orders: [], totalOutstanding: 0 });
   // Per-client A/R ageing + each client's credit limit and headroom.
@@ -620,7 +704,7 @@ export default function AdminDashboard() {
   // Recent expenses + per-category totals backing the Expenses page.
   const [expenseList, setExpenseList] = useState({ expenses: [], byCategory: [], total: 0 });
   const [expenseCategories, setExpenseCategories] = useState([]);
-  const [expenseForm, setExpenseForm] = useState({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', date: new Date().toISOString().slice(0,10) });
+  const [expenseForm, setExpenseForm] = useState(() => ({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', claimInputVat: false, date: todayStr() }));
   const [expenseSubmitting, setExpenseSubmitting] = useState(false);
   const [settleModal, setSettleModal] = useState(null); // { order }
   // `collectionDate` is when the money left the client's hands; `depositDate`
@@ -637,11 +721,16 @@ export default function AdminDashboard() {
   // --- SERVER-SIDE ANALYTICS ---
   const [analyticsData, setAnalyticsData]     = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
-  const fetchAnalytics = async () => {
+  // `range` ({ start, end }) picks the sales panel's period; anything else
+  // (a click event, nothing) keeps the last one chosen.
+  const analyticsRange = useRef(null);
+  const fetchAnalytics = async (range) => {
+    if (range && range.start) analyticsRange.current = range;
     if (analyticsLoading) return;
     setAnalyticsLoading(true);
     try {
-      const res  = await apiFetch('/api/analytics/dashboard');
+      const r = analyticsRange.current;
+      const res  = await apiFetch(`/api/analytics/dashboard${r ? `?start=${r.start}&end=${r.end}` : ''}`);
       const data = await res.json();
       if (data.success) setAnalyticsData(data);
     } catch (err) { console.error('fetchAnalytics', err); }
@@ -682,7 +771,7 @@ export default function AdminDashboard() {
   const [rfNewForm, setRfNewForm] = useState({ name: '', initialAmount: '', description: '', sourceAccount: '111000' });
   const [rfNewSubmitting, setRfNewSubmitting] = useState(false);
   const [rfDisbModal, setRfDisbModal] = useState(false);
-  const [rfDisbForm, setRfDisbForm] = useState({ amount: '', description: '', categoryCode: '760000' });
+  const [rfDisbForm, setRfDisbForm] = useState({ amount: '', description: '', categoryCode: '760000', payee: '', refNo: '' });
   const [rfDisbSubmitting, setRfDisbSubmitting] = useState(false);
   const [rfReplModal, setRfReplModal] = useState(false);
   const [rfReplForm, setRfReplForm] = useState({ amount: '', note: '', sourceAccount: '111000' });
@@ -706,6 +795,20 @@ export default function AdminDashboard() {
   // Command palette. Ctrl/Cmd+K is the accelerator; the header button is the
   // discoverable route for touchscreen users, who are most of the staff here.
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // The quick guide: opens by itself the first time each person signs in on
+  // this device (not the owner - see shared/staffGuide.js), then lives in the
+  // account menu.
+  const [guideOpen, setGuideOpen] = useState(false);
+  useEffect(() => {
+    if (!showsGuide(activeAdmin) || !activeAdmin?._id) return;
+    const key = GUIDE_SEEN_KEY(activeAdmin._id);
+    let seen = true;
+    try { seen = localStorage.getItem(key) === '1'; } catch { /* storage blocked: never nag */ }
+    if (seen) return;
+    try { localStorage.setItem(key, '1'); } catch { /* private mode */ }
+    setGuideOpen(true);
+  }, [activeAdmin?._id, activeAdmin?.role]);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   useEffect(() => {
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPaletteOpen(o => !o); }
@@ -714,14 +817,18 @@ export default function AdminDashboard() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Collapse the sidebar's utility tools (Fullscreen/QR/Password/toggles/Install)
-  // to reclaim space. Persisted so the choice sticks across reloads.
-  const [opsToolsOpen, setOpsToolsOpen] = useState(() => {
-    try { return localStorage.getItem('semivra_ops_tools_open') === '1'; } catch { return false; }
+  // Which sidebar groups are folded shut. The nav carries up to eighteen
+  // destinations in one scrolling column, so the half you are not working in
+  // spends the day pushing the half you are below the fold. Folding is
+  // per-group and remembered per browser; nothing is hidden by default, so an
+  // untouched install looks exactly as it did.
+  const [collapsedNavGroups, setCollapsedNavGroups] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('semivra_nav_collapsed') || '[]')); } catch { return new Set(); }
   });
-  const toggleOpsTools = () => setOpsToolsOpen(v => {
-    const next = !v;
-    try { localStorage.setItem('semivra_ops_tools_open', next ? '1' : '0'); } catch { /* ignore */ }
+  const toggleNavGroup = (key) => setCollapsedNavGroups(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    try { localStorage.setItem('semivra_nav_collapsed', JSON.stringify([...next])); } catch { /* ignore */ }
     return next;
   });
 
@@ -755,9 +862,11 @@ export default function AdminDashboard() {
   const [invSearch, setInvSearch] = useState('');
   const [invSort, setInvSort] = useState('name-asc');
   const [invCategoryFilter, setInvCategoryFilter] = useState('');
+  // Only the items with no unit cost: each one makes profit read too high.
+  const [invNoCostOnly, setInvNoCostOnly] = useState(false);
 
   // Reset to page 1 when search/filter/sort changes
-  useEffect(() => { setInvPage(1); }, [invSearch, invSort, invCategoryFilter]);
+  useEffect(() => { setInvPage(1); }, [invSearch, invSort, invCategoryFilter, invNoCostOnly]);
 
   // Import progress (0-100, -1 = idle)
   const [importProgress, setImportProgress] = useState(-1);
@@ -828,6 +937,129 @@ export default function AdminDashboard() {
     }
     return response;
   }, []);
+  // The PIN prompt for an approver (credit release) - needs apiFetch above.
+  const { requestApproval, approvalDialog } = useManagerApproval(apiFetch);
+
+  // Staff names for the POS salesperson picker (logistics sells through reps;
+  // a cafe till has none). Names only reach this screen.
+  useEffect(() => {
+    if (!isAuthenticated || BUSINESS_TYPE !== 'log') return;
+    let alive = true;
+    apiFetch('/api/users').then(r => r.json()).then(d => {
+      if (alive && d.success) setSalesStaff((d.users || []).filter(u => u.role !== 'client' && u.isActive !== false).map(u => u.name).filter(Boolean).sort((a, b) => a.localeCompare(b)));
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [isAuthenticated, apiFetch]);
+
+  // ── SHARED CASH DRAWER ─────────────────────────────────────────────────────
+  // The shop's one till, when sharedDrawer is on. Kept separate from logout on
+  // purpose: a barista finishing their shift must not close a drawer that still
+  // holds money and that other people are still selling into.
+  const [cashDrawerModal, setCashDrawerModal] = useState(false);
+  const [drawerSession, setDrawerSession] = useState(null);
+  const [drawerBusy, setDrawerBusy] = useState(false);
+  const [drawerMovement, setDrawerMovement] = useState({ type: 'out', amount: '', reason: '', expenseAccount: '' });
+
+  const fetchDrawerSession = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/shifts/current');
+      const d = await r.json();
+      if (d.success) {
+        setDrawerSession(d.shift || null);
+        // The server is the authority on whether the shared drawer is on; the
+        // pre-login public read can be stale by the time someone opens this.
+        if (typeof d.sharedDrawer === 'boolean') setSharedDrawer(d.sharedDrawer);
+      }
+    } catch { /* leave the last-known session on a transient failure */ }
+  }, [apiFetch]);
+
+  const openCashDrawer = async () => {
+    await fetchDrawerSession();
+    // Categories for "what was it spent on" - a pay-out files its expense on
+    // the spot. Whoever is on the till may not be allowed to read them; the
+    // picker simply does not appear then.
+    if (expenseCategories.length === 0) {
+      try {
+        const res = await apiFetch('/api/expenses/categories');
+        if (res.ok) { const d = await res.json(); if (d.success) setExpenseCategories(d.categories || []); }
+      } catch { /* the drawer still opens without it */ }
+    }
+    setCashDrawerModal(true);
+  };
+
+  const submitDrawerMovement = async () => {
+    const amt = parseFloat(drawerMovement.amount);
+    if (!(amt > 0)) return ui.alert('Enter a positive amount.');
+    if (!drawerMovement.reason.trim()) return ui.alert('Say what this cash was for - an unexplained movement is indistinguishable from missing money.');
+    setDrawerBusy(true);
+    try {
+      const r = await apiFetch('/api/shifts/movement', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: drawerMovement.type, amount: amt, reason: drawerMovement.reason.trim(),
+          ...(drawerMovement.type === 'out' && drawerMovement.expenseAccount
+            ? { expenseAccount: drawerMovement.expenseAccount }
+            : {}),
+        }),
+      });
+      const d = await r.json();
+      if (!d.success) return ui.alert(d.error || 'Could not record that.');
+      setDrawerMovement({ type: 'out', amount: '', reason: '', expenseAccount: '' });
+      await fetchDrawerSession();
+    } catch { ui.alert('Network error.'); }
+    finally { setDrawerBusy(false); }
+  };
+
+  // Hands over to the existing end-of-shift count, which already posts the
+  // close and shows the variance.
+  const openShiftEndFromDrawer = (handover = false) => {
+    setDrawerHandover(handover);
+    setCashDrawerModal(false);
+    setShiftReconcile({ actualCash: '', result: null });
+    setShiftEndModal(true);
+  };
+
+
+  // ── NOTIFICATIONS: one feed for the bell AND the Inventory badge ──────────
+  // They used to be two separate calculations. The bell fetched the server's
+  // feed every two minutes; the sidebar badge recounted low stock and expiry
+  // in the browser, instantly, with its own day arithmetic. Right after an
+  // import or a stock change the badge could read 6 while the bell still
+  // read 5 - impossible on its face, since every stock alert is also a bell
+  // item. Now there is one feed: the bell shows all of it, the badge counts
+  // its stock items, and it is refetched shortly after stock changes, so the
+  // two cannot disagree and cannot drift out of step.
+  const NOTIF_POLL_MS = 120000;
+  const [notifData, setNotifData] = useState({ items: [], count: 0, criticalCount: 0, loaded: false });
+  const [notifLoading, setNotifLoading] = useState(false);
+  const notifDeadRef = useRef(false);
+  const loadNotifications = useCallback(async () => {
+    if (notifDeadRef.current) return;
+    setNotifLoading(true);
+    try {
+      const res = await apiFetch('/api/notifications');
+      if (res.status === 401) { notifDeadRef.current = true; return; }
+      const d = await res.json();
+      if (d?.success) {
+        setNotifData({ items: d.items || [], count: d.count || 0, criticalCount: d.criticalCount || 0, loaded: true });
+      }
+    } catch { /* keep the last feed on a transient failure */ }
+    finally { setNotifLoading(false); }
+  }, [apiFetch]);
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    notifDeadRef.current = false; // a fresh login means a fresh session
+    const t = setInterval(loadNotifications, NOTIF_POLL_MS);
+    return () => clearInterval(t);
+  }, [isAuthenticated, loadNotifications]);
+  // Stock changed (a sale, a restock, an import) - refetch after a short pause
+  // so a burst of updates is one request, not dozens. This also covers the
+  // first load after sign-in, when the inventory list arrives.
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    const t = setTimeout(loadNotifications, 800);
+    return () => clearTimeout(t);
+  }, [inventory, isAuthenticated, loadNotifications]);
 
   // Optional accounting modules, read once and shared: the sidebar decides
   // whether to show a tab and the tab needs the same answer.
@@ -836,7 +1068,7 @@ export default function AdminDashboard() {
   // down - past `if (!isAuthenticated) return <login/>` - its hooks ran only
   // once someone was logged in, so the hook count changed between the logged
   // out and logged in renders and React threw #310 at the moment of login.
-  const { isOn: moduleOn } = useModules(apiFetch, { enabled: isAuthenticated });
+  const { isOn: moduleOn, reload: reloadModules } = useModules(apiFetch, { enabled: isAuthenticated });
 
   // COA-derived tender list (see usePaymentMethods) - the POS's own copy of
   // the same live list the client portal reads, riding this dashboard's
@@ -857,6 +1089,11 @@ export default function AdminDashboard() {
       });
       const data = await res.json();
 
+      if (!data.success && data.needsCode) {
+        setLoginNeedsCode(true);
+        setLoginError(data.message || 'Enter the 6-digit code from your authenticator app.');
+        return;
+      }
       if (!data.success) {
         // Show the server's reason when it gives one. Flattening every failure to
         // "invalid name or password" tells a rate-limited user their password is
@@ -873,7 +1110,7 @@ export default function AdminDashboard() {
       // Non-superadmins must declare their opening cash - unless the shop has
       // turned that requirement off entirely (Settings → System → Require
       // Cash Shift on Login), in which case nobody is asked, superadmin or not.
-      if (requireCashShift && !isSuperAdminLogin && (!startingCash || isNaN(cashAmount) || cashAmount < 0)) {
+      if (requireCashShift && !joiningOpenDrawer && !isSuperAdminLogin && (!startingCash || isNaN(cashAmount) || cashAmount < 0)) {
         setLoginError('Please enter a valid Starting Cash amount (₱0 or more).');
         return;
       }
@@ -885,16 +1122,42 @@ export default function AdminDashboard() {
 
       // Superadmin, or any role once the shop has turned the requirement off,
       // logs the shift at ₱0 when nothing was entered.
-      const finalCash = (isSuperAdminLogin || !requireCashShift) ? (isNaN(cashAmount) ? 0 : cashAmount) : cashAmount;
-      try {
-        const shiftRes = await fetch(`${API_URL}/api/shifts/start`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${data.token}` },
-          body: JSON.stringify({ startingCash: finalCash })
-        });
-        if (!shiftRes.ok) console.warn('Shift record failed to save - check server logs.');
-      } catch {
-        console.warn('Shift start request failed - shift may not be recorded.');
+      const finalCash = (isSuperAdminLogin || !requireCashShift || joiningOpenDrawer) ? (isNaN(cashAmount) ? 0 : cashAmount) : cashAmount;
+      // The shift record is what end-of-day cash is reconciled against. A
+      // failure here used to go only to the console, so a cashier could work a
+      // whole day with no shift and a meaningless variance. Retry once, then
+      // say so on screen.
+      const startShift = () => fetch(`${API_URL}/api/shifts/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${data.token}` },
+        body: JSON.stringify({ startingCash: finalCash })
+      });
+      let shiftRes = null;
+      for (let attempt = 0; attempt < 2 && !shiftRes?.ok; attempt++) {
+        try { shiftRes = await startShift(); } catch { shiftRes = null; }
+        if (!shiftRes?.ok && attempt === 0) await new Promise(r => setTimeout(r, 1500));
+      }
+      if (!shiftRes?.ok) {
+        ui.alert("Your shift could not be started, so today's cash will not reconcile. Log out and back in; if it keeps happening, tell your manager.");
+      } else {
+        // Joining an open till means taking on cash somebody else counted.
+        // Say what they are accepting, and from whom. Shown after
+        // authentication on purpose: the pre-login settings endpoint is public.
+        const sd = await shiftRes.json().catch(() => null);
+        if (sd?.success && sd.joined && sd.shift) {
+          const float = Number(sd.shift.startingCash || 0);
+          const opener = sd.shift.openedBy || sd.shift.cashierName || 'someone';
+          const openedAt = sd.shift.shiftStart ? new Date(sd.shift.shiftStart).toLocaleString() : '';
+          const NL = String.fromCharCode(10);
+          ui.alert([
+            'You have joined the open drawer.',
+            '',
+            `Opened by ${opener}${openedAt ? ` on ${openedAt}` : ''}.`,
+            `Cash handed over: ₱${float.toLocaleString('en-PH', { minimumFractionDigits: 2 })}.`,
+            '',
+            'Count the till if that does not match what is in front of you, and tell a manager before ringing anything.',
+          ].join(NL));
+        }
       }
       setStartingCash('');
       localStorage.removeItem('semivra_last_actual_cash');
@@ -908,11 +1171,46 @@ export default function AdminDashboard() {
   const handleLogout = () => {
     // Owner/superadmin isn't a tracked cashier - no register count required; log out directly.
     if (activeAdmin?.role === 'superadmin') { performLogout(); return; }
+    // On a shared drawer the till belongs to the shop, not to whoever happens
+    // to be leaving. Counting it here would close it under everyone still
+    // selling, and hand this one person a variance for a day's takings they
+    // did not ring.
+    //
+    // The exception is the last person out. Nobody can be certain who that is -
+    // someone logging out may be back in five minutes - so the closest honest
+    // signal is used: if no other staff member is still clocked in, offer the
+    // count. Offer, not force; skipping it leaves the drawer open for the next
+    // person, and the Cash Drawer panel can always close it deliberately.
+    if (sharedDrawer) {
+      (async () => {
+        try {
+          const r = await apiFetch('/api/shifts/current');
+          const d = await r.json();
+          const stillOpen = d?.success && d.shift;
+          const alone = stillOpen && (d.shift.othersOnDuty || 0) === 0;
+          if (alone && await ui.confirm('Nobody else is clocked in. Count the drawer and close it before you go?')) {
+            setDrawerHandover(false);
+            setShiftReconcile({ actualCash: '', result: null });
+            setShiftEndModal(true);
+            return;
+          }
+        } catch { /* a failed check must never trap someone in the app */ }
+        performLogout();
+      })();
+      return;
+    }
+    setDrawerHandover(false);
     setShiftReconcile({ actualCash: '', result: null });
     setShiftEndModal(true);
   };
 
   // Called when cashier confirms End-of-Shift cash count
+  // `handover` closes the session and immediately reopens one with the counted
+  // cash as its float - the money is still physically in the till, so the next
+  // person should not have to retype the figure they just watched being
+  // counted. Set when the count was started from the Cash Drawer panel rather
+  // than from logging out.
+  const [drawerHandover, setDrawerHandover] = useState(false);
   const handleEndShift = async () => {
     // Use denomination total if bills were counted; fall back to manual entry
     const actual = denomTotal > 0 ? denomTotal : parseFloat(shiftReconcile.actualCash);
@@ -921,7 +1219,7 @@ export default function AdminDashboard() {
     try {
       const res = await apiFetch('/api/shifts/end', {
         method: 'POST',
-        body: JSON.stringify({ actualCash: actual })
+        body: JSON.stringify({ actualCash: actual, handover: drawerHandover })
       });
       const data = await res.json();
       if (data.success) {
@@ -973,6 +1271,7 @@ export default function AdminDashboard() {
     setIsAuthenticated(false);
     setActiveAdmin(null);
     setLoginForm({ name: '', password: '' });
+    setLoginNeedsCode(false);
     setShiftEndModal(false);
     setShiftReconcile({ actualCash: '', result: null });
     setOrders([]);
@@ -1141,27 +1440,42 @@ export default function AdminDashboard() {
   };
 
   // 3. Add these two handler functions right above your return() statement:
-  const handleSaveAddOn = async (e) => {
+  const handleSaveAddOn = onceAtATime('addon', async (e) => {
     e.preventDefault();
     const { _id, ...body } = addOnForm;
+    // Only lines that take something; a line left at zero is not a recipe.
+    body.recipe = (body.recipe || []).filter(r => Number(r.qty) > 0);
     const url = _id ? `/api/addons/${_id}` : '/api/addons';
     await apiFetch(url, { method: _id ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    setAddOnForm({ name: '', price: '', category: 'Extras' });
+    setAddOnForm({ name: '', price: '', category: 'Extras', recipe: [] });
     fetchData();
-  };
+  });
   
   const deleteAddOn = async (id) => {
     if(await ui.confirm('Delete this Add-on?')) await apiFetch(`/api/addons/${id}`, { method: 'DELETE' });
     fetchData();
   };
 
-  const fetchERPData = async (journalSearchTerm) => {
+  // Stock alone - what the Inventory, Menu Setup, Pricing and Production
+  // tabs show. Refreshing those on every visit through fetchERPData would drag
+  // 500 journal entries along each time.
+  const fetchInventory = async () => {
     try {
       const invRes = await apiFetch(`/api/inventory`);
       if (invRes.ok) setInventory((await invRes.json()).items || []);
+    } catch (err) { console.error('Failed to fetch inventory', err); }
+  };
+
+  const fetchERPData = async (journalSearchTerm) => {
+    try {
+      // Stock, journal and balances do not depend on one another, so they are
+      // fetched together. One after another, the screen waited for three round
+      // trips in a row every time any of the 20-odd callers asked.
+      const stock = fetchInventory();
 
       const isSuperAdmin = activeAdmin?.role === 'superadmin';
-      if (isSuperAdmin) {
+      if (!isSuperAdmin) { await stock; return; }
+      {
         // limit=500 (server max) - the default 50 sorts by transaction date, so
         // an old-dated entry (e.g. a backdated sale) can fall off the page once
         // there are 500+ more-recent entries. When the caller passes a search
@@ -1171,11 +1485,15 @@ export default function AdminDashboard() {
         // that were already fetched.
         const q = (journalSearchTerm || '').trim();
         const jeUrl = q ? `/api/journal?limit=500&search=${encodeURIComponent(q)}` : `/api/journal?limit=500`;
-        const jeRes = await apiFetch(jeUrl);
-        if (jeRes.ok) setJournalEntries((await jeRes.json()).entries || []);
-
-        const balRes = await apiFetch(`/api/finance/balances`);
-        if (balRes.ok) setCashOnHand((await balRes.json()).cashOnHand || 0);
+        const journal = (async () => {
+          const jeRes = await apiFetch(jeUrl);
+          if (jeRes.ok) setJournalEntries((await jeRes.json()).entries || []);
+        })();
+        const balances = (async () => {
+          const balRes = await apiFetch(`/api/finance/balances`);
+          if (balRes.ok) setCashOnHand((await balRes.json()).cashOnHand || 0);
+        })();
+        await Promise.all([stock, journal, balances]);
       }
     } catch (err) { console.error('Failed to fetch ERP data', err); }
   };
@@ -1235,16 +1553,26 @@ export default function AdminDashboard() {
   // Sends one queued offline order. The stable queue-entry id is the idempotency
   // key, so replaying a half-sent order won't create a duplicate. Returns true on
   // success so the queue drops it; false/throw keeps it for the next attempt.
+  // Reports the OUTCOME, not just success. A 4xx is the server refusing the
+  // order (an item no longer on the menu, a price rule, a credit limit): it
+  // will never succeed on retry, so it is set aside for a person to see.
+  // Anything else - offline, a 5xx, an expired session - is retried.
   const sendQueuedOrder = async (entry) => {
     try {
       const res = await apiFetch('/api/orders', {
         method: 'POST',
         headers: { 'Idempotency-Key': entry.id },
-        body: JSON.stringify(entry.payload),
+        // When it was actually rung up, so a replay after midnight still lands
+        // on the day it was taken (the server bounds and checks this).
+        body: JSON.stringify({ ...entry.payload, ...(entry.queuedAt ? { placedAt: new Date(entry.queuedAt).toISOString() } : {}) }),
       });
-      const data = await res.json();
-      return !!data.success;
-    } catch { return false; }
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) return 'sent';
+      if (res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 408 && res.status !== 429) {
+        return { status: 'rejected', reason: data.error || `Refused (${res.status}).` };
+      }
+      return 'retry';
+    } catch { return 'retry'; }
   };
 
   // Replay a queued offline clock event against the server, backdating it to when
@@ -1289,11 +1617,15 @@ export default function AdminDashboard() {
       ]
     };
 
-    await apiFetch(`/api/journal`, { 
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(jePayload) 
+    const res = await apiFetch(`/api/journal`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(jePayload)
     });
+    const d = await res.json().catch(() => ({}));
+    if (!d.success) { ui.alert(d.error || 'Nothing was posted.'); return; }
     fetchERPData();
-    ui.alert(`₱${amount.toFixed(2)} injected into Cash on Hand.`);
+    ui.alert(d.pending
+      ? `Capital injection of ₱${amount.toFixed(2)} saved as ${d.draft?.draftNumber} - it reaches Cash on Hand once an approver signs off.`
+      : `₱${amount.toFixed(2)} injected into Cash on Hand.`);
   };
 
   // Pricing Control's "History" button - same idea as Inventory's Stock Card,
@@ -1373,18 +1705,18 @@ export default function AdminDashboard() {
     }
   };
   
-  const [jeForm, setJeForm] = useState({
+  const [jeForm, setJeForm] = useState(() => ({
     // An adjusting entry belongs to the period it corrects, not to the day it
     // was typed. The API has always accepted a date - and locks closed months
     // against it - but the form never offered a box, so every manual entry was
     // stamped "now" and a correction to last month landed in this one.
-    date: new Date().toISOString().slice(0, 10),
+    date: todayStr(),
     description: '',
     lines: [
       { accountCode: '', accountName: '', debit: '', credit: '' },
       { accountCode: '', accountName: '', debit: '', credit: '' }
     ]
-  });
+  }));
 
   const standardAccounts = [
     { accountCode: '111000', accountName: 'Cash on Hand', type: 'Asset' },
@@ -1518,16 +1850,76 @@ export default function AdminDashboard() {
   // ── Tenancy backfill report ─────────────────────────────────────────────────
   const [tenancyReport, setTenancyReport] = useState(null);
   const [tenancyBusy, setTenancyBusy] = useState(false);
+  // The failure path used to be `catch { /* ignore */ }` with state set only on
+  // success, so anything that went wrong - a timeout, a 500, a dropped
+  // connection - left the panel reading "Loading report..." forever with no way
+  // to tell a slow check from a broken one. It reports what happened now, and
+  // offers the retry that a spinner cannot.
+  const [tenancyError, setTenancyError] = useState('');
+  // { done, total, current } while a check runs. The report used to be one
+  // request answering everything at once, which can only ever be drawn as a
+  // spinner - and a spinner cannot tell "nearly done" from "stuck". Walking the
+  // collections individually makes the bar a count of real work finished.
+  const [tenancyProgress, setTenancyProgress] = useState(null);
   const fetchTenancyReport = useCallback(async () => {
-    try { const r = await apiFetch('/api/admin/tenancy-report'); const d = await r.json(); if (d.success) setTenancyReport(d); } catch { /* ignore */ }
-  }, []);
+    setTenancyError('');
+    setTenancyReport(null);
+    try {
+      const lr = await apiFetch('/api/admin/tenancy-report/collections');
+      const list = await lr.json();
+      if (!list.success) { setTenancyError(list.error || 'The report could not be built.'); return; }
+      const names = list.collections || [];
+      const rows = new Array(names.length);
+      let done = 0;
+      let next = 0;
+      setTenancyProgress({ done: 0, total: names.length, current: '' });
+      // A failed or unreachable collection is reported as unchecked, never as
+      // clean - on this screen those two must not look the same.
+      const unchecked = (name) => ({ collection: name, missingBusinessType: 0, otherBusinessType: 0, timedOut: true });
+      const worker = async () => {
+        while (next < names.length) {
+          const i = next++;
+          try {
+            const r = await apiFetch(`/api/admin/tenancy-report?collection=${encodeURIComponent(names[i])}`);
+            const d = await r.json();
+            rows[i] = d.success && d.row ? d.row : unchecked(names[i]);
+          } catch {
+            rows[i] = unchecked(names[i]);
+          }
+          done += 1;
+          setTenancyProgress({ done, total: names.length, current: names[i] });
+        }
+      };
+      // Four at a time: quick enough to finish promptly, gentle enough not to
+      // queue two dozen counts against the database at once.
+      await Promise.all(Array.from({ length: Math.min(4, names.length) }, worker));
+      const isClean = rows.every(r => !r.timedOut && r.missingBusinessType === 0 && r.otherBusinessType === 0);
+      const flagged = rows.filter(r => r.timedOut || r.missingBusinessType > 0 || r.otherBusinessType > 0);
+      setTenancyReport({
+        success: true, currentBusinessType: list.currentBusinessType,
+        rows, flagged, scannedCollections: rows.length, isClean,
+      });
+    } catch {
+      setTenancyError('Could not reach the server. Check the connection and try again.');
+    } finally {
+      setTenancyProgress(null);
+    }
+  }, [apiFetch]);
   const runTenancyRebackfill = async () => {
     if (!(await ui.confirm('Stamp current businessType on every legacy doc that is missing it?'))) return;
     setTenancyBusy(true);
     try {
       const r = await apiFetch('/api/admin/tenancy-rebackfill', { method: 'POST' });
       const d = await r.json();
-      if (d.success) { await fetchTenancyReport(); ui.alert(`Stamped: Orders ${d.stamped.Order}, Products ${d.stamped.Product}, Inventory ${d.stamped.Inventory}, Categories ${d.stamped.Category}.`); }
+      if (d.success) {
+        await fetchTenancyReport();
+        // The backfill now sweeps every businessType-carrying collection, so the
+        // summary lists what it actually touched instead of a fixed four.
+        const touched = Object.entries(d.stamped || {}).filter(([, n]) => n > 0);
+        ui.alert(touched.length
+          ? `Stamped ${d.totalStamped} doc(s): ${touched.map(([k, n]) => `${k} ${n}`).join(", ")}.`
+          : "Nothing to stamp - every doc already carries a business type.");
+      }
       else ui.alert(d.error || 'Re-backfill failed.');
     } finally { setTenancyBusy(false); }
   };
@@ -1623,6 +2015,32 @@ export default function AdminDashboard() {
   const procurementCreditAccounts = useMemo(() => [
     ...cashAndBankAccounts, ...apAccounts,
   ], [cashAndBankAccounts, apAccounts]);
+
+  // Where a PO line for EQUIPMENT gets debited. Only the five asset classes are
+  // valid: each is paired with its own accumulated-depreciation account, which
+  // is what makes the asset depreciable. Fetched rather than derived, because
+  // the same list is what the server validates against - and a locally-built
+  // one offered the 140000 parent, which the server rightly refuses.
+  const [fixedAssetAccounts, setFixedAssetAccounts] = useState([]);
+  // Once signed in, and again whenever a different person takes the till. It
+  // used to run the moment the dashboard mounted - behind the login screen,
+  // with no session - so it drew a 401 and never ran again, and the equipment
+  // account picker on purchase orders stayed empty for the whole session.
+  // Who is signed in matters too: the list is only there for a role that can
+  // see the accounts, so a barista handing over to the owner has to refetch.
+  useEffect(() => {
+    if (!isAuthenticated) { setFixedAssetAccounts([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await apiFetch('/api/fixed-assets/classes');
+        if (!r.ok) { if (!cancelled) setFixedAssetAccounts([]); return; }   // module off, or the role cannot see it
+        const d = await r.json();
+        if (!cancelled && d.success) setFixedAssetAccounts((d.classes || []).map(c => ({ code: c.code, name: c.name })));
+      } catch { /* the picker simply stays empty */ }
+    })();
+    return () => { cancelled = true; };
+  }, [apiFetch, isAuthenticated, activeAdmin?._id]);
 
   // ── Client accounts list (for per-product per-client discount picker) ──
   const [clientAccounts, setClientAccounts] = useState([]);
@@ -1739,7 +2157,7 @@ export default function AdminDashboard() {
     } catch { ui.alert('Failed to update tier rate. Check your connection.'); }
   };
 
-  useEffect(() => { if (isAuthenticated) { fetchDiscounts(); fetchCoa(); fetchClientAccounts(); fetchPriceTiers(); fetchPricingTable(); fetchClosedPeriods(); fetchPaymentMap(); } }, [isAuthenticated]);
+  useEffect(() => { if (isAuthenticated) { fetchDiscounts(); fetchCoa(); if (activeAdmin?.role === 'superadmin' || auth.can('pos.use') || auth.can('orders.view')) fetchClientAccounts(); fetchPriceTiers(); fetchPricingTable(); fetchClosedPeriods(); fetchPaymentMap(); } }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Partial fulfillment (logistics) ────────────────────────────────────────
   const [partialModal, setPartialModal] = useState(null);  // the order being split
@@ -1850,9 +2268,101 @@ export default function AdminDashboard() {
     };
   }, [invSubTab]);
 
+  // Inventory's page, like the Ledger's, is one this person may open.
+  useEffect(() => {
+    if (activeTab !== 'inventory' || !isAuthenticated) return;
+    if (can(`screen.inventory.${invSubTab}`) && (invSubTab !== 'eod' || can('inventory.count'))) return;
+    const first = ['live', 'transfers', 'reserved', 'places', 'eod', 'control'].find(p => can(`screen.inventory.${p}`) && (p !== 'eod' || can('inventory.count')));
+    if (first) setInvSubTab(first);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, invSubTab, isAuthenticated, activeAdmin?._id]);
+
+  // Opening a tab brings its figures up to date. The shared lists - orders,
+  // the menu, stock - were loaded once at sign-in and then kept current only
+  // by live updates, so a dropped connection left a tab showing whatever it
+  // had last heard until a full reload. Each tab asks only for what it shows:
+  // opening Inventory does not pull the ledger along with it. Tabs that load
+  // their own data when they open already do this and are not listed.
+  // Skipped for the tab signed into, which the sign-in load already covered.
+  const lastRefreshedTab = useRef(null);
+  useEffect(() => {
+    if (!isAuthenticated) { lastRefreshedTab.current = null; return; }
+    if (lastRefreshedTab.current === null) { lastRefreshedTab.current = activeTab; return; }
+    if (lastRefreshedTab.current === activeTab) return;
+    lastRefreshedTab.current = activeTab;
+    refreshTab(activeTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, isAuthenticated]);
+
+  // What each tab shows, fetched again. Used when a tab is opened, and when the
+  // app catches up after being asleep or offline (below).
+  function refreshTab(tab) {
+    const refresh = {
+      orders:     () => { fetchOrders(); fetchData(); fetchParked(); },
+      history:    () => { fetchOrders(); },
+      analytics:  () => { fetchOrders(); fetchData(); },
+      audit:      () => { fetchOrders(); },
+      inventory:  () => { fetchInventory(); fetchStockTaxonomy(); },
+      products:   () => { fetchData(); fetchInventory(); },
+      pricing:    () => { fetchData(); fetchInventory(); },
+      production: () => { fetchInventory(); fetchData(); },
+      ledger:     () => { fetchERPData(); },
+      reports:    () => { fetchERPData(); },
+      settings:   () => { fetchSettings(); },
+    }[tab];
+    refresh?.();
+  }
+
+  // Catching up. Live updates keep the screen current while connected, but
+  // nothing replays what was sent while the tablet slept, the app sat in the
+  // background, or the connection was down - so the tab on screen went on
+  // showing what it last heard. Coming back now refreshes it: the dashboard's
+  // own data for this tab, orders (the one thing every screen leans on), and a
+  // signal that the tabs which load their own data listen for. Lists only -
+  // nothing anyone is typing is touched.
+  const catchUpRef = useRef({ hiddenAt: 0, last: 0 });
+  const catchUp = () => {
+    const now = Date.now();
+    if (now - catchUpRef.current.last < 10000) return;      // at most every 10 s
+    catchUpRef.current.last = now;
+    fetchOrders();
+    refreshTab(activeTabRef.current);
+    broadcastRefresh();
+  };
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') { catchUpRef.current.hiddenAt = Date.now(); return; }
+      // A glance away and back is not worth a reload; half a minute is.
+      if (catchUpRef.current.hiddenAt && Date.now() - catchUpRef.current.hiddenAt >= 30000) catchUp();
+      catchUpRef.current.hiddenAt = 0;
+    };
+    let dropped = false;
+    // Our own disconnects (sign-in, switching user) are not a gap in the feed.
+    const onDisconnect = (reason) => { if (reason !== 'io client disconnect') dropped = true; };
+    const onConnect = () => { if (dropped) { dropped = false; catchUp(); } };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('online', catchUp);
+    socket.on('disconnect', onDisconnect);
+    socket.on('connect', onConnect);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('online', catchUp);
+      socket.off('disconnect', onDisconnect);
+      socket.off('connect', onConnect);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
+
   // Effect 2: Order list + menu listeners - named callbacks so cleanup doesn't nuke Effect 1's handlers
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated) {
+      // Signed out: nothing should be arriving for a session that has ended.
+      try { if (socket.connected) socket.disconnect(); } catch { /* already down */ }
+      return;
+    }
     fetchOrders();
     fetchData();
     fetchERPData();
@@ -1863,7 +2373,7 @@ export default function AdminDashboard() {
     // Force a reconnect so the handshake picks up the fresh token from auth.getToken().
     // Room placement is server-decided based on the verified JWT - no more
     // client-declared role (which an attacker could spoof to elevate to manager).
-    try { socket.disconnect(); socket.connect(); } catch { /* ignore */ }
+    reconnectSocket();
     // Back-compat: the server now ignores this payload but we keep emitting it
     // so older server builds during deploy don't drop the event.
     socket.emit('joinRoom', activeAdmin?.role || 'staff');
@@ -1885,6 +2395,13 @@ export default function AdminDashboard() {
       if (typeof document !== 'undefined' && document.hidden) notify('Accounting alert', a?.message || '');
     };
 
+    // A role's permissions were changed. Permissions travel inside the session
+    // token, so re-mint it now: what the owner just granted (or took away)
+    // applies on this screen at once rather than at the next refresh.
+    const handlePermissionsChanged = () => {
+      auth.refreshSession(API_URL).then((d) => { if (d?.user) setActiveAdmin(prev => ({ ...(prev || {}), ...d.user })); });
+    };
+    socket.on('permissionsChanged', handlePermissionsChanged);
     socket.on('newOrder',       handleNewOrder);
     socket.on('orderUpdated',   handleOrderUpdate);
     socket.on('menuUpdated',    handleMenuUpdate);
@@ -1893,6 +2410,7 @@ export default function AdminDashboard() {
     socket.on('mgrAlert',       handleMgrAlert);
 
     return () => {
+      socket.off('permissionsChanged', handlePermissionsChanged);
       socket.off('newOrder',       handleNewOrder);
       socket.off('orderUpdated',   handleOrderUpdate);
       socket.off('menuUpdated',    handleMenuUpdate);
@@ -1910,7 +2428,7 @@ export default function AdminDashboard() {
   // read by Products/Pricing Control too, and leaking one client's special
   // pricing into those unrelated, buyer-agnostic views would be wrong.
   useEffect(() => {
-    if (!posClientId) { setPosBuyerDiscounts({}); return; }
+    if (!posClientId) { setPosBuyerDiscounts({}); setPosBuyerPrices({}); return; }
     let cancelled = false;
     (async () => {
       try {
@@ -1919,7 +2437,12 @@ export default function AdminDashboard() {
         const data = await res.json();
         if (cancelled) return;
         const map = {};
-        (data.products || []).forEach(p => { map[p._id] = p.effectiveDiscountPercent || 0; });
+        const prices = {};
+        (data.products || []).forEach(p => {
+          map[p._id] = p.effectiveDiscountPercent || 0;
+          if (p.buyerUnitPrice != null) prices[p._id] = p.buyerUnitPrice;
+        });
+        setPosBuyerPrices(prices);
         setPosBuyerDiscounts(map);
       } catch { /* non-fatal - cart falls back to no live discount preview */ }
     })();
@@ -1932,7 +2455,10 @@ export default function AdminDashboard() {
   useEffect(() => {
     setPosCart(cart => cart.map(item => {
       const pct = item.productId ? (posBuyerDiscounts[item.productId] || 0) : 0;
-      return item.discountPercent === pct ? item : { ...item, discountPercent: pct };
+      // A line at the product's own price (no size, not on sale) follows the
+      // client's tier price if it is above list, and goes back to list if not.
+      const price = item.listPrice != null ? (posBuyerPrices[item.productId] ?? item.listPrice) : item.price;
+      return item.discountPercent === pct && item.price === price ? item : { ...item, discountPercent: pct, price };
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [posBuyerDiscounts]);
@@ -1962,11 +2488,15 @@ export default function AdminDashboard() {
     // Use active sale price when no size is selected (size pricing overrides base)
     let finalPrice = (posSelectedProduct.activeSalePrice != null ? posSelectedProduct.activeSalePrice : null) ?? posSelectedProduct.basePrice ?? posSelectedProduct.price ?? 0;
     let finalName = posSelectedProduct.name;
+    // The product's own price (no size, not on sale) - it can follow the client's tier.
+    let listPrice = posSelectedProduct.activeSalePrice == null ? finalPrice : null;
+    if (listPrice != null && posBuyerPrices[posSelectedProduct._id] != null) finalPrice = posBuyerPrices[posSelectedProduct._id];
 
     if (posActiveSize !== null) {
       const sizeObj = posSelectedProduct.sizes[posActiveSize];
       finalPrice = sizeObj.price;
       finalName = `${posSelectedProduct.name} (${sizeObj.name})`;
+      listPrice = null;
     }
     
     const productCategory = categories.find(c => c.name === posSelectedProduct.category);
@@ -1983,6 +2513,7 @@ export default function AdminDashboard() {
       productId: posSelectedProduct._id,
       name: finalName,
       price: finalPrice,
+      listPrice,
       quantity: Math.max(1, posItemQty),
       department,
       selectedAddOns: [...posActiveAddOns],
@@ -2012,7 +2543,14 @@ export default function AdminDashboard() {
     // Synchronous double-tap guard - blocks a second submit before React re-renders.
     if (posSubmittingRef.current) return;
     if (posCart.length === 0) return ui.alert("Cart is empty!");
-    if (!posCustomerName) return ui.alert("Please enter Customer / Driver Name.");
+    // A dine-in customer at a cafe usually has no name to give, and stopping
+    // the sale to ask for one is friction nobody needs. It is filed as
+    // "Walk-in", which the server treats as a stand-in rather than a person,
+    // so it is never promoted into a client account however many there are.
+    // Everything else - delivery, pickup, a picked client - still needs a name.
+    const walkInDefault = BUSINESS_TYPE === 'fb' && posTable === 'Dine-In' && !posClientId;
+    const customerName = String(posCustomerName || '').trim() || (walkInDefault ? 'Walk-in' : '');
+    if (!customerName) return ui.alert("Please enter Customer / Driver Name.");
     const isDelivery = posTable === 'Manual Delivery';
     const isPickup = posTable === 'Pickup';
     if (isDelivery && !posDeliveryAddress) return ui.alert("Please enter delivery address.");
@@ -2029,13 +2567,14 @@ export default function AdminDashboard() {
     const payload = {
       items: posCart,
       table: posTable,
-      customerName: posCustomerName,
+      customerName,
       // Linking to a client account lets the server resolve per-client product
       // discount overrides for this order. Optional - falls back to the
       // product's default discountPercent when blank.
       clientAccountId: posClientId || undefined,
+      salesperson: posSalesperson || undefined,
       reserveOnly: posReserveOnly || undefined,
-      paymentMethod: ['Grab Delivery', 'Foodpanda', 'Manual Delivery', 'Lalamove'].includes(posTable) ? posTable : 'Cash',
+      paymentMethod: DELIVERY_METHODS.includes(posTable) ? posTable : 'Cash',
       isComplimentary: false,
       sessionId: null,
       deliveryAddress: posDeliveryAddress,
@@ -2045,6 +2584,14 @@ export default function AdminDashboard() {
       dispatchStatus: (isDelivery || isPickup) ? 'Preparing' : '',
       orderNotes: posNotes.trim(),
       guestCount: Math.max(1, parseInt(posGuestCount) || 1),
+      // With Dine-in / Take-out on (Menu Setup) every order says which it is:
+      // a Dine-In table is dine-in, a walk-in is whichever was picked, and
+      // everything that leaves the shop is take-out. With it off, only the
+      // bar-cups switch on a dine-in order applies, as before.
+      ...(BUSINESS_TYPE !== 'fb' ? {}
+        : systemSettings.serviceModeEnabled === true
+          ? { serviceMode: (posTable === 'Dine-In' || (posTable === 'Walk In' && posBarCups)) ? 'dine-in' : 'take-out' }
+          : (posTable === 'Dine-In' && posBarCups ? { useBarCups: true } : {})),
       location: posBranch || '',
     };
 
@@ -2054,6 +2601,7 @@ export default function AdminDashboard() {
       setPosCart([]);
       setPosCustomerName('');
       setPosClientId('');
+      setPosSalesperson('');
       setPosReserveOnly(false);
       setPosDeliveryAddress('');
       setPosCustomerPhone('');
@@ -2063,6 +2611,9 @@ export default function AdminDashboard() {
       setPosSearch('');
       setPosNotes('');
       setPosGuestCount(1);
+      // The sale is rung, so the terminal goes back to nobody. Covers the
+      // queued-offline paths too: the sale happened either way.
+      lockRegisterAfterSale();
     };
 
     // OFFLINE: if the device is offline, queue the order locally and move on.
@@ -2079,7 +2630,13 @@ export default function AdminDashboard() {
       const res = await apiFetch(`/api/orders`, {
         method: 'POST', headers: { 'Idempotency-Key': idemKey }, body: JSON.stringify(payload)
       });
-      const data = await res.json();
+      let data = await res.json();
+      if (!data.success && data.needsCreditApproval) {
+        const extra = await creditRelease(data);
+        // A fresh key: the refused attempt's answer is remembered under the first one.
+        if (extra) data = await (await apiFetch(`/api/orders`, { method: 'POST', headers: { 'Idempotency-Key': `${idemKey}-credit` }, body: JSON.stringify({ ...payload, ...extra }) })).json();
+        else data = { success: false, error: 'Not placed - the sale is over the client\'s credit limit.' };
+      }
       if (data.success) {
         // Apply any manually-set per-item discounts from the POS cart
         const cartWithDisc = posCart.filter(item => (item.discountPercent || 0) > 0);
@@ -2109,20 +2666,22 @@ export default function AdminDashboard() {
     }
   };
 
-const updateStatus = async (orderId, newStatus) => {
+const updateStatus = async (orderId, newStatus, extra = {}) => {
     if (updatingOrders[orderId]) return; // double-tap guard
     setUpdatingOrders(prev => ({ ...prev, [orderId]: true }));
 
     // 1. Grab the order so we can check if it's a delivery
     const order = orders.find(o => o._id === orderId);
 
-    const payload = { status: newStatus };
+    const payload = { status: newStatus, ...extra };
 
     if (newStatus === 'Preparing') {
       // Payment is always operator-changeable. Use the dropdown selection if made,
       // else default to the delivery channel (for delivery orders) or the order's method.
       const isDeliveryTable = order && ['Grab Delivery', 'Foodpanda', 'Manual Delivery', 'Lalamove'].includes(order.table);
-      payload.paymentMethod = paymentSelections[orderId]
+      // A button that decides the tender itself ("Not paid yet") passes it in `extra`.
+      payload.paymentMethod = extra.paymentMethod
+        || paymentSelections[orderId]
         || (isDeliveryTable ? order.table : null)
         || (order ? order.paymentMethod : 'Cash') || 'Cash';
       // Include cash tendered for cash payments
@@ -2144,7 +2703,8 @@ const updateStatus = async (orderId, newStatus) => {
     if (newStatus === 'Ready') playReadyChime();
 
     // Optimistic UI update
-    setOrders(prev => prev.map(o => o._id === orderId ? { ...o, ...payload } : o));
+    const { approval: _approval, ...visible } = payload;   // the approval is for the server, not the order
+    setOrders(prev => prev.map(o => o._id === orderId ? { ...o, ...visible } : o));
     socket.emit('updateOrderStatus', { orderId, status: newStatus });
 
     // Backend Sync
@@ -2154,7 +2714,12 @@ const updateStatus = async (orderId, newStatus) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
+      let data = await res.json();
+      if (!data.success && data.needsCreditApproval) {
+        const extra = await creditRelease(data);
+        if (extra) data = await (await apiFetch(`/api/orders/${orderId}`, { method: 'PUT', body: JSON.stringify({ ...payload, ...extra }) })).json();
+        else data = { success: false, error: 'Not changed - the sale is over the client\'s credit limit.' };
+      }
 
       if (!data.success) {
         ui.alert(data.error);
@@ -2260,23 +2825,18 @@ const updateStatus = async (orderId, newStatus) => {
   const applyDiscount = async (orderId, isRemoving = false) => {
     const order = orders.find(o => o._id === orderId);
     const percent = isRemoving ? 0 : parseFloat(discountInputs[orderId] || 0);
-    if (percent < 0 || percent > 100) return ui.alert('Discount must be between 0% and 100%');
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) return ui.alert('Discount must be between 0% and 100%');
     
     // Grab the ticked checkboxes
     const selectedIndices = isRemoving ? [] : getSelectedItems(order);
 
-    // Auto-detect SC/PWD to trigger isolated VAT Exemption
-    let isVatExempt = false;
-    let discountType = 'None';
-    const selectedVal = discountInputs[orderId];
-    const selectedObj = discounts.find(d => d.percentage.toString() === selectedVal);
-    
-    if (selectedObj && selectedObj.isSCPWD) {
-      isVatExempt = true;
-      discountType = 'SC/PWD';
-    } else if (percent > 0) {
-      discountType = 'Promo';
-    }
+    // This is the ORDER-LEVEL promo control, and a promo is never a VAT
+    // exemption. SC/PWD is applied per item through its own control, which
+    // is what sets isVatExempt. This used to look the chosen percentage up
+    // across every preset, so a 20% promo matched the 20% SC/PWD preset and
+    // was booked as VAT-exempt.
+    const isVatExempt = false;
+    const discountType = percent > 0 ? 'Promo' : 'None';
 
     await apiFetch(`/api/orders/${orderId}`, { 
       method: 'PUT', 
@@ -2288,6 +2848,29 @@ const updateStatus = async (orderId, newStatus) => {
       }) 
     });
     if (isRemoving) setDiscountInputs(prev => ({ ...prev, [orderId]: '' }));
+  };
+
+  // Who an SC/PWD discount was given to. Both the 20% and the VAT exemption
+  // are granted against a named ID, and the sale cannot complete without them.
+  const [scPwdEntry, setScPwdEntry] = useState({});   // orderId -> { name, idNumber, kind }
+  const saveScPwdId = async (orderId) => {
+    const entry = scPwdEntry[orderId] || {};
+    if (!String(entry.name || '').trim() || !String(entry.idNumber || '').trim()) {
+      return ui.alert('Enter the cardholder\'s name and ID number as written on the card.');
+    }
+    try {
+      const res = await apiFetch(`/api/orders/${orderId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          scPwdName: entry.name.trim(),
+          scPwdIdNumber: entry.idNumber.trim(),
+          scPwdKind: entry.kind || 'Senior Citizen',
+        }),
+      });
+      const d = await res.json();
+      if (!d.success) return ui.alert(d.error || 'Could not save the card details.');
+      fetchOrders();
+    } catch { ui.alert('Network error.'); }
   };
 
   const applyItemDiscount = async (orderId, itemIndex, discountPercent) => {
@@ -2312,466 +2895,12 @@ const updateStatus = async (orderId, newStatus) => {
     }
   };
   const fetchShiftHistory = async (page = 1) => {
-    if (activeAdmin?.role !== 'superadmin') return;
+    if (activeAdmin?.role !== 'superadmin' && !auth.can('shifts.view')) return;
     try {
       const res = await apiFetch(`/api/shifts?page=${page}&limit=${SHIFT_HIST_PAGE_SIZE}`);
       const data = await res.json();
       if (data.success) { setShiftHistory(data.shifts); setShiftHistoryTotal(data.total); setShiftHistoryPage(page); }
     } catch (err) { console.error('fetchShiftHistory', err); }
-  };
-
-  // ===== FINANCE FETCHERS =====
-  const fetchPnl = async () => {
-    if (activeAdmin?.role !== 'superadmin') return;
-    try {
-      const res = await apiFetch(`/api/reports/pnl?start=${pnlRange.start}&end=${pnlRange.end}`);
-      const data = await res.json();
-      if (data.success) setPnlData(data);
-    } catch (err) { console.error('fetchPnl', err); }
-  };
-  const fetchPnlMonthly = async () => {
-    if (activeAdmin?.role !== 'superadmin') return;
-    try {
-      const res = await apiFetch(`/api/reports/pnl-monthly?start=${pnlmRange.start}&end=${pnlmRange.end}`);
-      const data = await res.json();
-      if (data.success) setPnlMonthly(data);
-    } catch (err) { console.error('fetchPnlMonthly', err); }
-  };
-  const exportPnlMonthlyPDF = async () => {
-    if (!pnlMonthly) return ui.alert('Load the Monthly P&L first.');
-    const { jsPDF, autoTable } = await loadPdfLibs();
-    const m = pnlMonthly;
-    const doc = new jsPDF(pnlmView === 'matrix' ? 'landscape' : 'portrait');
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Profit & Loss`, 14, 14);
-    doc.setFontSize(9); doc.text(`${pnlmRange.start} to ${pnlmRange.end}  ·  ${pnlmView === 'matrix' ? 'Monthly' : 'Period'}`, 14, 20);
-    const SECTIONS = [['revenue','REVENUE'],['contra','LESS: DISCOUNTS/RETURNS'],['cogs','COST OF SALES'],['opex','OPERATING EXPENSES'],['otherincome','OTHER INCOME'],['otherexpense','OTHER EXPENSES']];
-    const nr = m.grandTotals.netRevenue || 0;
-    if (pnlmView === 'matrix') {
-      const head = ['Account', ...m.months, 'Total'];
-      const body = [];
-      for (const [sec, label] of SECTIONS) {
-        body.push([{ content: label, colSpan: head.length, styles: { fontStyle: 'bold', fillColor: [235,235,235] } }]);
-        m.accounts.filter(a => a.section === sec).forEach(a => body.push([`  ${a.code} ${a.name}`, ...m.months.map(mm => pdfMoney(a.byMonth[mm] || 0)), pdfMoney(a.total)]));
-      }
-      body.push(['NET INCOME', ...m.months.map(mm => pdfMoney(m.monthTotals.netIncome[mm] || 0)), pdfMoney(m.grandTotals.netIncome)]);
-      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 6 }, headStyles: { fillColor: [30,30,30] } });
-    } else {
-      const head = ['Account', 'Amount', '% Rev', '% Parent'];
-      const parentTotals = {};
-      m.accounts.forEach(a => { parentTotals[a.parentCode] = (parentTotals[a.parentCode] || 0) + a.total; });
-      const body = [];
-      for (const [sec, label] of SECTIONS) {
-        const rows = m.accounts.filter(a => a.section === sec);
-        if (!rows.length) continue;
-        body.push([{ content: label, colSpan: 4, styles: { fontStyle: 'bold', fillColor: [235,235,235] } }]);
-        rows.forEach(a => body.push([`  ${a.code} ${a.name}`, pdfMoney(a.total), nr ? `${(a.total/nr*100).toFixed(1)}%` : '-', parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '-']));
-      }
-      body.push(['NET INCOME', pdfMoney(m.grandTotals.netIncome), nr ? `${(m.grandTotals.netIncome/nr*100).toFixed(1)}%` : '-', '']);
-      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 8 }, headStyles: { fillColor: [30,30,30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } } });
-    }
-    doc.save(`PnL-${pnlmRange.start}_to_${pnlmRange.end}.pdf`);
-  };
-  const fetchBsMonthly = async () => {
-    if (activeAdmin?.role !== 'superadmin') return;
-    try {
-      const res = await apiFetch(`/api/reports/balance-sheet-monthly?start=${bsmRange.start}&end=${bsmRange.end}`);
-      const data = await res.json();
-      if (data.success) setBsMonthly(data);
-    } catch (err) { console.error('fetchBsMonthly', err); }
-  };
-  const exportBsMonthlyPDF = async () => {
-    if (!bsMonthly) return ui.alert('Load the Monthly Balance Sheet first.');
-    const { jsPDF, autoTable } = await loadPdfLibs();
-    const b = bsMonthly;
-    const doc = new jsPDF(bsmView === 'matrix' ? 'landscape' : 'portrait');
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Balance Sheet`, 14, 14);
-    doc.setFontSize(9); doc.text(`${bsmRange.start} to ${bsmRange.end}  ·  ${bsmView === 'matrix' ? 'Monthly' : 'As of ' + b.asOf}`, 14, 20);
-    const SECTIONS = [['assets','ASSETS'],['liabilities','LIABILITIES'],['equity','EQUITY']];
-    const totalAssets = b.monthTotals.assets[b.asOf] || 0;
-    if (bsmView === 'matrix') {
-      const head = ['Account', ...b.months];
-      const body = [];
-      for (const [sec, label] of SECTIONS) {
-        body.push([{ content: label, colSpan: head.length, styles: { fontStyle: 'bold', fillColor: [235,235,235] } }]);
-        b[sec].forEach(a => body.push([`  ${a.code} ${a.name}`, ...b.months.map(mm => pdfMoney(a.byMonth[mm] || 0))]));
-        body.push([`  Total ${label}`, ...b.months.map(mm => pdfMoney(b.monthTotals[sec][mm] || 0))]);
-      }
-      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 6 }, headStyles: { fillColor: [30,30,30] } });
-    } else {
-      const head = ['Account', 'Amount', '% Assets', '% Parent'];
-      const parentTotals = {};
-      [...b.assets, ...b.liabilities, ...b.equity].forEach(a => { parentTotals[a.parentCode] = (parentTotals[a.parentCode] || 0) + a.total; });
-      const body = [];
-      for (const [sec, label] of SECTIONS) {
-        body.push([{ content: label, colSpan: 4, styles: { fontStyle: 'bold', fillColor: [235,235,235] } }]);
-        b[sec].forEach(a => body.push([`  ${a.code} ${a.name}`, pdfMoney(a.total), totalAssets ? `${(a.total/totalAssets*100).toFixed(1)}%` : '-', parentTotals[a.parentCode] ? `${(a.total/parentTotals[a.parentCode]*100).toFixed(1)}%` : '-']));
-        body.push([`  Total ${label}`, pdfMoney(b.monthTotals[sec][b.asOf] || 0), '', '']);
-      }
-      autoTable(doc, { startY: 24, head: [head], body, styles: { fontSize: 8 }, headStyles: { fillColor: [30,30,30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } } });
-    }
-    doc.save(`BalanceSheet-${bsmRange.start}_to_${bsmRange.end}.pdf`);
-  };
-
-  // ── Reports that previously had no export - same jsPDF/autoTable/addLogoToPDF
-  // pattern as every export above, just matching each report's own on-screen columns.
-  // (Trial Balance and Percentage Tax export locally in LedgerTab.jsx instead -
-  // their source state (tb/ptax/ptaxRange) lives there, not here.)
-  const exportArPDF = async () => {
-    if (!arOutstanding?.orders) return ui.alert('Load AR first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('ACCOUNTS RECEIVABLE', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`Total outstanding: ${pdfMoney(arOutstanding.totalOutstanding)}`, 105, 28, { align: 'center' });
-    let y = 34;
-    if (arAgeing?.clients?.length) {
-      autoTable(doc, {
-        startY: y,
-        head: [['Client', 'Current', '31-60', '61-90', '91+', 'Total', 'Committed']],
-        body: arAgeing.clients.map(r => [r.client, pdfMoney(r.current), pdfMoney(r.d31_60), pdfMoney(r.d61_90), pdfMoney(r.d90_plus), pdfMoney(r.total), pdfMoney(r.exposure)]),
-        styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] },
-        columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
-      });
-      y = doc.lastAutoTable.finalY + 6;
-    }
-    autoTable(doc, {
-      startY: y,
-      head: [['Order #', 'Customer', 'Channel', 'Date', 'Due', 'Amount']],
-      body: arOutstanding.orders.map(o => [o.orderNumber, o.customerName, o.paymentMethod, new Date(o.createdAt).toLocaleDateString(), o.arDueDate ? new Date(o.arDueDate).toLocaleDateString() : '-', pdfMoney(o.total)]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 5: { halign: 'right' } },
-    });
-    doc.save(`AR-Outstanding-${new Date().toISOString().slice(0, 10)}.pdf`);
-  };
-
-  const exportApPDF = async () => {
-    if (!apData) return ui.alert('Load AP first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('ACCOUNTS PAYABLE', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`Outstanding: ${pdfMoney(apData.outstandingBalance)}  ·  Purchased on credit: ${pdfMoney(apData.totalCredit)}  ·  Paid: ${pdfMoney(apData.totalDebit)}`, 105, 28, { align: 'center' });
-    let y = 34;
-    if ((apData.bySupplier || []).length) {
-      autoTable(doc, {
-        startY: y,
-        head: [['Supplier', 'Purchased', 'Paid', 'Balance']],
-        body: apData.bySupplier.map(s => [s.supplier, pdfMoney(s.incurred), pdfMoney(s.paid), pdfMoney(s.balance)]),
-        styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
-        columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
-      });
-      y = doc.lastAutoTable.finalY + 6;
-    }
-    autoTable(doc, {
-      startY: y,
-      head: [['Date', 'Reference', 'Supplier', 'Description', 'Incurred', 'Paid']],
-      body: (apData.recent || []).map(e => [new Date(e.date).toLocaleDateString(), e.reference, e.supplierName || '-', e.description, e.credit ? pdfMoney(e.credit) : '', e.debit ? pdfMoney(e.debit) : '']),
-      styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' } },
-    });
-    doc.save(`AP-${new Date().toISOString().slice(0, 10)}.pdf`);
-  };
-
-  const exportPaymentsPDF = async () => {
-    if (!salesByPayment) return ui.alert('Load the Payments report first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('SALES BY PAYMENT METHOD', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${sbpRange.start} to ${sbpRange.end}  ·  Total: ${pdfMoney(salesByPayment.grandTotal)}`, 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Payment Method', 'Orders', 'Amount', '% Share']],
-      body: (salesByPayment.breakdown || []).map(r => [r.method || 'Unknown', r.count, pdfMoney(r.total), `${(r.pct || 0).toFixed(1)}%`]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
-    });
-    doc.save(`Sales-By-Payment-${sbpRange.start}_to_${sbpRange.end}.pdf`);
-  };
-
-  const exportProfitByCategoryPDF = async () => {
-    if (!profitByCategory) return ui.alert('Refresh Profit by Category first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('PROFIT BY CATEGORY', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Category', 'Revenue', 'Est. COGS', 'Gross Profit', 'Margin']],
-      body: (profitByCategory.categories || profitByCategory || []).map(c => [c.category, pdfMoney(c.revenue), pdfMoney(c.estimatedCOGS), pdfMoney(c.grossProfit), `${c.margin.toFixed(1)}%`]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
-    });
-    doc.save(`Profit-By-Category-${new Date().toISOString().slice(0, 10)}.pdf`);
-  };
-
-  const exportMenuEngineeringPDF = async () => {
-    if (!menuEngineering) return ui.alert('Refresh Menu Engineering first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('MENU ENGINEERING', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Item', 'Qty', 'Revenue', 'Margin', 'Class']],
-      body: (menuEngineering.items || menuEngineering || []).map(r => [r.name, r.qty, pdfMoney(r.revenue), `${r.margin.toFixed(1)}%`, r.quadrant]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
-    });
-    doc.save(`Menu-Engineering-${new Date().toISOString().slice(0, 10)}.pdf`);
-  };
-
-  const exportVariancePDF = async () => {
-    if (!cashierVariance) return ui.alert('Refresh Cashier Variance first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('CASHIER VARIANCE', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Cashier', 'Shifts', 'Avg Variance', 'Times Short', 'Worst']],
-      body: (cashierVariance.cashiers || []).map(c => [c.cashierName, c.shifts, pdfMoney(c.avgVariance), c.shortCount, pdfMoney(c.worstShort)]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
-    });
-    doc.save(`Cashier-Variance-${new Date().toISOString().slice(0, 10)}.pdf`);
-  };
-
-  const exportCommissionsPDF = async () => {
-    if (!commissions) return ui.alert('Refresh Commissions first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('COMMISSIONS', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Cashier', 'Orders', 'Sales', 'Rate', 'Commission']],
-      body: (commissions.sellers || []).map(c => [c.name, c.orderCount, pdfMoney(c.salesTotal), `${c.commissionRate}%`, pdfMoney(c.commissionEarned)]),
-      foot: [[{ content: 'Total', colSpan: 4 }, pdfMoney(commissions.totalCommission)]],
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], fontStyle: 'bold', textColor: 255 },
-      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 4: { halign: 'right' } },
-    });
-    doc.save(`Commissions-${new Date().toISOString().slice(0, 10)}.pdf`);
-  };
-
-  const exportBillsPDF = async () => {
-    if (!bills || bills.length === 0) return ui.alert('No bills to export.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('BILLS (ACCOUNTS PAYABLE)', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`Filter: ${billsFilter}  ·  ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Bill #', 'Supplier', 'Source', 'Description', 'Amount', 'Status']],
-      body: bills.map(b => [b.billNumber, b.supplierName || '-', b.source, b.description || b.poNumber || '-', pdfMoney(b.amount), b.status]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { halign: 'right' } },
-    });
-    doc.save(`Bills-${billsFilter}-${new Date().toISOString().slice(0, 10)}.pdf`);
-  };
-
-  const exportAuditLogPDF = async () => {
-    if (!auditLogEntries || auditLogEntries.length === 0) return ui.alert('No audit entries loaded - run a query first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 148, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('AUDIT LOG', 148, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleString(), 148, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['When', 'Actor', 'Action', 'Reference', 'Details']],
-      body: auditLogEntries.map(e => [new Date(e.timestamp).toLocaleString(), e.userId, e.action, e.targetReference, e.details ? JSON.stringify(e.details).slice(0, 120) : '-']),
-      styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { cellWidth: 120 } },
-    });
-    doc.save(`Audit-Log-${new Date().toISOString().slice(0, 10)}.pdf`);
-  };
-
-  const exportExpensesPDF = async () => {
-    if (!expenseList || (expenseList.expenses || []).length === 0) return ui.alert('No expenses to export.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('EXPENSES', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`Total: ${pdfMoney(expenseList.total)}`, 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Date', 'Reference', 'Category', 'Description', 'Amount']],
-      body: expenseList.expenses.map(e => [new Date(e.date).toLocaleDateString(), e.reference, e.categoryName, e.description, pdfMoney(e.amount)]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { halign: 'right' } },
-    });
-    doc.save(`Expenses-${new Date().toISOString().slice(0, 10)}.pdf`);
-  };
-
-  // ── Newly-added report exports ─────────────────────────────────────────────
-
-  const exportStockTransfersPDF = async () => {
-    if (!stockTransfers || stockTransfers.length === 0) return ui.alert('No transfers to export - load Inventory → Transfers first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('STOCK TRANSFER HISTORY', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleString(), 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Date', 'Reference', 'Item', 'From', 'To', 'Qty', 'Status', 'By']],
-      body: stockTransfers.map(t => [
-        new Date(t.createdAt).toLocaleDateString(), t.reference || '-', t.itemName || '-',
-        t.fromLocation || '-', t.toLocation || '-', `${t.qtyBase ?? 0} ${t.unit || ''}`.trim(),
-        t.status, t.releasedBy || t.approvedBy || t.requestedBy || '-',
-      ]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
-    });
-    doc.save(`Stock-Transfer-History-${new Date().toISOString().slice(0, 10)}.pdf`);
-  };
-
-  // Batches dated by production (goods with no real expiry - beans, etc, FPFO
-  // instead of FEFO) flattened out of every inventory item's expiryBatches -
-  // a full roast/production log across the whole catalogue, not just one item.
-  const exportProductionHistoryPDF = async () => {
-    const rows = [];
-    for (const item of (inventory || [])) {
-      for (const b of (item.expiryBatches || [])) {
-        if (!b.productionDate) continue;
-        rows.push({ item: item.itemName, date: b.productionDate, qty: b.qty, unit: item.unit, ref: b.reference || '-', received: b.receivedAt });
-      }
-    }
-    if (rows.length === 0) return ui.alert('No batches with a production date recorded yet.');
-    rows.sort((a, b) => new Date(b.date) - new Date(a.date));
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('PRODUCTION HISTORY', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${rows.length} batch(es) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Production Date', 'Item', 'Qty', 'Received', 'Reference']],
-      body: rows.map(r => [new Date(r.date).toLocaleDateString(), r.item, `${r.qty} ${r.unit}`, r.received ? new Date(r.received).toLocaleDateString() : '-', r.ref]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
-    });
-    doc.save(`Production-History-${new Date().toISOString().slice(0, 10)}.pdf`);
-  };
-
-  // Production Report - reconciled Production Orders (batchNumber, planned vs
-  // actual output, and the moisture/variance between them), distinct from
-  // exportProductionHistoryPDF above (that one reads Inventory's raw
-  // production-dated batches; this one reads the Production Orders
-  // themselves, so it's the only report that can show moisture at all).
-  const exportProductionOrdersPDF = async () => {
-    try {
-      const res = await apiFetch('/api/production-orders?fulfillmentStatus=Complete');
-      const res2 = await apiFetch('/api/production-orders?fulfillmentStatus=Partial');
-      const [d1, d2] = await Promise.all([res.json(), res2.json()]);
-      const rows = [...(d1.success ? d1.orders : []), ...(d2.success ? d2.orders : [])];
-      if (rows.length === 0) return ui.alert('No reconciled production batches yet - approve and reconcile a batch first.');
-      rows.sort((a, b) => new Date(b.reconciledAt) - new Date(a.reconciledAt));
-      const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-      await addLogoToPDF(doc);
-      doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-      doc.setFontSize(10); doc.text('PRODUCTION REPORT', 105, 22, { align: 'center' });
-      doc.setFontSize(9); doc.text(`${rows.length} batch(es) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
-      autoTable(doc, {
-        startY: 34,
-        head: [['Batch', 'Product', 'Planned', 'Actual', 'Moisture / Variance', 'Status', 'Reconciled']],
-        body: rows.map(r => [
-          r.batchNumber, r.outputName,
-          `${r.outputQty}${r.outputUnit}`, `${r.actualOutputQty}${r.outputUnit}`,
-          r.moistureLossPercent > 0 ? `-${r.moistureLossPercent}% loss` : r.moistureLossPercent < 0 ? `+${Math.abs(r.moistureLossPercent)}% over` : '0%',
-          r.fulfillmentStatus, r.reconciledAt ? new Date(r.reconciledAt).toLocaleDateString() : '-',
-        ]),
-        styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
-      });
-      doc.save(`Production-Report-${new Date().toISOString().slice(0, 10)}.pdf`);
-    } catch { ui.alert('Failed to load production orders for the report.'); }
-  };
-
-  const exportMenuItemsPDF = async () => {
-    if (!products || products.length === 0) return ui.alert('No menu items to export.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('MENU ITEMS', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${products.length} item(s) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
-    // Sizes (small/medium/large) is an fb menu concept - a log item has no
-    // sizes at all (always "-"), it has a unit/pack instead (e.g. "1kg",
-    // "pcs"). Show whichever actually applies to this business type.
-    const lastCol = BUSINESS_TYPE === 'log' ? 'Unit' : 'Sizes';
-    autoTable(doc, {
-      startY: 34,
-      head: [['Name', 'Category', 'Code', 'Price', 'Available', lastCol]],
-      body: products.map(p => [
-        p.name, p.category || '-', p.productCode || '-', pdfMoney(p.basePrice),
-        p.isAvailable === false ? 'Removed' : (p.isOutOfStock ? 'Out of Stock' : 'Yes'),
-        BUSINESS_TYPE === 'log' ? (p.baseSize || 'pcs') : ((p.sizes || []).map(s => s.name).join(', ') || '-'),
-      ]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' } },
-    });
-    doc.save(`Menu-Items-${new Date().toISOString().slice(0, 10)}.pdf`);
-  };
-
-  const exportRevolvingFundsPDF = async () => {
-    if (!rfFunds || rfFunds.length === 0) return ui.alert('No revolving funds to export.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('REVOLVING FUNDS', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleString(), 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Fund', 'Initial Amount', 'Current Balance', 'Used', 'Status']],
-      body: rfFunds.map(f => [f.name, pdfMoney(f.initialAmount), pdfMoney(f.currentBalance), pdfMoney(f.initialAmount - f.currentBalance), f.isActive === false ? 'Closed' : 'Active']),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
-    });
-    // If one fund's transactions happen to be loaded (drilled into), append them.
-    if (rfTxs && rfTxs.length > 0 && rfActiveFund) {
-      doc.addPage();
-      doc.setFontSize(12); doc.text(`${rfActiveFund.name} - Transactions`, 105, 15, { align: 'center' });
-      autoTable(doc, {
-        startY: 22,
-        head: [['Date', 'Type', 'Description', 'Amount', 'Balance After', 'By']],
-        body: rfTxs.map(t => [new Date(t.date).toLocaleDateString(), t.type, t.description, pdfMoney(t.amount), pdfMoney(t.balanceAfter), t.performedBy || '-']),
-        styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' } },
-      });
-    }
-    doc.save(`Revolving-Funds-${new Date().toISOString().slice(0, 10)}.pdf`);
-  };
-
-  const exportPricingMasterlistPDF = async () => {
-    if (!products || products.length === 0) return ui.alert('No products to export.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('PRODUCT PRICING MASTERLIST', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${products.length} item(s) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Name', 'Category', 'Price', 'Cost', 'Margin']],
-      body: products.map(p => {
-        const cost = p.costOverride != null ? p.costOverride : (calcRecipeCost(p.baseRecipe) || 0);
-        const margin = p.basePrice > 0 ? ((p.basePrice - cost) / p.basePrice) * 100 : 0;
-        return [p.name, p.category || '-', pdfMoney(p.basePrice), pdfMoney(cost), `${margin.toFixed(1)}%`];
-      }),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
-    });
-    doc.save(`Pricing-Masterlist-${new Date().toISOString().slice(0, 10)}.pdf`);
-  };
-
-  const exportPriceTiersPDF = async () => {
-    if (!pricingTable.tiers || pricingTable.tiers.length === 0) return ui.alert('No price tiers set up yet - open Pricing Control first (or Super Admin → Price Tiers) so this can load.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(BIZ_NAME, 148, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('MARKET SEGMENT PRICING', 148, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${pricingTable.tiers.length} tier(s) · ${new Date().toLocaleDateString()}`, 148, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Product', 'List Price', ...pricingTable.tiers.map(t => t.name)]],
-      body: (pricingTable.products || []).map(p => [
-        p.name, pdfMoney(p.basePrice),
-        ...pricingTable.tiers.map(t => pdfMoney(t.prices?.[String(p._id)] ?? p.basePrice)),
-      ]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
-    });
-    doc.save(`Market-Segment-Pricing-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
   // ── PRICE TIER EXCEL EXPORT/IMPORT ──────────────────────────────────────────
@@ -2816,7 +2945,7 @@ const updateStatus = async (orderId, newStatus) => {
     ws['!cols'] = headers.map(h => ({ wch: Math.max(10, Math.min(24, h.length + 4)) }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Price Tiers');
-    XLSX.writeFile(wb, `price-tiers-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `price-tiers-${todayStr()}.xlsx`);
   };
 
   // Parsed-file preview, shown before anything is written - same shape/spirit
@@ -2965,7 +3094,7 @@ const updateStatus = async (orderId, newStatus) => {
       ]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' } },
     });
-    doc.save(`Shift-History-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Shift-History-${todayStr()}.pdf`);
   };
 
   const exportTimesheetsPDF = async () => {
@@ -2986,7 +3115,7 @@ const updateStatus = async (orderId, newStatus) => {
       ]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 5: { halign: 'right' } },
     });
-    doc.save(`Timesheets-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`Timesheets-${todayStr()}.pdf`);
   };
 
   const fetchBalanceSheet = async () => {
@@ -3010,7 +3139,10 @@ const updateStatus = async (orderId, newStatus) => {
     } catch { ui.alert('Network error.'); }
   };
   const fetchArOutstanding = async () => {
-    if (activeAdmin?.role !== 'superadmin') return;
+    // Anyone the server lets read the books (accounting.view) sees who owes -
+    // an admin chasing a "not paid yet" delivery needs the list. Recording the
+    // payment stays the owner's; the Settle button is only shown to them.
+    if (activeAdmin?.role !== 'superadmin' && !auth.can('accounting.view')) return;
     try {
       const res = await apiFetch(`/api/finance/ar-outstanding`);
       const data = await res.json();
@@ -3036,6 +3168,10 @@ const updateStatus = async (orderId, newStatus) => {
     } catch (err) { console.error('fetchExpenses', err); }
   }, [apiFetch]);
   const fetchSuppliers = async () => {
+    // Suppliers are a procurement record. A role that cannot see procurement
+    // was still asked for them every time the Inventory tab opened, drawing a
+    // 403 each time - asked for nothing it could use.
+    if (activeAdmin?.role !== 'superadmin' && !auth.can('procurement.view')) { setSuppliers([]); return; }
     try {
       const res = await apiFetch('/api/suppliers');
       const d = await res.json();
@@ -3124,7 +3260,7 @@ const updateStatus = async (orderId, newStatus) => {
     fetchStockTransfers(); if (action === 'release') fetchERPData();
   };
   const fetchArAgeing = async () => {
-    if (activeAdmin?.role !== 'superadmin') return;
+    if (activeAdmin?.role !== 'superadmin' && !auth.can('accounting.view')) return;
     try {
       const res = await apiFetch('/api/finance/ar-ageing');
       const data = await res.json();
@@ -3133,7 +3269,6 @@ const updateStatus = async (orderId, newStatus) => {
   };
   // ── REVOLVING FUND FETCHERS ─────────────────────────────────────────────────
   const fetchRfFunds = async () => {
-    if (activeAdmin?.role !== 'superadmin') return;
     setRfLoading(true);
     try {
       const res = await apiFetch('/api/revolving-funds');
@@ -3144,7 +3279,7 @@ const updateStatus = async (orderId, newStatus) => {
   };
 
   const fetchRfTxs = async (fundId, page = 1) => {
-    if (activeAdmin?.role !== 'superadmin') return;
+    if (activeAdmin?.role !== 'superadmin' && !auth.can('accounting.view')) return;
     try {
       const res = await apiFetch(`/api/revolving-funds/${fundId}/transactions?page=${page}&limit=20`);
       const data = await res.json();
@@ -3207,15 +3342,25 @@ const updateStatus = async (orderId, newStatus) => {
     if (!rfDisbForm.description.trim()) return ui.alert('Description is required.');
     setRfDisbSubmitting(true);
     try {
+      if (!can('funds.spend')) {
+        const slip = await (await apiFetch('/api/requisition-slips', {
+          method: 'POST',
+          body: JSON.stringify({ type: 'petty-cash', fundId: rfActiveFund._id, amount: amt, description: rfDisbForm.description.trim(), categoryCode: rfDisbForm.categoryCode, payee: (rfDisbForm.payee || '').trim(), refNo: (rfDisbForm.refNo || '').trim() }),
+        })).json();
+        if (!slip.success) return ui.alert(slip.error || 'Failed to file the requisition slip.');
+        setRfDisbModal(false);
+        ui.alert(`Requisition Slip ${slip.slip.slipNumber} filed. The fund is not touched until it is approved.`);
+        return;
+      }
       const res = await apiFetch(`/api/revolving-funds/${rfActiveFund._id}/disburse`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: amt, description: rfDisbForm.description.trim(), categoryCode: rfDisbForm.categoryCode }),
+        body: JSON.stringify({ amount: amt, description: rfDisbForm.description.trim(), categoryCode: rfDisbForm.categoryCode, payee: (rfDisbForm.payee || '').trim(), refNo: (rfDisbForm.refNo || '').trim() }),
       });
       const data = await res.json();
       if (!data.success) return ui.alert(data.error || 'Failed to disburse.');
       setRfDisbModal(false);
-      setRfDisbForm({ amount: '', description: '', categoryCode: '760000' });
+      setRfDisbForm({ amount: '', description: '', categoryCode: '760000', payee: '', refNo: '' });
       setRfFunds(prev => prev.map(f => f._id === data.fund._id ? data.fund : f));
       setRfActiveFund(data.fund);
       await fetchRfTxs(rfActiveFund._id, 1);
@@ -3226,7 +3371,7 @@ const updateStatus = async (orderId, newStatus) => {
   // Files a Requisition Slip instead of replenishing directly - unlike a
   // disbursement, this draws down a real cash/bank account, so the balance
   // doesn't move until someone with requisitions.approve signs off on
-  // Ledger → Approvals (see requisitions.js, type 'fund-replenish').
+  // Approvals (see requisitions.js, type 'fund-replenish').
   const submitRfRepl = async () => {
     if (rfReplSubmitting || !rfActiveFund) return;
     setRfReplSubmitting(true);
@@ -3282,7 +3427,7 @@ const updateStatus = async (orderId, newStatus) => {
       const data = await res.json();
       if (data.success) {
         setExpenseModal(false);
-        setExpenseForm({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', date: new Date().toISOString().slice(0,10) });
+        setExpenseForm({ amount: '', categoryCode: '', paymentMethod: 'Cash on Hand', description: '', vendor: '', claimInputVat: false, date: todayStr() });
         // Refresh the Expenses page list so the new entry appears immediately -
         // on a page (unlike the old popup) the result is visible right there.
         fetchExpenses();
@@ -3307,7 +3452,7 @@ const updateStatus = async (orderId, newStatus) => {
   const downloadExpenseImportTemplate = async () => {
     const XLSX = await import('xlsx');
     const headers = ['Ref No.', 'Date', 'Category', 'Total Amount', 'Payment', 'Paid To', 'Description'];
-    const sample = ['REC-00123', new Date().toISOString().slice(0, 10), (expenseCategories[0]?.label || 'Miscellaneous Expense'), 500, (activePaymentMethods[0]?.name || 'Cash on Hand'), 'Meralco', 'July electricity bill'];
+    const sample = ['REC-00123', todayStr(), (expenseCategories[0]?.label || 'Miscellaneous Expense'), 500, (activePaymentMethods[0]?.name || 'Cash on Hand'), 'Meralco', 'July electricity bill'];
     const ws = XLSX.utils.aoa_to_sheet([headers, sample]);
     ws['!cols'] = headers.map(h => ({ wch: Math.max(12, Math.min(28, h.length + 6)) }));
     // A reference sheet listing the exact category/payment labels this
@@ -3322,7 +3467,7 @@ const updateStatus = async (orderId, newStatus) => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Expenses');
     XLSX.utils.book_append_sheet(wb, legend, 'Valid Values');
-    XLSX.writeFile(wb, `expense-import-template-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `expense-import-template-${todayStr()}.xlsx`);
   };
 
   // { rows: [{ rowNum, refNo, date, categoryCode, categoryLabel, amount, paymentMethod, paymentMatched, vendor, description, status: 'ok'|'warn'|'error', message }], readyCount, warnCount, errorCount, totalAmount }
@@ -3343,11 +3488,13 @@ const updateStatus = async (orderId, newStatus) => {
       const col = (...names) => header.findIndex(h => names.includes(norm(h)));
       const cRef = col('refno', 'reference', 'refnumber');
       const cDate = col('date');
-      const cCat = col('category');
+      // categoryCode is the template's own header; Category is the older one.
+      const cCat = col('category', 'categorycode');
       const cAmt = col('totalamount', 'amount');
       const cPay = col('payment', 'paidfrom', 'paymentmethod');
       const cVendor = col('paidto', 'vendor');
       const cDesc = col('description');
+      const cWht = col('withholdingrate', 'withholding', 'ewtrate');
       if (cCat === -1 || cAmt === -1 || cPay === -1 || cDesc === -1) {
         return ui.alert('Could not find the Category, Total Amount, Payment, and Description columns - use the downloaded template as a starting point.');
       }
@@ -3380,6 +3527,7 @@ const updateStatus = async (orderId, newStatus) => {
         const amountRaw = row[cAmt];
         const vendor = cVendor >= 0 ? String(row[cVendor] ?? '').trim() : '';
         const description = String(row[cDesc] ?? '').trim();
+        const withholdingRate = cWht >= 0 && String(row[cWht] ?? '').trim() !== '' ? parseFloat(row[cWht]) : undefined;
         const category = findCategory(row[cCat]);
         const payment = findPayment(row[cPay]);
         const amount = parseFloat(amountRaw);
@@ -3388,11 +3536,11 @@ const updateStatus = async (orderId, newStatus) => {
         // sheet_to_json without cellDates gives numbers - handle both, plus a
         // plain typed string like "2026-08-01".
         let date = '';
-        if (dateRaw instanceof Date && !Number.isNaN(dateRaw.getTime())) date = dateRaw.toISOString().slice(0, 10);
+        if (dateRaw instanceof Date && !Number.isNaN(dateRaw.getTime())) date = dateStr(dateRaw);
         else if (typeof dateRaw === 'number') date = new Date(Math.round((dateRaw - 25569) * 86400 * 1000)).toISOString().slice(0, 10);
         else if (String(dateRaw ?? '').trim()) {
           const parsed = new Date(String(dateRaw).trim());
-          date = Number.isNaN(parsed.getTime()) ? String(dateRaw).trim() : parsed.toISOString().slice(0, 10);
+          date = Number.isNaN(parsed.getTime()) ? String(dateRaw).trim() : dateStr(parsed);
         }
         const dateInvalid = date && Number.isNaN(new Date(date).getTime());
 
@@ -3411,6 +3559,7 @@ const updateStatus = async (orderId, newStatus) => {
           amount: Number.isFinite(amount) ? amount : null,
           paymentMethod: payment.name, paymentMatched: payment.matched,
           vendor, description,
+          ...(Number.isFinite(withholdingRate) ? { withholdingRate } : {}),
           status: errors.length ? 'error' : (warnings.length ? 'warn' : 'ok'),
           message: [...errors, ...warnings].join('; '),
         });
@@ -3440,6 +3589,7 @@ const updateStatus = async (orderId, newStatus) => {
           rows: importable.map(r => ({
             amount: r.amount, categoryCode: r.categoryCode, paymentMethod: r.paymentMethod,
             description: r.description, vendor: r.vendor, refNo: r.refNo, date: r.date || undefined,
+            ...(r.withholdingRate !== undefined ? { withholdingRate: r.withholdingRate } : {}),
           })),
         }),
       });
@@ -3536,19 +3686,6 @@ const updateStatus = async (orderId, newStatus) => {
     } catch { setArHistory(null); ui.alert('Network error.'); }
     finally { setArHistoryLoading(false); }
   };
-  const downloadJournalCsv = async () => {
-    if (activeAdmin?.role !== 'superadmin') return;
-    try {
-      const res = await apiFetch(`/api/journal/export?start=${pnlRange.start}&end=${pnlRange.end}`);
-      const text = await res.text();
-      const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `journal_${pnlRange.start}_to_${pnlRange.end}.csv`;
-      a.click();
-      URL.revokeObjectURL(a.href);
-    } catch (err) { ui.alert('CSV export failed.'); }
-  };
 
   const printXReading = async () => {
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
@@ -3618,6 +3755,7 @@ const updateStatus = async (orderId, newStatus) => {
         return {
           qty: `${item.quantity}x`,
           name: item.name,
+          printName: item.printName || '',
           amount: (item.price + addOnTotal) * item.quantity,
           subLines: (item.selectedAddOns || []).map(a => ({ name: a.name, amount: Number(a.price || 0) })),
         };
@@ -3680,12 +3818,16 @@ const updateStatus = async (orderId, newStatus) => {
           order.customerPhone ? { label: 'Phone', value: order.customerPhone } : null,
           order.deliveryAddress ? { label: 'Address', value: order.deliveryAddress } : null,
           order.scheduledTime ? { label: 'Sched', value: order.scheduledTime } : null,
+          // The card the discount was granted against. Printed on the receipt
+          // because that is the copy the customer keeps and the examiner asks for.
+          order.scPwdName ? { label: order.scPwdKind === 'PWD' ? 'PWD Name' : 'SC Name', value: order.scPwdName } : null,
+          order.scPwdIdNumber ? { label: 'ID No.', value: order.scPwdIdNumber } : null,
           !order.isComplimentary ? { label: 'Payment', value: order.paymentMethod || 'Cash' } : null,
         ].filter(Boolean),
         lineItems,
         summaryRows,
         notes: order.orderNotes ? { title: 'SPECIAL INSTRUCTIONS', text: order.orderNotes } : null,
-        footerLines: [BUSINESS_TYPE === 'log' ? 'Thank you for your business!' : 'Thank you for dining with us!'],
+        footerLines: [THANKS_LINE],
         duplicate: dupe,
       });
     };
@@ -3826,6 +3968,19 @@ const updateStatus = async (orderId, newStatus) => {
     };
     socket.on('newOrder', onUsed);
 
+    // Scanned, but not yet ordered. The phone tells the server the moment the
+    // menu page opens; until this existed the code stayed on screen through the
+    // whole time the customer was browsing, so anyone else who scanned it
+    // landed on the SAME session - and whichever of them ordered first closed
+    // it under the other. The customer who scanned keeps their session (a new
+    // code is minted under a new table id and leaves theirs alone), so this
+    // only changes what the next person sees.
+    const onClaimed = (payload) => {
+      if (payload?.table !== autoTableId) return;
+      replace('That code was just scanned.');
+    };
+    socket.on('qrSessionClaimed', onClaimed);
+
     // The ten-minute lapse. Checked once a second so the countdown on screen
     // is honest, which is the point of showing it at all.
     const tick = setInterval(() => {
@@ -3834,7 +3989,7 @@ const updateStatus = async (orderId, newStatus) => {
       }
     }, 1000);
 
-    return () => { socket.off('newOrder', onUsed); clearInterval(tick); };
+    return () => { socket.off('newOrder', onUsed); socket.off('qrSessionClaimed', onClaimed); clearInterval(tick); };
     // handleShowQR is stable enough for this - it only reads apiFetch - and
     // adding it would re-subscribe on every render of a 6,000-line component.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3911,6 +4066,7 @@ const updateStatus = async (orderId, newStatus) => {
       if (data.success) {
         ui.alert('End of Day counts successfully locked and recorded.');
         setPhysicalCounts({});
+        setCountTouched({});
         setVarianceReasons({});
         setVarianceNoteMode({});
         fetchERPData(); // Refresh the live data
@@ -3923,7 +4079,7 @@ const updateStatus = async (orderId, newStatus) => {
     }
   };
 
-  const addInventory = async () => {
+  const addInventory = onceAtATime('inventory', async () => {
     // log: honour the chosen unit (defaulting to pcs) and per-qty size (default 1)
     // so a "10× 1L Milk" restock keeps its L unit and 1-per-pack size.
     const eff = BUSINESS_TYPE === 'log'
@@ -3969,13 +4125,22 @@ const updateStatus = async (orderId, newStatus) => {
         const pack = packInfo(existingItem);
         restockBase = qtyBought * (pack.packBase || 1);
       }
-      if (!(await ui.confirm(`Restock "${existingItem.itemName}"?\n\nQty: +${qtyBought} pcs\nCost per pack: ₱${costPerPack.toFixed(2)}\nTotal cost: ₱${totalCost.toFixed(2)}`))) return;
+      // The last thing read before stock changes, so it says what will actually
+      // be added. It used to read "+104 pcs" for 104 PACKS: a delivery of 104
+      // loose cups typed against a 50-cup sleeve went in as 5,200 cups, and
+      // this dialog confirmed it as though it were 104.
+      const perPack = parseFloat(invFormEff.unitPerPack) || 1;
+      const addedLine = perPack === 1
+        ? `+${qtyBought.toLocaleString()} ${invFormEff.unit}`
+        : `+${qtyBought.toLocaleString()} ${PACK_UNIT} x ${perPack.toLocaleString()} ${invFormEff.unit} = +${totalStockAdded.toLocaleString()} ${invFormEff.unit}`;
+      if (!(await ui.confirm(`Restock "${existingItem.itemName}"?\n\nAdding: ${addedLine}\nCost per pack: ₱${costPerPack.toFixed(2)}\nTotal cost: ₱${totalCost.toFixed(2)}`))) return;
       await apiFetch(`/api/inventory/restock/${existingItem._id}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           addedStock: restockBase, totalCost,
           expiryDate: invFormEff.expiryDate || null, productionDate: invFormEff.productionDate || null,
           creditAccount: invFormEff.creditAccount || '111000',
+          claimInputVat: invForm.claimInputVat === true,
           revolvingFundId: invFormEff.revolvingFundId || undefined,
           supplierId: invFormEff.supplierId || undefined,
           supplierName: invFormEff.supplierName || undefined,
@@ -4000,6 +4165,7 @@ const updateStatus = async (orderId, newStatus) => {
       };
 
       payload.creditAccount = invForm.creditAccount || '111000';
+      payload.claimInputVat = invForm.claimInputVat === true;
       if (invForm.revolvingFundId) payload.revolvingFundId = invForm.revolvingFundId;
       if (invForm.supplierId) payload.supplierId = invForm.supplierId;
       if (invForm.supplierName) payload.supplierName = invForm.supplierName;
@@ -4010,149 +4176,33 @@ const updateStatus = async (orderId, newStatus) => {
 
     setInvForm({ itemName: '', packQty: '', unitPerPack: '', unit: '', costPerPack: '', lowStockThreshold: '', expiryDate: '', productionDate: '', expiryWarnDays: 7, creditAccount: '111000', revolvingFundId: '', supplierId: '', supplierName: '', stockLocation: '', stockCategory: '' });
     fetchERPData();
-  };
+  });
   const deleteInventory = async (id) => { if(await ui.confirm('Delete inventory item?')) { await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' }); fetchERPData(); } };
 
   // --- OPEN EDIT INVENTORY MODAL: pre-fill from item ---
   // ============================================================
-  // UNITS DISPLAY HELPER - base ↔ display conversion (mirrors server/lib/units.js)
-  // ============================================================
-  const UNIT_TABLE = {
-    g:   { base: 'g',   mult: 1 },
-    kg:  { base: 'g',   mult: 1000 },
-    ml:  { base: 'ml',  mult: 1 },
-    L:   { base: 'ml',  mult: 1000 },
-    pcs: { base: 'pcs', mult: 1 },
-  };
-  const resolveUnitFE = (u) => {
-    if (!u) return { base: 'pcs', mult: 1 };
-    const k = String(u).trim();
-    if (UNIT_TABLE[k]) return UNIT_TABLE[k];
-    const low = k.toLowerCase();
-    if (['l','liter','litre'].includes(low)) return UNIT_TABLE.L;
-    if (['kg','kilogram'].includes(low))     return UNIT_TABLE.kg;
-    if (['g','gram'].includes(low))          return UNIT_TABLE.g;
-    if (['ml','milliliter'].includes(low))   return UNIT_TABLE.ml;
-    if (['pcs','pc','piece'].includes(low))  return UNIT_TABLE.pcs;
-    return { base: k, mult: 1 };
-  };
-  // Effective display unit + multiplier for any inventory item.
-  // FORCED RULE: never display g or ml - auto-promote to kg / L.
-  // Returns { unit, mult } - use everywhere that needs to convert base ↔ display.
-  const effectiveDisplay = (item) => {
-    const baseUnit = item.unit || '';
-    let displayUnit = item.displayUnit;
-    let mult = (item.unitMultiplier && item.unitMultiplier > 0) ? item.unitMultiplier : null;
-    if (!displayUnit || displayUnit === 'g' || displayUnit === 'ml') {
-      if (baseUnit === 'g')        { displayUnit = 'kg';  mult = mult || 1000; }
-      else if (baseUnit === 'ml')  { displayUnit = 'L';   mult = mult || 1000; }
-      else                          { displayUnit = baseUnit || 'pcs'; mult = mult || 1; }
-    }
-    return { unit: displayUnit, mult: mult || 1 };
-  };
-  // LOG 1:1 - the pack size (how much ONE purchased unit holds) drives cost-per-pack
-  // and the "count of packages" stock display. Prefer the persisted item.packSize
-  // field (set on import/edit - see server InventorySchema.packSize) since imports
-  // now STRIP the size hint out of the item name (e.g. "Milk 1L" → name "Milk",
-  // packSize 1). Only fall back to parsing the name for legacy items that still
-  // carry their size embedded in it (pre-packSize-field imports).
-  // unitCost is stored per base unit, so packCost = unitCost × packBaseUnits.
-  const PACK_RE = /(\d+(?:\.\d+)?)\s*(mg|kg|g|ml|cl|l|pcs|pc|pack|unit)\b/i;
-  const PACK_TO_BASE = { mg: 0.001, g: 1, kg: 1000, ml: 1, cl: 10, l: 1000, pcs: 1, pc: 1, pack: 1, unit: 1 };
-  // A pack under one whole kg/L reads better in the sub-unit: 0.377kg → 377g,
-  // 0.5L → 500ml. Only the display string changes; packBase (used for costing)
-  // stays in the stored unit. Math.round strips the ×1000 float noise
-  // (0.377 × 1000 = 377.0000…6).
-  const fmtPackLabel = (value, unit) => {
-    const v = Number(value);
-    const u = String(unit || '');
-    if (!Number.isFinite(v) || v <= 0) return `${value}${unit}`;
-    const ul = u.toLowerCase();
-    if (ul === 'kg' && v < 1) return `${Math.round(v * 1000 * 1000) / 1000}g`;
-    if (ul === 'l' && v < 1) return `${Math.round(v * 1000 * 1000) / 1000}ml`;
-    return `${v}${u}`; // ≥1 or already a sub-unit - keep the entered unit casing
-  };
-  const packInfo = (item) => {
-    if (item.packSize && item.packSize > 0) {
-      const { unit, mult } = effectiveDisplay(item);
-      const packBase = item.packSize * mult;
-      return { packBase, label: fmtPackLabel(item.packSize, unit), cost: (item.unitCost || 0) * packBase };
-    }
-    const mt = (item.itemName || '').match(PACK_RE);
-    const baseFactor = PACK_TO_BASE[(item.unit || '').toLowerCase()] || 1;
-    if (mt) {
-      const val = parseFloat(mt[1]);
-      const f = PACK_TO_BASE[mt[2].toLowerCase()];
-      if (f !== undefined && val > 0) {
-        const packBase = val * (f / baseFactor);
-        return { packBase, label: fmtPackLabel(mt[1], mt[2]), cost: (item.unitCost || 0) * packBase };
-      }
-    }
-    const { unit, mult } = effectiveDisplay(item);
-    return { packBase: mult, label: unit, cost: (item.unitCost || 0) * mult };
-  };
-  // Convenience: { qty, unit, cost } already converted to display.
-  const itemDisplay = (item) => {
-    const { unit, mult } = effectiveDisplay(item);
-    const pack = packInfo(item);
-    return {
-      qty:  (item.stockQty || 0) / mult,
-      unit,
-      cost: (item.unitCost || 0) * mult,
-      packCost: pack.cost,                                  // cost of one named pack (e.g. ₱200 for 250g)
-      packLabel: pack.label,                                // pack size label from the name (e.g. "250g")
-      packBase: pack.packBase,                              // base units in one package (e.g. 250)
-      packQty: pack.packBase ? (item.stockQty || 0) / pack.packBase : 0, // stock as a count of packages
-      // True only when a REAL pack size is known. packInfo() falls back to the
-      // plain display unit when there isn't one, in which case packQty/packCost
-      // already equal qty/cost - so the pack-first columns stay correct, but the
-      // unit must still read "kg", not "pcs".
-      isPacked: pack.label !== unit,
-    };
-  };
-  // Analytics display: for logistics, show pack-count (pcs) instead of kg/L -
-  // but ONLY when a real pack size is actually known (packSize field, or a
-  // size embedded in the item name like "250G"/"1L"). Without one, packInfo()
-  // silently falls back to effectiveDisplay's raw unit-conversion multiplier,
-  // which is NOT a piece count - labelling that number "pcs" prints the raw
-  // base-unit quantity (e.g. 59920 ml of milk) as if it were 59920 pieces.
-  // So an unconfigured item shows its real unit (kg/L/ml/g) instead, same as
-  // non-log businesses, until someone sets a pack size for it.
-  const analyticsDisplay = (item) => {
-    if (BUSINESS_TYPE === 'log') {
-      const pack = packInfo(item);
-      const { unit: rawUnit } = effectiveDisplay(item);
-      const isRealPack = pack.label !== rawUnit;
-      if (isRealPack) return { unit: 'pcs', mult: pack.packBase || 1 };
-    }
-    return effectiveDisplay(item);
-  };
-  // Pretty currency
-  const peso = (n) => `₱${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-
-  // ============================================================
   // BULK EXCEL/CSV IMPORT - Stock-take semantics
   // ============================================================
   const downloadImportTemplate = () => {
-    // LOG: each row is a packaged SKU. Put the pack size in the Product name
-    //   (…377G / …1L / …250G), Qty = number of packages (pure count, no unit),
-    //   Unit Cost = price per package. The importer multiplies the count by the
-    //   pack size and stores cost per base unit automatically.
-    // FB: Qty carries a unit (kg/L/pcs); Unit Cost = cost per display unit.
-    // Production date: for goods with no real expiry (roasted beans, etc.) -
-    // only fill this in when Expiry date is left blank on that row; the importer
-    // ignores it otherwise, same rule as receiving/import elsewhere in the app.
-    const csv = BUSINESS_TYPE === 'log'
-      ? 'Code,Product,Qty Unit,SRP,Unit Cost,Expiry date,Production date\n' +
-        ',ALASKA CONDENSED MILK 377G,100,77,50,2027-03-15,\n' +
-        ',ALASKA BARISTA MILK 1L,100,89,50,,\n' +
-        ',COMMERCIAL BLEND 1KG,100,950,200,,2026-08-01\n' +
-        ',FILTER ETHIOPIA - LIMU G2 250G,100,900,200,2026-12-31,\n'
-      : 'Code,Product,Qty Unit,Unit Cost,Expiry date,Production date\n' +
-        ',Milk 1L,10 L,70,2026-12-31,\n' +
-        ',Sugar 1kg,5 kg,100,,\n' +
-        ',Coffee Beans 1kg,1 kg,800,,2026-08-01\n' +
-        ',Cups (12oz),200 pcs,8,,\n';
+    // Everything on a row is per pack: Pack + Unit say what one pack is, Qty
+    // counts packs, and both prices are the price of one pack. Nothing has to
+    // be read out of the product name, which is where the old sheet's silent
+    // mistakes came from ("1 kilo" unreadable, "100pcs" a hundredfold out).
+    // An item sold loose has a blank Pack and its own unit.
+    // Production date: for goods with no real expiry (roasted beans) - only
+    // read when Expiry date is blank on that row.
+    const head = 'Code,Product,Pack,Unit,Qty (packs),Cost / pack,SRP / pack,Expiry date,Production date\n';
+    const csv = head + (BUSINESS_TYPE === 'log'
+      ? ',ALASKA CONDENSED MILK,377,g,100,50,77,2027-03-15,\n' +
+        ',ALASKA BARISTA MILK,1,L,100,50,89,,\n' +
+        ',COMMERCIAL BLEND,1,kg,100,200,950,,2026-08-01\n' +
+        ',FILTER ETHIOPIA - LIMU G2,250,g,100,200,900,2026-12-31,\n' +
+        ',PACKING TAPE,,pcs,40,35,60,,\n'
+      : ',Milk,1,L,10,70,,2026-12-31,\n' +
+        ',Sugar,1,kg,5,100,,,\n' +
+        ',Coffee Beans,1,kg,1,800,,,2026-08-01\n' +
+        ',Straw Small,100,pcs,5,150,,,\n' +
+        ',Cups 12oz,,pcs,200,8,,,\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -4161,8 +4211,13 @@ const updateStatus = async (orderId, newStatus) => {
     URL.revokeObjectURL(a.href);
   };
 
-  const parseImportFile = async (file) => {
+  // Set when the setup workbook hands its Inventory sheet over alongside an
+  // opening balance sheet: the stock is registered without posting, because
+  // its value is already on that balance sheet. Any other import resets it.
+  const importOpeningRef = useRef(false);
+  const parseImportFile = async (file, { opening = false } = {}) => {
     if (!file) return;
+    importOpeningRef.current = opening === true;
     try {
       const XLSX = await import('xlsx');
       const buf = await file.arrayBuffer();
@@ -4174,7 +4229,17 @@ const updateStatus = async (orderId, newStatus) => {
       // silently disabling that check (verified: it comes back completely absent,
       // not just unhelpful, unless this flag is set).
       const wb = XLSX.read(buf, { type: 'array', cellDates: true, cellNF: true });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
+      // Find the sheet that actually holds stock, instead of assuming it is the
+      // first. An Export All workbook opens on its Contents sheet, so taking
+      // sheet one made the app's own export impossible to import back. A stock
+      // sheet has a Product column plus Qty Unit or Unit Cost - which rules out
+      // Recipes (it has Product, but neither of the others) and Contents. A
+      // file with a single sheet, or none that match, behaves exactly as before.
+      const looksLikeStockSheet = (ws) => isStockSheetHeader(XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })[0]);
+      const stockSheetName = wb.SheetNames.find(n => /^(data|inventory)$/i.test(n) && looksLikeStockSheet(wb.Sheets[n]))
+        || wb.SheetNames.find(n => looksLikeStockSheet(wb.Sheets[n]))
+        || wb.SheetNames[0];
+      const sheet = wb.Sheets[stockSheetName];
       const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
       if (rows.length === 0) return ui.alert('No rows found in the file.');
 
@@ -4252,184 +4317,9 @@ const updateStatus = async (orderId, newStatus) => {
       // Anchoring strictly to end-of-string without this meant "MATCHA POWDER 1KG (NW)"
       // never matched at all (the "(NW)" broke the `$` anchor), silently dropping the
       // row from import (no unit could be inferred → filtered out with zero warning).
-      const PACK_SIZE_RE = /\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|L|l|ml|pcs|pc|piece)\b(\s*\([^)]*\))?\s*$/i;
-      // Strips ₱/commas/whitespace before parseFloat, so a currency- or
-      // thousands-formatted cell (e.g. "₱1,800.00") doesn't silently truncate
-      // at the first comma - parseFloat("1,800.00") alone reads as 1.
-      const parseNum = (v) => {
-        if (v === '' || v == null) return NaN;
-        if (typeof v === 'number') return v;
-        return parseFloat(String(v).replace(/[₱,\s]/g, ''));
-      };
-      const normalise = (r) => {
-        const lower = {};
-        for (const [k, v] of Object.entries(r)) lower[String(k).toLowerCase().trim()] = v;
-
-        // Parse trailing pack-size from product name.
-        // Capture both the number AND unit so we can compute total stock and unit cost per display unit.
-        // e.g. "FILTER PHIL 250G" → packQty=250, packRawUnit='g' → hintedUnit='kg', packSizeInDisplay=0.25
-        // e.g. "MONIN STRAWBERRY 750ML" → packQty=750, packRawUnit='ml' → hintedUnit='L', packSizeInDisplay=0.75
-        const rawProduct = String(lower.product || lower.itemname || lower.item || lower.name || '').trim();
-        const sizeMatch = rawProduct.match(PACK_SIZE_RE);
-        let cleanedName = rawProduct, hintedUnit = '', packSizeInDisplay = 1;
-        if (sizeMatch) {
-          const trailingNote = sizeMatch[3] ? sizeMatch[3].trim() : '';
-          cleanedName = (rawProduct.slice(0, sizeMatch.index).trim() + (trailingNote ? ' ' + trailingNote : '')).trim();
-          const packQty = parseFloat(sizeMatch[1]);
-          const rawU = sizeMatch[2].toLowerCase();
-          if (rawU === 'g') {
-            hintedUnit = 'kg'; packSizeInDisplay = packQty / 1000; // 250g → 0.25 kg
-          } else if (rawU === 'kg') {
-            hintedUnit = 'kg'; packSizeInDisplay = packQty;         // 1kg → 1 kg
-          } else if (rawU === 'ml') {
-            hintedUnit = 'L';  packSizeInDisplay = packQty / 1000; // 750ml → 0.75 L
-          } else if (rawU === 'l') {
-            hintedUnit = 'L';  packSizeInDisplay = packQty;         // 1L → 1 L
-          } else if (['pc', 'pcs', 'piece'].includes(rawU)) {
-            hintedUnit = 'pcs'; packSizeInDisplay = packQty;
-          }
-        }
-
-        // "Qty Unit" may be combined ("10 L") or just a number ("100") representing package count
-        let qty = 0, unitFromCol = '';
-        const qtyUnitCell = String(lower['qty unit'] || lower['qty/unit'] || lower['quantity unit'] || '').trim();
-        if (qtyUnitCell) {
-          const m = qtyUnitCell.match(/^([0-9.,]+)\s*[|/\s]*\s*([A-Za-z]+)$/);
-          if (m) {
-            qty = parseNum(m[1]) || 0;
-            unitFromCol = m[2];
-          } else {
-            const numOnly = parseNum(qtyUnitCell);
-            if (!isNaN(numOnly)) qty = numOnly;
-          }
-        }
-        if (!qty) qty = parseNum(lower.qty ?? lower.quantity ?? lower.stock ?? 0) || 0;
-        if (!unitFromCol) unitFromCol = String(lower.unit || lower.displayunit || '').trim();
-
-        // Normalise any unit that came directly from the column
-        if (unitFromCol.toLowerCase() === 'g') unitFromCol = 'kg';
-        else if (unitFromCol.toLowerCase() === 'ml') unitFromCol = 'L';
-        else if (unitFromCol.toLowerCase() === 'l') unitFromCol = 'L';
-
-        let unit = unitFromCol;
-
-        // When the Qty column is a pure package count (no unit in column), multiply by pack size.
-        // e.g. 100 packs × 0.25 kg/pack = 25 kg total.
-        if (!unitFromCol && hintedUnit && packSizeInDisplay > 0) {
-          qty = qty * packSizeInDisplay;
-          unit = hintedUnit;
-        } else if (!unit && hintedUnit) {
-          unit = hintedUnit;
-        }
-
-        // Nothing to go on - no Unit column, no parseable size in the name. Don't
-        // drop the row: default to pcs (no per-pack conversion needed) so the item
-        // still gets created/updated, and flag it so it's clearly marked "SET SIZE"
-        // for the user to fix later, same badge already used in the inventory list.
-        const needsSize = !unit;
-        if (needsSize) unit = 'pcs';
-
-        // Excel date cells arrive here in one of three shapes:
-        //  - a JS Date (cellDates:true recognized the cell's own date number-format)
-        //  - a raw serial day-number (Excel's 1899-12-30 epoch) when the cell holds a
-        //    date-looking value but ISN'T tagged with a date format - cellDates:true
-        //    can't convert what the file itself doesn't mark as a date, so this still
-        //    shows up as a bare number like 46572 and must be converted by hand
-        //  - plain text, when the cell was typed/formatted as text
-        // Stringifying a raw serial without this conversion is exactly what produced
-        // "1/1/46572" instead of 4/7/2027 - the number was read as a literal year.
-        const toDateStr = (v) => {
-          if (v === '' || v == null) return '';
-          if (v instanceof Date) {
-            // cellDates:true builds this Date from a LOCAL wall-clock construction
-            // (verified empirically against this exact xlsx version - NOT the UTC
-            // construction some docs describe), so reading it back with
-            // .toISOString() (UTC getters) silently rolls the date back a day for
-            // any timezone ahead of UTC - e.g. Nov 1 (Philippines, UTC+8) became
-            // Oct 31. Local getters undo exactly what was baked in, correctly,
-            // regardless of the viewer's own timezone.
-            if (isNaN(v.getTime())) return '';
-            const yr = v.getFullYear(), mo = String(v.getMonth() + 1).padStart(2, '0'), da = String(v.getDate()).padStart(2, '0');
-            return `${yr}-${mo}-${da}`;
-          }
-          if (typeof v === 'number') {
-            // Pure UTC day-count arithmetic (Excel's serial has no timezone concept
-            // at all) - self-consistent with .toISOString() below regardless of
-            // viewer timezone, unlike the Date-object branch above. Do not "fix"
-            // this one the same way; it isn't broken.
-            const d = new Date(Math.round((v - 25569) * 86400 * 1000));
-            return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
-          }
-          let s = String(v).trim();
-          // A 2-digit year in a typed/text cell (e.g. "9/21/27") is read by
-          // JS Date parsing as 19xx, not 20xx - new Date("9/21/27") is Sept 1927,
-          // not 2027. Expand it before anything else touches this string.
-          // Pivot at 50, same convention spreadsheets themselves use.
-          const m2 = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2})$/);
-          if (m2) {
-            const yy = parseInt(m2[3], 10);
-            s = `${m2[1]}/${m2[2]}/${yy < 50 ? 2000 + yy : 1900 + yy}`;
-          }
-          // Every date column in these sheets is MM/DD/YYYY (confirmed - not
-          // DD/MM). Convert straight to an unambiguous ISO YYYY-MM-DD here
-          // instead of handing the raw "M/D/YYYY" text down the pipe for
-          // something else to interpret later: `new Date("9/1/2026")` reads
-          // as MM/DD in most engines, but the app also re-parses this same
-          // string on the server, in preview diffing, and in date-string
-          // comparisons - any one of those going through a differently
-          // configured Date parser silently flips month/day (9/1 → Jan 9
-          // instead of Sept 1). Doing the MM/DD→ISO conversion explicitly,
-          // once, here, removes that ambiguity everywhere downstream.
-          const m3 = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-          if (m3) {
-            const mo = parseInt(m3[1], 10), da = parseInt(m3[2], 10), yr = parseInt(m3[3], 10);
-            if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) {
-              s = `${yr}-${String(mo).padStart(2, '0')}-${String(da).padStart(2, '0')}`;
-            }
-          }
-          return s;
-        };
-
-        const exp = lower['expiry date'] || lower['expiry'] || lower['expirydate'] || '';
-        const expStr = toDateStr(exp);
-
-        // Production date - for goods with no real expiry (roasted beans, etc.).
-        // Only meaningful when there's no expiry on the row.
-        const prod = lower['production date'] || lower['production'] || lower['prod date'] || lower['proddate'] || lower['roast date'] || lower['roastdate'] || '';
-        const prodStr = expStr ? '' : toDateStr(prod);
-
-        // SRP - strip ₱ symbol and commas
-        const rawSrpCell = lower.srp ?? lower['selling price'] ?? lower['retail price'] ?? '';
-        const srp = (rawSrpCell === '' || rawSrpCell == null) ? '' : parseNum(rawSrpCell);
-
-        // Excel unit cost is per package. Convert to cost per display unit.
-        // e.g. 200 per 250g pack → 200 / 0.25 kg = 800 per kg.
-        const rawUnitCostCell = (lower['unit cost'] === '' || lower['unit cost'] == null)
-          ? (lower.unitcost === '' || lower.unitcost == null ? '' : lower.unitcost)
-          : lower['unit cost'];
-        const rawUnitCost = rawUnitCostCell === '' ? '' : parseNum(rawUnitCostCell);
-        const unitCost = (rawUnitCost !== '' && !isNaN(rawUnitCost) && !unitFromCol && hintedUnit && packSizeInDisplay > 0)
-          ? rawUnitCost / packSizeInDisplay
-          : rawUnitCost;
-
-        return {
-          itemCode: String(lower.code || lower.itemcode || '').trim(),
-          itemName: cleanedName,
-          displayUnit: unit,
-          qty,
-          unitCost,
-          expiryDate: expStr,
-          productionDate: prodStr,
-          srp,
-          // Per-qty (pack) size parsed from the name, e.g. "Milk 1L" → packSize 1.
-          // null when the name carried no size hint (nothing to persist).
-          packSize: sizeMatch ? packSizeInDisplay : null,
-          // No unit/size could be determined anywhere - imported as pcs, but flagged
-          // so the preview (and later the inventory list's SET SIZE badge) tells the
-          // user this item still needs its real size added.
-          _needsSize: needsSize,
-        };
-      };
+      // Row reading is shared with the round-trip tests (shared/importSheets),
+      // so what the tests prove is what this import actually does.
+      const normalise = normaliseInventoryRow;
 
       // Diff against current inventory for preview
       // Track category from header rows (rows where code = category name, product = empty)
@@ -4441,8 +4331,12 @@ const updateStatus = async (orderId, newStatus) => {
       // so the preview's numbers match what actually gets posted. `qty` here is
       // the running projected total (base units) after each row for that item.
       const projected = new Map(); // importKey -> { existing: itemOrNull, qty }
+      // Which columns fed which field, from the sheet's own header. Shown in
+      // the preview so nobody has to guess how a row was read.
+      const columnsRead = describeSheetColumns(rows[0] || {});
       const previewed = rows.map((raw, rowIdx) => {
         const r = normalise(raw);
+        r._columns = columnsRead;
         // Apply the recovered MM/DD date in place of a day-first-corrupted one
         // BEFORE anything below diffs r.expiryDate against the existing item -
         // doing this after that comparison (as a later .map pass) would let the
@@ -4452,15 +4346,25 @@ const updateStatus = async (orderId, newStatus) => {
           if (dateWarn.corrected) r[dateWarn.field] = dateWarn.corrected;
           r._dateFormatWarn = dateWarn;
         }
-        // Category header row: no itemName but code column has a plain word (not a product code)
+        // Section row: a name with nothing else on the line. Written in the
+        // Code column ("COFFEE & TEA" with no Product), or - as people
+        // naturally type it - in the Product column with the rest blank.
         if (!r.itemName) {
-          const looksLikeCategoryHeader = r.itemCode && !/^[A-Z]\d+$/i.test(r.itemCode);
+          const looksLikeCategoryHeader = isCategoryHeaderCode(r.itemCode);
           if (looksLikeCategoryHeader) {
             currentCategory = r.itemCode;
             return { ...r, _isCategory: true, category: r.itemCode };
           }
           return { ...r, _error: 'Missing itemName' };
         }
+        if (isSectionRow(r)) {
+          currentCategory = r.itemName;
+          return { ...r, _isCategory: true, category: r.itemName };
+        }
+        // No quantity at all: a count sheet leaves a line blank when it was not
+        // counted. Skipped rather than counted as zero - which would book the
+        // whole item as a loss. Typing 0 counts zero.
+        if (r._noQty) return { ...r, _skipped: 'no quantity - not counted' };
         r.category = currentCategory;
         const resolved = resolveUnitFE(r.displayUnit);
         const newBaseQty = r.qty * resolved.mult;
@@ -4506,7 +4410,7 @@ const updateStatus = async (orderId, newStatus) => {
 
   const submitImport = async () => {
     if (importSubmitting) return;
-    const validRows = importRows.filter(r => !r._error && !r._isCategory && r.itemName && r.displayUnit);
+    const validRows = importRows.filter(r => !r._error && !r._isCategory && !r._skipped && r.itemName && r.displayUnit);
     if (validRows.length === 0) return ui.alert('No valid rows to import.');
     if (!(await ui.confirm({
       title: 'Replace stock from import?',
@@ -4524,20 +4428,7 @@ const updateStatus = async (orderId, newStatus) => {
       setImportProgress(Math.round(prog));
     }, 120);
     try {
-      const payload = {
-        items: validRows.map(r => ({
-          itemCode: r.itemCode || undefined,
-          itemName: r.itemName,
-          displayUnit: r.displayUnit,
-          qty: r.qty,
-          unitCost: r.unitCost === '' || r.unitCost === undefined ? undefined : r.unitCost,
-          expiryDate: r.expiryDate || undefined,
-          productionDate: r.productionDate || undefined,
-          category: r.category || undefined,
-          srp: r.srp === '' || r.srp === undefined ? undefined : r.srp,
-          packSize: r.packSize == null ? undefined : r.packSize,
-        }))
-      };
+      const payload = { ...inventoryImportPayload(validRows), ...(importOpeningRef.current ? { opening: true } : {}) };
       const res = await apiFetch('/api/inventory/import', {
         method: 'POST',
         body: JSON.stringify(payload)
@@ -4634,6 +4525,141 @@ const updateStatus = async (orderId, newStatus) => {
   }));
   // Drafts the server built: base size + extra sizes, each with its own recipe.
   const rsDrafts = (rsPreview?.drafts || []).filter(d => !d.needsReview);
+
+  // ── Coded menu sheet (F&B) ──────────────────────────────────────────────
+  // A stricter sheet than the barista workbook above: one row per size, and
+  // every ingredient named by its stock CODE with the quantity in the column
+  // beside it. Read and reviewed before anything is written, same as the rest.
+  const [msFile, setMsFile] = useState(null);
+  const [msPreview, setMsPreview] = useState(null);
+  const [msBusy, setMsBusy] = useState(false);
+
+  const closeMenuSheet = () => { setMsFile(null); setMsPreview(null); };
+
+  const openMenuSheet = async (file) => {
+    if (!file) return;
+    setMsBusy(true); setMsPreview(null);
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      // The first sheet only: this format is one table, not a workbook of them.
+      const first = wb.SheetNames[0];
+      // raw:true so a cell Excel turned into a date arrives as its serial and
+      // can be read back - formatted text would have lost the numbers.
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[first], { header: 1, defval: '', raw: true });
+      setMsFile({ name: file.name, sheet: first, rows: rows.length });
+      const res = await apiFetch('/api/products/menu-sheet/parse', { method: 'POST', body: JSON.stringify({ rows }) });
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Could not read that sheet.'); return; }
+      setMsPreview(d);
+    } catch (err) {
+      console.error('menu sheet', err);
+      ui.alert('Could not read that file.');
+    } finally { setMsBusy(false); }
+  };
+
+  const submitMenuSheet = async () => {
+    if (!msPreview) return;
+    setMsBusy(true);
+    try {
+      // Sent as the same rows the menu importer already takes, so the linking,
+      // unit conversion and category creation all happen in one place.
+      const rows = msPreview.products.map(p => ({
+        name: p.name, srp: p.srp, category: p.category,
+        // The sheet's first row for a drink is its base size; the rest are
+        // extras. Sending them any other way puts that size on the menu twice.
+        baseSize: p.baseSize,
+        ingredients: p.ingredients,
+        sizes: p.sizes.map(sz => ({ name: sz.name, price: sz.price, ingredients: sz.ingredients })),
+      }));
+      // Every row of this sheet is a size, so what it does NOT list, the
+      // product should not have. Otherwise a drink that lost a size keeps it.
+      const res = await apiFetch('/api/products/import-menu', { method: 'POST', body: JSON.stringify({ rows, replaceSizes: true }) });
+      const d = await res.json();
+      if (!d.success) { ui.alert(d.error || 'Import failed.'); return; }
+      closeMenuSheet();
+      fetchERPData();
+      ui.alert(`${d.created} product(s) created, ${d.updated} updated.${(d.unmatchedIngredients || []).length ? `\n\nNot linked to stock: ${d.unmatchedIngredients.join(', ')}` : ''}`);
+    } catch { ui.alert('Network error.'); }
+    finally { setMsBusy(false); }
+  };
+
+  // ── Who is at the screen ────────────────────────────────────────────────
+  // One tablet, several people. A password between drinks is friction nobody
+  // absorbs, so a short PIN hands the terminal over instead. It only ever
+  // identifies: what the person may do still comes from their role.
+  const [switchOpen, setSwitchOpen] = useState(false);
+  const [operators, setOperators] = useState([]);
+  const [switchPin, setSwitchPin] = useState('');
+  const [switchName, setSwitchName] = useState('');
+  const [switchBusy, setSwitchBusy] = useState(false);
+  const [switchError, setSwitchError] = useState('');
+  // Locked: the register is shut until somebody says who they are. Unlike the
+  // ordinary switch, this one cannot be waved away, because the whole point is
+  // that the next sale cannot be rung anonymously.
+  const [switchLocked, setSwitchLocked] = useState(false);
+
+  const openSwitch = async ({ locked = false } = {}) => {
+    setSwitchLocked(locked === true);
+    setSwitchOpen(true); setSwitchPin(''); setSwitchName(''); setSwitchError('');
+    try {
+      const d = await (await apiFetch('/api/users/operators')).json();
+      if (d.success) setOperators(d.operators || []);
+    } catch { /* the keypad still works without the name list */ }
+  };
+
+  const submitSwitch = async (pin = switchPin) => {
+    if (!/^\d{4,6}$/.test(pin)) { setSwitchError('Enter your 4 to 6 digit PIN.'); return; }
+    setSwitchBusy(true); setSwitchError('');
+    try {
+      const res = await apiFetch('/api/users/switch', {
+        method: 'POST',
+        body: JSON.stringify({ pin, name: switchName || undefined }),
+      });
+      const d = await res.json();
+      if (!d.success) { setSwitchError(d.error || 'That PIN was not recognised.'); setSwitchPin(''); return; }
+      // A real session for that person, so every screen and every sale from
+      // here on is theirs without any special handling. Same two steps login
+      // takes; the shift and the drawer are deliberately untouched, because the
+      // till did not change hands, only the person ringing on it.
+      auth.setToken(d.token);
+      auth.setUser(d.user);
+      setActiveAdmin(d.user);
+      // Whether THIS person is clocked in. The till did not change hands but
+      // the person did, and clock status is theirs: without this the screen
+      // kept the previous person's status and put a clock-in gate in front of
+      // someone the server already had clocked in.
+      setClockStatusLoaded(false);
+      fetchClockStatus();
+      reconnectSocket();
+      setSwitchLocked(false);
+      setSwitchOpen(false);
+      ui.toast?.(`${d.user.name} is now at the register.`, { tone: 'success' });
+    } catch { setSwitchError('Could not switch. Check the connection.'); }
+    finally { setSwitchBusy(false); }
+  };
+
+  // Lock the register once a sale is rung, when the shop has asked for that.
+  //
+  // It guarantees attribution - nobody can ring a second drink under the last
+  // person's name - at the cost of a PIN on every sale, which is why it is off
+  // unless somebody deliberately turns it on.
+  //
+  // It only ever locks when somebody can actually unlock it. With the setting
+  // on and no PINs issued yet, locking would shut the till mid-service with no
+  // way back in short of signing out, so an empty operator list means the
+  // register simply stays open.
+  const lockRegisterAfterSale = async () => {
+    if (systemSettings.askOperatorEachSale !== true) return;
+    try {
+      const d = await (await apiFetch('/api/users/operators')).json();
+      const list = d?.success ? (d.operators || []) : [];
+      if (!list.length) return;
+      setOperators(list);
+      setSwitchPin(''); setSwitchName(''); setSwitchError('');
+      setSwitchLocked(true); setSwitchOpen(true);
+    } catch { /* a failed check must never lock a till nobody can reopen */ }
+  };
 
   const openRecipeSheet = async (file) => {
     if (!file) return;
@@ -4734,38 +4760,23 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       const XLSX = await import('xlsx');
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: 'array' });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      // Find the menu sheet instead of assuming it is the first. An Export All
+      // workbook opens on its Contents sheet, so taking sheet one made the
+      // app's own Recipes export impossible to import back. A menu sheet has
+      // both a Product and an Ingredient column.
+      const isMenuSheet = (ws) => isMenuSheetHeader(XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })[0]);
+      const sheetName = wb.SheetNames.find(n => /^(data|recipes)$/i.test(n) && isMenuSheet(wb.Sheets[n]))
+        || wb.SheetNames.find(n => isMenuSheet(wb.Sheets[n]))
+        || wb.SheetNames[0];
+      const rawRows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '' });
       if (rawRows.length === 0) return ui.alert('No rows found in the file.');
 
-      // Group consecutive/matching rows by Product name into one entry per drink.
-      const byName = new Map(); // lowercased name -> row
-      const order = [];
-      for (const r of rawRows) {
-        const name = String(r.Product || r.product || '').trim();
-        if (!name) continue;
-        const key = name.toLowerCase();
-        const srp = Number(r.SRP ?? r.srp ?? '');
-        const ingName = String(r.Ingredient || r.ingredient || '').trim();
-        const qty = Number(r.Qty ?? r.qty ?? 0);
-        const unit = String(r.Unit || r.unit || '').trim();
-        if (!byName.has(key)) {
-          byName.set(key, { category: String(r.Category || r.category || 'Uncategorized').trim(), name, srp: isNaN(srp) ? 0 : srp, ingredients: [] });
-          order.push(key);
-        }
-        const entry = byName.get(key);
-        if (!isNaN(srp) && srp > 0) entry.srp = srp; // last non-empty SRP on the group wins
-        if (ingName) {
-          const matched = matchMenuIngredient(ingName, unit);
-          entry.ingredients.push({ name: ingName, qty, unit, _matched: !!matched, _matchName: matched?.itemName || null });
-        }
-      }
-      const rows = order.map(k => byName.get(k));
-      setMenuImportRows(rows);
+      // Grouping is shared with the round-trip tests (shared/importSheets).
+      setMenuImportRows(groupMenuRows(rawRows, matchMenuIngredient));
       setMenuImportModal(true);
     } catch (err) {
       console.error('parseMenuImportFile', err);
-      ui.alert('Failed to parse file. Make sure it is a valid .xlsx, .xls, or .csv with columns: Category, Product, SRP, Ingredient, Qty, Unit');
+      ui.alert('Failed to parse file. Make sure it is a valid .xlsx, .xls, or .csv with columns: Category, Product, SRP, Ingredient, Qty, Unit (and optionally Size).');
     }
   };
 
@@ -4808,7 +4819,12 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       // A template ships one worked example rather than a bare header row: the
       // shape of a real entry is easier to copy than to describe.
       const dataRows = template && d.example ? [d.example] : d.rows;
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([d.columns, ...dataRows]), 'Data');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([d.columns, ...dataRows]), d.sheetName || 'Data');
+      // A dataset that comes back with more than one sheet (Orders + its lines),
+      // so the file can be imported straight back.
+      if (!template) for (const x of (d.extraSheets || [])) {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([x.columns, ...(x.rows || [])]), x.name);
+      }
 
       if (template) {
         // What each column means, and which ones cannot be left blank.
@@ -4849,7 +4865,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         }
       }
 
-      const stamp = new Date().toISOString().slice(0, 10);
+      const stamp = todayStr();
       XLSX.writeFile(wb, `${(label || d.label || dataset).replace(/[^\w-]+/g, '-')}-${template ? 'template' : stamp}.xlsx`);
       if (d.truncated) {
         ui.alert(`Only the first ${d.limit} rows were exported - narrow the date range for the rest.`);
@@ -4868,9 +4884,426 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       const XLSX = await import('xlsx');
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([d.columns, ...d.rows]), 'Account Balances');
-      XLSX.writeFile(wb, `account-balances-${asOf || new Date().toISOString().slice(0, 10)}.xlsx`);
+      XLSX.writeFile(wb, `account-balances-${asOf || todayStr()}.xlsx`);
     } catch { ui.alert('Network error during export.'); }
     finally { setExportBusy(''); }
+  };
+
+  // ── EXPORT EVERYTHING ──────────────────────────────────────────────────────
+  // One action for "give me all of it". Tabular data becomes a single workbook
+  // with a sheet per dataset, because a dozen separate .xlsx files in a
+  // downloads folder is not an archive anyone can use. The two streamed CSV
+  // reports (journal, audit log) stay separate files - they are row-per-line
+  // ledgers with their own date semantics, and folding them into the workbook
+  // would misrepresent them as just another dataset.
+  //
+  // A Contents sheet leads, listing every dataset with its row count and
+  // whether it hit the server's row cap. Without it a truncated sheet looks
+  // exactly like a complete one.
+  const [exportAllBusy, setExportAllBusy] = useState('');
+  // { done, total, label } while an export runs. Counts finished steps - each
+  // dataset, reference sheet and CSV is one - so the bar reports real work
+  // rather than animating to reassure.
+  const [exportProgress, setExportProgress] = useState(null);
+  // The dataset registry, so the export screen can offer each one as a
+  // checkbox instead of an all-or-nothing button.
+  const [exportDatasets, setExportDatasets] = useState(null);
+  const fetchExportDatasets = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/export/datasets');
+      const d = await r.json();
+      setExportDatasets(d.success ? (d.datasets || []) : []);
+    } catch { setExportDatasets([]); }
+  }, [apiFetch]);
+
+  // ── LEDGER REPORTS AS PDF ─────────────────────────────────────────────────
+  // The journal and the audit log are REPORTS - read by an owner, an
+  // accountant, the BIR - so they come out as PDF, never CSV. The server still
+  // streams them as CSV (bounded to a date range, one row per posting, never
+  // held in memory whole); this lays that stream out as a printable report.
+  // One builder, used by Export and by the Audit Report tab.
+  // Returns { ok, lines, file } or { ok: false, error } - never throws, so a
+  // caller can report a failure in its own words.
+  const buildLedgerReportPdf = async (kind, { start, end, action, actor } = {}) => {
+    const spec = LEDGER_REPORT_SPEC[kind];
+    if (!spec) return { ok: false, error: 'unknown report' };
+    try {
+      const qs = new URLSearchParams({ start, end });
+      if (action && action !== 'all') qs.set('action', action);
+      if (actor) qs.set('actor', actor);
+      const res = await apiFetch(`${spec.path}?${qs.toString()}`);
+      const text = await res.text();
+      // A refused export (a range past the one-quarter cap, say) comes back as
+      // JSON; say why instead of building a PDF of an error message.
+      if (!res.ok || text.trim().startsWith('{')) {
+        let msg = 'export failed';
+        try { msg = JSON.parse(text).error || msg; } catch { /* keep default */ }
+        return { ok: false, error: msg };
+      }
+      // Rows, totals and the empty case come from shared/ledgerReport.
+      const table = ledgerReportTable(kind, text, pdfMoney);
+      const { jsPDF, autoTable } = await loadPdfLibs();
+      const doc = new jsPDF({ orientation: 'landscape' });
+      await addLogoToPDF(doc);
+      const mid = doc.internal.pageSize.getWidth() / 2;
+      const filters = [action && action !== 'all' ? `action: ${action}` : '', actor ? `user: ${actor}` : ''].filter(Boolean).join(', ');
+      doc.setFontSize(16); doc.text(BIZ_NAME, mid, 15, { align: 'center' });
+      doc.setFontSize(10); doc.text(spec.title, mid, 22, { align: 'center' });
+      doc.setFontSize(9); doc.text(`${start} to ${end}  -  ${table.lines} line(s)${filters ? `  -  ${filters}` : ''}`, mid, 28, { align: 'center' });
+      autoTable(doc, {
+        startY: 34,
+        head: table.head,
+        body: table.body,
+        ...(table.foot ? { foot: table.foot, showFoot: 'lastPage' } : {}),
+        styles: { fontSize: 7, cellPadding: 1.5 },
+        headStyles: { fillColor: [30, 30, 30] },
+        footStyles: { fillColor: [30, 30, 30], textColor: 255, fontStyle: 'bold' },
+        columnStyles: spec.columnStyles || {},
+      });
+      const file = `${spec.filePrefix}_${start}_to_${end}.pdf`;
+      doc.save(file);
+      return { ok: true, lines: table.lines, file };
+    } catch {
+      return { ok: false, error: 'could not build the PDF' };
+    }
+  };
+
+  // `datasets`: keys to include, or null for all of them.
+  // `reports`:  any of journal, auditlog (their own CSV files) and
+  //             accountBalances, validValues (sheets in the workbook).
+  // Either list may be empty, which is how "datasets only" and "reports only"
+  // work. Tabular data goes in one workbook led by a Contents sheet; the two
+  // streamed ledgers stay separate files, because they are row-per-posting
+  // records with their own date rules, not just another table.
+  // ── FULL BACKUP ───────────────────────────────────────────────────────────
+  // The dataset exports above are reports: chosen columns, derived figures, for
+  // a person to read. They cannot rebuild the system - no ids, no settings, no
+  // counters - so restoring from one leaves a database that looks similar and
+  // behaves differently.
+  //
+  // This is the other thing: every document of every collection in ONE
+  // workbook, one sheet per collection. Each row carries the document itself in
+  // __doc (split across __doc2, __doc3… when a document is longer than a cell
+  // can hold), which is what Restore reads back. The readable columns beside it
+  // are there so the file is still worth opening by hand.
+  const BACKUP_CELL = 30000;   // Excel's own limit is 32,767 characters
+  const BACKUP_PAGE = 1000;    // records per read, so no single response is huge
+  const BACKUP_RESTORE_SLICE = 250;  // records per write, well inside the 10MB body limit
+  const BACKUP_HUGE = 100000;  // past this, a server-side dump is the better tool
+  const [backupBusy, setBackupBusy] = useState('');
+  // { done, total, label } while a backup or restore runs. Counts records, so
+  // the bar tracks real work rather than animating to reassure.
+  const [backupProgress, setBackupProgress] = useState(null);
+
+  const downloadFullBackup = async () => {
+    if (backupBusy) return;
+    setBackupBusy('Counting records…');
+    setBackupProgress(null);
+    try {
+      // What is here, before reading any of it - so the progress figure is real
+      // and a big database can be warned about before the wait starts.
+      const sumRes = await apiFetch('/api/backup/summary');
+      const summary = await sumRes.json();
+      if (!summary.success) { ui.alert(summary.error || 'Could not read the database.'); return; }
+      if (summary.documents > BACKUP_HUGE && !(await ui.confirm(
+        `This database holds ${summary.documents.toLocaleString()} records. Building the file in the browser may take a while and needs a lot of memory.`
+        + String.fromCharCode(10, 10)
+        + 'For a database this size a server-side dump (scripts/backup-mongo.sh) is the safer tool. Carry on anyway?'))) return;
+
+      // Read a page at a time. The whole database never sits in one response,
+      // and the count moves while it works.
+      const snap = { takenAt: new Date(), businessType: summary.businessType, format: 1, documents: 0, collections: [] };
+      let read = 0;
+      for (const { name, count } of summary.collections) {
+        const docs = [];
+        for (let skip = 0; skip < count; skip += BACKUP_PAGE) {
+          setBackupBusy(`Reading ${name}…`);
+          setBackupProgress({ done: read, total: summary.documents, label: name });
+          const r = await apiFetch(`/api/backup/snapshot?collection=${encodeURIComponent(name)}&skip=${skip}&limit=${BACKUP_PAGE}`);
+          const d = await r.json();
+          if (!d.success) { ui.alert(d.error || `Could not read ${name}.`); return; }
+          docs.push(...d.docs);
+          read += d.docs.length;
+          if (d.done) break;
+        }
+        snap.documents += docs.length;
+        snap.collections.push({ name, count: docs.length, docs });
+      }
+
+      setBackupBusy('Building the workbook…');
+      setBackupProgress({ done: snap.documents, total: snap.documents, label: 'Writing the file' });
+      const XLSX = await import('xlsx');
+      const wb = XLSX.utils.book_new();
+
+      // A contents sheet first, so whoever opens the file knows what it is,
+      // when it was taken, and what it holds.
+      const contents = [
+        ['SEMIVRA FULL BACKUP'],
+        ['Taken', new Date(snap.takenAt).toLocaleString()],
+        ['Business type', snap.businessType],
+        ['Format', snap.format],
+        ['Documents', snap.documents],
+        [],
+        ['This file can be restored: Ledger → Export All → Restore backup.'],
+        ['Each sheet is one collection. The __doc column holds the record itself - do not edit it by hand.'],
+        [],
+        ['Collection', 'Rows'],
+        ...snap.collections.map(c => [c.name, c.count]),
+      ];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(contents), 'Contents');
+
+      for (const col of snap.collections) {
+        // A sheet per collection, even an empty one: restoring then knows the
+        // collection was empty rather than missing from the backup.
+        const rows = col.docs.map(doc => {
+          const json = JSON.stringify(doc);
+          const row = {
+            _id: String(doc._id || ''),
+            // One human-readable handle, whichever the document happens to have.
+            summary: doc.orderNumber || doc.reference || doc.name || doc.itemName || doc.billNumber
+              || doc.reservationNumber || doc.advanceNumber || doc.voucherNumber || doc.key || doc.username || '',
+            date: doc.date || doc.createdAt || '',
+          };
+          for (let i = 0; i * BACKUP_CELL < json.length; i++) {
+            row[i === 0 ? '__doc' : `__doc${i + 1}`] = json.slice(i * BACKUP_CELL, (i + 1) * BACKUP_CELL);
+          }
+          return row;
+        });
+        const sheet = XLSX.utils.json_to_sheet(rows.length ? rows : [{ _id: '', summary: '', date: '', __doc: '' }]);
+        // Sheet names are capped at 31 characters by the format itself.
+        XLSX.utils.book_append_sheet(wb, sheet, col.name.slice(0, 31));
+      }
+
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+      XLSX.writeFile(wb, `semivra-backup-${snap.businessType}-${stamp}.xlsx`);
+      ui.alert(`Backup saved: ${snap.documents.toLocaleString()} record(s) across ${snap.collections.length} collections.`);
+    } catch (err) {
+      console.error('downloadFullBackup', err);
+      ui.alert('Could not build the backup file.');
+    } finally { setBackupBusy(''); setBackupProgress(null); }
+  };
+
+  // Restoring puts the file back, collection by collection, replacing what is
+  // here now. Deliberately not silent: it says what it is about to overwrite and
+  // needs typed confirmation, because this is the one action that can throw away
+  // a working database.
+  const restoreFullBackup = async (file) => {
+    if (!file || backupBusy) return;
+    setBackupBusy('Reading the file…');
+    setBackupProgress(null);
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+
+      const contents = wb.Sheets.Contents
+        ? XLSX.utils.sheet_to_json(wb.Sheets.Contents, { header: 1 })
+        : null;
+      const stamp = (label) => (contents || []).find(r => r[0] === label)?.[1];
+      if (!contents || stamp('Business type') === undefined) {
+        ui.alert('That does not look like a backup file. Pick the .xlsx that Download backup produced.');
+        return;
+      }
+      const fileType = String(stamp('Business type')).toLowerCase();
+
+      const collections = [];
+      for (const name of wb.SheetNames) {
+        if (name === 'Contents') continue;
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[name]);
+        const docs = [];
+        for (const row of rows) {
+          const parts = Object.keys(row).filter(k => k === '__doc' || /^__doc\d+$/.test(k))
+            .sort((a, b) => (a === '__doc' ? 0 : Number(a.slice(5))) - (b === '__doc' ? 0 : Number(b.slice(5))))
+            .map(k => row[k]);
+          const json = parts.join('');
+          if (!json) continue;
+          try { docs.push(JSON.parse(json)); }
+          catch { /* a hand-edited row - skipped rather than aborting the restore */ }
+        }
+        collections.push({ name, docs });
+      }
+      const total = collections.reduce((s, c) => s + c.docs.length, 0);
+      if (!total) { ui.alert('That backup has no records in it.'); return; }
+
+      const ok = await ui.confirm(
+        `Restore ${total.toLocaleString()} record(s) from ${new Date(stamp('Taken') || Date.now()).toLocaleString()}?`
+        + String.fromCharCode(10, 10)
+        + 'Everything currently in this system is replaced by what is in the file. This cannot be undone.',
+      );
+      if (!ok) return;
+
+      let restored = 0;
+      const failures = [];
+      for (let i = 0; i < collections.length; i++) {
+        const c = collections[i];
+        if (!c.docs.length) continue;
+        // Sent in slices: one request per collection would breach the server's
+        // body limit on any sizeable collection, and the whole restore would
+        // fail on the largest - exactly the data you most want back.
+        // Only the FIRST slice replaces; the rest add to it, or each slice
+        // would wipe the one before it.
+        for (let from = 0; from < c.docs.length; from += BACKUP_RESTORE_SLICE) {
+          const slice = c.docs.slice(from, from + BACKUP_RESTORE_SLICE);
+          setBackupBusy(`Restoring ${c.name}…`);
+          setBackupProgress({ done: restored, total, label: c.name });
+          const res = await apiFetch('/api/backup/restore', {
+            method: 'POST',
+            body: JSON.stringify({
+              collection: c.name, docs: slice,
+              replace: from === 0, businessType: fileType, confirm: 'RESTORE',
+            }),
+          });
+          const d = await res.json();
+          if (!d.success) { failures.push(`${c.name}: ${d.error}`); break; }
+          restored += d.restored;
+          if (d.failed > 0) failures.push(`${c.name}: ${d.failed} row(s) refused`);
+        }
+      }
+
+      ui.alert(
+        `Restored ${restored.toLocaleString()} record(s).`
+        + (failures.length ? `${String.fromCharCode(10, 10)}${failures.slice(0, 6).join(String.fromCharCode(10))}` : '')
+        + `${String.fromCharCode(10, 10)}Reload the app to work with the restored data.`,
+      );
+    } catch (err) {
+      console.error('restoreFullBackup', err);
+      ui.alert('Could not read that backup file.');
+    } finally { setBackupBusy(''); setBackupProgress(null); }
+  };
+
+  const downloadAllExports = async ({ start, end, datasets = null, reports = ['journal', 'auditlog', 'accountBalances', 'validValues'] } = {}) => {
+    const rep = new Set(reports || []);
+    const failed = [];
+    const contents = [['Item', 'Rows', 'Date range', 'Status']];
+    setExportAllBusy('Preparing...');
+    try {
+      let list = exportDatasets;
+      if (!list) {
+        const lr = await apiFetch('/api/export/datasets');
+        const ld = await lr.json();
+        if (!ld.success) { ui.alert(ld.error || 'Could not read the dataset list.'); return; }
+        list = ld.datasets || [];
+      }
+      const chosen = datasets === null ? list : list.filter(d => datasets.includes(d.key));
+      const csvs = ['journal', 'auditlog'].filter(k => rep.has(k));
+      const wantsSheets = chosen.length > 0 || rep.has('accountBalances') || rep.has('validValues');
+      const total = chosen.length
+        + (rep.has('accountBalances') ? 1 : 0)
+        + (rep.has('validValues') ? 1 : 0)
+        + csvs.length
+        + (wantsSheets ? 1 : 0);
+      if (total === 0) { ui.alert('Pick at least one dataset or report.'); return; }
+
+      let done = 0;
+      const step = (label) => { setExportAllBusy(label); setExportProgress({ done, total, label }); };
+      const tick = () => { done += 1; setExportProgress(p => ({ ...(p || {}), done, total })); };
+      const range = `${start || 'all'} to ${end || 'all'}`;
+
+      const XLSX = wantsSheets ? await import('xlsx') : null;
+      const wb = wantsSheets ? XLSX.utils.book_new() : null;
+      // Excel caps sheet names at 31 characters and refuses duplicates.
+      const used = new Set();
+      const sheetName = (label) => {
+        const base = (String(label).replace(/[^\w -]+/g, '-').trim() || 'Sheet').slice(0, 31);
+        let name = base;
+        let n = 2;
+        while (used.has(name)) { name = `${base.slice(0, 28)}-${n++}`; }
+        used.add(name);
+        return name;
+      };
+      const addSheet = (label, columns, rows) =>
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([columns, ...rows]), sheetName(label));
+
+      for (const ds of chosen) {
+        step(`Exporting ${ds.label}...`);
+        try {
+          const qs = new URLSearchParams();
+          if (ds.dateFiltered && start) qs.set('start', start);
+          if (ds.dateFiltered && end) qs.set('end', end);
+          const res = await apiFetch(`/api/export/${ds.key}${qs.toString() ? `?${qs}` : ''}`);
+          const d = await res.json();
+          if (!d.success) {
+            failed.push([ds.label, d.error || 'export failed']);
+          } else {
+            addSheet(d.label || ds.label, d.columns, d.rows);
+            contents.push([
+              d.label || ds.label, d.rows.length,
+              ds.dateFiltered ? range : 'not date filtered',
+              d.truncated ? `TRUNCATED at ${d.limit}` : 'complete',
+            ]);
+          }
+        } catch {
+          failed.push([ds.label, 'network error']);
+        }
+        tick();
+      }
+
+      // Reference sheets, so codes in the data can be read without a second
+      // download. Now optional, since "datasets only" should mean exactly that.
+      if (rep.has('accountBalances')) {
+        step('Adding Account Balances...');
+        try {
+          const acc = await (await apiFetch('/api/export/account-balances')).json();
+          if (acc.success) {
+            addSheet('Account Balances', acc.columns, acc.rows);
+            contents.push(['Account Balances', acc.rows.length, 'as of today', 'complete']);
+          } else failed.push(['Account Balances', acc.error || 'export failed']);
+        } catch { failed.push(['Account Balances', 'network error']); }
+        tick();
+      }
+      if (rep.has('validValues')) {
+        step('Adding Valid Values...');
+        try {
+          const vv = await (await apiFetch('/api/export/valid-values')).json();
+          if (vv.success) {
+            addSheet('Valid Values', vv.columns, vv.rows);
+            contents.push(['Valid Values', vv.rows.length, 'reference', 'complete']);
+          } else failed.push(['Valid Values', vv.error || 'export failed']);
+        } catch { failed.push(['Valid Values', 'network error']); }
+        tick();
+      }
+
+      // The ledger reports, each as its own PDF (see buildLedgerReportPdf).
+      // Built before the workbook is written, so one that fails is listed on
+      // its Contents sheet too.
+      for (const k of csvs) {
+        const label = LEDGER_REPORT_SPEC[k].label;
+        if (!start || !end) {
+          failed.push([label, 'needs a date range']);
+        } else {
+          step(`Building ${label}...`);
+          const r = await buildLedgerReportPdf(k, { start, end });
+          if (r.ok) contents.push([label, r.lines, range, `downloaded as ${r.file}`]);
+          else failed.push([label, r.error]);
+        }
+        tick();
+      }
+
+      if (wantsSheets) {
+        step('Writing the workbook...');
+        if (!used.size) {
+          failed.push(['Workbook', 'every selected sheet failed, so there was nothing to save']);
+        } else {
+          if (failed.length) contents.push([], ['Not exported', 'Reason'], ...failed);
+          contents.push([], ['Generated', new Date().toLocaleString()]);
+          // Prepended, so Contents is the sheet the workbook opens on.
+          wb.SheetNames.unshift('Contents');
+          wb.Sheets.Contents = XLSX.utils.aoa_to_sheet(contents);
+          XLSX.writeFile(wb, `export-${todayStr()}.xlsx`);
+        }
+        tick();
+      }
+
+      const truncated = contents.filter(r => String(r[3] || '').startsWith('TRUNCATED')).length;
+      const notes = [];
+      if (truncated) notes.push(`${truncated} dataset(s) hit the row cap - narrow the date range for the rest`);
+      if (failed.length) notes.push(`${failed.length} item(s) could not be exported${wantsSheets && used.size ? ' (listed on the Contents sheet)' : ''}: ${failed.map(f => f[0]).join(', ')}`);
+      ui.alert(notes.length ? `Export finished. ${notes.join('. ')}.` : 'Export finished.');
+    } catch {
+      ui.alert('Export failed.');
+    } finally {
+      setExportAllBusy('');
+      setExportProgress(null);
+    }
   };
 
   // ── MENU BACKUP / RESTORE ──────────────────────────────────────────────────
@@ -4885,7 +5318,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       const res = await apiFetch(`/api/products/menu-backup${includeArchived ? '?includeArchived=true' : ''}`);
       const d = await res.json();
       if (!d.success) { ui.alert(d.error || 'Could not build the backup.'); return; }
-      const stamp = new Date().toISOString().slice(0, 10);
+      const stamp = todayStr();
       const blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -4947,12 +5380,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     }))) return;
     setMenuImportSubmitting(true);
     try {
-      const payload = {
-        rows: validRows.map(r => ({
-          category: r.category, name: r.name, srp: r.srp,
-          ingredients: r.ingredients.map(i => ({ name: i.name, qty: i.qty, unit: i.unit })),
-        })),
-      };
+      const payload = menuImportPayload(validRows);
       const res = await apiFetch('/api/products/import-menu', { method: 'POST', body: JSON.stringify(payload) });
       const data = await res.json();
       if (data.success) {
@@ -4987,13 +5415,14 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       unit: item.unit || '',
       unitCost: ((item.unitCost || 0) * costBasis).toFixed(2),                      // base → per-pack (log) / per-display (fb)
       lowStockThreshold: ((item.lowStockThreshold || 0) / costBasis).toString(),    // base → packages (log) / display (fb)
-      expiryDate: item.expiryDate ? new Date(item.expiryDate).toISOString().slice(0, 10) : '',
+      expiryDate: item.expiryDate ? dateStr(item.expiryDate) : '',
       expiryWarnDays: item.expiryWarnDays || 7,
       displayUnit: eff.unit,
       packSize: item.packSize != null ? String(item.packSize) : '',
       stockLocation: item.stockLocation || '',
       stockCategory: item.stockCategory || '',
       srp: item.srp != null && item.srp !== 0 ? String(item.srp) : '',
+      takeoutPackaging: item.takeoutPackaging === true,
     });
     setEditInvModal({ item });
   };
@@ -5033,6 +5462,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         stockLocation: editInvForm.stockLocation || null,
         stockCategory: editInvForm.stockCategory || null,
         srp: editInvForm.srp === '' || editInvForm.srp == null ? 0 : Math.max(0, parseFloat(editInvForm.srp) || 0),
+        takeoutPackaging: editInvForm.takeoutPackaging === true,
       };
       const res = await apiFetch(`/api/inventory/${editInvModal.item._id}`, {
         method: 'PUT',
@@ -5056,533 +5486,6 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
 // ==========================================
   //   PDF EXPORT ENGINE
-  // ==========================================
-
-  const formatMoney = (val) => `P${(val || 0).toFixed(2)}`;
-
-  // Stamps the business logo in the top-right corner of any jsPDF doc.
-  // Converts via canvas so any format (PNG/JPEG/WebP/etc.) renders crisply.
-  const addLogoToPDF = async (doc) => {
-    // Same priority as the shared receipt/billing-doc letterhead (resolveLetterhead
-    // in shared/receiptTemplate.js): a dedicated Print Logo wins when it's toggled
-    // on, else fall back to the regular business logo. This function was always
-    // using businessLogo unconditionally, so Settings → Printer Settings → Print
-    // Logo had zero effect on any of these tabular PDF exports - the print-specific
-    // logo the user uploaded (usually plain black line art, made to read on white
-    // paper) never showed, only the app's own logo (often styled for a dark UI,
-    // so it can render as a barely-visible wash on a white page).
-    const logo = (systemSettings.printLogoEnabled && systemSettings.printLogo) ? systemSettings.printLogo : systemSettings.businessLogo;
-    if (!logo) return;
-    try {
-      const img = new Image();
-      img.src = logo;
-      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
-      const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      canvas.getContext('2d').drawImage(img, 0, 0);
-      const pngData = canvas.toDataURL('image/png');
-      const pw = doc.internal.pageSize.getWidth();
-      // Fit the logo INSIDE a 30×18 box, preserving its real aspect ratio -
-      // passing mismatched w/h straight to addImage stretches/squishes it to
-      // fill that exact box instead.
-      const maxW = 30, maxH = 18;
-      const ratio = img.naturalWidth / img.naturalHeight;
-      let logoW = maxW, logoH = maxW / ratio;
-      if (logoH > maxH) { logoH = maxH; logoW = maxH * ratio; }
-      doc.addImage(pngData, 'PNG', pw - logoW - 8, 4, logoW, logoH);
-    } catch { /* unsupported image - skip */ }
-  };
-
-  // 1. Inventory & Movement History PDF (Unchanged)
-  const exportInventoryToPDF = async () => {
-    if (inventory.length === 0) return ui.alert("No inventory to export.");
-    try {
-      // Ask for the day this report covers, not the whole trading history.
-      // The filter below used to run in the browser over every stock movement
-      // ever recorded, which grows without bound.
-      const dayKey = new Date().toISOString().slice(0, 10);
-      const res = await apiFetch(`/api/inventory/history?start=${dayKey}&end=${dayKey}`);
-      const data = await res.json();
-      const allHistory = data.success ? data.history : [];
-      if (data.truncated) {
-        ui.alert(`Showing the most recent ${data.limit} movements for today - there were more than that, so the report is clipped.`);
-      }
-      const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-      await addLogoToPDF(doc);
-      doc.setFontSize(18); doc.text(`${BIZ_NAME} - Daily Inventory & Movement Report`, 14, 15);
-      const todayStr = new Date().toLocaleDateString();
-      doc.setFontSize(10); doc.text(`Date: ${todayStr} | Generated: ${new Date().toLocaleString()}`, 14, 22);
-      
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0);
-      const todayHistory = allHistory.filter(h => new Date(h.date) >= startOfDay);
-      
-      const stockBody = inventory.map(item => {
-        const itemHistory = todayHistory.filter(h => h.inventoryId === item._id);
-        let purchases = 0, sales = 0, adjustments = 0;
-        itemHistory.forEach(h => {
-          if (h.type === 'Restock' || h.type === 'Initial') purchases += h.qtyChange;
-          else if (h.type === 'Sale') sales += Math.abs(h.qtyChange);
-          else if (h.type === 'Adjustment') adjustments += h.qtyChange;
-        });
-        const ending = item.stockQty;
-        const beginning = ending - purchases + sales - adjustments;
-        // Show quantities in the item's DISPLAY unit (e.g. 1 L, not 1000 ml). LOG counts
-        // in packages (pcs); FB in kg/L/pcs - same conversion the inventory table uses.
-        const eff = BUSINESS_TYPE === 'log'
-          ? { mult: itemDisplay(item).packBase || 1, unit: 'pcs' }
-          : effectiveDisplay(item);
-        const conv = (n) => (n / eff.mult).toLocaleString(undefined, { maximumFractionDigits: 3 });
-        return [
-          item.itemName, eff.unit, conv(beginning), conv(purchases),
-          conv(sales), (adjustments > 0 ? '+' : '') + conv(adjustments), conv(ending)
-        ];
-      });
-      autoTable(doc, {
-        startY: 30,
-        head: [['Item Name', 'Unit', 'Beginning Bal.', 'Purchases (In)', 'Sales (Out)', 'Adjustments', 'Ending Bal.']],
-        body: stockBody, theme: 'grid', headStyles: { fillColor: [30, 30, 30], textColor: [255,255,255] }
-      });
-      doc.save(`Inventory_Movement_${new Date().toISOString().split('T')[0]}.pdf`);
-    } catch (err) { ui.alert("Failed to generate PDF: " + err.message); }
-  };
-
-  const exportLedgerToPDF = async () => {
-    if (journalEntries.length === 0) return ui.alert("No entries to export.");
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(18); doc.text(`${BIZ_NAME} - General Ledger Report`, 14, 15);
-    doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 22);
-    let currentY = 30;
-    journalEntries.forEach(entry => {
-      if (currentY > doc.internal.pageSize.getHeight() - 40) { doc.addPage(); currentY = 20; }
-      doc.setFontSize(11); doc.setFont(undefined, 'bold');
-      doc.text(`Ref: ${entry.reference}  |  Date: ${new Date(entry.date).toLocaleDateString()}`, 14, currentY);
-      doc.setFontSize(10); doc.setFont(undefined, 'normal');
-      doc.text(`Memo: ${entry.description}`, 14, currentY + 6);
-      const rows = entry.lines.map(line => [`${line.accountCode} - ${line.accountName}`, line.debit ? line.debit.toFixed(2) : '', line.credit ? line.credit.toFixed(2) : '']);
-      rows.push(['TOTAL', entry.totalDebit ? entry.totalDebit.toFixed(2) : '0.00', entry.totalCredit ? entry.totalCredit.toFixed(2) : '0.00']);
-      autoTable(doc, {
-        startY: currentY + 10, head: [['Account', 'Debit (P)', 'Credit (P)']], body: rows,
-        theme: 'grid', headStyles: { fillColor: [40, 40, 40] }, styles: { fontSize: 9 }
-      });
-      currentY = doc.lastAutoTable.finalY + 15;
-    });
-    doc.save(`General_Ledger_${new Date().toISOString().split('T')[0]}.pdf`);
-  };
-
-  // 1. COMPLETE SALES HISTORY (Master Summary + Daily Breakdown)
-  const exportAllToPDF = async () => {
-    const allOrders = [...orders.filter(o => o.status !== 'Pending' && o.status !== 'Preparing' && o.status !== 'Ready'), ...archivedOrders].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    if (allOrders.length === 0) return ui.alert("No orders to export.");
-    
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    await addLogoToPDF(doc);
-    doc.setFontSize(18); doc.text(`${BIZ_NAME} - Complete Sales History`, 14, 15);
-    const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
-
-    const grouped = {};
-    allOrders.forEach(o => {
-      const date = new Date(o.createdAt).toLocaleDateString();
-      if (!grouped[date]) grouped[date] = { orders: [], ordersCount: 0, gross: 0, vatable: 0, vatExempt: 0, vat: 0, discount: 0, netSales: 0 };
-      grouped[date].orders.push(o);
-      
-      // ONLY calculate revenue if the order is officially 'Completed'
-      if (o.status === 'Completed') {
-        grouped[date].ordersCount++;
-        grouped[date].gross += o.subtotal;
-        if (o.isVatExempt) { grouped[date].vatExempt += (o.subtotal / 1.12); }
-        else { grouped[date].vatable += (o.total / 1.12); }
-        grouped[date].vat += o.vatAmount || 0;
-        grouped[date].discount += o.isComplimentary ? o.subtotal : (o.discount || 0); // comp = 100% discount
-        grouped[date].netSales += o.total;
-      }
-    });
-
-    // MASTER SUMMARY TABLE
-    const summaryBody = Object.keys(grouped).map(date => [
-      date, grouped[date].ordersCount.toString(), formatMoney(grouped[date].gross), formatMoney(grouped[date].vatable),
-      formatMoney(grouped[date].vatExempt), formatMoney(grouped[date].vat), formatMoney(grouped[date].discount), formatMoney(grouped[date].netSales)
-    ]);
-    autoTable(doc, {
-      startY: 28, head: [['Date', 'Completed Orders', 'Gross Sales (VAT-Inc)', 'VATable Sales', 'VAT-Exempt (PWD)', 'VAT (12%)', 'Discounts', 'Net Sales']],
-      body: summaryBody, theme: 'grid', headStyles: { fillColor: [40, 40, 40] }
-    });
-
-    let currentY = doc.lastAutoTable.finalY + 15;
-
-    // INDIVIDUAL DAILY BREAKDOWN TABLES
-    Object.keys(grouped).forEach(date => {
-      if (currentY > doc.internal.pageSize.getHeight() - 40) { doc.addPage(); currentY = 20; }
-      doc.setFontSize(14); doc.setTextColor(0, 0, 0); doc.text(`Sales Breakdown: ${date}`, 14, currentY);
-      
-      const dayRows = [];
-      let dayTotals = { cash: 0, bank: 0, ewallet: 0, grand: 0 };
-      
-      grouped[date].orders.forEach(order => {
-        const time = new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        // --- NEW PAYMENT CLASSIFICATION LOGIC ---
-        const pm = order.paymentMethod || 'Cash';
-        const isCash = pm === 'Cash';
-        const isBank = pm === 'Bank Transfer';
-        const isEwallet = ['E-Wallet', 'GCash', 'Maya', 'Maribank', 'Other E-Wallet'].includes(pm);
-        const isDelivery = ['Grab Delivery', 'Foodpanda', 'Manual Delivery'].includes(pm);
-        const isCompleted = order.status === 'Completed';
-
-        // Protect Daily Totals from Voided/Cancelled Orders
-        if (isCompleted) {
-          if (dayTotals.delivery === undefined) dayTotals.delivery = 0; // Ensure delivery exists
-          dayTotals.cash += isCash ? order.total : 0;
-          dayTotals.bank += isBank ? order.total : 0;
-          dayTotals.ewallet += isEwallet ? order.total : 0;
-          dayTotals.delivery += isDelivery ? order.total : 0;
-          dayTotals.grand += order.total;
-        }
-
-        let discType = '-';
-        if (order.isComplimentary || order.transactionType === 'COMPLIMENTARY' || order.discountType === 'Complimentary') {
-          discType = 'COMPLIMENTARY';
-        } else if (order.discountPercent > 0) {
-          discType = order.isVatExempt ? `SC/PWD (${order.discountPercent}%)` : `Promo (${order.discountPercent}%)`;
-        }
-
-        // Update the array pushing logic to include Delivery
-        order.items.forEach((item, index) => {
-          const isLastItem = index === order.items.length - 1;
-          dayRows.push([
-            time, order.orderNumber, order.status, `${item.quantity}x ${item.name}`,
-            formatMoney(item.price * item.quantity),
-            isLastItem && isCompleted ? formatMoney(order.vatAmount) : '-',
-            isLastItem && isCompleted ? formatMoney(order.discount) : '-', 
-            isLastItem ? discType : '-',
-            isLastItem && isCash && isCompleted ? formatMoney(order.total) : '-',
-            isLastItem && isBank && isCompleted ? formatMoney(order.total) : '-',
-            isLastItem && isEwallet && isCompleted ? formatMoney(order.total) : '-',
-            isLastItem && isDelivery && isCompleted ? formatMoney(order.total) : '-', // <-- NEW DELIVERY COLUMN
-            isLastItem ? (isCompleted ? formatMoney(order.total) : 'VOID') : '-'
-          ]);
-        });
-      });
-
-      // Daily Footer
-      dayRows.push(['', '', '', '', '', '', '', 'DAILY TOTAL:', formatMoney(dayTotals.cash), formatMoney(dayTotals.bank), formatMoney(dayTotals.ewallet), formatMoney(dayTotals.delivery), formatMoney(dayTotals.grand)]);
-      autoTable(doc, {
-        startY: currentY + 5, // Use 28 for exportDayToPDF
-        // ADDED 'Delivery' to the Headers!
-        head: [['Time', 'Order #', 'Status', 'Item', 'Gross', 'VAT', 'Discount', 'Type', 'Cash', 'Bank', 'E-Wallet', 'Delivery', 'Total']],
-        body: dayRows, theme: 'striped', styles: { fontSize: 7 }, columnStyles: { 3: { cellWidth: 40 } },
-        willDrawCell: function(data) {
-          if (data.row.index === dayRows.length - 1) { doc.setFont(undefined, 'bold'); doc.setTextColor(0, 0, 0); }
-        }
-      });
-      currentY = doc.lastAutoTable.finalY + 15;
-    });
-    doc.save(`Complete_Sales_History_${new Date().toISOString().split('T')[0]}.pdf`);
-  };
-
-  // 2. EXPORT SPECIFIC DAY 
-  const exportDayToPDF = async (dateString, dayOrders) => {
-    if (dayOrders.length === 0) return ui.alert("No orders to export.");
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    await addLogoToPDF(doc);
-    doc.setFontSize(18); doc.text(`${BIZ_NAME} - Sales Report: ${dateString}`, 14, 15);
-    const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
-    
-    const dayRows = [];
-    let dayTotals = { cash: 0, bank: 0, ewallet: 0, grand: 0 };
-    
-    dayOrders.forEach(order => {
-      const time = new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      // --- NEW PAYMENT CLASSIFICATION LOGIC ---
-      const pm = order.paymentMethod || 'Cash';
-      const isCash = pm === 'Cash';
-      const isBank = pm === 'Bank Transfer';
-      const isEwallet = ['E-Wallet', 'GCash', 'Maya', 'Maribank', 'Other E-Wallet'].includes(pm);
-      const isDelivery = ['Grab Delivery', 'Foodpanda', 'Manual Delivery'].includes(pm);
-      const isCompleted = order.status === 'Completed';
-
-      // Protect Daily Totals from Voided/Cancelled Orders
-      if (isCompleted) {
-        if (dayTotals.delivery === undefined) dayTotals.delivery = 0; // Ensure delivery exists
-        dayTotals.cash += isCash ? order.total : 0;
-        dayTotals.bank += isBank ? order.total : 0;
-        dayTotals.ewallet += isEwallet ? order.total : 0;
-        dayTotals.delivery += isDelivery ? order.total : 0;
-        dayTotals.grand += order.total;
-      }
-
-      let discType = '-';
-      if (order.discountPercent > 0) discType = order.isVatExempt ? `SC/PWD (${order.discountPercent}%)` : `Promo (${order.discountPercent}%)`;
-      if (order.isComplimentary) discType = 'COMPLIMENTARY';
-
-      // Update the array pushing logic to include Delivery
-        order.items.forEach((item, index) => {
-          const isLastItem = index === order.items.length - 1;
-          dayRows.push([
-            time, order.orderNumber, order.status, `${item.quantity}x ${item.name}`,
-            formatMoney(item.price * item.quantity),
-            isLastItem && isCompleted ? formatMoney(order.vatAmount) : '-',
-            isLastItem && isCompleted ? formatMoney(order.discount) : '-', 
-            isLastItem ? discType : '-',
-            isLastItem && isCash && isCompleted ? formatMoney(order.total) : '-',
-            isLastItem && isBank && isCompleted ? formatMoney(order.total) : '-',
-            isLastItem && isEwallet && isCompleted ? formatMoney(order.total) : '-',
-            isLastItem && isDelivery && isCompleted ? formatMoney(order.total) : '-', // <-- NEW DELIVERY COLUMN
-            isLastItem ? (isCompleted ? formatMoney(order.total) : 'VOID') : '-'
-          ]);
-        });
-      });
-
-      // Daily Footer
-      dayRows.push(['', '', '', '', '', '', '', 'DAILY TOTAL:', formatMoney(dayTotals.cash), formatMoney(dayTotals.bank), formatMoney(dayTotals.ewallet), formatMoney(dayTotals.delivery), formatMoney(dayTotals.grand)]);
-      autoTable(doc, {
-        startY: 28,
-        // ADDED 'Delivery' to the Headers!
-        head: [['Time', 'Order #', 'Status', 'Item', 'Gross', 'VAT', 'Discount', 'Type', 'Cash', 'Bank', 'E-Wallet', 'Delivery', 'Total']],
-        body: dayRows, theme: 'striped', styles: { fontSize: 7 }, columnStyles: { 3: { cellWidth: 40 } },
-        willDrawCell: function(data) {
-          if (data.row.index === dayRows.length - 1) { doc.setFont(undefined, 'bold'); doc.setTextColor(0, 0, 0); }
-        }
-      });
-    doc.save(`Sales_${dateString.replace(/,/g, '').replace(/ /g, '_')}.pdf`);
-  };
-
-  // 3. DAILY SALES SUMMARY (Analytics Trend Export)
-  const exportAnalyticsToPDF = async () => {
-    // STRICT FILTER: Analytics must ONLY track Completed orders. Voided orders must never touch analytics.
-    const allCompletedOrders = [...orders.filter(o => o.status === 'Completed'), ...archivedOrders.filter(o => o.status === 'Completed')].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    if (allCompletedOrders.length === 0) return ui.alert("No analytics data to export.");
-    
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
-    await addLogoToPDF(doc);
-    doc.setFontSize(18); doc.text(`${BIZ_NAME} - Analytics Report`, 14, 15);
-    const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
-
-    const grouped = {};
-    allCompletedOrders.forEach(o => {
-      const date = new Date(o.createdAt).toLocaleDateString();
-      if (!grouped[date]) grouped[date] = { ordersCount: 0, gross: 0, vatable: 0, vatExempt: 0, vat: 0, discount: 0, netSales: 0 };
-      grouped[date].ordersCount++;
-      grouped[date].gross += o.subtotal;
-      // Prefer the figures the server stamped on the order. The /1.12 fallback
-      // is for legacy rows written before VAT was configurable - it assumes the
-      // 12% standard rate, which is all those rows can tell us.
-      if (o.isVatExempt) { grouped[date].vatExempt += (o.vatExemptSales ?? (o.subtotal / 1.12)); }
-      else { grouped[date].vatable += (o.vatableSales ?? (o.total / 1.12)); }
-      grouped[date].vat += o.vatAmount || 0;
-      grouped[date].discount += o.isComplimentary ? o.subtotal : (o.discount || 0); // comp = 100% discount
-      grouped[date].netSales += o.total;
-    });
-
-    const summaryBody = Object.keys(grouped).map(date => [
-      date, grouped[date].ordersCount.toString(), formatMoney(grouped[date].gross), formatMoney(grouped[date].vatable),
-      formatMoney(grouped[date].vatExempt), formatMoney(grouped[date].vat), formatMoney(grouped[date].discount), formatMoney(grouped[date].netSales)
-    ]);
-    autoTable(doc, {
-      startY: 28, head: [['Date', 'Orders', 'Gross Sales (VAT-Inc)', 'VATable Sales', 'VAT-Exempt (PWD/SC)', 'VAT (12%)', 'Discounts', 'Net Sales']],
-      body: summaryBody, theme: 'grid', headStyles: { fillColor: [40, 40, 40] }
-    });
-
-    // ── Inventory analytics sections (display units: pcs for log, kg/L/pcs for fb) ──
-    const ad = analyticsData || {};
-    const du = (item) => analyticsDisplay(item || {});
-    const sect = (title, head, body, fill) => {
-      if (!body.length) return;
-      doc.setFontSize(12); doc.text(title, 14, doc.lastAutoTable.finalY + 8);
-      autoTable(doc, { startY: doc.lastAutoTable.finalY + 11, head: [head], body, theme: 'grid', styles: { fontSize: 8 }, headStyles: { fillColor: fill } });
-    };
-
-    // High Velocity & Forecast
-    sect('High Velocity & Forecast', ['Item', 'Daily Burn', 'Lasts', 'Buy 1wk', 'Buy 1mo', 'Trend'],
-      (ad.mostUsedStock || []).map(i => { const d = du(i); return [
-        i.name, `${((i.dailyAvg||0)/d.mult).toFixed(2)} ${d.unit}`,
-        (!isFinite(i.daysLeft) ? '∞' : `${i.daysLeft}d`),
-        `${((i.weeklyNeed||0)/d.mult).toFixed(2)} ${d.unit}`,
-        `${((i.monthlyNeed||0)/d.mult).toFixed(2)} ${d.unit}`,
-        `${i.trend > 0.1 ? 'rising' : i.trend < -0.1 ? 'easing' : 'stable'} ${Math.abs((i.trend||0)*100).toFixed(0)}%`,
-      ]; }), [50, 50, 50]);
-
-    // Low Stock (Risk)
-    sect('Low Stock (Risk)', ['Item', 'On Hand', 'Days of Supply'],
-      (ad.lowestStock || []).map(i => { const d = du(i); return [
-        i.itemName, `${(Number(i.stockQty||0)/d.mult).toFixed(2)} ${d.unit}`,
-        (i.daysOfSupply <= 0 ? 'OUT' : `~${Math.floor(i.daysOfSupply)}d`),
-      ]; }), [30, 30, 30]);
-
-    // Overstock Watch
-    sect('Overstock Watch', ['Item', 'On Hand', 'Days of Supply', 'Tied-up Capital (PHP)'],
-      (ad.highestStock || []).map(i => { const d = du(i); return [
-        i.itemName, `${(Number(i.stockQty||0)/d.mult).toFixed(2)} ${d.unit}`,
-        (isFinite(i.daysOfSupply) ? `~${Math.floor(i.daysOfSupply)}d` : '∞'),
-        pdfMoney(i.tiedUpCapital || 0),
-      ]; }), [90, 90, 90]);
-
-    doc.save(`Analytics_Report_${new Date().toISOString().split('T')[0]}.pdf`);
-  };
-
-  const exportMonthlyToPDF = async () => {
-    // STRICT FILTER: Only Completed orders.
-    const allCompletedOrders = [...orders.filter(o => o.status === 'Completed'), ...archivedOrders.filter(o => o.status === 'Completed')].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    if (allCompletedOrders.length === 0) return ui.alert("No orders to export.");
-    
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(18); doc.text(`${BIZ_NAME} - Monthly Sales Summary`, 14, 15);
-    const groupedByMonth = {};
-    allCompletedOrders.forEach(o => {
-      const month = new Date(o.createdAt).toLocaleString('default', { month: 'long', year: 'numeric' });
-      if (!groupedByMonth[month]) groupedByMonth[month] = { cash: 0, bank: 0, ewallet: 0, total: 0 };
-      groupedByMonth[month].cash += (o.paymentMethod === 'Cash' || !o.paymentMethod) ? o.total : 0;
-      groupedByMonth[month].bank += (o.paymentMethod === 'Bank Transfer') ? o.total : 0;
-      groupedByMonth[month].ewallet += (o.paymentMethod === 'E-Wallet') ? o.total : 0;
-      groupedByMonth[month].total += o.total;
-    });
-    const rows = Object.keys(groupedByMonth).map(month => [
-      month, `P${groupedByMonth[month].cash.toFixed(2)}`, `P${groupedByMonth[month].bank.toFixed(2)}`, `P${groupedByMonth[month].ewallet.toFixed(2)}`, `P${groupedByMonth[month].total.toFixed(2)}`
-    ]);
-    autoTable(doc, {
-      startY: 25, head: [['Month', 'Cash', 'Bank', 'E-Wallet', 'Total Revenue']],
-      body: rows, theme: 'grid', headStyles: { fillColor: [40, 40, 40] }
-    });
-    doc.save(`Monthly_Summary_${new Date().toISOString().split('T')[0]}.pdf`);
-  };
-
-  // 4. Sales History PDF Helper
-  const handleSaveCategory = async (e) => { 
-    e.preventDefault(); 
-    if(!catForm.name.trim()) return; 
-
-    if (editingCategory) {
-      await apiFetch(`/api/categories/${editingCategory._id}`, { 
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify(catForm) 
-      });
-      setEditingCategory(null);
-    } else {
-      await apiFetch(`/api/categories`, { 
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify(catForm) 
-      });
-    }
-    setCatForm({ name: '', department: DEFAULT_DEPARTMENT });
-    fetchData();
-  };
-
-  const deleteCategory = async (id) => { if(await ui.confirm('Delete category?')) await apiFetch(`/api/categories/${id}`, { method: 'DELETE' }); };
-
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (event) => {
-      const img = new Image(); img.src = event.target.result;
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const scaleSize = 600 / img.width;
-        canvas.width = 600; canvas.height = img.height * scaleSize;
-        const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        setFormData({ ...formData, image: canvas.toDataURL('image/webp', 0.8) });
-      };
-    };
-  };
-
-  const handleSaveProduct = async (e) => {
-    e.preventDefault();
-    const method = editingProduct ? 'PUT' : 'POST';
-    const url = editingProduct ? `/api/products/${editingProduct._id}` : `/api/products`;
-    // Normalize modifierGroups to just IDs before sending
-    const payload = {
-      ...formData,
-      modifierGroups: (formData.modifierGroups||[]).map(id => (id && id._id) ? id._id : id),
-      image: formData.imageUrl?.trim() || formData.image, // URL overrides uploaded base64
-    };
-    const res = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    const data = await res.json();
-    if (!data.success) { ui.alert(data.error || 'Failed to save product.'); return; }
-    resetProductForm();
-    fetchData();
-  };
-  const deleteProduct = async (id) => {
-    if(await ui.confirm("Delete this product permanently?")) {
-      await apiFetch(`/api/products/${id}`, { method: 'DELETE' });
-      if (editingProduct && editingProduct._id === id) resetProductForm();
-    }
-  };
-  
-  const addSize = () => setFormData({ ...formData, sizes: [...formData.sizes, { name: '', price: 0 }] });
-  const updateSize = (index, field, value) => { const newSizes = [...formData.sizes]; newSizes[index][field] = field === 'price' ? parseFloat(value) || 0 : value; setFormData({ ...formData, sizes: newSizes }); };
-  const removeSize = (index) => setFormData({ ...formData, sizes: formData.sizes.filter((_, i) => i !== index) });
-  const addAddOn = () => setFormData({ ...formData, addOns: [...(formData.addOns || []), { name: '', price: 0, recipe: [] }] });
-  const updateAddOn = (index, field, value) => { const newAddOns = [...formData.addOns]; newAddOns[index][field] = field === 'price' ? parseFloat(value) || 0 : value; setFormData({ ...formData, addOns: newAddOns }); };
-  const removeAddOn = (index) => setFormData({ ...formData, addOns: formData.addOns.filter((_, i) => i !== index) });
-
-  const addMaterialToRecipe = (invId, sizeIndex = null) => {
-    if (!invId) return;
-    const invItem = inventory.find(i => i._id === invId);
-    if (!invItem) return;
-    const pack = packInfo(invItem);
-    const packBase = pack.packBase || 1;         // base units per display unit (e.g. 377 for a 377g can)
-    // Logistics sells per piece - always label ingredients as "pcs" so qty=1 means 1 package/unit.
-    // qty below is ONE PACK in base units, so the label has to be the pack's
-    // own label ("377g"), not the raw display unit - otherwise a 377g can
-    // reads as "1 kg".
-    const displayUnit = BUSINESS_TYPE === 'log' ? 'pcs' : pack.label;
-    const material = {
-      invId: invItem._id, name: invItem.itemName,
-      qty: packBase,           // stored in BASE units; 1 pack's worth by default
-      cost: invItem.unitCost,  // ₱ per BASE unit (for calcRecipeCost)
-      unit: displayUnit,       // display unit shown in UI (pcs, kg, L)
-      packBase,                // conversion factor; 1 = no conversion (legacy/pcs)
-    };
-    if (sizeIndex === null) { setFormData({ ...formData, baseRecipe: [...(formData.baseRecipe || []), material] });
-    } else { const newSizes = [...formData.sizes]; newSizes[sizeIndex].recipe = [...(newSizes[sizeIndex].recipe || []), material]; setFormData({ ...formData, sizes: newSizes }); }
-  };
-  const updateMaterialQty = (val, matIndex, sizeIndex = null) => {
-    const newQty = parseFloat(val) || 0;
-    if (sizeIndex === null) { const newRecipe = [...formData.baseRecipe]; newRecipe[matIndex].qty = newQty; setFormData({ ...formData, baseRecipe: newRecipe });
-    } else { const newSizes = [...formData.sizes]; newSizes[sizeIndex].recipe[matIndex].qty = newQty; setFormData({ ...formData, sizes: newSizes }); }
-  };
-  const removeMaterial = (matIndex, sizeIndex = null) => {
-    if (sizeIndex === null) { setFormData({ ...formData, baseRecipe: formData.baseRecipe.filter((_, i) => i !== matIndex) });
-    } else { const newSizes = [...formData.sizes]; newSizes[sizeIndex].recipe = newSizes[sizeIndex].recipe.filter((_, i) => i !== matIndex); setFormData({ ...formData, sizes: newSizes }); }
-  };
-  const calcRecipeCost = (recipe) => (recipe || []).reduce((sum, item) => sum + (item.qty * item.cost), 0);
-
-  // --- ESTIMATED MENU STOCK CALCULATOR ---
-  const getEstimatedStock = (recipe) => {
-    if (!recipe || recipe.length === 0) return null;
-    let minServings = Infinity;
-    for (let mat of recipe) {
-      const invItem = inventory.find(i => i._id === mat.invId);
-      if (!invItem) return 0;
-      let possibleServings;
-      if (BUSINESS_TYPE === 'log') {
-        // Work in BASE units so stale recipe rows (saved before packBase was
-        // tracked) are handled correctly.  If mat.packBase is stored we can
-        // derive how many packs the recipe calls for; otherwise assume 1 pack.
-        const currentPackBase = packInfo(invItem).packBase || 1;
-        let qtyBase;
-        if (mat.packBase > 0) {
-          const packCount = mat.qty / mat.packBase;  // e.g. 377/377 = 1 pack
-          qtyBase = packCount * currentPackBase;      // re-express in current base
-        } else {
-          qtyBase = currentPackBase;                  // legacy: treat as 1 pack per serving
-        }
-        possibleServings = Math.floor(invItem.stockQty / (qtyBase || 1));
-      } else {
-        // FB: qty stored in base units; direct division gives servings.
-        possibleServings = Math.floor(invItem.stockQty / (mat.qty || 1));
-      }
-      if (possibleServings < minServings) minServings = possibleServings;
-    }
-    return minServings === Infinity ? 0 : minServings;
-  };
-
   // ── Modifier Groups ─────────────────────────────────────────────────────────
   const fetchModifierGroups = async () => {
     try { const res = await apiFetch('/api/modifier-groups'); if (res.ok) setModifierGroups((await res.json()).groups || []); }
@@ -5696,140 +5599,13 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     fetchParked();
   };
 
-  // ── Reports ───────────────────────────────────────────────────────────────────
-  const fetchMenuEngineering = async () => {
-    try { const res = await apiFetch('/api/reports/menu-engineering'); const d = await res.json(); if (d.success) setMenuEngineering(d); }
-    catch (err) { console.error('fetchMenuEngineering', err); }
-  };
-  const fetchCashierVariance = async () => {
-    try { const res = await apiFetch('/api/reports/cashier-variance'); const d = await res.json(); if (d.success) setCashierVariance(d); }
-    catch (err) { console.error('fetchCashierVariance', err); }
-  };
-  const fetchCommissions = async () => {
-    try { const res = await apiFetch('/api/reports/commissions'); const d = await res.json(); if (d.success) setCommissions(d); }
-    catch (err) { console.error('fetchCommissions', err); }
-  };
-  const fetchPurchaseOrder = async () => {
-    try {
-      const res = await apiFetch('/api/reports/purchase-order?days=7');
-      const d = await res.json();
-      if (d.success) setPurchaseOrder(d);
-      else ui.alert(d.error || 'Failed to generate purchase order.');
-    } catch (err) { console.error('fetchPurchaseOrder', err); ui.alert('Network error generating purchase order.'); }
-  };
-
-  // Purchase Order → PDF in the requested "Product | Qty Unit" format
-  const exportPurchaseOrderPDF = async () => {
-    if (!purchaseOrder || !(purchaseOrder.lines || []).length) return ui.alert('Generate a purchase order first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    const today = new Date().toLocaleDateString('en-PH');
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('PURCHASE ORDER', 105, 22, { align: 'center' });
-    doc.setFontSize(9);  doc.text(`${today}  ·  covers ~${purchaseOrder.coverDays || 7} days`, 105, 28, { align: 'center' });
-    autoTable(doc, {
-      startY: 34,
-      head: [['Product', 'Qty Unit']],
-      body: (purchaseOrder.lines || []).map(l => [
-        l.itemName + (l.lowStock ? '  (LOW)' : ''),
-        `${l.suggestedOrder} ${l.displayUnit}`,
-      ]),
-      styles: { fontSize: 10 },
-      headStyles: { fillColor: [30, 30, 30] },
-      columnStyles: { 1: { halign: 'right' } },
-    });
-    const y = doc.lastAutoTable.finalY + 8;
-    doc.setFontSize(10);
-    doc.text(`Estimated Total (PHP): ${pdfMoney(purchaseOrder.totalEstCost || 0)}`, 14, y);
-    doc.save(`Purchase-Order-${today.replace(/\//g, '-')}.pdf`);
-  };
-
-  // Profit & Loss → PDF (replaces CSV export)
-  const exportPnlPDF = async () => {
-    if (!pnlData) return ui.alert('Run the P&L report first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    const range = `${pnlRange.start} to ${pnlRange.end}`;
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text(`PROFIT & LOSS STATEMENT ${vatStmtSuffix}`, 105, 22, { align: 'center' });
-    doc.setFontSize(9);  doc.text(range, 105, 28, { align: 'center' });
-    const section = (title, rows, startY) => {
-      autoTable(doc, {
-        startY,
-        head: [[title, 'Amount (PHP)']],
-        body: rows.length ? rows.map(r => [r.accountName || r.name || r.label || '', pdfMoney(r.amount ?? r.total)]) : [['-', pdfMoney(0)]],
-        styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] },
-        columnStyles: { 1: { halign: 'right' } },
-      });
-      return doc.lastAutoTable.finalY + 4;
-    };
-    let y = 34;
-    y = section('Revenue', pnlData.revenue || [], y);
-    y = section('Cost of Goods Sold', pnlData.cogs || [], y);
-    y = section('Operating Expenses', pnlData.opex || pnlData.expenses || [], y);
-    // Summary totals - negatives shown in parentheses, no ± / ₱ glyph issues.
-    const t = pnlData.totals || {};
-    autoTable(doc, {
-      startY: y,
-      head: [['Summary', 'Amount (PHP)']],
-      body: [
-        ['Gross Profit', pdfMoney(t.grossProfit)],
-        ['Net Income', pdfMoney(t.netIncome)],
-        ...(t.netMargin !== undefined ? [['Net Margin', `${Number(t.netMargin).toFixed(1)}%`]] : []),
-      ],
-      styles: { fontSize: 10, fontStyle: 'bold' }, headStyles: { fillColor: [70, 70, 70], textColor: 255 },
-      columnStyles: { 1: { halign: 'right' } },
-    });
-    doc.save(`Profit-Loss-${pnlRange.start}_to_${pnlRange.end}.pdf`);
-  };
-
-  const exportBalanceSheetPDF = async () => {
-    if (!bsData) return ui.alert('Load the Balance Sheet first.');
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    const asOf = bsData.asOf ? new Date(bsData.asOf).toLocaleDateString() : new Date().toLocaleDateString();
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text(`BALANCE SHEET ${vatStmtSuffix}`, 105, 22, { align: 'center' });
-    doc.setFontSize(9);  doc.text(`As of ${asOf}`, 105, 28, { align: 'center' });
-    const rowName = (r) => r.accountName || r.name || r.label || '';
-    const rowAmt = (r) => pdfMoney(r.amount ?? r.balance ?? r.total ?? 0);
-    const section = (title, rows, total, startY) => {
-      autoTable(doc, {
-        startY,
-        head: [[title, 'Amount (PHP)']],
-        body: [
-          ...(rows && rows.length ? rows.map(r => [rowName(r), rowAmt(r)]) : [['-', pdfMoney(0)]]),
-          [`Total ${title}`, pdfMoney(total ?? 0)],
-        ],
-        styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] },
-        columnStyles: { 1: { halign: 'right' } },
-        didParseCell: (d) => { if (d.row.index === (rows?.length || 1)) d.cell.styles.fontStyle = 'bold'; },
-      });
-      return doc.lastAutoTable.finalY + 4;
-    };
-    const t = bsData.totals || {};
-    let y = 34;
-    y = section('Assets', bsData.assets, t.assets, y);
-    y = section('Liabilities', bsData.liabilities, t.liabilities, y);
-    y = section('Equity', bsData.equity, t.equity, y);
-    const balanced = Math.abs((t.assets || 0) - ((t.liabilities || 0) + (t.equity || 0))) < 0.01;
-    autoTable(doc, {
-      startY: y,
-      head: [['Accounting Equation', '']],
-      body: [
-        ['Assets', pdfMoney(t.assets)],
-        ['Liabilities + Equity', pdfMoney((t.liabilities || 0) + (t.equity || 0))],
-        ['Status', balanced ? 'BALANCED' : 'OUT OF BALANCE'],
-      ],
-      styles: { fontSize: 10, fontStyle: 'bold' }, headStyles: { fillColor: [70, 70, 70], textColor: 255 },
-      columnStyles: { 1: { halign: 'right' } },
-    });
-    doc.save(`Balance-Sheet-${asOf.replace(/\//g, '-')}.pdf`);
-  };
-
   // ── Settings / QR toggle ────────────────────────────────────────────────────
   const fetchSettings = async () => {
-    try { const res = await apiFetch('/api/settings'); const d = await res.json(); if (d.success) setSystemSettings(p => ({ ...p, ...d.settings })); }
+    // The business's own clock, handed to the date helpers. Until this lands
+    // they fall back to the device's zone, which on the shop's own tablet is
+    // already the right one - unlike UTC, which is a whole day out for the
+    // first eight hours of every Manila day.
+    try { const res = await apiFetch('/api/settings'); const d = await res.json(); if (d.success) { setSystemSettings(p => ({ ...p, ...d.settings })); setClientBusinessTz(d.settings?.businessTimeZone); } }
     catch (err) { console.error('fetchSettings', err); }
   };
   const toggleQROrders = async () => {
@@ -5850,39 +5626,6 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       if (d.success) { fetchSettings(); setRequireCashShift(next); }
     } catch (err) { console.error('toggleRequireCashShift', err); }
   };
-  // Superadmin-only: enable/disable the automatic midnight close & day archive.
-  const toggleAutoClose = async () => {
-    const next = systemSettings.autoCloseEnabled === false; // currently off → turning on
-    if (!next && !await ui.confirm('Disable automatic midnight close?\n\nThe day will stay OPEN past midnight and a superadmin must close & archive it manually.')) return;
-    try {
-      const res = await apiFetch('/api/settings/autoCloseEnabled', { method: 'PATCH', body: JSON.stringify({ value: next }) });
-      const d = await res.json(); if (d.success) fetchSettings();
-    } catch (err) { console.error('toggleAutoClose', err); }
-  };
-
-  // Toggle whether product images are shown across the app (menu, portal, product list).
-  // Generic setting writer for non-boolean settings (credit limit mode, global
-  // limit). The toggle* helpers above stay as they are - they encode their own
-  // confirm/labelling rules.
-  const saveSetting = async (key, value) => {
-    try {
-      const res = await apiFetch(`/api/settings/${encodeURIComponent(key)}`, {
-        method: 'PATCH', body: JSON.stringify({ value }),
-      });
-      const d = await res.json();
-      if (d.success) fetchSettings();
-      else ui.alert(d.error || 'Could not save setting.');
-    } catch (err) { console.error('saveSetting', err); ui.alert('Could not save setting.'); }
-  };
-
-  const toggleImages = async () => {
-    const next = systemSettings.imagesEnabled === false; // currently off -> turning on
-    try {
-      const res = await apiFetch('/api/settings/imagesEnabled', { method: 'PATCH', body: JSON.stringify({ value: next }) });
-      const d = await res.json(); if (d.success) fetchSettings();
-    } catch (err) { console.error('toggleImages', err); }
-  };
-
   // ── Profit by category ──────────────────────────────────────────────────────
   const fetchProfitByCategory = async () => {
     try { const res = await apiFetch('/api/reports/profit-by-category'); const d = await res.json(); if (d.success) setProfitByCategory(d); }
@@ -6018,14 +5761,21 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     finally { setBounceSubmitting(false); }
   };
 
-  const fetchSalesByPayment = async () => {
-    try { const res = await apiFetch(`/api/reports/sales-by-payment?start=${sbpRange.start}&end=${sbpRange.end}`); const d = await res.json(); if (d.success) setSalesByPayment(d); }
+  // Which sales a sales report covers: '' all, 'backdated' (entered after the
+  // fact - Backdate Sale or an import), or 'live' (the till, the portal). One
+  // choice shared by the sales reports. Each loader also takes it directly, so
+  // changing the choice can reload at once without waiting for a re-render;
+  // called as a click handler it is handed an event, hence the string check.
+  const [salesSource, setSalesSource] = useState('');
+  const srcQuery = (arg) => { const s = typeof arg === 'string' ? arg : salesSource; return s ? `&source=${s}` : ''; };
+  const fetchSalesByPayment = async (src) => {
+    try { const res = await apiFetch(`/api/reports/sales-by-payment?start=${sbpRange.start}&end=${sbpRange.end}${srcQuery(src)}`); const d = await res.json(); if (d.success) setSalesByPayment(d); }
     catch (err) { console.error('fetchSalesByPayment', err); }
   };
 
   // ── Summary Sales (channel breakdown: cash / e-wallet / bank / delivery) ──────
-  const fetchSalesSummary = async () => {
-    try { const res = await apiFetch(`/api/reports/sales-summary?start=${sssRange.start}&end=${sssRange.end}`); const d = await res.json(); if (d.success) setSalesSummary(d); }
+  const fetchSalesSummary = async (src) => {
+    try { const res = await apiFetch(`/api/reports/sales-summary?start=${sssRange.start}&end=${sssRange.end}${srcQuery(src)}`); const d = await res.json(); if (d.success) setSalesSummary(d); }
     catch (err) { console.error('fetchSalesSummary', err); }
   };
   // Roll per-order rows up to per-day rows (client-side), merging channel + method detail.
@@ -6035,9 +5785,9 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     const byDay = {};
     for (const r of rows) {
       const day = new Date(r.date).toLocaleDateString('en-CA'); // YYYY-MM-DD
-      if (!byDay[day]) byDay[day] = { date: r.date, orderNumber: null, count: 0, cash: 0, ewallet: 0, bank: 0, delivery: 0, total: 0, methods: {} };
+      if (!byDay[day]) byDay[day] = { date: r.date, orderNumber: null, count: 0, cash: 0, ewallet: 0, bank: 0, delivery: 0, subtotal: 0, total: 0, methods: {} };
       const t = byDay[day];
-      t.count++; t.cash += r.cash; t.ewallet += r.ewallet; t.bank += r.bank; t.delivery += r.delivery; t.total += r.total;
+      t.count++; t.cash += r.cash; t.ewallet += r.ewallet; t.bank += r.bank; t.delivery += r.delivery; t.total += r.total; t.subtotal += r.subtotal || 0;
       for (const [m, a] of Object.entries(r.methods || {})) t.methods[m] = (t.methods[m] || 0) + a;
     }
     return Object.values(byDay).sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -6058,398 +5808,52 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     ];
     const cv = (r, ms) => ms.reduce((s, m) => s + (r?.methods?.[m] || 0), 0);
     // Item-level detail lives in the separate Sales Line Items report.
-    const head = ['Date', 'Customer ID', 'Customer Name', sssGroup === 'day' ? 'Orders' : 'Order ID', ...COLS.map(c => c[0]), 'Total'];
+    const head = ['Date', 'Customer ID', 'Customer Name', sssGroup === 'day' ? 'Orders' : 'Order ID', ...COLS.map(c => c[0]), 'Gross Sales', 'Sales After Discount'];
     const body = sssRows.map(r => [
       new Date(r.date).toLocaleDateString(),
       sssGroup === 'day' ? '' : (r.customerId || ''),
       sssGroup === 'day' ? '' : (r.customerName || ''),
       sssGroup === 'day' ? String(r.count) : r.orderNumber,
       ...COLS.map(([, ms]) => pdfMoney(cv(r, ms))),
-      pdfMoney(r.total),
+      pdfMoney(r.subtotal || 0), pdfMoney(r.total),
     ]);
     const t = salesSummary.totals || {};
     autoTable(doc, {
       startY: 24, head: [head], body,
-      foot: [[ 'TOTALS', '', '', '', ...COLS.map(([, ms]) => pdfMoney(ms.reduce((s, m) => s + (tm[m] || 0), 0))), pdfMoney(t.total) ]],
+      foot: [[ 'TOTALS', '', '', '', ...COLS.map(([, ms]) => pdfMoney(ms.reduce((s, m) => s + (tm[m] || 0), 0))), pdfMoney(t.subtotal || 0), pdfMoney(t.total) ]],
       styles: { fontSize: 7 }, headStyles: { fillColor: [30,30,30] }, footStyles: { fillColor: [70,70,70], textColor: 255 },
     });
     doc.save(`Sales-Summary_${sssRange.start}_to_${sssRange.end}.pdf`);
   };
 
   // ── Sales Line Items (item-level detail) ─────────────────────────────────────
-  const fetchSalesLineItems = async () => {
-    try { const res = await apiFetch(`/api/reports/sales-line-items?start=${sliRange.start}&end=${sliRange.end}`); const d = await res.json(); if (d.success) setSalesLineItems(d); }
+  const fetchSalesLineItems = async (src) => {
+    try { const res = await apiFetch(`/api/reports/sales-line-items?start=${sliRange.start}&end=${sliRange.end}${srcQuery(src)}`); const d = await res.json(); if (d.success) setSalesLineItems(d); }
     catch (err) { console.error('fetchSalesLineItems', err); }
   };
   const exportSalesLineItemsPDF = async () => {
-    if (!salesLineItems) return ui.alert('Load the Sales Line Items report first.');
+    if (!salesLineItems) return ui.alert('Load the Daily Sales Report first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
     await addLogoToPDF(doc);
-    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Sales Line Items`, 14, 14);
+    doc.setFontSize(16); doc.text(`${BIZ_NAME} - Daily Sales Report`, 14, 14);
     doc.setFontSize(9); doc.text(`${sliRange.start} to ${sliRange.end}`, 14, 20);
-    const head = ['Date', 'Customer ID', 'Customer Name', 'Order ID', 'Item Code', 'Item', 'Qty', 'Payment', 'Line Total'];
+    // Net of discount, like the screen and the Excel - the gross alone read as
+    // more than was actually sold.
+    const head = ['Date', 'Customer ID', 'Customer Name', 'Order ID', 'Item Code', 'Item', 'Qty', 'Payment', 'Gross Sales', 'Discount', 'Sales After Discount'];
     const body = salesLineItems.rows.map(r => r.isComponent
       // Promo/combo component: indented, no price (it's included in the combo row).
-      ? ['', '', '', '', r.itemCode || '', `   ↳ ${r.itemName || ''}`, String(r.quantity), '', 'included']
+      ? ['', '', '', '', r.itemCode || '', `   ↳ ${r.itemName || ''}`, String(r.quantity), '', '', '', 'included']
       : [
         new Date(r.date).toLocaleDateString(), r.customerId || '', r.customerName || '', r.orderNumber,
-        r.itemCode || '', (r.itemName || '') + (r.isCombo ? ' (promo)' : ''), String(r.quantity), r.paymentMethod || '', pdfMoney(r.lineTotal),
+        r.itemCode || '', (r.itemName || '') + (r.isCombo ? ' (promo)' : ''), String(r.quantity), r.paymentMethod || '',
+        pdfMoney(r.grossSales ?? r.lineTotal), pdfMoney(r.discount || 0), pdfMoney(r.netSales ?? r.lineTotal),
       ]);
     autoTable(doc, {
       startY: 24, head: [head], body,
-      foot: [[ 'TOTAL', '', '', '', '', '', '', '', pdfMoney(salesLineItems.grandTotal) ]],
+      foot: [[ 'TOTAL', '', '', '', '', '', '', '', pdfMoney(salesLineItems.totals?.gross ?? salesLineItems.grandTotal), pdfMoney(salesLineItems.totals?.discount || 0), pdfMoney(salesLineItems.totals?.net ?? salesLineItems.grandTotal) ]],
       styles: { fontSize: 7 }, headStyles: { fillColor: [30,30,30] }, footStyles: { fillColor: [70,70,70], textColor: 255 },
     });
     doc.save(`Sales-Line-Items_${sliRange.start}_to_${sliRange.end}.pdf`);
-  };
-
-  // ── Refund ──────────────────────────────────────────────────────────────────
-  const handleRefund = async () => {
-    if (!refundModal || !refundForm.reason.trim()) return ui.alert('Reason required.');
-    setRefundSubmitting(true);
-    try {
-      const res = await apiFetch(`/api/orders/${refundModal._id}/refund`, { method: 'POST', body: JSON.stringify({ reason: refundForm.reason, refundAmount: parseFloat(refundForm.refundAmount) || refundModal.total, inventoryAction: refundForm.inventoryAction }) });
-      const d = await res.json();
-      if (d.success) { setRefundModal(null); setRefundForm({ reason: '', refundAmount: '', inventoryAction: 'Restock' }); fetchOrders(); ui.alert('Refund processed. Reversal journal created.'); }
-      else ui.alert(d.error || 'Refund failed.');
-    } catch { ui.alert('Network error.'); }
-    finally { setRefundSubmitting(false); }
-  };
-
-  // Line-item + qty precise refund - not everything on the order has to come
-  // back, and not all of a line's qty either. `items` is [{ itemIndex, qty }].
-  const handlePartialRefund = async (items) => {
-    if (!refundModal || !refundForm.reason.trim()) return ui.alert('Reason required.');
-    if (!items || items.length === 0) return ui.alert('Select at least one item to refund.');
-    setRefundSubmitting(true);
-    try {
-      const res = await apiFetch(`/api/orders/${refundModal._id}/partial-refund`, {
-        method: 'POST',
-        body: JSON.stringify({ items, reason: refundForm.reason, inventoryAction: refundForm.inventoryAction }),
-      });
-      const d = await res.json();
-      if (d.success) {
-        setRefundModal(null);
-        setRefundForm({ reason: '', refundAmount: '', inventoryAction: 'Restock' });
-        fetchOrders();
-        ui.alert(d.fullyRefunded
-          ? `Refunded ₱${(d.refundAmount || 0).toFixed(2)} - every item on this order is now refunded.`
-          : `Refunded ₱${(d.refundAmount || 0).toFixed(2)}. The order stays Completed - the rest can still be refunded later.`);
-      } else ui.alert(d.error || 'Refund failed.');
-    } catch { ui.alert('Network error.'); }
-    finally { setRefundSubmitting(false); }
-  };
-
-  // Return some line(s)/qty and add a replacement item on the SAME order, net-
-  // settled in one cash movement. `returnItems` is [{ itemIndex, qty }] (may be
-  // empty - a pure add-on exchange), `newItems` is [{ productId, quantity }].
-  const handleExchange = async (returnItems, newItems) => {
-    if (!refundModal || !refundForm.reason.trim()) return ui.alert('Reason required.');
-    if (!newItems || newItems.length === 0) return ui.alert('Pick at least one replacement item.');
-    setRefundSubmitting(true);
-    try {
-      const res = await apiFetch(`/api/orders/${refundModal._id}/exchange`, {
-        method: 'POST',
-        body: JSON.stringify({ returnItems, newItems, reason: refundForm.reason, inventoryAction: refundForm.inventoryAction }),
-      });
-      const d = await res.json();
-      if (d.success) {
-        setRefundModal(null);
-        setRefundForm({ reason: '', refundAmount: '', inventoryAction: 'Restock' });
-        fetchOrders();
-        const delta = d.netDelta || 0;
-        ui.alert(Math.abs(delta) < 0.01
-          ? 'Exchange processed - even swap, no cash movement.'
-          : delta > 0
-            ? `Exchange processed - customer paid ₱${delta.toFixed(2)} more.`
-            : `Exchange processed - ₱${Math.abs(delta).toFixed(2)} refunded to the customer.`);
-      } else ui.alert(d.error || 'Exchange failed.');
-    } catch { ui.alert('Network error.'); }
-    finally { setRefundSubmitting(false); }
-  };
-
-  // ── Clock in/out ─────────────────────────────────────────────────────────────
-  // Apply any queued offline clock events on top of a base status so the gate /
-  // button reflect the staff member's optimistic state until the queue syncs.
-  const applyQueuedClock = (base) => {
-    let s = { ...base };
-    for (const e of getQueuedClock()) {
-      if (e.type === 'in')  s = { ...s, isClockedIn: true,  onBreak: false };
-      if (e.type === 'out') s = { ...s, isClockedIn: false, onBreak: false };
-    }
-    return s;
-  };
-  const CLOCK_STATE_KEY = 'semivra_clock_state';
-  const fetchClockStatus = async () => {
-    // OFFLINE: rebuild status from the last cached server snapshot + queued events.
-    if (!navigator.onLine) {
-      try {
-        const cached = JSON.parse(localStorage.getItem(CLOCK_STATE_KEY) || 'null')
-          || { isClockedIn: false, entry: null, onBreak: false, breakUsedMinutes: 0, breakRemainingMinutes: 60 };
-        setClockStatus(applyQueuedClock(cached));
-      } catch { /* ignore */ }
-      finally { setClockStatusLoaded(true); }
-      return;
-    }
-    try {
-      const res = await apiFetch('/api/clock/status'); const d = await res.json();
-      if (d.success) {
-        const st = {
-          isClockedIn: d.isClockedIn, entry: d.entry,
-          onBreak: !!d.onBreak, breakStartedAt: d.breakStartedAt || null,
-          breakUsedMinutes: d.breakUsedMinutes || 0, breakRemainingMinutes: d.breakRemainingMinutes ?? 60,
-        };
-        setClockStatus(st);
-        try { localStorage.setItem(CLOCK_STATE_KEY, JSON.stringify(st)); } catch { /* ignore */ }
-      }
-    }
-    catch (err) { console.error('fetchClockStatus', err); }
-    finally { setClockStatusLoaded(true); }
-  };
-  const fetchClockEntries = async (page = 1) => {
-    try { const res = await apiFetch(`/api/clock/entries?page=${page}&limit=30`); const d = await res.json(); if (d.success) { setClockEntries(d.entries||[]); setClockEntriesTotal(d.total||0); setClockEntriesPage(page); } }
-    catch (err) { console.error('fetchClockEntries', err); }
-  };
-  const handleClockIn = async () => {
-    if (!navigator.onLine) {
-      queueClock('in');
-      setClockStatus((s) => ({ ...s, isClockedIn: true, onBreak: false }));
-      ui.alert('Clocked in (offline - will sync when back online).');
-      return;
-    }
-    try { const res = await apiFetch('/api/clock/in', { method: 'POST', body: '{}' }); const d = await res.json(); if (d.success) { fetchClockStatus(); ui.alert('Clocked in.'); } else ui.alert(d.error||'Clock-in failed.'); }
-    catch { ui.alert('Network error.'); }
-  };
-  // Pressing the clock button while working opens the choice modal (break vs end shift).
-  const handleClockButton = () => {
-    if (!clockStatus.isClockedIn) return handleClockIn();
-    if (clockStatus.onBreak) return endBreak();      // currently on break → resume
-    setClockModalOpen(true);                          // working → show options
-  };
-  const startBreak = async () => {
-    try {
-      const res = await apiFetch('/api/clock/break/start', { method: 'POST', body: '{}' });
-      const d = await res.json();
-      if (d.success) { setClockModalOpen(false); fetchClockStatus(); }
-      else ui.alert(d.error || 'Could not start break.');
-    } catch { ui.alert('Network error.'); }
-  };
-  const endBreak = async () => {
-    try {
-      const res = await apiFetch('/api/clock/break/end', { method: 'POST', body: '{}' });
-      const d = await res.json();
-      if (d.success) { fetchClockStatus(); } else ui.alert(d.error || 'Could not end break.');
-    } catch { ui.alert('Network error.'); }
-  };
-  const handleClockOut = async () => {
-    if (!navigator.onLine) {
-      queueClock('out');
-      setClockStatus((s) => ({ ...s, isClockedIn: false, onBreak: false }));
-      setClockModalOpen(false);
-      ui.alert('Clocked out (offline - will sync when back online).');
-      return;
-    }
-    try {
-      const res = await apiFetch('/api/clock/out', { method: 'POST', body: '{}' });
-      const d = await res.json();
-      if (d.success) {
-        setClockModalOpen(false); fetchClockStatus();
-        const m = d.entry?.workedMinutes ?? d.entry?.durationMinutes ?? 0;
-        const b = d.entry?.breakMinutes || 0;
-        ui.alert(`Clocked out. Worked ${Math.floor(m/60)}h ${m%60}m${b ? ` (${b}m break)` : ''}.`);
-      } else ui.alert(d.error||'Clock-out failed.');
-    } catch { ui.alert('Network error.'); }
-  };
-
-  // ── Billing Statement print (log mode) ──────────────────────────────────────
-  // Uses the shared A4 document template (same one the Procurement purchase-order
-  // print uses). Letterhead/payment/contact come from system settings, falling
-  // back to VITE_BILLING_* env then defaults.
-  const printBillingStatement = (order) => {
-    const dateStr = new Date(order.createdAt || Date.now()).toLocaleDateString('en-PH', {
-      year: 'numeric', month: 'long', day: 'numeric'
-    });
-    const transactionNo = order.billingNumber || order.orderNumber || '-';
-    const isDelivery = ['Manual Delivery', 'Lalamove'].includes(order.table);
-
-    const items = (order.items || []).map(item => {
-      const addOnTotal = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
-      const unitPrice  = item.price + addOnTotal;
-      const addOnDesc  = (item.selectedAddOns || []).map(a => a.name).join(', ');
-      return {
-        code: item.productCode || '',
-        desc: item.name + (item.size ? ` (${item.size})` : '') + (addOnDesc ? ` + ${addOnDesc}` : ''),
-        qty: item.quantity,
-        unitPrice,
-        total: unitPrice * item.quantity,
-      };
-    });
-
-    const schedRows = [
-      order.scheduledTime   ? { label: `Scheduled ${isDelivery ? 'Delivery' : 'Pickup'} Time:`, value: order.scheduledTime } : null,
-      order.deliveryAddress ? { label: 'Delivery Address:', value: order.deliveryAddress } : null,
-      order.customerPhone   ? { label: 'Contact No.:', value: order.customerPhone } : null,
-    ].filter(Boolean);
-
-    printBillingDoc(buildBillingDocHTML({
-      docTitle: 'BILLING STATEMENT',
-      dateLabel: 'Submitted date',
-      dateStr,
-      settings: systemSettings,
-      metaFields: [
-        { label: 'Invoice For', value: order.customerName || '' },
-        { label: 'Payable To', value: '' },
-        { label: 'Transaction No.', value: transactionNo },
-      ],
-      subFields: [
-        { label: 'Terms of Payment', value: order.paymentMethod || '' },
-        { label: 'Order Type', value: order.table || '' },
-      ],
-      schedRows,
-      items,
-      totals: [
-        { label: 'Subtotal', value: order.subtotal || order.total || 0 },
-        { label: 'Discount', value: order.discount || 0 },
-        { label: 'Delivery Fee', value: order.deliveryFee || 0 },
-        { label: 'TOTAL', value: order.total || 0, grand: true },
-      ],
-      // Prepared By pre-filled with whoever rang up the sale (falls back to the
-      // current user printing it, for legacy orders with no cashier on record).
-      // Checked/Received By stay blank ruled lines - those really do get signed
-      // by someone else after the fact.
-      signatures: [
-        `PREPARED BY${(order.cashier || activeAdmin?.name) ? `: ${order.cashier || activeAdmin?.name}` : ''} - Signature over Printed Name / Date`,
-        'CHECKED BY: Signature over Printed Name / Date',
-        'RECEIVED BY: Signature over Printed Name / Date',
-      ],
-    }));
-  };
-
-  // ── Delivery Receipt print (logistics) ───────────────────────────────────────
-  // Prints TWO copies in one job: ORIGINAL for the customer, DUPLICATE for the
-  // office. Both are identical apart from the copy label, so a signature on the
-  // duplicate is proof of delivery.
-  //
-  // Item lines are pre-filled from the order, but the delivery details (driver,
-  // plate, received-by, date, signature) are printed as blank ruled fields - the
-  // crew fills those in by hand at the drop-off, which is how the paper DR is
-  // actually used.
-  const printDeliveryReceipt = (order) => {
-    const win = window.open('', '_blank', 'width=900,height=1000');
-    if (!win) return ui.alert('Pop-up blocked - allow pop-ups for this site.');
-
-    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    const BILL_NAME  = import.meta.env.VITE_BILLING_NAME     || BIZ_NAME;
-    const BILL_ADDR1 = import.meta.env.VITE_BILLING_ADDRESS1 || '';
-    const BILL_ADDR2 = import.meta.env.VITE_BILLING_ADDRESS2 || '';
-    const BILL_PHONE = import.meta.env.VITE_BILLING_PHONE    || '';
-
-    const drNo = order.billingNumber || order.orderNumber || '';
-    const dateStr = new Date(order.createdAt || Date.now()).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
-
-    const rows = (order.items || []).map((item, i) => {
-      const addOns = (item.selectedAddOns || []).map(a => a.name).join(', ');
-      const desc = esc(item.name) + (item.size ? ` (${esc(item.size)})` : '') + (addOns ? ` + ${esc(addOns)}` : '');
-      return `<tr>
-        <td class="n">${i + 1}</td>
-        <td class="c">${esc(item.productCode || '')}</td>
-        <td class="d">${desc}</td>
-        <td class="q">${esc(item.quantity)}</td>
-        <td class="u"></td>
-      </tr>`;
-    }).join('');
-
-    // Pad to a fixed number of rows so the form keeps its shape and leaves room
-    // for hand-written additions.
-    const MIN_ROWS = 10;
-    const padding = Math.max(0, MIN_ROWS - (order.items || []).length);
-    const padRows = Array.from({ length: padding }, () =>
-      '<tr><td class="n">&nbsp;</td><td class="c"></td><td class="d"></td><td class="q"></td><td class="u"></td></tr>'
-    ).join('');
-
-    const copy = (label, note) => `
-      <section class="dr">
-        <div class="copy-tag">${label}<span class="copy-note">${note}</span></div>
-        <header>
-          <div class="biz">
-            <div class="biz-name">${esc(BILL_NAME)}</div>
-            ${BILL_ADDR1 ? `<div class="biz-line">${esc(BILL_ADDR1)}</div>` : ''}
-            ${BILL_ADDR2 ? `<div class="biz-line">${esc(BILL_ADDR2)}</div>` : ''}
-            ${BILL_PHONE ? `<div class="biz-line">Tel: ${esc(BILL_PHONE)}</div>` : ''}
-          </div>
-          <div class="doc">
-            <div class="doc-title">DELIVERY RECEIPT</div>
-            <div class="doc-no">No. <b>${esc(drNo)}</b></div>
-            <div class="doc-date">Date: ${esc(dateStr)}</div>
-          </div>
-        </header>
-
-        <div class="party">
-          <div class="fld wide"><span class="lbl">Delivered To</span><span class="val">${esc(order.customerName || '')}</span></div>
-          <div class="fld wide"><span class="lbl">Address</span><span class="val"></span></div>
-          <div class="fld"><span class="lbl">P.O. / Ref No.</span><span class="val"></span></div>
-          <div class="fld"><span class="lbl">Terms</span><span class="val">${esc(order.termsOfPayment || '')}</span></div>
-        </div>
-
-        <table>
-          <thead>
-            <tr><th class="n">#</th><th class="c">Item Code</th><th class="d">Description</th><th class="q">Qty</th><th class="u">Unit</th></tr>
-          </thead>
-          <tbody>${rows}${padRows}</tbody>
-        </table>
-
-        ${order.orderNotes ? `<div class="notes"><b>Notes:</b> ${esc(order.orderNotes)}</div>` : ''}
-
-        <div class="sigs">
-          <div class="sig"><div class="line"></div><div class="cap">Prepared By${(order.cashier || activeAdmin?.name) ? `: ${esc(order.cashier || activeAdmin?.name)}` : ''}</div></div>
-          <div class="sig"><div class="line"></div><div class="cap">Driver / Plate No.</div></div>
-          <div class="sig"><div class="line"></div><div class="cap">Received By (Signature over Printed Name)</div></div>
-          <div class="sig narrow"><div class="line"></div><div class="cap">Date Received</div></div>
-        </div>
-        <div class="foot">Received the above goods in good order and condition.</div>
-      </section>`;
-
-    win.document.write(`<!DOCTYPE html><html><head><title>Delivery Receipt ${esc(drNo)}</title><style>
-      * { box-sizing: border-box; }
-      body { font-family: Arial, Helvetica, sans-serif; margin:0; color:#000; font-size:11px; }
-      .dr { padding:10mm 10mm 6mm; border-bottom:1px dashed #999; position:relative; }
-      /* Each copy fills half a page so both land on one sheet; the second starts
-         a new page only if the content genuinely overflows. */
-      .copy-tag { position:absolute; top:4mm; right:10mm; font-size:10px; font-weight:bold; letter-spacing:1px; border:1px solid #000; padding:2px 8px; }
-      .copy-note { font-weight:normal; letter-spacing:0; margin-left:6px; color:#444; }
-      header { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #000; padding-bottom:4mm; margin-bottom:4mm; }
-      .biz-name { font-size:15px; font-weight:bold; text-transform:uppercase; }
-      .biz-line { font-size:10px; color:#333; }
-      .doc { text-align:right; }
-      .doc-title { font-size:14px; font-weight:bold; letter-spacing:1px; }
-      .doc-no, .doc-date { font-size:11px; margin-top:2px; }
-      .party { display:grid; grid-template-columns:1fr 1fr; gap:2mm 6mm; margin-bottom:4mm; }
-      .fld { display:flex; align-items:flex-end; gap:4px; }
-      .fld.wide { grid-column:span 2; }
-      .lbl { font-size:9px; text-transform:uppercase; color:#555; white-space:nowrap; }
-      .val { flex:1; border-bottom:1px solid #000; min-height:14px; padding:0 4px 1px; font-weight:bold; }
-      table { width:100%; border-collapse:collapse; }
-      th, td { border:1px solid #000; padding:3px 5px; }
-      th { background:#eee; font-size:9px; text-transform:uppercase; text-align:left; }
-      td { height:16px; }
-      .n { width:6%; text-align:center; } .c { width:16%; } .q { width:10%; text-align:center; } .u { width:12%; }
-      .notes { margin-top:3mm; font-size:10px; border:1px solid #000; padding:3px 5px; }
-      .sigs { display:flex; gap:6mm; margin-top:6mm; }
-      .sig { flex:1; } .sig.narrow { flex:0 0 28%; }
-      .line { border-bottom:1px solid #000; height:9mm; }
-      .cap { font-size:8.5px; text-transform:uppercase; color:#333; margin-top:2px; text-align:center; }
-      .foot { margin-top:3mm; font-size:9px; font-style:italic; color:#333; text-align:center; }
-      @media print {
-        @page { size:A4; margin:0; }
-        .dr { page-break-inside:avoid; }
-        body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-      }
-    </style></head><body>
-      ${copy('ORIGINAL', 'Customer&rsquo;s Copy')}
-      ${copy('DUPLICATE', 'Office Copy')}
-    </body></html>`);
-    win.document.close();
-    win.onload = () => { win.focus(); win.print(); };
   };
 
   // ── Kitchen ticket print ─────────────────────────────────────────────────────
@@ -6491,76 +5895,6 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     setTimeout(() => { win.print(); win.close(); }, 300);
   };
 
-  // ── Z-Reading PDF ─────────────────────────────────────────────────────────────
-  const printZReading = async () => {
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    const today = new Date().toLocaleDateString('en-PH');
-    const now   = new Date().toLocaleTimeString('en-PH');
-    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text(vatRegLabel, 105, 21, { align: 'center' });
-    doc.setFontSize(12); doc.text('Z-READING', 105, 28, { align: 'center' });
-    doc.setFontSize(9);  doc.text(`${today}  ${now}  -  OFFICIAL END-OF-DAY REPORT`, 105, 34, { align: 'center' });
-    const completed  = archivedOrders.filter(o => o.status === 'Completed');
-    const voided     = archivedOrders.filter(o => o.status === 'Voided');
-    const cancelled  = archivedOrders.filter(o => o.status === 'Cancelled');
-    const comps      = completed.filter(o => o.isComplimentary);
-    const regular    = completed.filter(o => !o.isComplimentary);
-    const gross      = regular.reduce((s,o) => s+(o.subtotal||0), 0);
-    const discounts  = regular.reduce((s,o) => s+(o.discount||0), 0);
-    const payMethods = {};
-    regular.forEach(o => { const m = o.paymentMethod||'Cash'; if (!payMethods[m]) payMethods[m]={count:0,total:0}; payMethods[m].count++; payMethods[m].total+=(o.total||0); });
-    doc.setFontSize(8); doc.setTextColor(120); doc.text('All amounts in PHP. Negatives shown in (parentheses).', 105, 38, { align: 'center' }); doc.setTextColor(0);
-    autoTable(doc, {
-      startY: 42,
-      head: [['Summary', 'Amount (PHP)']],
-      body: [
-        ['Gross Sales',      pdfMoney(gross)],
-        ['Less: Discounts',  pdfMoney(-discounts)],
-        ['Net Sales',        pdfMoney(gross - discounts)],
-        ['Complimentary',    pdfMoney(-comps.reduce((s,o)=>s+(o.subtotal||0),0))],
-        ['Orders Completed', String(completed.length)],
-        ['Orders Voided',    String(voided.length)],
-        ['Orders Cancelled', String(cancelled.length)],
-      ],
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] },
-      columnStyles: { 1: { halign: 'right' } },
-    });
-    autoTable(doc, {
-      startY: doc.lastAutoTable.finalY + 6,
-      head: [['Payment Method', 'Orders', 'Amount (PHP)']],
-      body: Object.entries(payMethods).map(([m, d]) => [m, String(d.count), pdfMoney(d.total)]),
-      styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] },
-      columnStyles: { 1: { halign: 'center' }, 2: { halign: 'right' } },
-    });
-    doc.save(`Z-Reading-${today.replace(/\//g,'-')}.pdf`);
-  };
-
-  // Toggle a product's manual availability flag (Removed on/off). Superadmin only.
-  const toggleProductAvailability = async (product) => {
-    try {
-      const next = !(product.isAvailable !== false); // default true → toggle to false
-      const res = await apiFetch(`/api/products/${product._id}/availability`, {
-        method: 'PATCH',
-        body: JSON.stringify({ isAvailable: next }),
-      });
-      if (res.ok) fetchData(); // refresh products
-      else ui.alert('Failed to update availability.');
-    } catch (err) { console.error('toggleProductAvailability', err); }
-  };
-
-  // Toggle Out-Of-Stock flag. Stays on the menu (with a badge), still in reports.
-  const toggleProductOOS = async (product) => {
-    try {
-      const next = !product.isOutOfStock;
-      const res = await apiFetch(`/api/products/${product._id}/oos`, {
-        method: 'PATCH',
-        body: JSON.stringify({ isOutOfStock: next }),
-      });
-      if (res.ok) fetchData();
-      else ui.alert('Failed to update OOS status.');
-    } catch (err) { console.error('toggleProductOOS', err); }
-  };
-
   // ── Change Password ────────────────────────────────────────────────────────
   const handleChangePassword = async () => {
     setChangePwError('');
@@ -6600,24 +5934,16 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     } catch (err) { console.error('fetchAuditLogs', err); }
   };
 
-  // CSV export streams straight from the server (bounded to a 92-day range,
-  // same convention as /api/journal/export) - filters must be set before
-  // exporting since the server has no memory of the on-screen page.
-  const exportAuditLogsCsv = async () => {
+  // Full date-range audit report, as a PDF - the whole range with the chosen
+  // action and user filters, not just the page on screen. It used to download
+  // CSV; reports are PDF. Bounded to 92 days server-side, like the journal.
+  const exportAuditLogsRangePdf = async () => {
     if (!auditLogFilters.start || !auditLogFilters.end) { return ui.alert('Pick a start and end date to export (max 92 days).'); }
-    const qs = new URLSearchParams({ start: auditLogFilters.start, end: auditLogFilters.end });
-    if (auditLogFilters.action) qs.set('action', auditLogFilters.action);
-    if (auditLogFilters.actor)  qs.set('actor', auditLogFilters.actor);
-    try {
-      const res = await apiFetch(`/api/audit-logs/export?${qs.toString()}`);
-      if (!res.ok) { const d = await res.json().catch(() => ({})); return ui.alert(d.error || 'Failed to export audit log.'); }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `audit_log_${auditLogFilters.start}_to_${auditLogFilters.end}.csv`;
-      document.body.appendChild(a); a.click(); a.remove();
-      URL.revokeObjectURL(url);
-    } catch (err) { console.error('exportAuditLogsCsv', err); ui.alert('Network error exporting audit log.'); }
+    const r = await buildLedgerReportPdf('auditlog', {
+      start: auditLogFilters.start, end: auditLogFilters.end,
+      action: auditLogFilters.action, actor: auditLogFilters.actor,
+    });
+    if (!r.ok) ui.alert(r.error || 'Failed to export the audit log.');
   };
 
   // PDF export builds from whatever's already loaded in `auditLogs` state - the
@@ -6671,7 +5997,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   // ── Bills (AP approval workflow) ────────────────────────────────────────────
   const [bills, setBills] = useState(null);
   const [billsFilter, setBillsFilter] = useState('Pending');
-  const [billCreate, setBillCreate] = useState({ open: false, supplierId: '', description: '', amount: '', dueDate: '', expenseAccountCode: '600000' });
+  const [billCreate, setBillCreate] = useState({ open: false, supplierId: '', description: '', amount: '', dueDate: '', expenseAccountCode: '600000', claimInputVat: false, supplierInvoiceNo: '' });
   const [billPayModal, setBillPayModal] = useState(null); // the bill being paid
   const [billPayFrom, setBillPayFrom] = useState('111000');
   const [billPayReference, setBillPayReference] = useState('');
@@ -6702,7 +6028,51 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     finally { setBillBusy(false); }
   };
 
-  const approveBill = (b) => billAction(b._id, 'approve');
+  // Three-way match: a bill for received goods needs the supplier's invoice
+  // recorded against it before it can be approved for payment.
+  const [billInvoiceModal, setBillInvoiceModal] = useState(null); // the bill whose invoice is being recorded
+  const [billInvoiceForm, setBillInvoiceForm] = useState({ no: '', amount: '', date: '' });
+  const openBillInvoice = (b) => {
+    setBillInvoiceForm({
+      no: b.supplierInvoiceNo || '',
+      amount: b.supplierInvoiceAmount != null ? String(b.supplierInvoiceAmount) : String(b.amount ?? ''),
+      date: b.supplierInvoiceDate ? String(b.supplierInvoiceDate).slice(0, 10) : '',
+    });
+    setBillInvoiceModal(b);
+  };
+  const submitBillInvoice = async () => {
+    const b = billInvoiceModal;
+    if (!b) return;
+    const amount = parseFloat(billInvoiceForm.amount);
+    if (!billInvoiceForm.no.trim()) return ui.alert("Enter the supplier's invoice number.");
+    if (!(amount > 0)) return ui.alert('Enter the invoice total.');
+    setBillBusy(true);
+    try {
+      const res = await apiFetch(`/api/bills/${b._id}/invoice`, { method: 'POST', body: JSON.stringify({ supplierInvoiceNo: billInvoiceForm.no.trim(), invoiceAmount: amount, invoiceDate: billInvoiceForm.date || null }) });
+      const d = await res.json();
+      if (!d.success) return ui.alert(d.error || 'Could not record the invoice.');
+      setBillInvoiceModal(null);
+      fetchBills();
+      if (d.match?.status === 'Exception') {
+        ui.alert(`Invoice recorded - it does NOT match:\n\n${(d.match.issues || []).map(i => '• ' + i.text).join('\n')}\n\nReturn it to procurement, or have someone who can approve price changes accept the difference.`);
+      }
+    } catch { ui.alert('Network error.'); }
+    finally { setBillBusy(false); }
+  };
+  const approveBill = async (b) => {
+    if (b.source === 'PO') {
+      const status = b.match?.status || 'Unmatched';
+      if (status === 'Unmatched') return openBillInvoice(b);
+      if (status === 'Exception') {
+        const issues = (b.match.issues || []).map(i => '• ' + i.text).join('\n');
+        if (!can('pricing.approve')) return ui.alert(`This bill's invoice does not match:\n\n${issues}\n\nReturn it to procurement, or ask someone who can approve price changes to accept it.`);
+        const reason = prompt(`Accept the difference and approve ${b.billNumber}?\n\n${issues}\n\nThe payable becomes the invoiced amount and the difference is booked to Purchase Price Variance. Why is it accepted?`);
+        if (!reason || !reason.trim()) return;
+        return billAction(b._id, 'approve', { acceptVariance: true, acceptReason: reason.trim() });
+      }
+    }
+    return billAction(b._id, 'approve');
+  };
   const rejectBill = async (b) => {
     const reason = prompt(`Reject bill ${b.billNumber}? Enter a reason:`);
     if (!reason || !reason.trim()) return;
@@ -6834,7 +6204,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   // date: when the money actually moved. An advance is usually filed after
   // the fact, so stamping 'now' would put it in the wrong period and the
   // ledger would stop matching the bank.
-  const ADV_ISSUE_BLANK = { type: 'employee', payeeName: '', amount: '', purpose: '', sourceAccount: '111000', referenceNumber: '', date: '' };
+  const ADV_ISSUE_BLANK = { type: 'employee', clientId: '', payeeId: '', payeeName: '', amount: '', purpose: '', sourceAccount: '111000', referenceNumber: '', date: '' };
   const [advIssueModal, setAdvIssueModal] = useState(null); // null | {...ADV_ISSUE_BLANK}
   const submitIssueAdvance = async () => {
     const f = advIssueModal;
@@ -6843,7 +6213,15 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     if (!amt || amt <= 0) return ui.alert('Enter a valid amount.');
     setAdvBusy(true);
     try {
-      const res = await apiFetch('/api/advances', { method: 'POST', body: JSON.stringify({ ...f, amount: amt }) });
+      // A supplier typed exactly as one already on file IS that supplier: use
+      // their name as filed and tie the advance to them.
+      let payee = {};
+      if (f.type === 'supplier') {
+        const typed = f.payeeName.trim().toLowerCase();
+        const s = (suppliers || []).find(x => String(x._id) === String(f.payeeId)) || (suppliers || []).find(x => String(x.name || '').trim().toLowerCase() === typed);
+        payee = s ? { payeeId: String(s._id), payeeName: s.name } : { payeeId: '' };
+      }
+      const res = await apiFetch('/api/advances', { method: 'POST', body: JSON.stringify({ ...f, ...payee, amount: amt }) });
       const d = await res.json();
       if (!d.success) { ui.alert(d.error || 'Failed to issue advance.'); return; }
       setAdvIssueModal(null);
@@ -6953,11 +6331,13 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       const res = await apiFetch('/api/bills', { method: 'POST', body: JSON.stringify({
         supplierId: billCreate.supplierId, description: billCreate.description.trim(),
         amount: amt, dueDate: billCreate.dueDate || null, expenseAccountCode: billCreate.expenseAccountCode,
+        claimInputVat: billCreate.claimInputVat === true,
+        supplierInvoiceNo: (billCreate.supplierInvoiceNo || '').trim() || undefined,
       }) });
       const d = await res.json();
       if (d.success) {
         ui.alert('Bill created (Pending approval).');
-        setBillCreate({ open: false, supplierId: '', description: '', amount: '', dueDate: '', expenseAccountCode: '600000' });
+        setBillCreate({ open: false, supplierId: '', description: '', amount: '', dueDate: '', expenseAccountCode: '600000', claimInputVat: false, supplierInvoiceNo: '' });
         fetchBills();
       } else ui.alert(d.error || 'Failed to create bill.');
     } catch { ui.alert('Network error.'); }
@@ -6980,7 +6360,12 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     return [...byId.values()];
   })();
   const filteredOrders = (orderFilter === 'Parked' ? parkedOrders : orderFilter === 'All' ? allOrdersSource : orders).filter(o => {
-    const statusOk = (orderFilter === 'All' || orderFilter === 'Parked') ? true : o.status === orderFilter;
+    // "All" is the working queue. A cancelled ticket - one deleted as entered
+    // by mistake - leaves it at once instead of lingering until the day
+    // closes; it is still there under the Cancelled filter, and in the audit.
+    const statusOk = orderFilter === 'Parked' ? true
+      : orderFilter === 'All' ? o.status !== 'Cancelled'
+      : o.status === orderFilter;
     if (!statusOk) return false;
     if (!orderSearch.trim()) return true;
     const q = orderSearch.trim().toLowerCase();
@@ -6991,29 +6376,16 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     );
   });
 
-  // ── Inventory badge count (hoisted so it can be used in sidebar AND ctx) ──
-  const invBadgeCount = (() => {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const low     = inventory.filter(i => i.lowStockThreshold > 0 && i.stockQty <= i.lowStockThreshold).length;
-    const expired = inventory.filter(i => i.expiryDate && i.stockQty > 0 && new Date(i.expiryDate) < today).length;
-    const soon    = inventory.filter(i => {
-      if (!i.expiryDate || i.stockQty <= 0) return false;
-      const days = Math.ceil((new Date(i.expiryDate) - today) / 86400000);
-      return days >= 0 && days <= (i.expiryWarnDays || 7);
-    }).length;
-    return low + expired + soon;
-  })();
-  const invBadgeColor = (() => {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const expired = inventory.filter(i => i.expiryDate && i.stockQty > 0 && new Date(i.expiryDate) < today).length;
-    const low     = inventory.filter(i => i.lowStockThreshold > 0 && i.stockQty <= i.lowStockThreshold).length;
-    const soon    = inventory.filter(i => {
-      if (!i.expiryDate || i.stockQty <= 0) return false;
-      const days = Math.ceil((new Date(i.expiryDate) - today) / 86400000);
-      return days >= 0 && days <= (i.expiryWarnDays || 7);
-    }).length;
-    return expired > 0 ? 'bg-red-500 animate-pulse' : low > 0 ? 'bg-red-500' : soon > 0 ? 'bg-orange-500' : 'bg-red-500';
-  })();
+  // ── Inventory badge (hoisted so it can be used in sidebar AND ctx) ──
+  // The stock items of the bell's own feed - the same rules, the same data,
+  // the same moment. It can never exceed the bell, which shows everything.
+  const INV_NOTIF_KINDS = ['low_stock', 'expired', 'expiring'];
+  const invNotifs = (notifData.items || []).filter(n => INV_NOTIF_KINDS.includes(n.kind));
+  const invBadgeCount = invNotifs.length;
+  const invBadgeColor = invNotifs.some(n => n.kind === 'expired') ? 'bg-red-500 animate-pulse'
+    : invNotifs.some(n => n.kind === 'low_stock') ? 'bg-red-500'
+    : invNotifs.some(n => n.kind === 'expiring') ? 'bg-orange-500'
+    : 'bg-red-500';
   const todayCompleted = orders.filter(o => o.status === 'Completed');
   const todayComplimentary = todayCompleted.filter(o => o.isComplimentary);
   const todayCompAmount = todayComplimentary.reduce((sum, o) => sum + o.subtotal, 0);
@@ -7165,10 +6537,95 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
   // While the silent refresh is resolving, show a neutral splash instead of
   // briefly flashing the login screen for an already-authenticated user.
+  // The groups of functions that live in their own files (./make*.js). They are
+  // created here, before any screen below is drawn, because every screen from
+  // this point on - the sign-in page and the clock-in gate included - uses them.
+  // from ./makeUnitHelpers.js
+  const {
+    itemDisplay, resolveUnitFE, packInfo, effectiveDisplay, analyticsDisplay, peso,
+  } = makeUnitHelpers({
+    BUSINESS_TYPE,
+  });
+
+  // from ./makePdfExports.js
+  const {
+    addLogoToPDF, calcRecipeCost, exportAnalyticsToPDF, exportDayToPDF, exportInventoryToPDF, exportLedgerToPDF, exportAllToPDF, handleSaveProduct,
+    handleSaveCategory, deleteProduct, deleteCategory, updateSize, removeSize, addSize, addMaterialToRecipe, addNonStockToRecipe,
+    updateMaterialQty, removeMaterial, getEstimatedStock, handleImageUpload,
+  } = makePdfExports({
+    systemSettings, inventory, apiFetch, loadPdfLibs, BIZ_NAME, itemDisplay, effectiveDisplay, journalEntries,
+    archivedOrders, activeAdmin, archiveTotal, archiveSearch, archiveDateRange, orders, analyticsData, analyticsDisplay,
+    pdfMoney, onceAtATime, catForm, editingCategory, setEditingCategory, setCatForm, fetchData, setFormData,
+    formData, editingProduct, resetProductForm, packInfo,
+  });
+
+  // from ./makeFinanceFetchers.js
+  const {
+    fetchPnlMonthly, fetchBsMonthly, fetchPnl, exportPnlMonthlyPDF, exportBsMonthlyPDF,
+  } = makeFinanceFetchers({
+    activeAdmin, apiFetch, pnlRange, setPnlData, pnlmRange, setPnlMonthly, pnlMonthly, loadPdfLibs,
+    pnlmView, addLogoToPDF, BIZ_NAME, pdfMoney, bsmRange, setBsMonthly, bsMonthly, bsmView,
+  });
+
+  // from ./makeReportExports.js
+  const {
+    exportArPDF, exportApPDF, exportPaymentsPDF, exportProfitByCategoryPDF, exportMenuEngineeringPDF, exportVariancePDF, exportCommissionsPDF, exportBillsPDF,
+    exportAuditLogPDF, exportExpensesPDF, exportStockTransfersPDF, exportProductionHistoryPDF, exportProductionOrdersPDF, exportMenuItemsPDF, exportRevolvingFundsPDF, exportPricingMasterlistPDF,
+    exportPriceTiersPDF,
+  } = makeReportExports({
+    arOutstanding, loadPdfLibs, addLogoToPDF, BIZ_NAME, pdfMoney, arAgeing, apData, salesByPayment,
+    sbpRange, profitByCategory, menuEngineering, cashierVariance, commissions, bills, billsFilter, auditLogEntries,
+    expenseList, stockTransfers, inventory, apiFetch, products, BUSINESS_TYPE, rfFunds, rfTxs,
+    rfActiveFund, calcRecipeCost, pricingTable,
+  });
+
+  // from ./makeReportFetchers.js
+  const {
+    fetchMenuEngineering, fetchCashierVariance, fetchPurchaseOrder, fetchCommissions, exportPnlPDF, exportBalanceSheetPDF, exportPurchaseOrderPDF,
+  } = makeReportFetchers({
+    apiFetch, setMenuEngineering, setCashierVariance, setCommissions, setPurchaseOrder, purchaseOrder, loadPdfLibs, addLogoToPDF,
+    BIZ_NAME, pdfMoney, pnlData, pnlRange, vatStmtSuffix, bsData,
+  });
+
+  // from ./makeCashDrawerSettings.js
+  const {
+    toggleSharedDrawer, toggleBlindClose, saveVarianceThreshold, saveDrawerMaxHours, toggleAskOperatorEachSale, toggleAutoClose, toggleImages, saveSetting,
+  } = makeCashDrawerSettings({
+    systemSettings, apiFetch, fetchSettings, setSharedDrawer,
+  });
+
+  // from ./makeRefunds.js
+  const {
+    handleRefund, handlePartialRefund, handleExchange,
+  } = makeRefunds({
+    refundModal, refundForm, setRefundSubmitting, apiFetch, setRefundModal, setRefundForm, fetchOrders,
+  });
+
+  // from ./makeTimeClock.js
+  const {
+    fetchClockStatus, handleClockIn, handleClockButton, fetchClockEntries, handleClockOut, startBreak, endBreak,
+  } = makeTimeClock({
+    setClockStatus, setClockStatusLoaded, apiFetch, setClockEntries, setClockEntriesTotal, setClockEntriesPage, clockStatus, setClockModalOpen,
+  });
+
+  // from ./makeSalesDocuments.js
+  const {
+    printBillingStatement, printDeliveryReceipt,
+  } = makeSalesDocuments({
+    clientAccounts, systemSettings, activeAdmin, BIZ_NAME,
+  });
+
+  // from ./makeZReading.js
+  const {
+    toggleProductAvailability, toggleProductOOS, toggleProductQr, printZReading,
+  } = makeZReading({
+    loadPdfLibs, BIZ_NAME, vatRegLabel, archivedOrders, pdfMoney, apiFetch, fetchData,
+  });
+
   if (authBootstrapping) {
     return (
       <div className="min-h-screen bg-page-bg flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4 text-fg/60">
+        <div className="flex flex-col items-center gap-4 text-fg/65">
           <RefreshCw size={32} className="animate-spin text-brand-text" />
           <span className="text-sm">Restoring session…</span>
         </div>
@@ -7186,7 +6643,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             </div>
             <p className="text-5xl font-black text-brand-text tracking-tight leading-none mb-3">{BIZ_NAME}</p>
             <p className="text-fg/65 font-bold uppercase tracking-[0.3em] text-sm">SEMIVRA LIBELLUS</p>
-            <p className="text-fg/15 text-xs mt-12 font-medium">Restaurant POS &amp; Management System</p>
+            <p className="text-fg/65 text-xs mt-12 font-medium">Restaurant POS &amp; Management System</p>
           </div>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center p-6 lg:p-12">
@@ -7214,7 +6671,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             placeholder="Staff Name"
             value={loginForm.name}
             onChange={e => setLoginForm({...loginForm, name: e.target.value})}
-            className="w-full bg-white/5 border border-white/10 focus:border-brand focus:ring-2 focus:ring-brand/20 text-fg placeholder-white/20 text-center py-3 rounded-xl outline-none mb-3 font-bold transition"
+            className="w-full bg-white/5 border border-white/10 focus:border-brand focus:ring-2 focus:ring-brand/20 text-fg placeholder-fg/70 text-center py-3 rounded-xl outline-none mb-3 font-bold transition"
             required
             autoFocus
           />
@@ -7224,10 +6681,27 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             placeholder="Password"
             value={loginForm.password}
             onChange={e => setLoginForm({...loginForm, password: e.target.value})}
-            className="w-full bg-white/5 border border-white/10 focus:border-brand focus:ring-2 focus:ring-brand/20 text-fg placeholder-white/20 text-center py-3 rounded-xl outline-none mb-3 font-bold tracking-widest transition"
+            className="w-full bg-white/5 border border-white/10 focus:border-brand focus:ring-2 focus:ring-brand/20 text-fg placeholder-fg/70 text-center py-3 rounded-xl outline-none mb-3 font-bold tracking-widest transition"
             required
           />
-          {requireCashShift && (
+          {/* Two-step sign-in: asked for only after the password was right. */}
+          {loginNeedsCode && (
+            <input
+              type="text" inputMode="numeric" autoComplete="one-time-code" autoFocus
+              aria-label="Sign-in code" placeholder="6-digit code, or a backup code"
+              value={loginForm.code || ''}
+              onChange={e => setLoginForm(f => ({ ...f, code: e.target.value }))}
+              className="w-full bg-white/5 border border-white/10 focus:border-brand focus:ring-2 focus:ring-brand/20 text-fg placeholder-fg/70 text-center py-3 rounded-xl outline-none mb-3 font-bold tracking-widest"
+            />
+          )}
+          {/* The till is already open, so this login joins it. Saying so beats
+              silently removing a field somebody expected to fill in. */}
+          {joiningOpenDrawer && (
+            <p className="text-[11px] text-fg/70 font-bold text-center mb-2">
+              The drawer is already open - you will join the current session. No starting cash needed.
+            </p>
+          )}
+          {requireCashShift && !joiningOpenDrawer && (
             <div className="relative mb-1">
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-brand-text font-black text-lg pointer-events-none">₱</span>
               <input
@@ -7245,10 +6719,22 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           <p className="text-fg/65 text-xs mb-5 text-center font-medium">
             {requireCashShift ? 'Required for staff · Optional for Superadmin' : 'Cash shift tracking is turned off for this shop'}
           </p>
-          <button type="submit" className="w-full bg-brand hover:bg-brand-dark text-fg font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest">
+          <button type="submit" className="w-full bg-brand hover:bg-brand-dark text-on-brand font-black py-4 rounded-xl transition shadow-lg shadow-brand/20 uppercase tracking-widest">
             Start Shift
           </button>
+          {/* The ordering code on its own - for a counter tablet facing the
+              customer, with nobody signed in. */}
+          <button type="button" onClick={() => setJustQrOpen(true)}
+            className="w-full mt-3 flex items-center justify-center gap-2 border border-white/15 hover:border-brand/60 text-fg/80 hover:text-fg font-bold py-3 rounded-xl transition text-sm uppercase tracking-widest">
+            <QrCode size={16} /> Just QR
+          </button>
+          <p className="mt-5 text-center text-xs text-fg/65">
+            <a href="/privacy" target="_blank" rel="noopener" className="underline hover:text-fg">Privacy Notice</a>
+            {' · '}
+            <a href="/terms" target="_blank" rel="noopener" className="underline hover:text-fg">Terms of Use</a>
+          </p>
         </form>
+        {justQrOpen && <JustQr apiUrl={API_URL} businessType={BUSINESS_TYPE} bizName={BIZ_NAME} onClose={() => setJustQrOpen(false)} />}
         </div>
       </div>
     );
@@ -7343,6 +6829,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     if (invCategoryFilter) {
       list = list.filter(i => getInvCategory(i).toLowerCase() === invCategoryFilter.toLowerCase());
     }
+    if (invNoCostOnly) list = list.filter(i => !(Number(i.unitCost) > 0));
     // Sort
     switch (invSort) {
       case 'name-asc':  list.sort((a, b) => (a.itemName || '').localeCompare(b.itemName || '')); break;
@@ -7389,7 +6876,10 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   // Granular permission check for UI gating (server still enforces). Superadmin ⇒ all.
   const can = (perm) => isSuperAdmin || auth.can(perm);
   // Void / refund are allowed for superadmin OR admin (case-insensitive).
-  const canVoidRefund = ['superadmin', 'admin'].includes(String(activeAdmin?.role || '').toLowerCase());
+  const canVoidRefund = can('orders.refund');
+  // Voiding follows the "Void / delete orders" permission, as the server does,
+  // so granting it to a role (a head barista, say) is all it takes.
+  const canVoid = can('orders.delete');
 
   // CLOCK-IN GATE: every non-superadmin must clock in before using the POS.
   // (Superadmin/owner is exempt.) Shown once the clock status is known so we
@@ -7406,7 +6896,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           className="bg-brand text-on-brand px-10 py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-brand/90 active:scale-98 transition shadow-lg shadow-brand/20 min-h-[56px] flex items-center gap-2">
           <Clock size={18} /> Clock In
         </button>
-        <button onClick={performLogout} className="mt-5 text-fg/70 hover:text-fg/70 text-xs font-bold uppercase tracking-wider transition">
+        <button onClick={performLogout} className="mt-5 text-fg/70 text-xs font-bold uppercase tracking-wider transition">
           Log out
         </button>
       </div>
@@ -7416,149 +6906,142 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   // Sidebar nav content (inlined twice: desktop + mobile)
   const renderSidebarNav = (closeFn) => (
     <>
-      {/* Brand header */}
-      <div className="px-4 pt-4 pb-3 border-b border-white/5">
-        {/* Row 1: logo + business name */}
-        <div className="flex items-start gap-2.5 mb-1.5">
-          <div className="shrink-0 mt-0.5">
+      {/* Brand header. Two slim rows, not four: on a laptop screen the
+          header and the footer between them took two thirds of the sidebar,
+          leaving a window of four tabs to scroll through. A long business name
+          takes a second line rather than being cut; the full name is its tooltip. */}
+      <div className="px-3 pt-3 pb-2 border-b border-white/5">
+        <div className="flex items-center gap-2.5">
+          <div className="shrink-0">
             {systemSettings.businessLogo
-              ? <img src={systemSettings.businessLogo} alt="" className="w-12 h-12 object-cover" style={{ borderRadius: systemSettings.logoRadius || '10px', ...(systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor } : {}) }} />
+              ? <img src={systemSettings.businessLogo} alt="" className="w-9 h-9 object-cover" style={{ borderRadius: systemSettings.logoRadius || '10px', ...(systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor } : {}) }} />
               : <div
-                  className={`w-12 h-12 flex items-center justify-center font-black text-sm select-none ${systemSettings.logoColor ? '' : 'bg-brand/20 text-brand-text'}`}
+                  className={`w-9 h-9 flex items-center justify-center font-black text-sm select-none ${systemSettings.logoColor ? '' : 'bg-brand/20 text-brand-text'}`}
                   style={{ borderRadius: systemSettings.logoRadius || '10px', ...(systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor, color: '#fff' } : {}) }}
                 >{BIZ_NAME.charAt(0)}</div>
             }
           </div>
-          <p className="text-[22px] font-black text-brand-text tracking-tight leading-[1.1] break-words drop-shadow-sm min-w-0 flex-1">{BIZ_NAME}</p>
-        </div>
-
-        {/* Row 2: SEMIVRA NEGOTIUM · */}
-        <p className="text-[9px] text-fg/75 font-bold uppercase tracking-[0.2em]">
-          SEMIVRA <span className="text-brand-text">{navMode === 'libellus' ? 'LIBELLUS' : 'NEGOTIUM'}</span> ·
-        </p>
-
-        {/* Row 3: Operations / Management */}
-        <p className="text-[9px] text-fg/70 font-semibold mt-0.5">
-          {navMode === 'libellus' ? 'Operations' : 'Management'}
-        </p>
-
-        {/* Row 4: VAT pill + bell */}
-        <div className="flex items-center justify-between mt-2">
-          <span className="text-[8px] font-black bg-brand/10 border border-brand/30 text-brand-text px-2 py-0.5 rounded-full uppercase tracking-widest">{vatRegLabel}</span>
-          <div className="hidden md:block">
+          <p title={BIZ_NAME} className="text-base font-black text-brand-text tracking-tight leading-tight line-clamp-2 break-words min-w-0 flex-1">{BIZ_NAME}</p>
+          <div className="hidden md:block shrink-0">
             <NotificationBell align="left" />
           </div>
+        </div>
+        <div className="flex items-center justify-between gap-2 mt-1.5">
+          <p className="text-[9px] text-fg/75 font-bold uppercase tracking-[0.15em] truncate">
+            <span className="text-brand-text">{navMode === 'libellus' ? 'Libellus' : 'Negotium'}</span> · {navMode === 'libellus' ? 'Operations' : 'Management'}
+          </p>
+          <span title={vatRegLabel} className="shrink-0 text-[8px] font-black bg-brand/10 border border-brand/30 text-brand-text px-2 py-0.5 rounded-full uppercase tracking-widest">{vatRegistered ? 'VAT' : 'Non-VAT'}</span>
         </div>
       </div>
 
       {/* Nav */}
-      <nav className="p-3 space-y-0.5 md:flex-1 md:min-h-0 md:overflow-y-auto custom-scrollbar">
-        <p className="text-[9px] text-fg/80 font-bold uppercase tracking-[0.2em] px-4 pt-2 pb-1">Operations</p>
-        {[
-          { id: 'orders', label: 'Orders & POS', icon: ShoppingCart, perm: 'orders.view' },
-          { id: 'inventory', label: 'Inventory & Stock', icon: Package, perm: 'inventory.view' },
-          { id: 'hub', label: 'Hub', icon: Network, perm: 'inventory.view' },
-          // Raw materials -> finished item, approval-gated. Was logistics-only,
-          // which hid it from exactly the business that needs it most: a cafe
-          // makes its own Spanish Milk, Breve Milk, Biscoff Based and cold brew
-          // from bought-in stock, and those in turn are recipe materials. With
-          // no way to file a batch they sat at zero cost and zero quantity, so
-          // every drink built on them was uncostable and unsellable.
-          { id: 'production', label: 'Production', icon: Factory, perm: 'inventory.view' },
-          { id: 'procurement', label: 'Procurement', icon: Truck, perm: 'procurement.view' },
-          { id: 'clients', label: 'Clients', icon: Users, perm: 'orders.view' },
-          // Prices asked for, not sales made. Lives beside Clients because
-          // that is who asks, and nothing on it touches the books.
-          { id: 'quotations', label: 'Quotations', icon: FileText, perm: 'orders.view' },
-          { id: 'products', label: 'Menu Setup', icon: ChefHat, perm: 'products.view' },
-        ].filter(({ perm }) => can(perm)).map(({ id, label, icon: Icon }) => {
-          // invBadgeCount and invBadgeColor are hoisted to component scope above
-          const badgeCount = id === 'inventory' ? invBadgeCount : 0;
-          const badgeColor = id === 'inventory' ? invBadgeColor : 'bg-red-500';
-          return (
-            <button key={id}
-              onClick={() => { setActiveTab(id); setNavMode('libellus'); closeFn?.(); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
-                ${activeTab === id && navMode === 'libellus' ? 'bg-brand text-on-brand shadow-sm' : 'text-fg/75 hover:text-fg hover:bg-white/5'}`}
-            >
-              <Icon size={16} />
-              {label}
-              {badgeCount > 0 && <span className={`ml-auto text-[9px] text-fg font-black px-1.5 py-0.5 rounded-full ${badgeColor}`}>{badgeCount}</span>}
-              {activeTab === id && navMode === 'libellus' && badgeCount === 0 && <ChevronRight size={13} className="ml-auto" />}
-            </button>
-          );
-        })}
+      {/* Nav - rendered from navRegistry.js, which the Ctrl+K palette reads
+          too. They were separate hand-written lists before and had drifted:
+          three destinations were missing from search, and Production carried
+          the wrong nav mode there, so jumping to it left nothing highlighted.
 
-        {(() => {
-          // Management tabs gated by granular permission. History still depends on
-          // superadmin-only server routes, so it stays superadmin-only; Pricing
-          // Control's only server calls (/api/discounts - promos, PWD/Senior
-          // discounts) are requireStaff, not superadmin-only, so it's gated on
-          // products.manage like Menu Setup - a hardcoded isSuperAdmin here made
-          // any non-superadmin staff (managers, custom roles with products.manage)
-          // unable to find or CRUD promos/discounts at all.
-          // Default sub-tab for each grouped tab, set on click so switching between
-          // Ledger and Reports (both rendered by LedgerTab) lands on the right page.
-          const mgmtItems = [
-            { id: 'analytics', label: 'Analytics',       icon: BarChart3,   show: can('analytics.view') },
-            { id: 'reports',   label: 'Reports',         icon: BarChart2,   show: can('reports.view'), sub: 'salessummary' },
-            { id: 'ledger',    label: 'Ledger',          icon: FileText,    show: can('accounting.view'), sub: 'journal' },
-            { id: 'pricing',   label: 'Pricing Control', icon: DollarSign,  show: can('products.manage') },
-            { id: 'history',   label: 'Shifts & Cash',   icon: Clock,       show: isSuperAdmin },
-            { id: 'audit',     label: 'Audit Report',    icon: ShieldCheck, show: can('audit.view') },
-            { id: 'fixedassets', label: 'Fixed Assets',  icon: Building2,   show: can('accounting.view') },
-            // Optional modules: each appears only where the business has
-            // switched it on. A cafe on percentage tax withholds nothing, and
-            // a screen it can never use is noise on the sidebar.
-            { id: 'bankrec',   label: 'Bank Reconciliation', icon: Landmark, show: can('accounting.view') && moduleOn('bankReconciliation') },
-            { id: 'wht',       label: 'Withholding Tax', icon: Receipt,   show: can('accounting.view') && moduleOn('withholdingTax') },
-            { id: 'payroll',   label: 'Payroll',         icon: Users,     show: can('accounting.view') && moduleOn('payroll') },
-          ].filter(it => it.show);
-          if (mgmtItems.length === 0 && !isSuperAdmin) return null;
-          return (
-            <>
-              <p className="text-[9px] text-fg/80 font-bold uppercase tracking-[0.2em] px-4 pt-4 pb-1">Management</p>
-              {mgmtItems.map(({ id, label, icon: Icon, sub }) => (
-                <button key={id}
-                  onClick={() => { setActiveTab(id); setNavMode('negotium'); closeFn?.(); if (id === 'analytics') { fetchAnalytics(); fetchTurnover(); fetchSalesTrend(); } if (sub) setLedgerSubTab(sub); }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
-                    ${activeTab === id && navMode === 'negotium' ? 'bg-brand text-on-brand shadow-sm' : 'text-fg/75 hover:text-fg hover:bg-white/5'}`}
+          Each group folds shut. Eighteen destinations in one scrolling column
+          meant the half you were not using pushed the half you were below the
+          fold; folding the other one gives that space back. Nothing starts
+          folded, so this looks unchanged until someone chooses otherwise. */}
+      {/* Search, where search is looked for: the top of the sidebar, before the
+          list. The quick jump existed only behind Ctrl+K and a folded Quick
+          Tools section, so on a desktop nothing on screen said the app could
+          be searched at all - and it is the fastest way to any of the fifty
+          pages, sub-pages included ("Export All · Ledger → Setup"). */}
+      <div className="px-3 pt-2.5">
+        <button onClick={() => { setPaletteOpen(true); closeFn?.(); }} aria-label="Search screens (Ctrl+K)"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-fg/70 hover:text-fg hover:border-white/25 transition">
+          <Search size={14} className="shrink-0" />
+          <span className="text-sm font-bold">Go to…</span>
+          <span className="ml-auto text-[9px] font-black tracking-widest text-fg/65 border border-white/10 rounded px-1.5 py-0.5">CTRL K</span>
+        </button>
+      </div>
+
+      <nav className="p-3 space-y-0.5 md:flex-1 md:min-h-0 md:overflow-y-auto custom-scrollbar">
+        {visibleNavGroups({ can, isSuperAdmin, moduleOn, businessType: BUSINESS_TYPE })
+          .filter(g => g.key !== 'system')
+          .map(group => {
+            const collapsed = collapsedNavGroups.has(group.key);
+            // Never let a fold hide where you actually are.
+            const holdsActive = group.items.some(it => it.id === activeTab && navMode === group.mode);
+            const hidden = collapsed && !holdsActive;
+            return (
+              <div key={group.key}>
+                <button
+                  onClick={() => toggleNavGroup(group.key)}
+                  aria-expanded={!hidden}
+                  className="w-full flex items-center gap-1.5 px-4 pt-4 pb-1 text-[9px] text-fg/80 font-bold uppercase tracking-[0.2em] hover:text-fg transition"
                 >
-                  <Icon size={16} />
-                  {label}
-                  {activeTab === id && navMode === 'negotium' && <ChevronRight size={13} className="ml-auto" />}
+                  {hidden ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+                  {group.label}
+                  {hidden && <span className="ml-auto text-[9px] text-fg/65 font-black normal-case tracking-normal">{group.items.length}</span>}
                 </button>
-              ))}
-              {isSuperAdmin && (
-                // Superadmin-only deep link - the Admin Panel page (user, client-
-                // account, role & tenant management), outside the tabbed dashboard.
-                <button key="admin-panel"
-                  onClick={() => { closeFn?.(); navigate('/admin/admin-panel'); }}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm text-fg/75 hover:text-fg hover:bg-white/5"
-                >
-                  <ShieldCheck size={16} className="text-brand-text shrink-0" />
-                  <span className="whitespace-nowrap">Admin Panel</span>
-                  <span className="ml-auto shrink-0 text-[8px] font-black uppercase tracking-widest bg-brand border border-brand text-on-brand px-1.5 py-0.5 rounded">Super</span>
-                </button>
-              )}
-            </>
-          );
-        })()}
+                {!hidden && group.items.map(item => {
+                  const Icon = item.icon;
+                  const label = navLabel(item, BUSINESS_TYPE);
+                  const active = activeTab === item.id && navMode === group.mode;
+                  // invBadgeCount and invBadgeColor are hoisted to component scope above
+                  const badgeCount = item.id === 'inventory' ? invBadgeCount : 0;
+                  const badgeColor = item.id === 'inventory' ? invBadgeColor : 'bg-red-500';
+                  return (
+                    <button key={item.id}
+                      onClick={() => {
+                        closeFn?.();
+                        if (item.route) { navigate(item.route); return; }
+                        setActiveTab(item.id);
+                        setNavMode(group.mode);
+                        if (item.sub) setLedgerSubTab(item.sub);
+                        // Analytics loads itself when it opens (AnalyticsTab).
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
+                        ${active ? 'bg-brand text-on-brand shadow-sm' : 'text-fg/75 hover:text-fg hover:bg-white/5'}`}
+                    >
+                      <Icon size={16} />
+                      {label}
+                      {badgeCount > 0 && <span className={`ml-auto text-[9px] text-fg font-black px-1.5 py-0.5 rounded-full ${badgeColor}`}>{badgeCount}</span>}
+                      {active && badgeCount === 0 && <ChevronRight size={13} className="ml-auto" />}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
+
+        {isSuperAdmin && (
+          // Superadmin-only deep link - the Admin Panel page (user, client-
+          // account, role & tenant management), outside the tabbed dashboard.
+          // Declared in navRegistry's `system` group so search can find it;
+          // rendered here rather than in a group because of its own styling.
+          <button key="admin-panel"
+            onClick={() => { closeFn?.(); navigate('/admin/admin-panel'); }}
+            className="w-full flex items-center gap-3 px-4 py-3 mt-1 rounded-xl text-left transition font-bold text-sm text-fg/75 hover:text-fg hover:bg-white/5"
+          >
+            <ShieldCheck size={16} className="text-brand-text shrink-0" />
+            <span className="whitespace-nowrap">Admin Panel</span>
+            <span className="ml-auto shrink-0 text-[8px] font-black uppercase tracking-widest bg-brand border border-brand text-on-brand px-1.5 py-0.5 rounded">Super</span>
+          </button>
+        )}
       </nav>
 
-      {/* Bottom */}
-      <div className="p-3 border-t border-white/5 space-y-0.5">
-        <div className="flex items-center justify-between px-4 py-2">
-          <span className="text-[10px] text-fg/60 font-bold uppercase tracking-wider">Auto-Close</span>
-          <MidnightCountdown />
-        </div>
+      {/* Bottom. Only what is used all shift stays in view - clocking in and
+          the shared drawer. Everything occasional (switching user, settings,
+          fullscreen, the QR, logging out) sits behind the account button, the
+          way every workspace app does it, so the tabs above get the height. */}
+      <div className="p-2.5 border-t border-white/5 space-y-1 relative">
+        {sharedDrawer && (
+          <button onClick={openCashDrawer}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-xl font-bold text-sm text-fg/70 hover:text-fg hover:bg-white/5 transition">
+            <Banknote size={15} />
+            Cash Drawer
+          </button>
+        )}
         {/* Clock In/Out/Break - always visible for staff (frequent, critical
             action). Hidden for superadmin: they're already exempt from the
-            clock-in gate below (owners aren't tracked for attendance), so
-            this button was just nagging someone the app never blocks. */}
+            clock-in gate below (owners aren't tracked for attendance). */}
         {!isSuperAdmin && (
           <button onClick={handleClockButton}
-            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${clockStatus.onBreak ? 'text-white bg-amber-500 hover:bg-amber-600' : clockStatus.isClockedIn ? 'text-white bg-accent hover:bg-accent/80' : 'text-fg/70 hover:text-fg hover:bg-white/5'}`}>
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl font-bold text-sm transition ${clockStatus.onBreak ? 'text-white bg-amber-500 hover:bg-amber-600' : clockStatus.isClockedIn ? 'text-white bg-accent hover:bg-accent/80' : 'text-fg/70 hover:text-fg hover:bg-white/5'}`}>
             <Clock size={15} />
             {clockStatus.onBreak
               ? `On Break - tap to resume`
@@ -7568,73 +7051,67 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           </button>
         )}
 
-        {/* Settings - system preferences & account. The QR-Orders / Auto-Close /
-            Product-Images toggles and Change Password now live on this page
-            instead of being crammed into the sidebar dropdown. */}
-        <button onClick={() => { setActiveTab('settings'); setNavMode('negotium'); closeFn?.(); }}
-          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl font-bold text-sm transition ${activeTab === 'settings' ? 'bg-brand text-on-brand shadow-sm' : 'text-fg/70 hover:text-fg hover:bg-white/5'}`}>
-          <Settings size={15} />
-          Settings
-          {activeTab === 'settings' && <ChevronRight size={13} className="ml-auto" />}
-        </button>
-
-        {/* Collapsible quick tools - Fullscreen / QR / Install (frequent, low-stakes) */}
-        <button onClick={toggleOpsTools}
-          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/70 hover:text-fg hover:bg-white/5 transition font-bold text-[11px] uppercase tracking-wider">
-          {opsToolsOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-          Quick Tools
-        </button>
-        {opsToolsOpen && (
-          <div className="space-y-0.5">
-            {/* Quick jump lives here too - the top bar that used to host it is
-                hidden once the persistent sidebar appears (md+), and a touch-only
-                tablet has no Ctrl+K. */}
-            <button onClick={() => { setPaletteOpen(true); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/70 hover:text-fg hover:bg-white/5 transition font-bold text-sm">
-              <Search size={15} />
-              Quick Jump
-              <span className="ml-auto text-[9px] font-black text-fg/65 tracking-widest">CTRL K</span>
-            </button>
-            <button onClick={toggleFullScreen} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-fg/70 hover:text-fg hover:bg-white/5 transition font-bold text-sm">
-              {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
-              {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-            </button>
-            <button onClick={e => { e.preventDefault(); (BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR()); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand-text/85 hover:text-brand-text hover:bg-brand/10 transition font-bold text-sm">
-              <QrCode size={15} />
-              {BUSINESS_TYPE === 'log' ? 'Portal' : 'Show QR'}
-            </button>
-            {/* Logistics: a guest walk-in QR (below Portal) - a customer with no
-                account scans it to order on the spot, same guest menu flow as fb. */}
-            {BUSINESS_TYPE === 'log' && (
-              <button onClick={e => { e.preventDefault(); handleShowQR(); closeFn?.(); }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand-text/85 hover:text-brand-text hover:bg-brand/10 transition font-bold text-sm">
-                <QrCode size={15} />
-                Guest QR
-              </button>
-            )}
-            {/* Install as app (only when the browser offers it) */}
-            {installable && (
-              <button onClick={() => { install(); closeFn?.(); }}
-                className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-brand-text hover:text-brand-text hover:bg-brand/10 transition font-bold text-sm">
-                <Download size={15} />
-                Install App
-              </button>
-            )}
-          </div>
+        {accountMenuOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setAccountMenuOpen(false)} aria-hidden="true" />
+            <div role="menu" aria-label="Account"
+              className="absolute left-2.5 right-2.5 bottom-full mb-1 z-50 bg-sidebar-bg border border-white/15 rounded-xl shadow-2xl p-1.5 space-y-0.5 animate-scale-in origin-bottom">
+              <p className="px-3 pt-1.5 pb-1 text-[10px] text-fg/65 truncate">
+                Signed in as <span className="text-fg font-bold">{activeAdmin?.name}</span> · <span className="uppercase tracking-widest">{activeAdmin?.role}</span>
+              </p>
+              {(() => {
+                const item = 'w-full flex items-center gap-3 px-3 py-2 rounded-lg font-bold text-sm transition';
+                const plain = `${item} text-fg/80 hover:text-fg hover:bg-white/5`;
+                const done = (fn) => () => { setAccountMenuOpen(false); fn(); };
+                return (
+                  <>
+                    <button role="menuitem" onClick={done(openSwitch)} className={plain}><Users size={15} /> Switch User</button>
+                    <button role="menuitem" onClick={done(() => { setActiveTab('settings'); setNavMode('negotium'); closeFn?.(); })}
+                      className={`${item} ${activeTab === 'settings' ? 'bg-brand text-on-brand' : 'text-fg/80 hover:text-fg hover:bg-white/5'}`}>
+                      <Settings size={15} /> Settings
+                    </button>
+                    {showsGuide(activeAdmin) && (
+                      <button role="menuitem" onClick={done(() => setGuideOpen(true))} className={plain}><BookOpen size={15} /> Quick guide</button>
+                    )}
+                    <button role="menuitem" onClick={done(toggleFullScreen)} className={plain}>
+                      {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+                      {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                    </button>
+                    <button role="menuitem" onClick={done(() => { (BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR()); closeFn?.(); })} className={plain}>
+                      <QrCode size={15} /> {BUSINESS_TYPE === 'log' ? 'Portal link' : 'Show QR'}
+                    </button>
+                    {/* Logistics: a guest walk-in QR - a customer with no account
+                        scans it to order on the spot, same guest menu flow as fb. */}
+                    {BUSINESS_TYPE === 'log' && (
+                      <button role="menuitem" onClick={done(() => { handleShowQR(); closeFn?.(); })} className={plain}><QrCode size={15} /> Guest QR</button>
+                    )}
+                    {installable && (
+                      <button role="menuitem" onClick={done(() => { install(); closeFn?.(); })} className={plain}><Download size={15} /> Install App</button>
+                    )}
+                    <div className="border-t border-white/10 my-1" />
+                    <button role="menuitem" onClick={done(handleLogout)} className={`${item} text-danger hover:bg-red-500/10`}>
+                      <LogOut size={15} /> {isSuperAdmin ? 'Log Out' : 'End Shift'}
+                    </button>
+                  </>
+                );
+              })()}
+            </div>
+          </>
         )}
-        <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-danger hover:text-danger hover:bg-red-500/10 transition font-bold text-sm">
-          <LogOut size={15} />
-          {isSuperAdmin ? 'Log Out' : 'End Shift'}
-        </button>
-        <div className="px-3 py-2 border-t border-white/5 mt-1">
-          <div className="flex items-center gap-3 p-2 rounded-xl bg-white/5">
-            <div className="w-8 h-8 rounded-lg bg-brand/20 border border-brand/30 flex items-center justify-center flex-shrink-0">
-              <span className="text-brand-text font-black text-xs">{activeAdmin?.name?.charAt(0)?.toUpperCase()}</span>
-            </div>
-            <div className="min-w-0">
-              <p className="text-fg/60 text-xs font-bold truncate">{activeAdmin?.name}</p>
-              <p className="text-fg/65 text-[10px] uppercase tracking-widest">{activeAdmin?.role}</p>
-            </div>
+
+        <button onClick={() => setAccountMenuOpen(o => !o)} aria-haspopup="menu" aria-expanded={accountMenuOpen}
+          className={`w-full flex items-center gap-2.5 p-2 rounded-xl transition text-left ${accountMenuOpen ? 'bg-white/10' : 'bg-white/5 hover:bg-white/10'}`}>
+          <div className="w-8 h-8 rounded-lg bg-brand/20 border border-brand/30 flex items-center justify-center flex-shrink-0">
+            <span className="text-fg font-black text-xs">{activeAdmin?.name?.charAt(0)?.toUpperCase()}</span>
           </div>
-        </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-fg text-xs font-bold truncate" title={String((activeAdmin?.name) ?? '')}>{activeAdmin?.name}</p>
+            <p className="text-fg/65 text-[10px] truncate" title={`${activeAdmin?.role || ''} · time until the automatic end-of-day close`}>
+              Day closes in <MidnightCountdown short className="text-brand-text font-bold" />
+            </p>
+          </div>
+          {accountMenuOpen ? <ChevronDown size={14} className="text-fg/65 shrink-0" /> : <ChevronUp size={14} className="text-fg/65 shrink-0" />}
+        </button>
       </div>
     </>
   );
@@ -7650,7 +7127,15 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   const ctx = {
     // ── Shared data ─────────────────────────────────────────────────────────
     orders, archivedOrders, products, categories, inventory, discounts, globalAddOns,
-    users, activeAdmin, isSuperAdmin, canVoidRefund, can,
+    users, activeAdmin, isSuperAdmin, canVoidRefund, canVoid, can,
+    // Needed by the command palette: module-gated screens must not be offered
+    // when the module is off, and the Admin Panel is a route, not a tab.
+    moduleOn, navigate,
+    // One notification feed, read by the bell and the Inventory badge.
+    notifData, notifLoading, loadNotifications,
+    // Shared cash drawer
+    sharedDrawer, cashDrawerModal, setCashDrawerModal, drawerSession, drawerBusy,
+    drawerMovement, setDrawerMovement, submitDrawerMovement, openShiftEndFromDrawer, openCashDrawer,
     // ── Core helpers ────────────────────────────────────────────────────────
     fetchOrders, fetchData, fetchERPData, fetchEODData,
     // Pause socket-triggered auto-refreshes during a long sequential bulk op
@@ -7668,6 +7153,8 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     shiftEndModal, setShiftEndModal, shiftEndLoading, shiftReconcile, setShiftReconcile,
     handleEndShift, handleBankDeposit, performLogout, startingCash,
     requireCashShift, toggleRequireCashShift,
+    toggleSharedDrawer, toggleBlindClose, saveVarianceThreshold, saveDrawerMaxHours,
+    toggleAskOperatorEachSale,
     depositAmount, setDepositAmount, depositError, setDepositError, depositLoading,
     // ── Stock history / import / partial fulfil modals ──────────────────────
     submitImport, loadPdfLibs, addLogoToPDF, pdfMoney,
@@ -7689,13 +7176,13 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     // ── Backdated Sales (superadmin) ──
     backdateForm, setBackdateForm, backdateBusy, submitBackdateSale,
     // ── Tenancy ──
-    tenancyReport, tenancyBusy, fetchTenancyReport, runTenancyRebackfill,
+    tenancyReport, tenancyBusy, tenancyError, tenancyProgress, fetchTenancyReport, runTenancyRebackfill,
     // ── Client accounts (for per-product per-client discount picker) ──
     clientAccounts,
     // ── Price tiers (for the per-product segment override picker) ──
     priceTiers,
     // ── Market segment pricing table (Pricing Control) ──
-    pricingTable, fetchPricingTable, handleTierCellUpdate, handleTierPercentUpdate,
+    pricingTable, fetchPricingTable, fetchPriceTiers, handleTierCellUpdate, handleTierPercentUpdate,
     tierBreaksFor, addTierBulkBreak, removeTierBulkBreak,
     // ── Partial fulfillment ──
     partialModal, setPartialModal, partialQtys, setPartialQtys,
@@ -7734,7 +7221,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     orderSearch, setOrderSearch,
     collapsedOrders, setCollapsedOrders, updatingOrders, cashTendered, setCashTendered,
     isPosOpen, setIsPosOpen, posCart, setPosCart, posCategory, setPosCategory, posPage, setPosPage,
-    posSearch, setPosSearch, posCustomerName, setPosCustomerName, posClientId, setPosClientId, posBuyerDiscounts, posReserveOnly, setPosReserveOnly, posTable, setPosTable,
+    posSearch, setPosSearch, posCustomerName, setPosCustomerName, posClientId, setPosClientId, posSalesperson, setPosSalesperson, salesStaff, posBuyerDiscounts, posReserveOnly, setPosReserveOnly, posTable, setPosTable,
     posBranch, setPosBranch,
     posPayment, setPosPayment, posSelectedProduct, setPosSelectedProduct,
     posActiveSize, setPosActiveSize, posActiveAddOns, setPosActiveAddOns, posItemQty, setPosItemQty,
@@ -7747,17 +7234,19 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     compReasonTypes, setCompReasonTypes, compReasonNotes, setCompReasonNotes,
     paymentSelections, setPaymentSelections,
     paymentRefs, setPaymentRefs, paymentCheckDates, setPaymentCheckDates,
+    scPwdEntry, setScPwdEntry, saveScPwdId,
     submitManualOrder, openProductModal, confirmPosItem,
     ordersPage, setOrdersPage, ordersItemsPerPage,
     // ── Inventory ───────────────────────────────────────────────────────────
     invSubTab, setInvSubTab, invForm, setInvForm, invPage, setInvPage, invItemsPerPage,
-    invSearch, setInvSearch, invSort, setInvSort, invCategoryFilter, setInvCategoryFilter,
+    invSearch, setInvSearch, invSort, setInvSort, invCategoryFilter, setInvCategoryFilter, invNoCostOnly, setInvNoCostOnly,
     importProgress,
     activeInventoryItem, setActiveInventoryItem, restockData, setRestockData,
     stockHistory, setStockHistory, historyModalOpen, setHistoryModalOpen, historyItemName, setHistoryItemName, historyItem, historyLoading,
     priceHistory, priceHistoryOpen, setPriceHistoryOpen, priceHistoryProduct, priceHistoryLoading, fetchPriceHistory,
     tierPriceHistory, tierPriceHistoryOpen, setTierPriceHistoryOpen, tierPriceHistoryCtx, tierPriceHistoryLoading, fetchTierPriceHistory,
     physicalCounts, setPhysicalCounts, varianceReasons, setVarianceReasons,
+    countTouched, setCountTouched,
     varianceNoteMode, setVarianceNoteMode,
     eodStatus, eodLockedAt, dailyMovement,
     invBadgeCount, expandedBatchRows, setExpandedBatchRows,
@@ -7766,8 +7255,11 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     menuImportModal, setMenuImportModal, menuImportRows, setMenuImportRows, menuImportSubmitting,
     menuBackupBusy, downloadMenuBackup, menuRestoreModal, setMenuRestoreModal, openMenuRestore, runMenuRestore,
     exportBusy, downloadDataset, downloadAccountBalances,
+    exportAllBusy, downloadAllExports, exportProgress, exportDatasets, fetchExportDatasets,
+    backupBusy, backupProgress, downloadFullBackup, restoreFullBackup,
     downloadMenuImportTemplate, parseMenuImportFile, submitMenuImport,
     rsFile, rsPreview, rsBusy, rsCreateMissing, setRsCreateMissing, openRecipeSheet, closeRecipeSheet, submitRecipeSheet,
+    msFile, msPreview, msBusy, openMenuSheet, closeMenuSheet, submitMenuSheet,
     rsDrafts, rsPrices, setRsPrice,
     spoilageModal, setSpoilageModal, spoilageForm, setSpoilageForm, spoilageLoading, setSpoilageLoading,
     handleRestockSubmit, submitPhysicalCounts,
@@ -7811,7 +7303,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     journalEntries, setJournalEntries,
     // ── Additional handlers ──────────────────────────────────────────────────
     archiveDay, addInventory,
-    downloadImportTemplate, downloadJournalCsv,
+    downloadImportTemplate,
     exportArPDF, exportApPDF, exportPaymentsPDF,
     exportProfitByCategoryPDF, exportMenuEngineeringPDF, exportVariancePDF, exportCommissionsPDF,
     exportBillsPDF, exportAuditLogPDF, exportExpensesPDF,
@@ -7819,7 +7311,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     exportPricingMasterlistPDF, exportPriceTiersPDF, exportShiftHistoryPDF, exportTimesheetsPDF,
     exportPriceTiersExcel, priceTierImportPreview, setPriceTierImportPreview, parsePriceTierExcel, submitPriceTierImport, priceTierImporting,
     exportInventoryToPDF, exportLedgerToPDF, exportAllToPDF,
-    handleSaveProduct, handleSaveCategory, toggleProductAvailability, toggleProductOOS,
+    handleSaveProduct, handleSaveCategory, busyForms, toggleProductAvailability, toggleProductOOS, toggleProductQr,
     // ── Change Password ──────────────────────────────────────────────────────
     changePwModal, setChangePwModal, setChangePwError, changePwForm, setChangePwForm, changePwLoading, changePwError, handleChangePassword,
     // ── Modifier Groups ──────────────────────────────────────────────────────
@@ -7837,7 +7329,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     commissions, fetchCommissions,
     exportPnlPDF, exportBalanceSheetPDF, exportPurchaseOrderPDF,
     // ── Multi-Payment ────────────────────────────────────────────────────────
-    posPayments, setPosPayments, posGuestCount, setPosGuestCount,
+    posPayments, setPosPayments, posGuestCount, setPosGuestCount, posBarCups, setPosBarCups,
     // ── Archive Search ───────────────────────────────────────────────────────
     archiveSearch, setArchiveSearch, archiveDateRange, setArchiveDateRange, archiveTotal,
     // ── Denomination Breakdown + Z-Reading ──────────────────────────────────
@@ -7845,7 +7337,11 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     // ── Profit by Category ───────────────────────────────────────────────────
     profitByCategory, fetchProfitByCategory,
     // ── System Settings / QR Toggle ─────────────────────────────────────────
-    systemSettings, toggleQROrders, toggleAutoClose, toggleImages, saveSetting,
+    systemSettings, setSystemSettings, fetchSettings, toggleQROrders, toggleAutoClose, toggleImages, saveSetting,
+    // Settings owns the module switches, but the SIDEBAR owns the copy that
+    // decides which tabs exist. Without this the switch moved and the tab
+    // did not appear until a manual reload.
+    reloadModules,
     // ── Sales by Payment ─────────────────────────────────────────────────────
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     arReport, arReportAsOf, setArReportAsOf, fetchArReport,
@@ -7860,7 +7356,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     bounceTarget, setBounceTarget, bounceForm, setBounceForm, bounceSubmitting, submitBounceCheck,
     // ── Summary Sales (channel breakdown) ────────────────────────────────────
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
-    salesLineItems, sliRange, setSliRange, fetchSalesLineItems, exportSalesLineItemsPDF,
+    salesLineItems, sliRange, setSliRange, fetchSalesLineItems, exportSalesLineItemsPDF, salesSource, setSalesSource,
     // ── Refund ───────────────────────────────────────────────────────────────
     refundModal, setRefundModal, refundForm, setRefundForm, refundSubmitting, handleRefund, handlePartialRefund, handleExchange,
     // ── Clock In/Out ─────────────────────────────────────────────────────────
@@ -7871,20 +7367,22 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     printKitchenTicket,
     // ── Audit Logs ──────────────────────────────────────────────────────────
     auditLogs, auditLogsPage, auditLogsTotal, AUDIT_LOGS_PAGE_SIZE, fetchAuditLogs,
-    auditLogFilters, setAuditLogFilters, exportAuditLogsCsv, exportAuditLogsPdf,
+    auditLogFilters, setAuditLogFilters, exportAuditLogsRangePdf, exportAuditLogsPdf,
     // ── AP Outstanding ──────────────────────────────────────────────────────
     apData, fetchApData, apPayModal, setApPayModal, apPayForm, setApPayForm, apPaySubmitting, submitApPayment,
     // ── Bills (AP approval workflow) ─────────────────────────────────────────
     bills, billsFilter, setBillsFilter, fetchBills, billBusy,
     billCreate, setBillCreate, submitCreateBill,
     approveBill, rejectBill, scheduleBill,
+    billInvoiceModal, setBillInvoiceModal, billInvoiceForm, setBillInvoiceForm, openBillInvoice, submitBillInvoice,
     billPayModal, setBillPayModal, billPayFrom, setBillPayFrom, billPayReference, setBillPayReference, submitBillPay,
     billPayAmount, setBillPayAmount, applySupplierCredit,
     expenseAccounts,
+    fixedAssetAccounts,
     // ── Order Notes ─────────────────────────────────────────────────────────
     posNotes, setPosNotes,
     deleteProduct, deleteCategory, deleteAddOn,
-    updateSize, removeSize, addSize, addMaterialToRecipe, updateMaterialQty, removeMaterial,
+    updateSize, removeSize, addSize, addMaterialToRecipe, addNonStockToRecipe, updateMaterialQty, removeMaterial,
     calcRecipeCost, getEstimatedStock, handleImageUpload,
     // ── Orders interactive handlers ──────────────────────────────────────────
     updateItemStatus, removeAddOnFromOrder,
@@ -7901,6 +7399,113 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   return (
     <DashboardProvider value={ctx}>
     <div className="min-h-screen bg-page-bg flex text-fg">
+      {approvalDialog}
+
+
+      {/* ── WHO IS AT THE SCREEN ──
+          A keypad, not a login form. Typing a password to ring a drink is the
+          friction that makes people share a session, and a shared session is
+          what puts the wrong name on a sale. */}
+      {switchOpen && (
+        <div className="fixed inset-0 z-[99998] flex justify-center p-4 bg-black/70 backdrop-blur-sm overflow-y-auto"
+          onClick={() => { if (!switchBusy && !switchLocked) setSwitchOpen(false); }}>
+          <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-6 my-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div>
+                <h2 className="font-black text-fg text-lg leading-none">
+                  {switchLocked ? 'Register locked' : 'Switch user'}
+                </h2>
+                <p className="text-fg/65 text-xs font-bold mt-1">
+                  {switchName
+                    ? `${switchName}, enter your PIN`
+                    : switchLocked
+                      ? 'Enter your PIN to ring the next sale'
+                      : 'Enter your PIN to take the register'}
+                </p>
+              </div>
+              {/* No way out while locked: a dismissable lock is not a lock. The
+                  escape hatch is signing out and using a password, below. */}
+              {!switchLocked && (
+                <button onClick={() => setSwitchOpen(false)} className="text-fg/65 hover:text-fg transition"><X size={18} /></button>
+              )}
+            </div>
+
+            {/* Tapping a name first is optional: PINs are unique, so the code
+                alone already identifies one person. */}
+            {operators.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-4">
+                {operators.map(o => (
+                  <button key={o._id}
+                    onClick={() => { setSwitchName(switchName === o.name ? '' : o.name); setSwitchError(''); }}
+                    className={`text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition ${
+                      switchName === o.name
+                        ? 'bg-brand text-on-brand border-brand'
+                        : 'bg-white/5 text-fg/70 border-white/10 hover:text-fg hover:bg-white/10'
+                    }`}>
+                    {o.name}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-center gap-2 mb-4" aria-label="PIN entry">
+              {[0, 1, 2, 3, 4, 5].map(i => (
+                <span key={i}
+                  className={`w-3 h-3 rounded-full transition ${
+                    i < switchPin.length ? 'bg-brand' : i < 4 ? 'bg-white/15' : 'bg-white/5'
+                  }`} />
+              ))}
+            </div>
+
+            {switchError && (
+              <p className="text-danger text-xs font-bold text-center mb-3">{switchError}</p>
+            )}
+
+            <div className="grid grid-cols-3 gap-2">
+              {['1','2','3','4','5','6','7','8','9'].map(d => (
+                <button key={d} disabled={switchBusy}
+                  onClick={() => { const next = (switchPin + d).slice(0, 6); setSwitchPin(next); setSwitchError(''); if (next.length === 6) submitSwitch(next); }}
+                  className="py-4 rounded-xl bg-white/5 hover:bg-white/10 text-fg font-black text-xl transition disabled:opacity-40">
+                  {d}
+                </button>
+              ))}
+              <button disabled={switchBusy} onClick={() => { setSwitchPin(''); setSwitchError(''); }}
+                className="py-4 rounded-xl bg-white/5 hover:bg-white/10 text-fg/65 font-bold text-xs uppercase tracking-wider transition disabled:opacity-40">
+                Clear
+              </button>
+              <button disabled={switchBusy}
+                onClick={() => { const next = (switchPin + '0').slice(0, 6); setSwitchPin(next); setSwitchError(''); if (next.length === 6) submitSwitch(next); }}
+                className="py-4 rounded-xl bg-white/5 hover:bg-white/10 text-fg font-black text-xl transition disabled:opacity-40">
+                0
+              </button>
+              <button disabled={switchBusy} onClick={() => setSwitchPin(switchPin.slice(0, -1))}
+                className="py-4 rounded-xl bg-white/5 hover:bg-white/10 text-fg/65 font-bold text-xs uppercase tracking-wider transition disabled:opacity-40">
+                Back
+              </button>
+            </div>
+
+            {/* A 4 or 5 digit PIN needs a way to say "that is all of it". */}
+            <button onClick={() => submitSwitch()} disabled={switchBusy || switchPin.length < 4}
+              className="w-full mt-3 py-3 rounded-xl bg-brand hover:bg-brand/90 text-on-brand font-black text-sm uppercase tracking-wider transition disabled:opacity-40">
+              {switchBusy ? 'Checking...' : 'Take the register'}
+            </button>
+
+            <p className="text-[10px] text-fg/65 text-center mt-3 leading-snug">
+              Your PIN says who is ringing. What you can do still comes from your role.
+              No PIN yet? Ask the owner to set one, or sign out and use your password.
+            </p>
+
+            {/* Somebody without a PIN still has to be able to reach the till. A
+                locked register with no way past it stops the shop trading. */}
+            {switchLocked && (
+              <button onClick={handleLogout} disabled={switchBusy}
+                className="w-full mt-2 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-fg/70 font-bold text-xs transition disabled:opacity-40">
+                No PIN? Sign out and use a password
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── IN-APP ORDER TOASTS (sound plays on newOrder; this shows the visual) ── */}
       {orderToasts.length > 0 && (
@@ -7922,10 +7527,10 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       {mgrAlerts.length > 0 && (
         <div className="fixed bottom-4 right-4 z-[99999] flex flex-col gap-2 max-w-sm">
           {mgrAlerts.map(a => (
-            <div key={a.id} className="flex items-start gap-2 bg-amber-500/15 border border-amber-500/40 text-amber-200 px-4 py-3 rounded-2xl shadow-lg animate-fade-in">
+            <div key={a.id} className="flex items-start gap-2 bg-amber-500/15 border border-amber-500/40 text-warning px-4 py-3 rounded-2xl shadow-lg animate-fade-in">
               <AlertTriangle size={16} className="shrink-0 mt-0.5" />
               <p className="text-xs font-bold leading-snug flex-1">{a.message}</p>
-              <button onClick={() => dismissMgrAlert(a.id)} className="text-amber-200/60 hover:text-amber-100 shrink-0"><X size={15} /></button>
+              <button onClick={() => dismissMgrAlert(a.id)} className="text-warning hover:text-amber-100 shrink-0"><X size={15} /></button>
             </div>
           ))}
         </div>
@@ -7964,14 +7569,15 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <p className="font-black text-fg text-sm uppercase tracking-widest truncate">{BIZ_NAME}</p>
-              <span className="text-[8px] font-black bg-brand/20 border border-brand/30 text-brand-text px-1.5 py-0.5 rounded-full uppercase tracking-widest flex-shrink-0">NON-VAT</span>
+              {/* Hidden on the narrowest screens, where it crowded the business
+                  name down to two letters; the sidebar still shows it. */}
+              <span className="hidden min-[400px]:inline text-[8px] font-black bg-brand/20 border border-brand/30 text-brand-text px-1.5 py-0.5 rounded-full uppercase tracking-widest flex-shrink-0">{vatRegistered ? 'VAT' : 'NON-VAT'}</span>
             </div>
             <p className="text-brand-text text-[10px] font-bold uppercase truncate">{activeAdmin?.name} · {navMode === 'libellus' ? 'Operations' : 'Management'}</p>
           </div>
           {/* min-w-0 + overflow-x lets this action group scroll internally on a
               very narrow phone (≤320px) rather than pushing the whole page wider;
-              shrink-0 keeps each control its natural size. At 375px+ it all fits,
-              so no scrollbar shows. */}
+              shrink-0 keeps each control its natural size. */}
           <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-hide">
             {(!isOnline || queuedCount > 0) && (
               <span className={`shrink-0 flex items-center gap-1 px-2 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider ${isOnline ? 'bg-amber-500/15 text-warning border border-amber-500/30' : 'bg-red-500/15 text-danger border border-red-500/30'}`}>
@@ -7988,10 +7594,12 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             <button onClick={e => { e.preventDefault(); BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR(); }} className="shrink-0 flex items-center gap-1.5 bg-brand/20 text-brand-text border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
               <QrCode size={13} /> {BUSINESS_TYPE === 'log' ? 'Portal' : 'QR'}
             </button>
-            <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="shrink-0 flex items-center gap-1.5 bg-white/5 text-fg/75 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 transition" title="Change Password">
+            {/* Settings and Log Out are in the navigation drawer too; on a phone the
+                bar ran out of room for them and squeezed the business name away. */}
+            <button onClick={() => { setChangePwModal(true); setChangePwError(''); }} className="shrink-0 hidden sm:flex items-center gap-1.5 bg-white/5 text-fg/75 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 transition" title="Change Password">
               <Settings size={13} />
             </button>
-            <button onClick={handleLogout} className="shrink-0 flex items-center gap-1.5 bg-red-500/10 text-danger border border-red-500/20 px-3 py-2 rounded-xl font-bold text-xs hover:bg-red-500/20 transition">
+            <button onClick={handleLogout} className="shrink-0 hidden sm:flex items-center gap-1.5 bg-red-500/10 text-danger border border-red-500/20 px-3 py-2 rounded-xl font-bold text-xs hover:bg-red-500/20 transition">
               {isSuperAdmin ? 'Log Out' : 'End Shift'}
             </button>
           </div>
@@ -8002,7 +7610,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
       {/* ── OFFLINE / SYNC BANNER ─────────────────────────────────────────── */}
       {(!isOnline || queuedCount > 0) && (
-        <div className={`mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border ${isOnline ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
+        <div className={`mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border ${isOnline ? 'bg-amber-500/10 border-amber-500/30 text-warning' : 'bg-red-500/10 border-red-500/30 text-danger'}`}>
           {isOnline ? <CloudOff size={18} className="shrink-0" /> : <WifiOff size={18} className="shrink-0" />}
           <div className="flex-1 min-w-0">
             <p className="font-black text-sm leading-tight">
@@ -8018,7 +7626,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           </div>
           {isOnline && queuedCount > 0 && (
             <button onClick={() => syncQueue(sendQueuedOrder).then(({ sent }) => { if (sent > 0) fetchOrders(); })}
-              className="shrink-0 flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition">
+              className="shrink-0 flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-warning px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition">
               <RefreshCw size={12} /> Sync now
             </button>
           )}
@@ -8063,13 +7671,13 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
             <button
               onClick={(e) => { e.preventDefault(); setQrReplacedBecause(''); handleShowQR(); }}
-              className="mt-4 w-full bg-surface border border-accent text-brand-text font-bold py-3 rounded-md hover:bg-accent hover:text-fg transition uppercase tracking-widest text-sm shrink-0"
+              className="mt-4 w-full bg-surface border border-accent text-brand-text font-bold py-3 rounded-md hover:bg-accent hover:text-on-brand transition uppercase tracking-widest text-sm shrink-0"
             >
               Generate Next QR
             </button>
             <button
               onClick={() => { setShowQR(false); setQrReplacedBecause(''); }}
-              className="mt-3 w-full bg-page-bg border border-gray-600 text-brand-text font-bold py-3 rounded-md hover:bg-accent hover:text-fg transition text-sm shrink-0"
+              className="mt-3 w-full bg-page-bg border border-gray-600 text-brand-text font-bold py-3 rounded-md hover:bg-accent hover:text-on-brand transition text-sm shrink-0"
             >
               Close
             </button>
@@ -8082,7 +7690,42 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           ============================================================ */}
       <ShiftEndModal />
 
+      {/* Offline orders the server REFUSED when they synced. Each may be a sale
+          the customer already paid for that is not in the system - so it stays
+          on every screen until someone deals with it and dismisses it. */}
+      {rejectedOrders.length > 0 && (
+        <div role="alert" className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 p-4">
+          <p className="text-danger font-black text-sm uppercase tracking-wider flex items-center gap-2">
+            <AlertTriangle size={16} /> {rejectedOrders.length} offline order{rejectedOrders.length === 1 ? ' was' : 's were'} not recorded
+          </p>
+          <p className="text-fg/80 text-xs mt-1">
+            These were taken while offline and refused when they synced. If the customer paid, re-enter the order.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {rejectedOrders.map(r => {
+              const items = r.payload?.items || [];
+              const total = items.reduce((t, i) => t + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0);
+              return (
+                <li key={r.id} className="flex flex-wrap items-center gap-3 bg-page-bg/60 rounded-lg px-3 py-2 text-xs">
+                  <span className="text-fg font-bold">{new Date(r.queuedAt).toLocaleString()}</span>
+                  <span className="text-fg/80 min-w-0 flex-1 truncate" title={items.map(i => `${i.quantity}× ${i.name}`).join(', ')}>
+                    {items.map(i => `${i.quantity}× ${i.name}`).join(', ')}
+                  </span>
+                  <span className="font-mono text-fg">₱{total.toFixed(2)}</span>
+                  <span className="text-danger basis-full sm:basis-auto">{r.reason}</span>
+                  <button onClick={() => dismissRejected(r.id)}
+                    className="ml-auto border border-white/15 text-fg/80 hover:bg-white/5 rounded-md px-2 py-1 font-bold">
+                    Dealt with
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
       {/* --- ANALYTICS DASHBOARD TAB --- */}
+      {activeTab === 'owner' && <Suspense fallback={<TabFallback />}><OwnerOverview apiFetch={apiFetch} can={can} go={setActiveTab} /></Suspense>}
       {activeTab === 'analytics' && <Suspense fallback={<TabFallback />}><AnalyticsTab ctx={ctx} /></Suspense>}
 
       {/* --- ACTIVE ORDERS TAB (Kitchen & Bar View) --- */}
@@ -8099,7 +7742,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       {activeTab === 'production' && <Suspense fallback={<TabFallback />}><ProductionTab ctx={ctx} /></Suspense>}
 
       {/* --- ACCOUNTING & LEDGER TAB --- */}
-      {(activeTab === 'ledger' || activeTab === 'reports') && <Suspense fallback={<TabFallback />}><LedgerTab ctx={ctx} /></Suspense>}
+      {(activeTab === 'ledger' || activeTab === 'reports' || activeTab === 'approvals') && <Suspense fallback={<TabFallback />}><LedgerTab ctx={ctx} /></Suspense>}
 
       {/* ===== REVOLVING FUND MODALS ===== */}
 
@@ -8133,6 +7776,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       {activeTab === 'bankrec' && <Suspense fallback={<TabFallback />}><BankReconciliationTab /></Suspense>}
       {activeTab === 'wht' && <Suspense fallback={<TabFallback />}><WithholdingTaxTab /></Suspense>}
       {activeTab === 'payroll' && <Suspense fallback={<TabFallback />}><PayrollTab /></Suspense>}
+      {activeTab === 'timeoff' && <Suspense fallback={<TabFallback />}><TimeOffTab /></Suspense>}
       {activeTab === 'quotations' && <Suspense fallback={<TabFallback />}><QuotationsTab /></Suspense>}
 
 {/* --- MENU SETUP (PRODUCTS/CATEGORIES) --- */}
@@ -8140,6 +7784,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
 {/* --- PROCUREMENT (PURCHASE ORDERS) --- */}
       {activeTab === 'procurement' && <Suspense fallback={<TabFallback />}><ProcurementTab ctx={ctx} /></Suspense>}
+      {activeTab === 'costing' && <Suspense fallback={<TabFallback />}><CostingTab ctx={ctx} /></Suspense>}
 
       {/* --- CLIENTS TAB --- */}
       {activeTab === 'clients' && <Suspense fallback={<TabFallback />}><ClientsTab /></Suspense>}
@@ -8171,8 +7816,8 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
       {/* Payment QR - full-screen for the customer to scan; dismissed once paid. */}
       {payQrOpen && systemSettings.paymentQrImage && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-6" onClick={() => setPayQrOpen(false)}>
-          <div className="bg-white rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[9999] flex justify-center bg-black/90 backdrop-blur-sm p-6 overflow-y-auto" onClick={() => setPayQrOpen(false)}>
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl my-auto" onClick={e => e.stopPropagation()}>
             <p className="text-black font-black text-lg uppercase tracking-wider mb-1">Scan to Pay</p>
             <p className="text-fg/70 text-xs mb-4">Open your e-wallet or bank app and scan</p>
             <img src={systemSettings.paymentQrImage} alt="Payment QR" className="w-full max-w-[300px] mx-auto rounded-xl" />
@@ -8190,10 +7835,13 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
       {/* ── CLOCK OUT / BREAK CHOICE MODAL ───────────────────────────────── */}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <StaffGuide open={guideOpen && showsGuide(activeAdmin)} onClose={() => setGuideOpen(false)}
+        user={activeAdmin} businessType={BUSINESS_TYPE} can={can} />
       <ClockModal />
 
       {/* ── CHANGE PASSWORD MODAL ─────────────────────────────────────────── */}
       <ChangePasswordModal />
+      <CashDrawerModal />
 
       <SpoilageModal />
 

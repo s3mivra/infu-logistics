@@ -1,6 +1,10 @@
 ﻿import React, { useCallback, useEffect, useState } from 'react';
-import { SlidersHorizontal, QrCode, Clock, DollarSign, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt, Type, X } from 'lucide-react';
+import { SlidersHorizontal, AlertTriangle, QrCode, Clock, DollarSign, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt, Type, X } from 'lucide-react';
 import { readPrinterMode, writePrinterMode } from '../../shared/escpos';
+import * as ui from '../../shared/ui';
+import { readDeviceKey, writeDeviceKey } from '../qr/JustQr';
+import PrivacyContactCard from './PrivacyContactCard';
+import SetupSheetCard from './SetupSheetCard';
 
 // ── SettingsTab - system preferences & account controls ───────────────────────
 // Houses the toggles that used to live crammed in the sidebar's "Tools" dropdown
@@ -9,7 +13,9 @@ import { readPrinterMode, writePrinterMode } from '../../shared/escpos';
 //
 // Self-contained: pulls only what it needs from ctx.
 
-const BUSINESS_TYPE = import.meta.env.VITE_BUSINESS_TYPE || 'fb';
+import { BUSINESS_TYPE } from '../../shared/businessType.js';
+import MailSettingsCard from './MailSettingsCard';
+import TwoStepCard from './TwoStepCard';
 
 // Reusable iOS-style toggle switch.
 function Toggle({ on, onChange, disabled }) {
@@ -86,7 +92,7 @@ function TextSetting({ label, hint, value, onSave, placeholder, multiline, maxLe
       const next = e.target.value.trim();
       if (next !== String(value ?? '')) onSave(next);
     },
-    className: 'w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-3 py-2.5 rounded-xl outline-none transition text-sm',
+    className: 'w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-3 py-2.5 rounded-xl outline-none transition text-sm',
   };
   return (
     <div>
@@ -116,12 +122,22 @@ const readFontScale = () => {
   try { return Number(localStorage.getItem('dash.fontScale')) || 100; } catch { return 100; }
 };
 
+// Offered rather than typed: a mistyped zone would be rejected by the server,
+// and a *valid but wrong* one would quietly move every report, EOD count and
+// midnight close by hours.
+const TIME_ZONES = [
+  'Asia/Manila', 'Asia/Singapore', 'Asia/Hong_Kong', 'Asia/Taipei', 'Asia/Tokyo',
+  'Asia/Seoul', 'Asia/Bangkok', 'Asia/Jakarta', 'Asia/Kuala_Lumpur', 'Asia/Dubai',
+  'Australia/Sydney', 'Europe/London', 'America/Los_Angeles', 'America/New_York', 'UTC',
+];
+
 export default function SettingsTab({ ctx }) {
   const {
     systemSettings = {}, toggleQROrders, toggleAutoClose, toggleImages,
-    toggleRequireCashShift,
+    toggleRequireCashShift, toggleSharedDrawer, toggleBlindClose, saveVarianceThreshold, saveDrawerMaxHours,
+    toggleAskOperatorEachSale,
     isSuperAdmin, setChangePwModal, setChangePwError, BIZ_NAME, activeAdmin,
-    saveSetting, apiFetch,
+    saveSetting, apiFetch, reloadModules,
   } = ctx;
 
   // Optional accounting modules. VAT already worked as a switch; these follow
@@ -147,6 +163,51 @@ export default function SettingsTab({ ctx }) {
   }, [apiFetch]);
   useEffect(() => { loadModules(); }, [loadModules]);
 
+  // What every document a person holds is called. Served rather than hard-coded
+  // here: the sample beside each field has to be what the server will really
+  // print, not this screen's guess at it.
+  const [docSeries, setDocSeries] = useState([]);
+  const [seriesBusy, setSeriesBusy] = useState('');
+  const loadDocSeries = useCallback(async () => {
+    try {
+      const d = await (await apiFetch('/api/settings/document-series')).json();
+      if (d.success) setDocSeries(d.series || []);
+    } catch { /* the card simply stays empty rather than blocking Settings */ }
+  }, [apiFetch]);
+  useEffect(() => { loadDocSeries(); }, [loadDocSeries]);
+
+  // What still has to be set before trading - and which of it has a deadline.
+  // The receipt serial start number locks the moment the first receipt is
+  // issued, so "you can still fix this" is the part worth saying out loud.
+  const [readiness, setReadiness] = useState(null);
+  const loadReadiness = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/settings/readiness');
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.success) setReadiness(d);
+    } catch { /* the card simply does not appear */ }
+  }, [apiFetch]);
+  useEffect(() => { loadReadiness(); }, [loadReadiness]);
+  // Saving anything can clear an outstanding item, so re-read after a change.
+  useEffect(() => { if (systemSettings) loadReadiness(); }, [systemSettings, loadReadiness]);
+
+  // The server normalises whatever was typed (case, stray punctuation, a
+  // trailing dash) and hands back the whole list with fresh samples, so the
+  // screen shows the result of the rule rather than re-implementing it.
+  const saveSeriesPrefix = async (series, raw) => {
+    if (String(raw).trim().toUpperCase() === series.prefix) return;
+    setSeriesBusy(series.key);
+    try {
+      const d = await (await apiFetch(`/api/settings/${series.key}`, {
+        method: 'PATCH', body: JSON.stringify({ value: raw }),
+      })).json();
+      if (d.success && d.series) setDocSeries(d.series);
+      else await loadDocSeries();
+    } catch { await loadDocSeries(); }
+    finally { setSeriesBusy(''); }
+  };
+
   const toggleModule = async (mod) => {
     setModuleBusy(mod.key);
     try {
@@ -154,7 +215,13 @@ export default function SettingsTab({ ctx }) {
         method: 'PATCH', body: JSON.stringify({ value: !mod.enabled }),
       });
       const d = await res.json();
-      if (d.success && d.modules) setModules(d.modules);
+      if (d.success && d.modules) {
+        setModules(d.modules);
+        // The sidebar keeps its own copy of the module list to decide which
+        // tabs exist. Updating only the switch here left the tab missing (or
+        // stranded) until the operator reloaded the page by hand.
+        reloadModules?.();
+      }
     } catch { /* leave the switch where it was */ }
     finally { setModuleBusy(''); }
   };
@@ -162,6 +229,11 @@ export default function SettingsTab({ ctx }) {
   const qrOn    = systemSettings.isAcceptingQROrders !== false;
   const autoOn  = systemSettings.autoCloseEnabled !== false;
   const cashShiftOn = systemSettings.requireCashShift !== false;
+  const sharedDrawerOn = systemSettings.sharedDrawer === true;
+  const blindOn = systemSettings.blindClose !== false;
+  const askOperatorOn = systemSettings.askOperatorEachSale === true;
+  const varThreshold = Number.isFinite(Number(systemSettings.varianceThreshold)) ? Number(systemSettings.varianceThreshold) : 50;
+  const drawerMaxHours = Number.isFinite(Number(systemSettings.drawerMaxHours)) ? Number(systemSettings.drawerMaxHours) : 0;
   const imgOn   = systemSettings.imagesEnabled !== false;
 
   const [theme, setTheme] = useState(readTheme);
@@ -241,11 +313,63 @@ export default function SettingsTab({ ctx }) {
         </div>
         <div>
           <h1 className="text-xl font-black text-fg leading-none">Settings</h1>
-          <p className="text-fg/60 text-xs font-bold mt-1">System preferences &amp; account</p>
+          <p className="text-fg/65 text-xs font-bold mt-1">System preferences &amp; account</p>
         </div>
       </div>
 
+      {/* Before the first sale, one of these can still be put right; afterwards
+          it cannot. Shown at the top because a warning further down the page
+          is a warning nobody reads in time. */}
+      {isSuperAdmin && readiness && !readiness.ready && (
+        <div className={`mb-6 rounded-2xl border px-4 py-4 ${
+          readiness.urgent ? 'bg-amber-500/10 border-amber-500/30' : 'bg-white/5 border-white/10'
+        }`}>
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={18} className={readiness.urgent ? 'text-warning shrink-0 mt-0.5' : 'text-fg/65 shrink-0 mt-0.5'} />
+            <div className="flex-1 min-w-0">
+              <p className="font-black text-fg text-sm">
+                {readiness.urgent
+                  ? 'Set this before your first sale'
+                  : `${readiness.outstanding} setting${readiness.outstanding === 1 ? '' : 's'} still to fill in`}
+              </p>
+              <ul className="mt-2 space-y-1.5">
+                {readiness.items.filter(i => !i.set).map(i => (
+                  <li key={i.key} className="text-xs leading-snug">
+                    <span className={`font-bold ${i.severity === 'locks' ? 'text-warning' : 'text-fg/80'}`}>{i.label}</span>
+                    {i.severity === 'locks' && (
+                      <span className="ml-1.5 text-[9px] font-black uppercase tracking-wider bg-amber-500/20 text-warning px-1.5 py-0.5 rounded">locks after the first receipt</span>
+                    )}
+                    <span className="block text-fg/65">{i.note}</span>
+                  </li>
+                ))}
+              </ul>
+              {readiness.serialLocked && (
+                <p className="text-[10px] text-fg/65 mt-2">
+                  The receipt series has already issued {readiness.receiptsIssued} receipt{readiness.receiptsIssued === 1 ? '' : 's'}, so its starting number is now fixed.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="space-y-6">
+        {/* QR display first: it is what a counter tablet is set up for. */}
+        {BUSINESS_TYPE !== 'log' && (isSuperAdmin || ctx.can?.('settings.manage')) && <QrDevicesCard apiFetch={apiFetch} />}
+        {(isSuperAdmin || ctx.can?.('settings.manage')) && <MailSettingsCard apiFetch={apiFetch} />}
+        {/* Everyone can protect their own account. */}
+        <TwoStepCard apiFetch={apiFetch} isSuperAdmin={isSuperAdmin} />
+
+        {/* Everything the business has to type in, kept in one linked sheet. */}
+        {isSuperAdmin && (
+          <SetupSheetCard apiFetch={apiFetch} can={ctx.can} isSuperAdmin={isSuperAdmin} businessType={BUSINESS_TYPE}
+            parseImportFile={ctx.parseImportFile} onImported={ctx.fetchData} />
+        )}
+
+        {(isSuperAdmin || ctx.can?.('settings.manage')) && (
+          <PrivacyContactCard value={systemSettings.privacyContact} onSave={v => saveSetting?.('privacyContact', v)} />
+        )}
+
         {/* System toggles - superadmin only */}
         {isSuperAdmin ? (
           <Card title="System">
@@ -255,6 +379,33 @@ export default function SettingsTab({ ctx }) {
                 <Toggle on={qrOn} onChange={toggleQROrders} />
               </SettingRow>
             )}
+            {/* Every day boundary in the system hangs off this: which day a
+                sale belongs to, when the EOD count locks, when the midnight
+                close fires, and the range every report covers. */}
+            <div className="flex items-start gap-4 px-4 py-4">
+              <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand-text bg-brand/15 border-brand/30">
+                <Clock size={16} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-fg text-sm">Time zone</p>
+                <p className="text-fg/70 text-xs mt-0.5 leading-snug">
+                  The business&apos;s own clock. It decides which day a sale belongs to, when the day&apos;s count locks, and what a daily report covers - whatever timezone the server itself runs in.
+                </p>
+                <label htmlFor="biz-tz" className="sr-only">Business time zone</label>
+                <select
+                  id="biz-tz"
+                  value={systemSettings.businessTimeZone || 'Asia/Manila'}
+                  onChange={e => saveSetting?.('businessTimeZone', e.target.value)}
+                  className="mt-2 w-full max-w-xs bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition font-bold"
+                >
+                  {TIME_ZONES.map(tz => <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>)}
+                </select>
+                <p className="text-[10px] text-fg/65 mt-1.5">
+                  Changing this takes effect at once. Do it between trading days - mid-day it moves where the current day&apos;s sales are counted.
+                </p>
+              </div>
+            </div>
+
             <SettingRow icon={Clock} title="Automatic Midnight Close"
               desc={autoOn ? 'The day auto-closes & archives at midnight.' : 'Manual close required; the day stays open past midnight.'}>
               <Toggle on={autoOn} onChange={toggleAutoClose} />
@@ -265,6 +416,42 @@ export default function SettingsTab({ ctx }) {
                 : 'Login skips the starting-cash prompt entirely - for shops with no cash drawer to reconcile.'}>
               <Toggle on={cashShiftOn} onChange={toggleRequireCashShift} />
             </SettingRow>
+            <SettingRow icon={DollarSign} title="One Shared Cash Drawer"
+              desc={sharedDrawerOn
+                ? 'One till for the shop: the float is declared once, everyone rings on it, one person counts at close.'
+                : 'Each cashier declares their own float and answers for their own till.'}>
+              <Toggle on={sharedDrawerOn} onChange={toggleSharedDrawer} />
+            </SettingRow>
+            {sharedDrawerOn && (
+              <>
+                <SettingRow icon={DollarSign} title="Blind Close"
+                  desc={blindOn
+                    ? 'Whoever counts cannot see the expected total first - the only way a variance means anything.'
+                    : 'The expected total is visible before counting. A short drawer can be written up as an exact one.'}>
+                  <Toggle on={blindOn} onChange={toggleBlindClose} />
+                </SettingRow>
+                <SettingRow icon={Clock} title="Session Limit (hours)"
+                  desc={drawerMaxHours > 0
+                    ? `A drawer open longer than ${drawerMaxHours}h is closed uncounted and flagged, so a forgotten close cannot sweep the next day's sales into it. Set 0 to turn this off.`
+                    : 'No limit: a drawer stays open until somebody closes it. Set a number of hours to bound it - useful where the shop never shuts.'}>
+                  <input type="number" min="0" max="168" step="1" defaultValue={drawerMaxHours}
+                    onBlur={e => { if (Number(e.target.value) !== drawerMaxHours) saveDrawerMaxHours?.(e.target.value); }}
+                    className="w-24 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg text-right font-bold outline-none focus:border-accent" />
+                </SettingRow>
+                <SettingRow icon={DollarSign} title="Variance Alert Threshold"
+                  desc={`Closes more than this far out are flagged for review. Small differences are normal; escalating all of them means none get looked at.`}>
+                  <input type="number" min="0" step="1" defaultValue={varThreshold}
+                    onBlur={e => { if (Number(e.target.value) !== varThreshold) saveVarianceThreshold?.(e.target.value); }}
+                    className="w-24 bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg text-right font-bold outline-none focus:border-accent" />
+                </SettingRow>
+              </>
+            )}
+            <SettingRow icon={Lock} title="Ask Who Is Ringing, Every Sale"
+              desc={askOperatorOn
+                ? 'The register locks after each sale; the next person enters their PIN first. Exact attribution, at the cost of a PIN on every sale.'
+                : 'Whoever is signed in keeps the register until somebody switches with their PIN. Fewer taps, and sales follow whoever last took it.'}>
+              <Toggle on={askOperatorOn} onChange={toggleAskOperatorEachSale} />
+            </SettingRow>
             <SettingRow icon={ImageIcon} title="Product Images"
               desc={imgOn ? 'Product images show across the menu, portal & lists.' : 'Images are hidden app-wide (faster, text-only).'}>
               <Toggle on={imgOn} onChange={toggleImages} />
@@ -272,7 +459,7 @@ export default function SettingsTab({ ctx }) {
           </Card>
         ) : (
           <Card title="System">
-            <div className="flex items-center gap-3 px-4 py-5 text-fg/60">
+            <div className="flex items-center gap-3 px-4 py-5 text-fg/65">
               <Lock size={15} />
               <span className="text-sm font-bold">System toggles are superadmin-only.</span>
             </div>
@@ -299,7 +486,7 @@ export default function SettingsTab({ ctx }) {
                     >
                       {currentLogo
                         ? <img src={currentLogo} alt="Logo" className="max-w-full max-h-full object-contain" />
-                        : <ImageIcon size={22} className={systemSettings.logoColor ? 'text-white/60' : 'text-fg/60'} />}
+                        : <ImageIcon size={22} className={systemSettings.logoColor ? 'text-white/60' : 'text-fg/65'} />}
                     </div>
                     <div className="flex flex-col gap-2">
                       <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-on-brand hover:bg-brand/90 transition min-h-[40px]">
@@ -372,7 +559,7 @@ export default function SettingsTab({ ctx }) {
                     <div className="w-20 h-20 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden shrink-0">
                       {currentQr
                         ? <img src={currentQr} alt="Payment QR" className="max-w-full max-h-full object-contain" />
-                        : <QrCode size={22} className="text-fg/60" />}
+                        : <QrCode size={22} className="text-fg/65" />}
                     </div>
                     <div className="flex flex-col gap-2">
                       <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-on-brand hover:bg-brand/90 transition min-h-[40px]">
@@ -405,7 +592,7 @@ export default function SettingsTab({ ctx }) {
                   <div className="flex items-center justify-between gap-4">
                     <div className="min-w-0">
                       <p className="font-bold text-fg text-sm">VAT-registered</p>
-                      <p className="text-fg/60 text-xs mt-0.5 leading-snug">
+                      <p className="text-fg/65 text-xs mt-0.5 leading-snug">
                         {vatOn
                           ? 'Receipts break out output VAT. The 3% percentage-tax report is switched off - a VAT-registered business does not owe it.'
                           : 'Non-VAT. Sales are reported under the 3% percentage tax.'}
@@ -433,10 +620,44 @@ export default function SettingsTab({ ctx }) {
                             saveSetting?.('vatRate', n);
                           }}
                           placeholder="12"
-                          className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
+                          className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
                         />
-                        <p className="text-[10px] text-fg/60 mt-1.5">
+                        <p className="text-[10px] text-fg/65 mt-1.5">
                           Standard Philippine VAT is 12%.
+                        </p>
+                      </div>
+
+                      {/* A delivery charge is generally part of gross receipts and
+                          VATable - but a business that merely passes a courier's
+                          own fee through bills it differently, so it is asked
+                          rather than assumed. Stamped per order, so changing it
+                          never restates a receipt already issued. */}
+                      <div className="mt-4">
+                        <label className="flex items-start gap-2 cursor-pointer">
+                          <input type="checkbox" checked={systemSettings.deliveryFeeVatable === true}
+                            onChange={e => saveSetting?.('deliveryFeeVatable', e.target.checked)}
+                            className="mt-0.5 accent-brand" />
+                          <span>
+                            <span className="text-[11px] font-bold text-fg block">Delivery fees carry VAT</span>
+                            <span className="text-[10px] text-fg/65 leading-snug block">On by most businesses: the delivery service is part of gross receipts. Leave off only if you bill a courier&apos;s fee as a pass-through. Ask your accountant.</span>
+                          </span>
+                        </label>
+                      </div>
+
+                      <div className="mt-4">
+                        <label htmlFor="biz-tin" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
+                          VAT registration TIN
+                        </label>
+                        <input
+                          id="biz-tin"
+                          type="text"
+                          defaultValue={systemSettings.businessTin || ''}
+                          onBlur={e => saveSetting?.('businessTin', e.target.value.trim())}
+                          placeholder="000-000-000-00000"
+                          className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition font-bold"
+                        />
+                        <p className="text-[10px] text-fg/65 mt-1.5">
+                          Printed on every invoice and receipt. A VAT invoice without the seller&apos;s TIN does not let a VAT-registered buyer claim the VAT.
                         </p>
                       </div>
 
@@ -454,13 +675,13 @@ export default function SettingsTab({ ctx }) {
                               className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
                                 vatInclusive === opt.v
                                   ? 'bg-brand text-on-brand border-brand'
-                                  : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'
+                                  : 'bg-white/5 text-fg/65 border-white/10 hover:text-fg hover:bg-white/10'
                               }`}>
                               {opt.label}
                             </button>
                           ))}
                         </div>
-                        <p className="text-[10px] text-fg/60 mt-1.5 leading-relaxed">
+                        <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
                           {vatInclusive
                             ? 'Listed prices already contain VAT. A ₱112 item stays ₱112 - the receipt just breaks out the ₱12 VAT inside it. Standard for Philippine retail.'
                             : 'Listed prices are net; VAT is added on top. A ₱100 item rings up at ₱112. Common in B2B quoting.'}
@@ -486,13 +707,13 @@ export default function SettingsTab({ ctx }) {
                                 className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
                                   scPwdOrder === opt.v
                                     ? 'bg-brand text-on-brand border-brand'
-                                    : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'
+                                    : 'bg-white/5 text-fg/65 border-white/10 hover:text-fg hover:bg-white/10'
                                 }`}>
                                 {opt.label}
                               </button>
                             ))}
                           </div>
-                          <p className="text-[10px] text-fg/60 mt-1.5 leading-relaxed">
+                          <p className="text-[10px] text-fg/65 mt-1.5 leading-relaxed">
                             {scPwdOrder === 'vat-first'
                               ? 'Strip the VAT, then apply the discount to the VAT-less amount. This is the BIR treatment.'
                               : 'Apply the discount to the VAT-inclusive price, then strip the VAT from what remains.'}
@@ -504,11 +725,87 @@ export default function SettingsTab({ ctx }) {
                     </>
                   )}
 
-                  <p className="text-[10px] text-fg/60 mt-3 leading-relaxed">
+                  {/* What the receipt has to carry to BE a registered receipt:
+                      the authority/permit number it was printed or issued
+                      under, the machine it was issued from, and the serial
+                      series. Blank until the business has them, and printed
+                      only when filled in. */}
+                  <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="sm:col-span-2">
+                      <p className="text-[11px] font-bold text-fg">Receipt registration (BIR)</p>
+                      <p className="text-[10px] text-fg/65 leading-snug">Printed at the foot of every receipt and invoice. Copy these from your Authority to Print or Permit to Use.</p>
+                    </div>
+                    <div>
+                      <label htmlFor="bir-permit" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">ATP / Permit no.</label>
+                      <input id="bir-permit" type="text" defaultValue={systemSettings.birPermitNo || ''}
+                        onBlur={e => saveSetting?.('birPermitNo', e.target.value.trim())}
+                        className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition text-sm" />
+                    </div>
+                    <div>
+                      <label htmlFor="bir-min" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Machine ID / serial</label>
+                      <input id="bir-min" type="text" defaultValue={systemSettings.birMachineId || ''}
+                        onBlur={e => saveSetting?.('birMachineId', e.target.value.trim())}
+                        className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition text-sm" />
+                    </div>
+                    <div>
+                      <label htmlFor="or-start" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">Continue serials from</label>
+                      <input id="or-start" type="number" min="0" defaultValue={systemSettings.orStartNumber ?? 0}
+                        onBlur={e => saveSetting?.('orStartNumber', Number(e.target.value) || 0)}
+                        className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2.5 rounded-xl outline-none transition text-sm" />
+                      <p className="text-[10px] text-fg/65 mt-1">Set once, before the first sale: the number your registered series is already up to. The prefix it prints under lives in Document numbering below.</p>
+                    </div>
+                  </div>
+
+                  <p className="text-[10px] text-fg/65 mt-3 leading-relaxed">
                     Changing this affects <span className="text-fg/80 font-bold">new orders only</span>.
                     Receipts already issued keep the rate they were rung up under.
                   </p>
                 </div>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* Every business already has its own names for these - "SI-2026-000123"
+            on the books, a receipt booklet with its own series. The numbering
+            used to be fixed in code, so the system and the paperwork could only
+            ever disagree. Each series ships with a sensible default, so nothing
+            is blank on day one and a business that does not care never has to
+            look here. */}
+        {isSuperAdmin && (
+          <Card title="Document numbering">
+            <div className="px-4 py-4">
+              <p className="text-[11px] text-fg/65 leading-snug mb-3">
+                What each document is called. Renaming one changes what future documents are called
+                and it never renumbers anything already issued, nor restarts a sequence.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {docSeries.map(series => (
+                  <div key={series.key}>
+                    <label htmlFor={`series-${series.code}`} className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1">
+                      {series.label}
+                      {series.registered && <span className="ml-1.5 text-[9px] text-warning normal-case tracking-normal">registered series</span>}
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        id={`series-${series.code}`}
+                        type="text"
+                        // The server decides the final shape of a prefix, so the
+                        // field has to show what was STORED, not what was typed:
+                        // keying on the resolved value remounts it once the
+                        // answer comes back, turning "soa-" into "SOA" in place.
+                        key={`${series.key}-${series.prefix}`}
+                        defaultValue={series.prefix}
+                        placeholder={series.defaultPrefix}
+                        disabled={seriesBusy === series.key}
+                        onBlur={e => saveSeriesPrefix(series, e.target.value)}
+                        className="w-28 bg-white/5 border border-white/10 focus:border-brand text-fg px-3 py-2 rounded-xl outline-none transition text-sm font-bold uppercase disabled:opacity-50"
+                      />
+                      <span className="text-[11px] text-fg/65 font-mono truncate" title={series.sample}>{series.sample}</span>
+                    </div>
+                    <p className="text-[10px] text-fg/65 mt-1 leading-snug">{series.note}</p>
+                  </div>
+                ))}
               </div>
             </div>
           </Card>
@@ -522,7 +819,7 @@ export default function SettingsTab({ ctx }) {
           <Card title="Accounting modules">
             {modulesError && (
               <div className="px-4 py-4 flex items-center gap-3">
-                <p className="text-xs text-amber-400/90 flex-1">
+                <p className="text-xs text-warning flex-1">
                   {modulesError} The switches cannot be shown until this loads.
                 </p>
                 <button onClick={loadModules}
@@ -543,7 +840,7 @@ export default function SettingsTab({ ctx }) {
                     <div className="flex items-center justify-between gap-4">
                       <div className="min-w-0">
                         <p className="font-bold text-fg text-sm">{mod.label}</p>
-                        <p className="text-fg/60 text-xs mt-0.5 leading-snug">{mod.blurb}</p>
+                        <p className="text-fg/65 text-xs mt-0.5 leading-snug">{mod.blurb}</p>
                       </div>
                       <Toggle on={mod.enabled} disabled={moduleBusy === mod.key}
                         onChange={() => toggleModule(mod)} />
@@ -569,7 +866,7 @@ export default function SettingsTab({ ctx }) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-fg text-sm">How limits apply</p>
-                  <p className="text-fg/60 text-xs mt-0.5 leading-snug">
+                  <p className="text-fg/65 text-xs mt-0.5 leading-snug">
                     {CREDIT_MODES.find(m => m.value === creditMode)?.desc}
                   </p>
                   <div className="grid grid-cols-2 gap-2 mt-3">
@@ -579,7 +876,7 @@ export default function SettingsTab({ ctx }) {
                         className={`px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border transition ${
                           creditMode === m.value
                             ? 'bg-brand text-on-brand border-brand'
-                            : 'bg-white/5 text-fg/60 border-white/10 hover:text-fg hover:bg-white/10'
+                            : 'bg-white/5 text-fg/65 border-white/10 hover:text-fg hover:bg-white/10'
                         }`}>
                         {m.label}
                       </button>
@@ -596,15 +893,15 @@ export default function SettingsTab({ ctx }) {
                         defaultValue={globalLimit}
                         onBlur={e => saveSetting?.('globalCreditLimit', e.target.value === '' ? null : Number(String(e.target.value).replace(/[,\s₱]/g, '')))}
                         placeholder="e.g. 50000"
-                        className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-white/20 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
+                        className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm tabular-nums"
                       />
-                      <p className="text-[10px] text-fg/60 mt-1.5">
+                      <p className="text-[10px] text-fg/65 mt-1.5">
                         Applies to every client{creditMode === 'both' ? ' that has no limit of its own' : ''}.
                         Blank = no shared limit.
                       </p>
                     </div>
                   )}
-                  <p className="text-[10px] text-fg/60 mt-3 leading-relaxed">
+                  <p className="text-[10px] text-fg/65 mt-3 leading-relaxed">
                     Only <span className="text-fg/80 font-bold">on-account</span> (non-cash) orders use credit.
                     Cash sales settle immediately and are never blocked.
                   </p>
@@ -731,7 +1028,7 @@ export default function SettingsTab({ ctx }) {
                     <p className="text-fg/70 text-xs mt-0.5 leading-snug">What prints when an order is paid, and on what paper. The A4 document always prints an original and a duplicate.</p>
                   </div>
                   <div>
-                    <p className="text-xs font-bold text-fg/60 mb-1.5">Receipt format</p>
+                    <p className="text-xs font-bold text-fg/65 mb-1.5">Receipt format</p>
                     <div className="grid grid-cols-3 gap-2">
                       {[
                         { v: 'billing', label: 'Billing / A4' },
@@ -751,7 +1048,7 @@ export default function SettingsTab({ ctx }) {
                     </div>
                   </div>
                   <div>
-                    <p className="text-xs font-bold text-fg/60 mb-1.5">Print size (A4 document)</p>
+                    <p className="text-xs font-bold text-fg/65 mb-1.5">Print size (A4 document)</p>
                     <div className="grid grid-cols-4 gap-2">
                       {['A4', 'Letter', 'Legal', 'A5'].map(sz => {
                         const active = (systemSettings.portalPrintSize || 'A4') === sz;
@@ -767,7 +1064,7 @@ export default function SettingsTab({ ctx }) {
                     </div>
                   </div>
                   <div>
-                    <p className="text-xs font-bold text-fg/60 mb-1.5">Thermal paper width</p>
+                    <p className="text-xs font-bold text-fg/65 mb-1.5">Thermal paper width</p>
                     <p className="text-fg/70 text-[11px] mb-1.5 leading-snug">The order slip auto-adjusts and stays centered for whichever roll is loaded.</p>
                     <div className="grid grid-cols-2 gap-2">
                       {[{ v: '58', label: '58mm' }, { v: '80', label: '80mm' }].map(opt => {
@@ -794,7 +1091,7 @@ export default function SettingsTab({ ctx }) {
                   <Toggle on={systemSettings.fbDuplicateReceipt === true} onChange={() => saveSetting?.('fbDuplicateReceipt', !(systemSettings.fbDuplicateReceipt === true))} />
                 </SettingRow>
                 <div className="px-4 py-4 border-t border-white/5">
-                  <p className="text-xs font-bold text-fg/60 mb-1.5">Thermal paper width</p>
+                  <p className="text-xs font-bold text-fg/65 mb-1.5">Thermal paper width</p>
                   <p className="text-fg/70 text-[11px] mb-1.5 leading-snug">The receipt auto-adjusts and stays centered for whichever roll is loaded.</p>
                   <div className="grid grid-cols-2 gap-2 max-w-xs">
                     {[{ v: '58', label: '58mm' }, { v: '80', label: '80mm' }].map(opt => {
@@ -834,7 +1131,7 @@ export default function SettingsTab({ ctx }) {
                           >
                             <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${usePrintLogo ? 'left-5' : 'left-0.5'}`} />
                           </button>
-                          <span className="text-xs text-fg/60 font-bold">
+                          <span className="text-xs text-fg/65 font-bold">
                             {usePrintLogo ? 'Using uploaded print logo' : 'Using business logo for print'}
                           </span>
                         </div>
@@ -843,7 +1140,7 @@ export default function SettingsTab({ ctx }) {
                             <div className="w-20 h-20 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden shrink-0">
                               {currentPrintLogo
                                 ? <img src={currentPrintLogo} alt="Print logo" className="max-w-full max-h-full object-contain" />
-                                : <Printer size={22} className="text-fg/60" />}
+                                : <Printer size={22} className="text-fg/65" />}
                             </div>
                             <div className="flex flex-col gap-2">
                               <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-brand text-on-brand hover:bg-brand/90 transition min-h-[40px]">
@@ -946,7 +1243,7 @@ export default function SettingsTab({ ctx }) {
                     </button>
                   ))}
                 </div>
-                <p className="text-[10px] text-fg/60 mt-2 leading-relaxed">
+                <p className="text-[10px] text-fg/65 mt-2 leading-relaxed">
                   Your choice is saved, but most screens are still English-only -
                   translations are being added screen by screen.
                 </p>
@@ -1006,5 +1303,91 @@ export default function SettingsTab({ ctx }) {
         </Card>
       </div>
     </div>
+  );
+}
+
+// Devices that may show the ordering QR from the login screen ("Just QR").
+function QrDevicesCard({ apiFetch }) {
+  const [devices, setDevices] = useState(null);
+  const [thisKey, setThisKey] = useState(readDeviceKey());
+  const [thisId, setThisId] = useState(() => { try { return localStorage.getItem('semivra_qr_device_id') || ''; } catch { return ''; } });
+  const [busy, setBusy] = useState(false);
+  const [label, setLabel] = useState('Counter tablet');
+
+  const load = useCallback(async () => {
+    try {
+      const r = await apiFetch('/api/qr-devices');
+      const d = await r.json();
+      setDevices(d.success ? d.devices : []);
+    } catch { setDevices([]); }
+  }, [apiFetch]);
+  useEffect(() => { load(); }, [load]);
+
+  const enableHere = async () => {
+    setBusy(true);
+    try {
+      const r = await apiFetch('/api/qr-devices', { method: 'POST', body: JSON.stringify({ label }) });
+      const d = await r.json();
+      if (!d.success) return ui.alert(d.error || 'Could not turn this device on.');
+      writeDeviceKey(d.key);
+      try { localStorage.setItem('semivra_qr_device_id', d.device._id); } catch { /* private mode */ }
+      setThisKey(d.key); setThisId(d.device._id);
+      ui.toast('This device can now show the QR from the login screen.', { tone: 'success' });
+      load();
+    } finally { setBusy(false); }
+  };
+
+  const revoke = async (id) => {
+    if (!(await ui.confirm('Switch this device off? It will stop showing the QR without a sign-in.'))) return;
+    const r = await apiFetch(`/api/qr-devices/${id}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (!d.success) return ui.alert(d.error || 'Could not switch it off.');
+    if (id === thisId) {
+      writeDeviceKey('');
+      try { localStorage.removeItem('semivra_qr_device_id'); } catch { /* private mode */ }
+      setThisKey(''); setThisId('');
+    }
+    load();
+  };
+
+  const hereOn = !!thisKey && (devices || []).some(d => d._id === thisId);
+  return (
+    <Card title="QR display">
+      <div className="px-4 py-4 space-y-4">
+        <p className="text-sm text-fg/75">
+          The login screen has a <b>Just QR</b> button that shows the ordering code without anyone signing in. Anyone who scans
+          that code can send orders to the kitchen, so it only works on devices you turn on here.
+        </p>
+        {hereOn ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-bold text-success">This device can show the QR.</span>
+            <button onClick={() => revoke(thisId)} className="text-xs font-bold uppercase tracking-wider px-3 py-2 rounded-lg border border-white/15 text-fg/80 hover:text-fg hover:bg-white/5 transition">Switch off here</button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <input value={label} onChange={e => setLabel(e.target.value)} aria-label="Name for this device" maxLength={60}
+              className="flex-1 min-w-[180px] bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand" />
+            <button onClick={enableHere} disabled={busy}
+              className="bg-brand hover:bg-brand-dark text-on-brand text-xs font-black uppercase tracking-wider px-4 py-2.5 rounded-lg transition disabled:opacity-50">
+              Let this device show the QR
+            </button>
+          </div>
+        )}
+        {devices && devices.length > 0 && (
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-widest text-fg/70 mb-2">Devices turned on</p>
+            <ul className="divide-y divide-white/5 border border-white/10 rounded-lg">
+              {devices.map(d => (
+                <li key={d._id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                  <span className="text-fg">{d.label}{d._id === thisId ? <span className="text-fg/70"> (this device)</span> : null}</span>
+                  <span className="text-fg/70 text-xs ml-auto">{d.lastUsedAt ? `last used ${new Date(d.lastUsedAt).toLocaleString()}` : 'not used yet'}</span>
+                  <button onClick={() => revoke(d._id)} className="text-danger text-xs font-bold uppercase">Switch off</button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }

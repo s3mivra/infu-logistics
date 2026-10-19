@@ -3,7 +3,7 @@
  *          (2) runtime asset caching, (3) push notifications.
  * Bump CACHE_VERSION whenever caching logic changes to force a refresh.
  */
-const CACHE_VERSION = 'semivra-v2';
+const CACHE_VERSION = 'semivra-v3';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 
@@ -50,6 +50,9 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api/')) return; // never cache API responses
+  // The update check asks for the live page. Served from the cache, it would
+  // always look unchanged and an installed till would never update.
+  if (url.searchParams.has('__fresh')) return;
 
   // App navigations: try network, fall back to cached shell when offline.
   if (request.mode === 'navigate') {

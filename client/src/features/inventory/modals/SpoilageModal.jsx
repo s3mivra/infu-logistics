@@ -2,6 +2,7 @@
 import * as ui from '../../../shared/ui';
 
 
+import { PACK_UNIT } from '../../../shared/packUnit.js';
 // Reasons are a closed list on purpose: spoilage posts a journal entry, and a
 // free-text reason makes the waste report unaggregatable at month-end.
 const REASONS = [
@@ -17,22 +18,23 @@ const REASONS = [
 export default function SpoilageModal() {
   const {
     spoilageModal, setSpoilageModal, spoilageForm, setSpoilageForm,
-    spoilageLoading, setSpoilageLoading, itemDisplay, packInfo, apiFetch, fetchERPData,
+    spoilageLoading, setSpoilageLoading, itemDisplay, apiFetch, fetchERPData,
   } = useDashboard();
 
   if (!spoilageModal) return null;
 
   const item = spoilageModal.item;
   const d = itemDisplay(item);
-  const unitLabel = d.isPacked ? 'pcs' : d.unit;
+  const unitLabel = d.isPacked ? PACK_UNIT : d.unit;
   const currentQty = d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 });
 
   const submit = async () => {
-    // The form collects packs (or display units for unpacked items); the API
-    // always takes base units.
-    const pack = packInfo(item);
+    // The form collects the counted unit the label beside it names - kg, L or
+    // pcs in a cafe, packages in logistics - and the API takes base units. It
+    // used the PACK size here whatever the label said, so half a kilo written
+    // off from a 500 g bag of chocolate went out as 250 g.
     const qtyEntered = parseFloat(spoilageForm.qty);
-    const qtyBase = qtyEntered * (pack.packBase || 1);
+    const qtyBase = qtyEntered * (d.packBase || 1);
     const { reason, note } = spoilageForm;
     const label = `${qtyEntered} ${unitLabel} of ${item.itemName}`;
 
@@ -60,8 +62,8 @@ export default function SpoilageModal() {
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-4">
+    <div className="fixed inset-0 z-[9999] flex justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in overflow-y-auto">
+      <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-sm w-full p-6 flex flex-col gap-4 my-auto">
         <div className="flex justify-between items-center">
           <div>
             <h2 className="text-lg font-black text-fg uppercase tracking-wider">Log Waste / Spoilage</h2>

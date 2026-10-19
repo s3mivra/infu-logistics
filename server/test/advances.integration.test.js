@@ -125,6 +125,13 @@ describe('liquidating an advance', () => {
     expect(lineFor(je, '260200').debit).toBe(2000);
     expect(lineFor(je, '120000').credit).toBe(2000);
     balances(je);
+
+    // The order itself must record the payment, or the A/R screens keep
+    // showing the full balance while the ledger says it is paid.
+    const after = await Order.findById(order._id).lean();
+    expect(after.arPaidAmount).toBe(2000);
+    expect(after.arSettled).toBe(true);
+    expect(after.arPayments.at(-1).paymentMethod).toBe('Customer Deposit');
   });
 
   it('refuses to liquidate more than is left', async () => {

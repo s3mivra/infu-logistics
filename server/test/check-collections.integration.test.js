@@ -20,6 +20,8 @@ const Order = () => mongoose.model('Order');
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 async function receivable(price) {
+  // Line prices come from the product record now, so it must cost `price`.
+  await mongoose.model('Product').updateOne({ _id: prod._id }, { $set: { basePrice: price } });
   const a = await auth('post', '/api/orders', staffTok).send({
     items: [{ productId: String(prod._id), name: 'Widget', price, quantity: 1 }],
     table: 'Takeout', paymentMethod: 'On Account', clientAccountId: client._id,
@@ -259,5 +261,67 @@ describe('a bounced check reverses the collection', () => {
     const o = await Order().findById(id).lean();
     expect(o.arPaidAmount).toBe(400);
     expect(o.arSettled).toBe(false);
+  });
+});
+
+describe('one check paying several sales', () => {
+  let a, b;
+  const group = 'CG-TEST-1';
+  const part = (id, amount, extra = {}) => settle(id, { amount, paymentMethod: 'Check', checkNumber: 'CHK-MANY-1', checkBank: 'BPI', checkGroup: group, ...extra });
+  const rows = async () => (await auth('get', '/api/collections/checks', superTok)).body.checks.filter(c => c.checkNumber === 'CHK-MANY-1');
+
+  it('records a part on each sale instead of refusing the number as a double entry', async () => {
+    a = await receivable(300);
+    b = await receivable(500);
+    expect((await part(a, 300)).status).toBe(200);
+    expect((await part(b, 500)).status).toBe(200);
+
+    const r = await rows();
+    expect(r).toHaveLength(2);
+    expect(r.every(c => c.groupSize === 2 && c.status === 'On Hand')).toBe(true);
+
+    // The same number outside that check is still a double entry.
+    const c = await receivable(100);
+    const dupe = await settle(c, { amount: 100, paymentMethod: 'Check', checkNumber: 'CHK-MANY-1', checkBank: 'BPI' });
+    expect(dupe.status).toBe(409);
+  });
+
+  it('counts as one check in the register totals', async () => {
+    const before = (await auth('get', '/api/collections/checks?status=On Hand', superTok)).body;
+    const mine = before.checks.filter(c => c.checkNumber === 'CHK-MANY-1');
+    const distinct = new Set(before.checks.map(c => c.checkGroup || String(c.paymentId))).size;
+    expect(mine).toHaveLength(2);
+    expect(before.summary.onHandCount).toBe(distinct);
+  });
+
+  it('deposits and clears every part together', async () => {
+    const [first] = await rows();
+    const dep = await auth('post', `/api/collections/checks/${first.orderId}/${first.paymentId}/deposit`, superTok).send({});
+    expect(dep.status).toBe(200);
+    expect(dep.body.sales).toBe(2);
+    expect((await rows()).every(c => c.status === 'Deposited')).toBe(true);
+
+    const clr = await auth('post', `/api/collections/checks/${first.orderId}/${first.paymentId}/clear`, superTok).send({});
+    expect(clr.status).toBe(200);
+    expect((await rows()).every(c => c.status === 'Cleared')).toBe(true);
+
+    // 800 left Checks on Hand for the bank, in two entries of 300 and 500.
+    const refs = (await Order().find({ _id: { $in: [a, b] } }).lean()).map(o => `${o.arPayments[0].journalRef}-CLR`);
+    const jes = await mongoose.model('JournalEntry').find({ reference: { $in: refs } }).lean();
+    expect(jes).toHaveLength(2);
+    expect(jes.reduce((s, j) => s + j.totalDebit, 0)).toBe(800);
+  });
+
+  it('a bounce reopens every sale the check paid', async () => {
+    const [first] = await rows();
+    const res = await auth('post', `/api/collections/checks/${first.orderId}/${first.paymentId}/bounce`, superTok).send({ reason: 'DAIF' });
+    expect(res.status).toBe(200);
+    expect(res.body.sales).toBe(2);
+    for (const id of [a, b]) {
+      const o = await Order().findById(id).lean();
+      expect(o.arPaidAmount).toBe(0);
+      expect(o.arSettled).toBe(false);
+      expect(o.arPayments[0].checkStatus).toBe('Bounced');
+    }
   });
 });

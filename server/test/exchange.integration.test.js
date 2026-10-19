@@ -155,6 +155,8 @@ describe('exchange - guards', () => {
   });
 
   it('rejects insufficient stock on the replacement without applying anything', async () => {
+    // Selling below zero set to block (the default warns; test/stock-control.integration.test.js).
+    await mongoose.model('Settings').findOneAndUpdate({ key: 'negativeStockMode' }, { value: 'block' }, { upsert: true });
     const order = await makeSale();
     const stockOldBefore = await stockOf(invOldId);
     const res = await request(app).post(`/api/orders/${order._id}/exchange`).set(auth(superToken)).send({

@@ -22,50 +22,353 @@
 // into a row. Fetching lives in the route (it needs models and request scope);
 // everything here is testable without a database.
 
+import { businessDateStr } from './businessTime.js';
+
 const money = (n) => Math.round((Number(n) || 0) * 100) / 100;
-const day = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
+const round4 = (n) => Math.round((Number(n) || 0) * 1e4) / 1e4;
+const round6 = (n) => Math.round((Number(n) || 0) * 1e6) / 1e6;
+// "1kg", "377g", "2L", "750ml", "100pcs" - the size as it is written on the
+// pack and in the product sheet. packSize is held in display units, so a
+// fraction of a kg or L reads back in g or ml the way it is sold.
+// One recipe line resolved against live stock. Same rules a sale uses: a
+// non-stock line (filtered water) is never stock and never costed; otherwise
+// match by stock link, then by name. A line whose stock item no longer exists
+// falls back to the cost it carried when added, and says so - a silent zero
+// would make the drink look cheaper than it is.
+const resolveLine = (line, inv) => {
+  if (line?.nonStock) {
+    return { link: 'Not from inventory', item: null, perBase: 0, packBase: Number(line.packBase) > 0 ? Number(line.packBase) : null };
+  }
+  const item = inv
+    ? ((line?.invId && inv.byId.get(String(line.invId))) || (line?.name && inv.byName.get(String(line.name).toUpperCase())) || null)
+    : null;
+  const mult = item && Number(item.unitMultiplier) > 0 ? Number(item.unitMultiplier) : 1;
+  // "Qty (packs)" answers how much of the PACK named in the column beside it,
+  // so it can only come from the item's own pack size. A line's own packBase
+  // describes the unit that LINE is written in, which is a different question:
+  // an imported line is written in stock units and carries packBase 1, and
+  // reading that as a pack size printed 20g of beans as "20 packs".
+  const packBase = item && Number(item.packSize) > 0 ? Number(item.packSize) * mult : null;
+  return {
+    link: item ? 'Linked' : 'Missing - cost from when it was added',
+    item,
+    perBase: item ? (Number(item.unitCost) || 0) : (Number(line?.cost) || 0),
+    packBase,
+  };
+};
+// Same exclusion as Menu Setup's calcRecipeCost: non-stock lines cost nothing.
+const recipeCost = (recipe, inv) => (recipe || [])
+  .filter(l => !l?.nonStock)
+  .reduce((sum, l) => sum + (Number(l.qty) || 0) * resolveLine(l, inv).perBase, 0);
+
+const packLabel = (pack, disp) => {
+  if (!(pack > 0)) return '';
+  const u = String(disp || '');
+  const trim = (x) => String(Math.round(x * 1000) / 1000);
+  if (u === 'kg' && pack < 1) return `${trim(pack * 1000)}g`;
+  if (u === 'L' && pack < 1) return `${trim(pack * 1000)}ml`;
+  return `${trim(pack)}${u}`;
+};
+// The business's calendar date - toISOString() gave the UTC one, a day early
+// for anything stamped before 08:00 in Manila.
+const day = (d) => (d && !Number.isNaN(new Date(d).getTime()) ? businessDateStr(d) : '');
 const yes = (b) => (b ? 'Yes' : 'No');
 
 // `key` is what the client asks for; `label` names the file and the button.
 // `importable` marks the datasets an import actually exists for - the rest are
 // export-only on purpose. Importing posted ledger rows would let someone
 // rewrite history through a spreadsheet, so those are deliberately one-way.
+// ── Inventory export, in the import sheet's own shape ──────────────────────
+export const INVENTORY_IMPORT_COLUMNS = ['Code', 'Product', 'Pack', 'Unit', 'Qty', 'Cost / pack', 'SRP / unit', 'Expiry date', 'Production date'];
+const CATEGORY_INFO_COLUMNS = ['Category', 'Category Source'];
+const INVENTORY_INFO_COLUMNS = [
+  'Category', 'Category Source', 'Display Unit', 'Qty (display unit)', 'Cost per Display Unit',
+  'Total Value', 'Low Stock At', 'Location', 'Base Unit', 'Qty (base)', 'Cost per Base Unit',
+];
+// The same trailing-size pattern the importer uses (PACK_SIZE_RE in
+// AdminDashboard's inventory parser). A name that already ends in a size is
+// left alone rather than given a second one.
+const IMPORT_PACK_RE = /\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|L|l|ml|pcs|pc|piece)(?:\s*\/\s*(pack|box|bag|sleeve|case|pk))?\b(\s*\([^)]*\))?\s*$/i;
+const round9 = (n) => Math.round((Number(n) || 0) * 1e9) / 1e9;
+const isoDay = (d) => {
+  if (!d) return '';
+  const t = new Date(d);
+  return Number.isNaN(t.getTime()) ? '' : businessDateStr(t);
+};
+// Pack size written from BASE units, not the stored display unit, so it
+// parses back identically however the item was set up: 1000 g -> "1kg",
+// 377 g -> "377g", 2500 ml -> "2.5L", 100 pcs -> "100pcs". The importer turns
+// "377g" into 0.377 kg, and kg is always 1000 g, so the pack round-trips.
+// One pack as a number and a unit, from BASE units, so it means the same
+// however the item was set up: 1000 g -> 1 kg, 377 g -> 377 g, 2500 ml -> 2.5 L,
+// 100 pcs -> 100 pcs. An item with no pack is simply 1 of its own unit.
+const packColumns = (packBase, base) => {
+  const t = (x) => Math.round(x * 1e6) / 1e6;
+  const canon = base === 'g' ? 'kg' : base === 'ml' ? 'L' : 'pcs';
+  // Blank, not 1: an item with no pack must not come back from an import as a
+  // packed item. Its quantity is simply an amount in its own unit.
+  if (!(packBase > 0)) return { pack: '', unit: canon };
+  if (base === 'g') return packBase >= 1000 ? { pack: t(packBase / 1000), unit: 'kg' } : { pack: t(packBase), unit: 'g' };
+  if (base === 'ml') return packBase >= 1000 ? { pack: t(packBase / 1000), unit: 'L' } : { pack: t(packBase), unit: 'ml' };
+  return { pack: t(packBase), unit: 'pcs' };
+};
+const basePackLabel = (packBase, base) => {
+  const t = (x) => String(Math.round(x * 1000) / 1000);
+  if (base === 'g') return packBase >= 1000 ? `${t(packBase / 1000)}kg` : `${t(packBase)}g`;
+  if (base === 'ml') return packBase >= 1000 ? `${t(packBase / 1000)}L` : `${t(packBase)}ml`;
+  // "/pack", because the importer reads a bare piece size as describing a
+  // pack while the number beside it is the count - "50pcs | 104" is 104 cups.
+  // This sheet writes the count in PACKS for a packed item, so it has to say
+  // so, or re-importing it would bring back a fiftieth of the stock.
+  return `${t(packBase)}pcs/pack`;
+};
+// One sheet row per stock lot, or one row for the item when its lots do not
+// account for all of it. Repeating a code in one import is how the importer
+// adds a second expiry lot, so writing each lot separately keeps every expiry
+// date instead of collapsing them to the soonest.
+const inventorySheetRows = (i, category, categorySource) => {
+  const base = i.unit || 'pcs';
+  // Without a pack size, quantity and cost go out in the importer's canonical
+  // display unit - kg, L or pcs - with the unit written into Qty Unit.
+  const canonFactor = base === 'g' || base === 'ml' ? 1000 : 1;
+  const canonUnit = base === 'g' ? 'kg' : base === 'ml' ? 'L' : 'pcs';
+  const mult = Number(i.unitMultiplier) > 0 ? Number(i.unitMultiplier) : 1;
+  const pack = Number(i.packSize) > 0 ? Number(i.packSize) : null;
+  const packBase = pack ? pack * mult : null;
+  const perBase = Number(i.unitCost) || 0;
+  const qtyBase = Number(i.stockQty) || 0;
+  // The size has its own Pack and Unit columns now, so the name is written as
+  // the name. A name that still ends in a size (typed that way long ago) keeps
+  // it: the columns are what the importer reads, and it strips the size from
+  // the name when they are present.
+  const product = String(i.itemName || '');
+
+  const batches = (i.expiryBatches || []).filter(b => Number(b.qty) > 0);
+  const batchTotal = batches.reduce((sum, b) => sum + Number(b.qty), 0);
+  // stockQty is the source of truth; batches are the audit trail of it. Only
+  // split into lots when they add up, or a re-import would change the count.
+  const lots = batches.length > 1 && Math.abs(batchTotal - qtyBase) < 1e-6
+    ? batches.map(b => ({
+        qty: Number(b.qty),
+        expiry: b.expiryDate,
+        production: b.productionDate,
+        cost: Number(b.unitCost) > 0 ? Number(b.unitCost) : perBase,
+      }))
+    : [{
+        qty: qtyBase,
+        expiry: i.expiryDate || batches[0]?.expiryDate,
+        production: batches[0]?.productionDate,
+        cost: perBase,
+      }];
+
+  // Everything on the row is per pack, so the quantity, the cost and the
+  // price can never end up in different units - which is exactly what the
+  // old "size hidden in the name" sheet allowed.
+  const { pack: packCol, unit: unitCol } = packColumns(packBase, base);
+  return lots.map(lot => {
+    const expiry = isoDay(lot.expiry);
+    return [
+      i.itemCode || '',
+      product,
+      packCol,
+      unitCol,
+      round9(lot.qty / (packBase || canonFactor)),
+      // Six decimals, not two: a cost blended across deliveries (P65.8734 a
+      // can) must re-import to the same stored cost, not a rounded one.
+      round6(lot.cost * (packBase || canonFactor)),
+      Number(i.srp) > 0 ? round6(i.srp) : '',
+      expiry,
+      // The importer only uses a production date when there is no expiry.
+      expiry ? '' : isoDay(lot.production),
+      // ── reference only; not read on import ──
+      category, categorySource, i.displayUnit || canonUnit,
+      round4(lot.qty / mult), money(perBase * mult),
+      money(lot.qty * lot.cost), money(i.lowStockThreshold), i.stockLocation || '',
+      base, round4(lot.qty), round6(perBase),
+    ];
+  });
+};
+
+// What the goods on an order cost: what its stock moves took (at the cost they
+// left at), plus any cost booked from a total alone. One line's share when a
+// line index is given.
+const orderCost = (o, lineIndex = null) => {
+  const moves = (o.stockMoves || []).filter(m => lineIndex === null || Number(m.lineIndex) === lineIndex);
+  const fromStock = moves.reduce((s, m) => s + (Number(m.qty) || 0) * (Number(m.unitCost) || 0), 0);
+  return Math.round((fromStock + (lineIndex === null ? Number(o.costPosted) || 0 : 0)) * 100) / 100;
+};
+
 export const DATASETS = {
   // ── Master data ──────────────────────────────────────────────────────────
   inventory: {
-    label: 'Inventory', model: 'Inventory', importable: true,
+    label: 'Inventory', model: 'Inventory', importable: true, withStockCategories: true,
     sort: { itemName: 1 },
     importSpec: {
       endpoint: '/api/inventory/import',
-      intro: 'One row per stock item. Cost matters as much as quantity: an item at zero cost posts zero cost of sale, and every drink built on it reads as 100% margin.',
+      intro: 'One row per stock item, and everything on it is per pack: Pack and Unit say what one pack is, Qty counts packs, and both prices are the price of one pack. Cost matters as much as quantity: an item at zero cost posts zero cost of sale, and every drink built on it reads as 100% margin.',
       columns: [
-        { name: 'itemName', required: true, note: 'Stored in capitals, however you type it.', example: 'Full Milk' },
-        { name: 'itemCode', note: 'Yours, if you use one. Left blank, the system assigns one.', example: 'RM-MILK' },
-        { name: 'unit', required: true, note: 'kg, L or pcs. Grams and millilitres are promoted to kg / L.', example: 'L' },
-        { name: 'qty', required: true, note: 'How much you hold now, in the unit above.', example: '20' },
-        { name: 'unitCost', required: true, note: 'Cost of ONE unit. Zero here means zero cost of sale later.', example: '82' },
-        { name: 'lowStockThreshold', note: 'Warn below this. Blank for no warning.', example: '5' },
-        { name: 'expiryDate', note: 'YYYY-MM-DD.', example: '2026-12-31' },
-        { name: 'stockLocation', note: 'Where it is kept.', example: 'Main bar' },
+        { name: 'Code', note: 'Yours, if you use one. Left blank, the system assigns one.', example: 'RM-MILK' },
+        { name: 'Product', required: true, note: 'The name only - the size goes in Pack and Unit. Stored in capitals, however you type it.', example: 'Full Milk' },
+        { name: 'Pack', note: 'What ONE pack holds, as a number. Blank if it is not sold in packs.', example: '1' },
+        { name: 'Unit', required: true, note: 'The unit of the Pack: kg, g, L, ml or pcs. Grams and millilitres are stored as kg / L.', example: 'L' },
+        { name: 'Qty', required: true, note: 'How many packs you counted. With no Pack, how much you hold in the unit above. Leave blank if you did not count it; type 0 to count zero.', example: '20' },
+        { name: 'Cost / pack', required: true, note: 'What ONE pack costs you, as the invoice says it. Zero here means zero cost of sale later.', example: '82' },
+        { name: 'SRP / unit', note: 'What you sell ONE unit for - per kg, L or piece. Selling by the pack instead? Rename this column to "SRP / pack".', example: '110' },
+        { name: 'Expiry date', note: 'YYYY-MM-DD.', example: '2026-12-31' },
+        { name: 'Production date', note: 'For goods with no real expiry (roasted beans). Only read when Expiry date is blank.', example: '' },
+        { name: 'Low Stock At', note: 'Warn below this, counted in the unit above. Blank for no warning.', example: '5' },
+        { name: 'Location', note: 'Where it is kept.', example: 'Main bar' },
       ],
     },
-    columns: ['Item Code', 'Item Name', 'Category', 'Unit', 'Qty', 'Unit Cost', 'Total Value', 'Low Stock At', 'Location'],
-    toRow: (i) => [
-      i.itemCode || '', i.itemName || '', i.stockCategory || '', i.unit || '',
-      money(i.stockQty), money(i.unitCost), money((i.stockQty || 0) * (i.unitCost || 0)),
-      money(i.lowStockThreshold), i.stockLocation || '',
-    ],
+    // Written in the SAME shape the Inventory tab's Import reads, so an export
+    // can be imported straight back - into this system or a new one - and land
+    // on the same stored figures. The first seven columns are exactly the
+    // import sheet: Code, Product (with the pack size written into the name,
+    // e.g. "BEANS PROFILE(2) 1kg"), Qty Unit, SRP, Unit Cost, Expiry date,
+    // Production date. Everything after them is reference only; the importer
+    // does not read those columns.
+    //
+    // Categories are carried the way the import sheet carries them: a header
+    // row with the category name in Code and everything else blank, before
+    // each group. The importer has no Category column - a header row is the
+    // only thing it reads a category from.
+    //
+    // Stock is STORED in base units (g / ml / pcs) with cost per base unit.
+    // This export used to print those storage values straight out: BEANS 1kg
+    // bought at P386 came out as "g, 0.39" - a unit nobody buys in, rounded
+    // until P386 read as P390, and a sheet no importer could take back.
+    columns: [...INVENTORY_IMPORT_COLUMNS, ...INVENTORY_INFO_COLUMNS],
+    // Category columns only where stock has categories - logistics. In fb the
+    // categories belong to menu products, and a stock sheet with a Category
+    // column that is always blank only suggests something is missing.
+    columnsFor: (ctx) => (ctx?.useCategories
+      ? [...INVENTORY_IMPORT_COLUMNS, ...INVENTORY_INFO_COLUMNS]
+      : [...INVENTORY_IMPORT_COLUMNS, ...INVENTORY_INFO_COLUMNS.filter(c => !CATEGORY_INFO_COLUMNS.includes(c))]),
+    buildRows: (docs, ctx) => {
+      const useCats = !!ctx?.useCategories;
+      const width = INVENTORY_IMPORT_COLUMNS.length + INVENTORY_INFO_COLUMNS.length - (useCats ? 0 : CATEGORY_INFO_COLUMNS.length);
+      const groups = new Map();
+      for (const i of docs) {
+        // fb: no categories at all, so every item lands in one group and no
+        // header row is written.
+        const fromCode = useCats && !i.stockCategory && ctx?.categoryForCode ? ctx.categoryForCode(i.itemCode) : '';
+        const category = useCats ? (i.stockCategory || fromCode || '') : '';
+        const source = !useCats ? '' : (i.stockCategory ? 'Item' : (fromCode ? 'Code prefix' : ''));
+        if (!groups.has(category)) groups.set(category, []);
+        groups.get(category).push({ i, category, source });
+      }
+      // Uncategorised items FIRST. The importer applies the last header it saw
+      // to every row after it, so an uncategorised item placed after a header
+      // would silently be filed under that header's category on re-import.
+      const keys = [...groups.keys()].sort((a, b) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)));
+      const byCode = (x, y) => {
+        const a = String(x.i.itemCode || ''), b = String(y.i.itemCode || '');
+        if (!a && b) return 1;
+        if (a && !b) return -1;
+        return a.localeCompare(b) || String(x.i.itemName || '').localeCompare(String(y.i.itemName || ''));
+      };
+      const out = [];
+      for (const k of keys) {
+        if (k) {
+          const header = new Array(width).fill('');
+          header[0] = k;
+          out.push(header);
+        }
+        for (const x of groups.get(k).sort(byCode)) {
+          for (const row of inventorySheetRows(x.i, x.category, x.source)) {
+            // Category and Category Source are the first two reference columns.
+            if (!useCats) row.splice(INVENTORY_IMPORT_COLUMNS.length, CATEGORY_INFO_COLUMNS.length);
+            out.push(row);
+          }
+        }
+      }
+      return out;
+    },
   },
 
+  // This used to report that a drink had "3" recipe lines and nothing else -
+  // not what they were, how much, or what they cost. Recipe cost and margin
+  // are now included, priced on ingredient costs as they are today (see
+  // withInventory in data-export.js). New columns are appended, so anything
+  // reading the existing ones by position is undisturbed. The line-by-line
+  // view is the separate Recipes dataset below.
   products: {
-    label: 'Products', model: 'Product', importable: true,
+    label: 'Products', model: 'Product', importable: true, withInventory: true,
     sort: { category: 1, name: 1 },
-    columns: ['Product Code', 'Name', 'Category', 'Base Price', 'Base Size', 'Barcode', 'Available', 'Archived', 'Recipe Lines', 'Sizes'],
-    toRow: (p) => [
-      p.productCode || '', p.name || '', p.category || '', money(p.basePrice),
-      p.baseSize || '', p.barcode || '', yes(p.isAvailable !== false), yes(p.isArchived),
-      (p.baseRecipe || []).length, (p.sizes || []).length,
+    columns: [
+      'Product Code', 'Name', 'Category', 'Base Price', 'Base Size', 'Barcode', 'Available', 'Archived', 'Recipe Lines', 'Sizes',
+      'Recipe Cost', 'Margin %', 'Cost Override', 'Size Prices',
     ],
+    toRow: (p, inv) => {
+      const cost = recipeCost(p.baseRecipe, inv);
+      const price = Number(p.basePrice) || 0;
+      return [
+        p.productCode || '', p.name || '', p.category || '', money(p.basePrice),
+        p.baseSize || '', p.barcode || '', yes(p.isAvailable !== false), yes(p.isArchived),
+        (p.baseRecipe || []).length, (p.sizes || []).length,
+        money(cost),
+        price > 0 ? Math.round(((price - cost) / price) * 1000) / 10 : '',
+        Number(p.costOverride) > 0 ? money(p.costOverride) : '',
+        (p.sizes || []).map(sz => `${sz.name || ''} ${money(sz.price)}`.trim()).join('; '),
+      ];
+    },
+  },
+
+  // Every recipe line, one row each - written in Menu Setup's own import shape,
+  // so the sheet can be imported straight back to move a menu or restore one.
+  // The leading columns are exactly the menu import sheet (Category, Product,
+  // SRP, Size, Ingredient, Qty, Unit) plus Stock Link, which marks a non-stock
+  // ingredient (filtered water) so it comes back as one. Qty is in storage
+  // units (g / ml / pcs), which the importer converts exactly. Everything after
+  // Stock Link is reference only.
+  //
+  // Add-on recipes are listed for reference with Recipe "Add-on: ...". The menu
+  // importer skips those rows: the sheet has no add-on column, and taking them
+  // in would fold every add-on ingredient into the drink's base recipe.
+  recipes: {
+    label: 'Recipes', model: 'Product', withInventory: true,
+    sort: { category: 1, name: 1 },
+    columns: [
+      'Category', 'Product', 'SRP', 'Size', 'Ingredient', 'Qty', 'Unit', 'Stock Link',
+      'Product Code', 'Recipe', 'Qty (packs)', 'Pack', 'Cost per Base Unit', 'Line Cost',
+    ],
+    expand: (p, inv) => {
+      if (p.isArchived) return [];            // not on sale; only noise here
+      const out = [];
+      const priceCell = (price) => (price === undefined || price === null || price === '' ? '' : money(price));
+      // A drink, or a size, with no recipe lines still needs a row - without
+      // it the importer would never see that name or its price.
+      const bare = (recipeLabel, size, price) => [
+        p.category || '', p.name || '', priceCell(price), size, '', '', '', '',
+        p.productCode || '', recipeLabel, '', '', '', '',
+      ];
+      const lineRow = (recipeLabel, size, price, l) => {
+        const r = resolveLine(l, inv);
+        const qty = Number(l.qty) || 0;
+        // Storage unit for stock (g / ml / pcs) - the unit the importer
+        // converts from. A non-stock line keeps the unit it was written in.
+        const unit = l.nonStock ? (l.unit || 'ml') : (r.item ? (r.item.unit || '') : '');
+        return [
+          p.category || '', p.name || '', priceCell(price), size,
+          l.name || '', round6(qty), unit, r.link,
+          p.productCode || '', recipeLabel,
+          r.packBase ? round4(qty / r.packBase) : '',
+          r.item ? packLabel(Number(r.item.packSize) || null, r.item.displayUnit || r.item.unit) : '',
+          round6(r.perBase),
+          money(l.nonStock ? 0 : qty * r.perBase),
+        ];
+      };
+      const add = (recipeLabel, size, price, lines) => {
+        if (!(lines || []).length) { out.push(bare(recipeLabel, size, price)); return; }
+        for (const l of lines) out.push(lineRow(recipeLabel, size, price, l));
+      };
+      add('Base', '', p.basePrice, p.baseRecipe);
+      for (const sz of p.sizes || []) add(`Size: ${sz.name || ''}`, sz.name || '', sz.price, sz.recipe);
+      for (const a of p.addOns || []) {
+        for (const l of a.recipe || []) out.push(lineRow(`Add-on: ${a.name || ''}`, '', '', l));
+      }
+      return out;
+    },
   },
 
   clients: {
@@ -106,13 +409,14 @@ export const DATASETS = {
         { name: 'email', example: 'joy@metrobeans.ph' },
         { name: 'address', example: '12 Bonifacio St, Quezon City' },
         { name: 'paymentTerms', note: 'What their invoices say, in their words.', example: '30 days' },
+        { name: 'leadTimeDays', note: 'Days from ordering to delivery, 0-90. Used to work out how much to buy of what they supply. Blank = the business default (7).', example: '5' },
         { name: 'notes', note: 'Anything worth remembering.', example: 'Delivers Tuesdays only' },
       ],
     },
-    columns: ['Name', 'Contact', 'Phone', 'Email', 'Address', 'Terms', 'Credit Balance', 'Active'],
+    columns: ['Name', 'Contact', 'Phone', 'Email', 'Address', 'Terms', 'Lead Time (days)', 'Credit Balance', 'Active'],
     toRow: (s) => [
       s.name || '', s.contactPerson || '', s.phone || '', s.email || '',
-      s.address || '', s.paymentTerms || '', money(s.creditBalance), yes(s.isActive !== false),
+      s.address || '', s.paymentTerms || '', s.leadTimeDays ?? '', money(s.creditBalance), yes(s.isActive !== false),
     ],
   },
 
@@ -129,6 +433,8 @@ export const DATASETS = {
         { name: 'amount', required: true, note: 'The invoice total, in pesos.', example: '12000' },
         { name: 'expenseAccountCode', required: true, note: 'Which account this is charged to when approved. Without it the bill can never be approved - see the Accounts sheet.', example: '510000' },
         { name: 'dueDate', note: 'YYYY-MM-DD. When the supplier expects payment.', example: '2026-04-15' },
+        { name: 'supplierInvoiceNo', note: "The supplier's own invoice number. The same one cannot be entered twice.", example: 'INV-88120' },
+        { name: 'poNumber', note: 'Optional. The purchase order this invoice was for.', example: 'PO-2026-0412' },
       ],
     },
     columns: ['Bill No', 'Supplier', 'Description', 'Amount', 'Paid', 'Outstanding', 'Status', 'Due Date', 'Source'],
@@ -157,6 +463,20 @@ export const DATASETS = {
       a.advanceNumber || '', a.branchCode || '', a.type || '', a.payeeName || '',
       money(a.amount), money(a.liquidatedAmount), money((a.amount || 0) - (a.liquidatedAmount || 0)),
       a.status || '', a.purpose || '', day(a.date),
+    ],
+  },
+
+  // Stock held for a client is a real commitment against the stock figure -
+  // an export of inventory without it overstates what is actually sellable.
+  reservations: {
+    label: 'Reserved Stock', model: 'Reservation',
+    sort: { createdAt: -1 },
+    columns: ['Reservation No', 'Branch', 'Held For', 'Order', 'Items', 'Held Qty', 'Status', 'Held Until', 'Note', 'Created'],
+    toRow: (r) => [
+      r.reservationNumber || '', r.branchCode || '', r.clientName || '', r.orderNumber || '',
+      (r.items || []).map(i => i.itemName).join('; '),
+      (r.items || []).reduce((s, i) => s + ((i.qty || 0) - (i.releasedQty || 0)), 0),
+      r.status || '', day(r.expiresAt), r.note || '', day(r.createdAt),
     ],
   },
 
@@ -212,6 +532,132 @@ export const DATASETS = {
     ],
   },
 
+  // ── Moving over from books kept elsewhere (features/setup-import.js). ──
+  //    Template-only: they carry balances IN; what they become is exported by
+  //    the journal, the chart of accounts, AR and bills.
+  accounts: {
+    label: 'Chart of Accounts', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/accounts/import',
+      intro: 'Only if your old books use their own account codes. One row per account: it is added under one of the system’s accounts, keeps your name, and remembers your code - so the other sheets can use your codes. Accounts under cash, bank, receivables or payables are not offered at the till until you switch them on.',
+      columns: [
+        { name: 'code', required: true, note: 'Your account code, exactly as your books write it.', example: 'X-1000' },
+        { name: 'name', required: true, note: 'Your account name.', example: 'Sample Bank - Savings' },
+        { name: 'goesUnder', required: true, note: 'The system account it belongs under - the code or the name from the Accounts sheet.', example: '112000' },
+        { name: 'keepSeparate', note: 'Yes (the default): its own account under that one, with your name. No: your code IS that system account - use No for your Sales, Cost of Sales and Discounts so old and new figures share one line. Accounts Receivable - Trade, Inventory and Accounts Payable - Trade are always No: the system’s sales, collections, stock and bills post straight to them.', example: 'Yes' },
+      ],
+    },
+  },
+
+  pnlHistory: {
+    label: 'P&L History', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/pnl-history/import',
+      intro: 'This year’s income statement, one row per account and one column per month, so the monthly reports start with real figures. Every amount as a positive number the way the statement shows it - sales, costs and expenses alike. An income line shown in brackets under expenses (like "Misc. non-operating income (200,752)") goes in as a positive number on an income account. Leave out the subtotal rows (Gross profit, Total expenses, Net income). Each month posts on its last day.',
+      columns: [
+        { name: 'code', required: true, note: 'Your code (from the Chart of Accounts sheet) or the system’s. Revenue, discount, cost and expense accounts only.', example: 'X-4000' },
+        { name: 'name', note: 'For your reading only.', example: 'Sample Sales' },
+        { name: 'year', required: true, example: '2026' },
+        { name: 'jan', example: '100000' }, { name: 'feb', example: '110000' }, { name: 'mar', example: '120000' }, { name: 'apr', example: '' }, { name: 'may', example: '' }, { name: 'jun', example: '' }, { name: 'jul', example: '' }, { name: 'aug', example: '' }, { name: 'sep', example: '' }, { name: 'oct', example: '' }, { name: 'nov', example: '' }, { name: 'dec', example: '' },
+      ],
+    },
+  },
+
+  openingBalances: {
+    label: 'Opening Balances', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/opening-balances/import',
+      intro: 'Your balance sheet on the day you switch over - one row per account, each balance as the balance sheet shows it. Contra accounts such as accumulated depreciation go in as negatives, e.g. (29,762). Include every account: cash, receivables, inventory, equipment, payables, retained earnings. If you also fill P&L History, your "Net Income" line is left out automatically (the P&L months produce it) and the result says whether the two agree. The open invoice and bill sheets are the detail behind Accounts Receivable and Payable here - they do not post a second time.',
+      columns: [
+        { name: 'code', required: true, note: 'Your code (from the Chart of Accounts sheet) or the system’s. Balance-sheet accounts only.', example: 'X-1000' },
+        { name: 'name', note: 'For your reading only.', example: 'Sample Bank - Savings' },
+        { name: 'balance', required: true, note: 'As the balance sheet shows it. Brackets or a minus sign for a contra balance.', example: '50000' },
+        { name: 'asOf', required: true, note: 'YYYY-MM-DD - the date of the balance sheet. The same date on every row (one row is enough).', example: '2026-08-31' },
+      ],
+    },
+  },
+
+  priceTiers: {
+    label: 'Price Tiers', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/price-tiers/import',
+      intro: 'What each customer class pays for each product - the same layout Pricing Control exports. One row per product; after Code, Product and List Price, add one column per tier headed with the tier name (Dealer, Satellite, ...), and fill in its price. A blank cell means that tier has no price of its own for the product. Tiers are created if they do not exist. Products come from the Inventory sheet, so prices for products not created yet wait and are applied the moment the Inventory preview is confirmed.',
+      columns: [
+        { name: 'Code', required: true, note: 'The product code - for stock-based products, the item code from the Inventory sheet. Matched first; the name is only a fallback.', example: 'X-1' },
+        { name: 'Product', note: 'The product name. Used when a row has no code.', example: 'Sample Product' },
+        { name: 'List Price', note: 'For reading only - the product keeps its own price (the Inventory sheet SRP, or Catalog Setup).', example: '100' },
+        { name: 'Dealer Price', note: 'One column per tier, headed with the tier name - rename this one and add as many as you need. A client tagged with that tier pays this price.', example: '90' },
+      ],
+    },
+  },
+
+  openReceivables: {
+    label: 'Open Receivables', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/open-receivables/import',
+      intro: 'Every customer invoice still unpaid on the switch-over day - what makes up Accounts Receivable on your balance sheet. They appear in Ledger → AR & AP, aged from their invoice date, ready to collect. They do not post: the opening balance already holds them, so the total here should equal your Accounts Receivable - Trade.',
+      columns: [
+        { name: 'customer', required: true, note: 'A name matching a client account links the debt to them (credit limit, statement).', example: 'Reyes Hardware' },
+        { name: 'invoiceNo', required: true, note: 'Your invoice number - it becomes the receivable’s number.', example: 'SI-004512' },
+        { name: 'invoiceDate', required: true, note: 'YYYY-MM-DD. Ages the debt.', example: '2026-08-12' },
+        { name: 'dueDate', note: 'YYYY-MM-DD. When it falls overdue.', example: '2026-09-11' },
+        { name: 'amountOwed', required: true, note: 'What is STILL owed - after any part payment.', example: '38500' },
+      ],
+    },
+  },
+
+  openPurchaseOrders: {
+    label: 'Purchase Orders', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/purchase-orders/import',
+      intro: 'Purchase orders you already have with suppliers - one row per item, rows with the same poNumber make one order. They arrive as open orders in Procurement; nothing posts and no stock moves. Give the same poNumber on an Open Payables or Bills row and the two are linked: an order whose payable is already in the books closes on its own, one still to be delivered stays open to receive.',
+      columns: [
+        { name: 'poNumber', required: true, note: 'Your own PO number. Repeat it on every row of the same order.', example: 'PO-2026-0412' },
+        { name: 'supplier', required: true, note: 'Must match a supplier - add them on the Suppliers sheet first.', example: 'Metro Packaging Corp' },
+        { name: 'orderDate', note: 'YYYY-MM-DD. When it was ordered.', example: '2026-08-01' },
+        { name: 'expectedDate', note: 'YYYY-MM-DD. When delivery is expected.', example: '2026-08-10' },
+        { name: 'itemCode', note: 'The stock item code, as on the Inventory sheet. Links the line to that item.', example: 'PKG-001' },
+        { name: 'itemName', required: true, note: 'What was ordered.', example: 'Cartons 12x12' },
+        { name: 'qty', required: true, note: 'How many were ordered.', example: '500' },
+        { name: 'unitCost', required: true, note: 'Price each, in pesos.', example: '250' },
+        { name: 'notes', note: 'Anything worth keeping with the order.', example: 'August delivery' },
+      ],
+    },
+  },
+
+  openPayables: {
+    label: 'Open Payables', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/open-payables/import',
+      intro: 'Every supplier bill still unpaid on the switch-over day - what makes up Accounts Payable on your balance sheet. They arrive Approved in Bills (AP), ready to pay. They do not post: the opening balance already holds them, so the total here should equal your Accounts Payable - Trade. (The Bills sheet is for NEW bills, which do post when approved.)',
+      columns: [
+        { name: 'supplier', required: true, note: 'Must match a supplier - add them on the Suppliers sheet first.', example: 'Metro Packaging Corp' },
+        { name: 'invoiceNo', required: true, note: 'The supplier’s invoice number.', example: 'INV-88120' },
+        { name: 'invoiceDate', note: 'YYYY-MM-DD.', example: '2026-08-05' },
+        { name: 'dueDate', note: 'YYYY-MM-DD.', example: '2026-09-04' },
+        { name: 'amountOwed', required: true, note: 'What is STILL owed.', example: '125000' },
+        { name: 'description', note: 'What it was for.', example: 'Cartons, August delivery' },
+        { name: 'poNumber', note: 'Optional. The purchase order this invoice was for - yours, as written on your own PO.', example: 'PO-2026-0412' },
+      ],
+    },
+  },
+
+  openDeposits: {
+    label: 'Open Deposits & Advances', templateOnly: true, importable: true, columns: [],
+    importSpec: {
+      endpoint: '/api/setup/open-deposits/import',
+      intro: 'Money paid ahead that is still unused on the switch-over day: customer deposits and credits you owe back in goods, and advances and credits you hold with suppliers and staff. Each lands on the Advances screen (or the client / supplier credit balance), ready to apply to their next order or bill. They do not post: the opening balance already holds them, so each kind should add up to its account there.',
+      columns: [
+        { name: 'kind', required: true, note: 'Customer deposit (260200) · Customer credit (260100) · Supplier advance (170200) · Supplier credit (160100) · Employee advance (170100).', example: 'Customer deposit' },
+        { name: 'name', required: true, note: 'Customer kinds: a client account name (a credit MUST match one; a deposit that does not is kept as a walk-in deposit). Supplier kinds: must match a supplier. Employee: the person.', example: 'Reyes Hardware' },
+        { name: 'reference', required: true, note: 'Your receipt, OR or voucher number - it is what stops the same row being carried in twice.', example: 'OR-10233' },
+        { name: 'date', note: 'YYYY-MM-DD, when the money was paid. Defaults to the day of import.', example: '2026-09-15' },
+        { name: 'amountRemaining', required: true, note: 'What is STILL unused - after anything already applied.', example: '5000' },
+        { name: 'note', note: 'What it is for.', example: 'Deposit on October bulk order' },
+      ],
+    },
+  },
+
   // ── Ledger. Export only: importing posted rows would let a spreadsheet
   //    rewrite history, and the balanced-entry guard exists precisely to stop
   //    that happening by accident.
@@ -239,13 +685,47 @@ export const DATASETS = {
   },
 
   orders: {
-    label: 'Orders', model: 'Order', dateField: 'createdAt',
+    label: 'Orders', model: 'Order', dateField: 'createdAt', importable: true,
     sort: { createdAt: -1 },
-    columns: ['Order No', 'Date', 'Customer', 'Status', 'Payment', 'Subtotal', 'Discount', 'Total', 'Items'],
+    // Named, so the export can be imported straight back (Ledger -> Import),
+    // with each order's product lines on a sheet of their own.
+    sheetName: 'Orders',
+    extraSheets: (docs) => [{
+      name: 'Order Lines',
+      columns: ['Order No', 'Code', 'Product', 'Qty', 'Unit Price', 'Line Discount %', 'Line Cost'],
+      rows: docs.flatMap(o => (o.items || []).map((it, idx) => [
+        o.orderNumber || '', it.productCode || '',
+        (it.name || '') + ((it.selectedAddOns || []).length ? ` + ${(it.selectedAddOns || []).map(a => a.name).join(', ')}` : ''),
+        Number(it.quantity) || 0,
+        money((Number(it.price) || 0) + (it.selectedAddOns || []).reduce((s, a) => s + (Number(a.price) || 0), 0)),
+        Math.max(Number(it.productDiscountPercent) || 0, Number(it.discountPercent) || 0),
+        money(orderCost(o, idx)),
+      ])),
+    }],
+    importSpec: {
+      endpoint: '/api/orders/import',
+      intro: 'Brings back an Orders export. Each completed order returns as a sale on its own date, with its own order number, posted to the books. Keep the "Order Lines" sheet with it to bring the products back too. Cost of goods sold is booked for each sale: from the Cost column when it is filled in, otherwise from what the stock items of its products cost. Stock quantities are not changed - the next stock count settles them. An order already in the app is skipped - except that a Cost added to it later is booked once.',
+      columns: [
+        { name: 'Order No', required: true, example: 'ORD-2026-A0742' },
+        { name: 'Date', required: true, note: 'YYYY-MM-DD.', example: '2026-09-30' },
+        { name: 'Customer', example: 'COSTA VERDE' },
+        { name: 'Status', note: 'Only Completed is imported.', example: 'Completed' },
+        { name: 'Payment', note: 'See the Valid Values sheet.', example: 'On Account' },
+        { name: 'Subtotal', example: '126410' },
+        { name: 'Discount', example: '0' },
+        { name: 'Total', required: true, example: '126410' },
+        { name: 'Cost', note: 'Optional. What the goods sold cost. Books cost of goods sold for the sale.', example: '88200' },
+      ],
+    },
+    // OR No. is what an examiner traces a sale by, and a total with no sight of
+    // what was refunded or collected against it cannot be reconciled to the
+    // books from the sheet alone.
+    columns: ['Order No', 'OR No', 'Date', 'Customer', 'Status', 'Payment', 'Subtotal', 'Discount', 'Total', 'Refunded', 'Collected', 'Items', 'Cost'],
     toRow: (o) => [
-      o.orderNumber || '', day(o.createdAt), o.customerName || '', o.status || '',
+      o.orderNumber || '', o.orNumber || '', day(o.createdAt), o.customerName || '', o.status || '',
       o.paymentMethod || '', money(o.subtotal), money(o.discount), money(o.total),
-      (o.items || []).length,
+      money(o.refundedAmount), money(o.arPaidAmount),
+      (o.items || []).length, money(orderCost(o)),
     ],
   },
 
@@ -256,7 +736,7 @@ export const DATASETS = {
       intro: 'One row per expense. Each posts its own balanced entry immediately - unlike bills there is no approval step, so check the sheet before importing. A date inside a closed month is refused.',
       columns: [
         { name: 'amount', required: true, note: 'The full amount, before any tax withheld.', example: '3500' },
-        { name: 'categoryCode', required: true, note: 'Which expense account. See the Accounts sheet.', example: '610000' },
+        { name: 'categoryCode', required: true, note: 'Which expense account. See the Accounts sheet.', example: '640000' },
         { name: 'description', required: true, example: 'March electricity' },
         { name: 'paymentMethod', required: true, note: 'What it was paid from. See the Valid Values sheet.', example: 'Cash on Hand' },
         { name: 'date', note: 'YYYY-MM-DD. Defaults to today.', example: '2026-03-31' },
@@ -337,8 +817,25 @@ export function buildValidValues({ expenseCategories = [], paymentMethods = [], 
   add('checkVouchers', 'Status', statuses.voucher, '');
   add('bills', 'Supplier', suppliers, 'Must match an existing supplier name.');
   add('purchaseOrders', 'Supplier', suppliers, 'Must match an existing supplier name.');
+  add('openDeposits', 'kind', OPEN_DEPOSIT_KINDS.map(k => k.label), 'Which register the row goes to - and which opening balance it must add up to.');
+  add('openDeposits', 'name', suppliers, 'For the supplier kinds: must match a supplier name. Customer kinds match a client account.');
 
   return table;
+}
+
+// The kinds of prepaid money carried in at switch-over, each with the control
+// account its total must match. Order matters only for display.
+export const OPEN_DEPOSIT_KINDS = [
+  { key: 'customerDeposit', label: 'Customer deposit', account: '260200', side: 'credit' },
+  { key: 'customerCredit',  label: 'Customer credit',  account: '260100', side: 'credit' },
+  { key: 'supplierAdvance', label: 'Supplier advance', account: '170200', side: 'debit' },
+  { key: 'supplierCredit',  label: 'Supplier credit',  account: '160100', side: 'debit' },
+  { key: 'employeeAdvance', label: 'Employee advance', account: '170100', side: 'debit' },
+];
+// "customer deposit", "Customer Deposits", "customer-deposit" -> the kind.
+export function openDepositKind(raw) {
+  const s = String(raw ?? '').trim().toLowerCase().replace(/[-_]+/g, ' ').replace(/s$/, '');
+  return OPEN_DEPOSIT_KINDS.find(k => k.label.toLowerCase() === s) || null;
 }
 
 export const VALID_VALUE_COLUMNS = ['Dataset', 'Column', 'Accepted Values', 'Notes'];
