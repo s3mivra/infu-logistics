@@ -2,9 +2,9 @@
 #
 #   caddy          — the only thing on :80/:443. Terminates TLS, routes by subdomain.
 #   mongo          — ONE mongod, one database per tenant. Never publishes a port.
-#   control-plane  — provisioning UI. Bound to 127.0.0.1 only; reach it over an
-#                    SSH tunnel. It holds the Docker socket, which is root on the
-#                    box, so it must never be exposed publicly.
+#   control-plane  — provisioning UI at CP_HOST, behind Caddy basic auth plus
+#                    its own login. Also on 127.0.0.1:9000 for SSH tunnels. It
+#                    holds the Docker socket (root on the box) — keep both gates.
 #
 # Tenant stacks live in their own compose projects and join semivra-net.
 # Start this first:  docker compose -f platform/docker-compose.yml up -d
@@ -21,6 +21,9 @@ services:
     environment:
       ACME_EMAIL: ${ACME_EMAIL}
       CADDY_GLOBAL_EXTRA: ${CADDY_GLOBAL_EXTRA:-}
+      CP_HOST: ${CP_HOST:?set CP_HOST in platform/.env}
+      CP_BASIC_USER: ${CP_BASIC_USER:?set CP_BASIC_USER in platform/.env}
+      CP_BASIC_HASH: ${CP_BASIC_HASH:?set CP_BASIC_HASH in platform/.env}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./tenants-caddy:/etc/caddy/tenants
@@ -37,16 +40,79 @@ services:
     restart: unless-stopped
     # Replica set is mandatory: the app's money paths use multi-document
     # transactions, which MongoDB only allows on a replica set.
-    command: ["--replSet", "rs0", "--bind_ip_all", "--wiredTigerCacheSizeGB", "2"]
+    # Starts mongod as before unless MONGO_AUTH=on, which adds --auth and the
+    # replica-set keyfile. See mongo-entrypoint.sh and MONGO_AUTH.md.
+    entrypoint: ["/bin/bash", "/mongo-entrypoint.sh"]
+    environment:
+      MONGO_AUTH: ${MONGO_AUTH:-off}
+      MONGO_ROOT_USER: ${MONGO_ROOT_USER:-root}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-}
+      MONGO_KEYFILE_CONTENT: ${MONGO_KEYFILE_CONTENT:-}
+      # First boot of an EMPTY data dir only: the image creates this root user.
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-}
     volumes:
       - mongo-data:/data/db
       - ./backups:/backups
+      - ./mongo-entrypoint.sh:/mongo-entrypoint.sh:ro
+      - ./mongo-health.sh:/mongo-health.sh:ro
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok }"]
+      test: ["CMD", "bash", "/mongo-health.sh"]
       interval: 10s
       timeout: 10s
       start_period: 40s
       retries: 12
+    networks: [semivra-net]
+
+  # Scheduled, self-verifying backups of every tenant database. Each run is
+  # read back with a dry-run restore before it is kept; see backup-loop.sh.
+  # Prove a full restore periodically with: bash platform/restore-drill.sh
+  backup:
+    image: mongo:7
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "/backup-loop.sh"]
+    environment:
+      # With MONGO_AUTH=on set MONGO_BACKUP_URI to the root login, e.g.
+      # mongodb://root:<password>@mongo:27017/?replicaSet=rs0&authSource=admin
+      MONGO_BACKUP_URI: ${MONGO_BACKUP_URI:-mongodb://mongo:27017/?replicaSet=rs0}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      TZ: Asia/Manila
+    volumes:
+      - ./backups:/backups
+      - ./backup-loop.sh:/backup-loop.sh:ro
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks: [semivra-net]
+
+  # Offsite copy to Cloudflare R2 or Backblaze B2 (both speak S3). A backup
+  # that lives on the same VPS as the data dies with it. Enable with
+  #   docker compose --profile offsite up -d
+  # after setting the OFFSITE_* variables in platform/.env.
+  backup-offsite:
+    image: rclone/rclone:1.68
+    profiles: ["offsite"]
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        while true; do
+          rclone copy /backups offsite:$${OFFSITE_BUCKET}/semivra-backups
+            --include 'semivra-*.archive.gz' --include 'LAST_*' --s3-no-check-bucket
+          && date -u +%FT%TZ > /backups/LAST_OFFSITE_SYNC
+          || echo "offsite sync failed";
+          sleep 21600;
+        done
+    environment:
+      RCLONE_CONFIG_OFFSITE_TYPE: s3
+      RCLONE_CONFIG_OFFSITE_PROVIDER: ${OFFSITE_PROVIDER:-Cloudflare}
+      RCLONE_CONFIG_OFFSITE_ACCESS_KEY_ID: ${OFFSITE_ACCESS_KEY_ID:-}
+      RCLONE_CONFIG_OFFSITE_SECRET_ACCESS_KEY: ${OFFSITE_SECRET_ACCESS_KEY:-}
+      RCLONE_CONFIG_OFFSITE_ENDPOINT: ${OFFSITE_ENDPOINT:-}
+      OFFSITE_BUCKET: ${OFFSITE_BUCKET:-}
+    volumes:
+      - ./backups:/backups
     networks: [semivra-net]
 
   control-plane:
@@ -58,6 +124,9 @@ services:
       - "127.0.0.1:9000:9000"
     environment:
       PORT: 9000
+      MONGO_AUTH: ${MONGO_AUTH:-off}
+      MONGO_ROOT_USER: ${MONGO_ROOT_USER:-root}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-}
       DOMAIN: ${DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL}
       # STACK_ROOT is the path where the control-plane reads/writes tenant files

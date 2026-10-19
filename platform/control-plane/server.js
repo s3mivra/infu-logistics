@@ -16,6 +16,48 @@ import readline from 'node:readline';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// ── MongoDB authentication (opt-in: MONGO_AUTH=on) ───────────────────────────
+// Every tenant shares one mongod. Without auth, a compromise of ANY tenant's
+// API container is read/write access to EVERY tenant's books - isolation was
+// only the database name. With MONGO_AUTH=on:
+//   - the control plane talks to mongod as root (MONGO_ROOT_PASSWORD),
+//   - each tenant gets its OWN user with readWrite on its OWN database only,
+//     and its MONGO_URI carries those credentials.
+// Off by default: switching an EXISTING deployment on needs the one-time
+// migration in platform/MONGO_AUTH.md, or every tenant loses its database.
+const MONGO_AUTH = String(process.env.MONGO_AUTH || '').toLowerCase() === 'on';
+const MONGO_ROOT_USER = process.env.MONGO_ROOT_USER || 'root';
+const MONGO_ROOT_PASSWORD = process.env.MONGO_ROOT_PASSWORD || '';
+if (MONGO_AUTH && MONGO_ROOT_PASSWORD.length < 24) {
+  console.error('MONGO_AUTH=on needs MONGO_ROOT_PASSWORD of at least 24 characters.');
+  process.exit(1);
+}
+// `docker exec` prefix for mongosh inside the mongo container, logged in as
+// root when auth is on. The password rides in the connection string: visible
+// only inside the mongo container itself, which nothing else runs in.
+function mongoshExec() {
+  const base = ['exec', 'semivra-platform-mongo-1', 'mongosh', '--quiet'];
+  if (!MONGO_AUTH) return base;
+  const uri = `mongodb://${encodeURIComponent(MONGO_ROOT_USER)}:${encodeURIComponent(MONGO_ROOT_PASSWORD)}@localhost:27017/admin?directConnection=true`;
+  return ['exec', 'semivra-platform-mongo-1', 'mongosh', uri, '--quiet'];
+}
+// Creates (or re-passwords) the tenant's own database user and returns the
+// URI its API should use. Without auth, the unauthenticated URI as before.
+async function tenantMongoUri(slug) {
+  const db = `semivra_${slug}`;
+  if (!MONGO_AUTH) return `mongodb://mongo:27017/${db}?replicaSet=rs0`;
+  const user = `app_${slug}`;
+  const pwd = crypto.randomBytes(24).toString('hex');
+  const script = `
+    const d = db.getSiblingDB(${JSON.stringify(db)});
+    const roles = [{ role: 'readWrite', db: ${JSON.stringify(db)} }];
+    if (d.getUser(${JSON.stringify(user)})) d.updateUser(${JSON.stringify(user)}, { pwd: ${JSON.stringify(pwd)}, roles });
+    else d.createUser({ user: ${JSON.stringify(user)}, pwd: ${JSON.stringify(pwd)}, roles });
+    print('ok');`;
+  await docker([...mongoshExec(), '--eval', script], { timeout: 60_000 });
+  return `mongodb://${user}:${pwd}@mongo:27017/${db}?replicaSet=rs0&authSource=${db}`;
+}
+
 const run = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -241,7 +283,7 @@ async function readDbSizes(slugs) {
   `;
   try {
     const raw = await docker(
-      ['exec', 'semivra-platform-mongo-1', 'mongosh', '--quiet', '--eval', script],
+      [...mongoshExec(), '--eval', script],
       { timeout: 60_000 },
     );
     const line = raw.trim().split('\n').filter((l) => l.trim().startsWith('{')).pop() || '{}';
@@ -424,8 +466,9 @@ app.post('/api/tenants', requireAuth, async (req, res) => {
     TENANT: slug,
     STACK_ROOT,
     ...resourceEnv(memMb, cpuShares),
-    // Each tenant gets its own database inside the one shared mongod.
-    MONGO_URI: `mongodb://mongo:27017/semivra_${slug}?replicaSet=rs0`,
+    // Each tenant gets its own database inside the one shared mongod - and,
+    // with MONGO_AUTH=on, its own user that can reach nothing else.
+    MONGO_URI: await tenantMongoUri(slug),
     JWT_SECRET: crypto.randomBytes(32).toString('hex'),
     ADMIN_PASS: adminPass,
     ALLOWED_ORIGINS: origins,
@@ -994,8 +1037,8 @@ app.post('/api/tenants/:slug/wipe', requireAuth, passwordAttemptLimiter, async (
     return res.status(400).json({ error: `Type "${slug}" to confirm.` });
   }
   try {
-    await docker(['exec', 'semivra-platform-mongo-1', 'mongosh', '--quiet', '--eval',
-      `db.getSiblingDB(${JSON.stringify(`semivra_${slug}`)}).dropDatabase()`], { timeout: 120_000 });
+    await docker([...mongoshExec(), '--eval',
+      `const t = db.getSiblingDB(${JSON.stringify(`semivra_${slug}`)}); t.dropAllUsers(); t.dropDatabase()`], { timeout: 120_000 });
     // The API seeds the superadmin from ADMIN_PASS on boot when no user exists,
     // so a restart is what makes the tenant usable again.
     await docker([...composeArgs(slug), 'restart', 'api'], { timeout: 180_000 });
@@ -1036,7 +1079,7 @@ app.get('/api/errors', requireAuth, async (req, res) => {
   `;
 
   try {
-    const raw = await docker(['exec', 'semivra-platform-mongo-1', 'mongosh', '--quiet', '--eval', script],
+    const raw = await docker([...mongoshExec(), '--eval', script],
       { timeout: 60_000 });
     const line = raw.trim().split('\n').filter((l) => l.trim().startsWith('[')).pop() || '[]';
     res.json({ groups: JSON.parse(line), hours, tenants: slugs });
@@ -1054,8 +1097,8 @@ app.delete('/api/tenants/:slug', requireAuth, passwordAttemptLimiter, async (req
   if (req.get('x-confirm-slug') !== slug) return res.status(400).json({ error: `Type "${slug}" to confirm.` });
   try {
     await docker([...composeArgs(slug), 'down', '-v'], { timeout: 180_000 });
-    await docker(['exec', 'semivra-platform-mongo-1', 'mongosh', '--quiet', '--eval',
-      `db.getSiblingDB(${JSON.stringify(`semivra_${slug}`)}).dropDatabase()`], { timeout: 120_000 });
+    await docker([...mongoshExec(), '--eval',
+      `const t = db.getSiblingDB(${JSON.stringify(`semivra_${slug}`)}); t.dropAllUsers(); t.dropDatabase()`], { timeout: 120_000 });
     await fs.rm(caddyPath(slug), { force: true });
     await fs.rm(tenantDir(slug), { recursive: true, force: true });
     await docker(['exec', 'semivra-platform-caddy-1', 'caddy', 'reload',
