@@ -214,3 +214,39 @@ describe('a payslip', () => {
     expect(body.payslip.status).toBe('Approved');
   }, 30000);
 });
+
+describe('employees linked to accounts', () => {
+  it('an account ticked "Employee" is offered to payroll with its rate and number; others are not', async () => {
+    const ana = await makeUser({ name: 'Ana Linked', role: 'staff', permissions: ['pos.use'] });
+    await makeUser({ name: 'Not Staff', role: 'staff', permissions: ['pos.use'] });
+    const anaId = ana?._id || (await M('User').findOne({ name: 'Ana Linked' }).lean())._id;
+
+    const on = await auth('patch', `/api/users/${anaId}`).send({ isEmployee: true, employeeNumber: 'EMP-007', dailyRate: 650, sssNumber: '34-1234567-8' });
+    expect(on.status, JSON.stringify(on.body)).toBe(200);
+
+    const list = await auth('get', '/api/payroll/employees');
+    expect(list.status).toBe(200);
+    expect(list.body.employees.map(e => e.name)).toEqual(['Ana Linked']);
+    expect(list.body.employees[0]).toMatchObject({ employeeNumber: 'EMP-007', dailyRate: 650 });
+
+    // A line under that name takes the account's numbers onto the payslip.
+    const run = await auth('post', '/api/payroll-runs').send({
+      periodStart: '2026-03-01', periodEnd: '2026-03-15', payDate: '2026-03-16',
+      lines: [{ employeeName: 'Ana Linked', grossPay: 9750 }],
+    });
+    expect(run.status, JSON.stringify(run.body)).toBe(200);
+    expect(run.body.run.lines[0]).toMatchObject({ employeeId: 'EMP-007', sssNumber: '34-1234567-8' });
+
+    // Unticking takes them off the list (past runs keep what they were paid).
+    await auth('patch', `/api/users/${anaId}`).send({ isEmployee: false });
+    expect((await auth('get', '/api/payroll/employees')).body.employees).toEqual([]);
+  }, 60000);
+
+  it('the list is behind the payroll permission, and hidden while payroll is off', async () => {
+    await makeUser({ name: 'Till Only', role: 'staff', permissions: ['pos.use'] });
+    const till = await loginStaff(app, 'Till Only');
+    expect((await request(app).get('/api/payroll/employees').set('Authorization', `Bearer ${till}`)).status).toBe(403);
+    await enable(false);
+    expect((await auth('get', '/api/payroll/employees')).status).toBe(404);
+  }, 30000);
+});

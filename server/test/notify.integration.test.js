@@ -160,3 +160,40 @@ describe('the low-stock list', () => {
     expect(low.text).toMatch(/Dairy Co:\n\s+- MILK.*order about 24 at ~PHP 85\.00/);
   });
 });
+
+describe('test send (superadmin only)', () => {
+  it('previews any automatic email without a mail account, and refuses anyone but a superadmin', async () => {
+    setMailTransportForTests(null);
+    expect(mailConfigured()).toBe(false);          // the test env has no SMTP account
+    const p = await as('post', '/api/mail/test-preview').send({ kind: 'weekly' });
+    expect(p.status, JSON.stringify(p.body)).toBe(200);
+    expect(p.body.subject).toMatch(/week of \d{4}-\d{2}-\d{2}/);
+    expect(p.body.text).toMatch(/Week in review/);
+    expect((await as('post', '/api/mail/test-send').send({ kind: 'weekly' })).status).toBe(409);   // nothing to send with
+
+    await makeUser({ name: 'mailManager', role: 'staff', permissions: ['settings.manage'] });
+    const mgr = await loginStaff(app, 'mailManager');
+    expect((await as('get', '/api/mail/status', mgr)).status).toBe(200);              // may manage mail...
+    expect((await as('post', '/api/mail/test-preview', mgr).send({ kind: 'summary' })).status).toBe(403);   // ...but not test it
+    expect((await as('post', '/api/mail/test-send', tillTok).send({ kind: 'summary' })).status).toBe(403);
+    expect((await as('post', '/api/mail/test-preview').send({ kind: 'nope' })).status).toBe(400);
+  });
+
+  it('sends a [TEST] copy to the owner only - never the client - and marks nothing as sent', async () => {
+    useMail();
+    await as('put', '/api/mail/settings').send({ ownerEmail: 'owner@example.com', reminders: false });
+    const before = (await M('Settings').findOne({ key: 'mailRemindersSent' }).lean())?.value || {};
+
+    const prev = await as('post', '/api/mail/test-preview').send({ kind: 'reminder' });
+    expect(prev.status).toBe(200);
+    expect(prev.body.empty).toBeUndefined();       // the overdue invoices from the daily-run test
+    expect(prev.body.wouldGoTo).toBeTruthy();
+
+    const r = await as('post', '/api/mail/test-send').send({ kind: 'reminder' });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(sentMail).toHaveLength(1);
+    expect(sentMail[0].to).toBe('owner@example.com');
+    expect(sentMail[0].subject).toMatch(/^\[TEST\] .*payment reminder/);
+    expect((await M('Settings').findOne({ key: 'mailRemindersSent' }).lean())?.value || {}).toEqual(before);
+  });
+});

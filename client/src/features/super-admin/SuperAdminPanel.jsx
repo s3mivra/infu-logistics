@@ -201,7 +201,7 @@ function panelAccess() {
   return auth.can('users.manage') ? 'staff' : null;
 }
 
-const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false, permissions: [], customPerms: false, commissionRate: '', dailyRate: '', pin: '', employeeNumber: '', sssNumber: '', philhealthNumber: '', pagibigNumber: '', tin: '' };
+const EMPTY_FORM = { name: '', password: '', role: 'Staff', showPassword: false, permissions: [], customPerms: false, commissionRate: '', dailyRate: '', pin: '', employeeNumber: '', sssNumber: '', philhealthNumber: '', pagibigNumber: '', tin: '', isEmployee: false };
 
 export default function SuperAdminPanel() {
   const navigate = useNavigate();
@@ -453,7 +453,7 @@ export default function SuperAdminPanel() {
       pin: '', hasPin: !!user.hasPin || !!user.pinHash,
       employeeNumber: user.employeeNumber || '', sssNumber: user.sssNumber || '',
       philhealthNumber: user.philhealthNumber || '', pagibigNumber: user.pagibigNumber || '',
-      tin: user.tin || '',
+      tin: user.tin || '', isEmployee: !!user.isEmployee,
     });
     setFormErrors({});
     setModal({ open: true, mode: 'edit', user });
@@ -536,6 +536,7 @@ export default function SuperAdminPanel() {
         if (form.password) body.password = form.password;
         if (form.commissionRate !== '') body.commissionRate = form.commissionRate;
         body.dailyRate = Number(form.dailyRate) || 0;
+        body.isEmployee = !!form.isEmployee;
         // Payroll copies these onto each run, so they are worth having on file
         // before the first payslip rather than after the first filing.
         for (const key of ['employeeNumber', 'sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin']) {
@@ -1849,6 +1850,13 @@ export default function SuperAdminPanel() {
               {modal.mode === 'edit' && (
                 <div>
                   <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Payroll & statutory numbers</label>
+                  <label className="flex items-start gap-2.5 mb-2 cursor-pointer">
+                    <input type="checkbox" checked={!!form.isEmployee} onChange={e => handleFormChange('isEmployee', e.target.checked)} className="mt-0.5 w-4 h-4" />
+                    <span>
+                      <span className="block text-sm font-bold text-fg">Employee (on payroll)</span>
+                      <span className="block text-[10px] text-fg/65">Payroll offers this person by name, with their rate and the numbers below. Leave off for owners and logins that are not paid staff.</span>
+                    </span>
+                  </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {[
                       ['employeeNumber', 'Employee no.', 'EMP-001'],

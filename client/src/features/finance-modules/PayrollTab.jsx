@@ -218,6 +218,27 @@ function DraftModal({ apiFetch, onClose, onDone }) {
 
   const setLine = (i, k, v) => setLines(prev => prev.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
 
+  // The accounts ticked "Employee" in User Control. Picking one by name ties the
+  // line to that account, so the payslip carries its numbers; a name typed by
+  // hand still works for someone with no login.
+  const [employees, setEmployees] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    apiFetch('/api/payroll/employees').then(r => r.json())
+      .then(d => { if (alive && d.success) setEmployees(d.employees || []); }).catch(() => {});
+    return () => { alive = false; };
+  }, [apiFetch]);
+  const pickName = (i, name) => {
+    const e = employees.find(x => x.name === name);
+    setLines(prev => prev.map((l, j) => (j === i ? { ...l, employeeName: name, employeeId: e ? (e.employeeNumber || l.employeeId) : l.employeeId } : l)));
+  };
+  const addAllEmployees = () => {
+    const have = new Set(lines.map(l => String(l.employeeName).trim()));
+    const add = employees.filter(e => !have.has(e.name));
+    if (!add.length) return ui.alert(employees.length ? 'Every employee already has a line.' : 'No account is marked as an employee yet. Tick "Employee (on payroll)" on their account in User Control.');
+    setLines(prev => [...prev.filter(l => String(l.employeeName).trim()), ...add.map(e => ({ ...blankLine(), employeeName: e.name, employeeId: e.employeeNumber || '' }))]);
+  };
+
   // Days clocked in, approved paid leave and approved overtime for the period,
   // at each person's daily rate - a starting point, still editable line by line.
   const [filling, setFilling] = useState(false);
@@ -326,8 +347,8 @@ function DraftModal({ apiFetch, onClose, onDone }) {
                 return (
                   <tr key={i} className="border-b border-white/5">
                     <td className="px-2 py-1.5">
-                      <input className={`${numCls} text-left`} value={l.employeeName}
-                        onChange={e => setLine(i, 'employeeName', e.target.value)} placeholder="Name" />
+                      <input className={`${numCls} text-left`} value={l.employeeName} list="payroll-employees"
+                        onChange={e => pickName(i, e.target.value)} placeholder="Name" aria-label="Employee" />
                     </td>
                     {COLS.map(([k]) => (
                       <td key={k} className="px-2 py-1.5">
@@ -357,6 +378,13 @@ function DraftModal({ apiFetch, onClose, onDone }) {
             className="flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">
             <Plus size={11} /> Add employee
           </button>
+          <button onClick={addAllEmployees}
+            className="flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition">
+            <Plus size={11} /> Add all employees{employees.length ? ` (${employees.length})` : ''}
+          </button>
+          <datalist id="payroll-employees">
+            {employees.map(e => <option key={e._id} value={e.name}>{e.employeeNumber || ''}</option>)}
+          </datalist>
           <button onClick={fillFromTimesheet} disabled={filling}
             className="flex items-center gap-1.5 text-[10px] border border-brand/40 text-brand hover:bg-brand/10 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-50">
             {filling ? 'Reading…' : 'Fill from timesheet'}

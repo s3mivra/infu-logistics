@@ -9,10 +9,18 @@ import * as ui from '../../shared/ui';
 const box = 'bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg';
 const call = async (apiFetch, path, method = 'GET', body) => (await apiFetch(path, { method, ...(body ? { body: JSON.stringify(body) } : {}) })).json();
 
-export default function MailSettingsCard({ apiFetch }) {
+// The automatic emails a superadmin can preview or test-send on demand.
+const TEST_KINDS = [
+  ['summary', 'Daily summary'], ['lowStock', 'Low-stock alert'], ['weekly', 'Week in review'],
+  ['monthly', 'Month in review'], ['reminder', 'Payment reminder'],
+];
+
+export default function MailSettingsCard({ apiFetch, isSuperAdmin = false }) {
   const [state, setState] = useState(null);
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState('');
+  const [testKind, setTestKind] = useState('summary');
+  const [preview, setPreview] = useState(null);
   const load = useCallback(async () => {
     try {
       const d = await call(apiFetch, '/api/mail/status');
@@ -84,6 +92,48 @@ export default function MailSettingsCard({ apiFetch }) {
             className="px-3 py-2 rounded-lg border border-white/15 text-fg/80 hover:bg-white/5 font-bold text-xs uppercase tracking-wider disabled:opacity-50">Send a test</button>
           <button type="button" disabled={!!busy} onClick={async () => { if (await ui.confirm({ title: "Send today's emails now?", message: 'Everything switched on above is sent now, including reminders to clients.', confirmLabel: 'Send now' })) run('/api/mail/run-now', d => `Sent. Summary: ${d.summary ? (d.summary.ok ? 'yes' : d.summary.error) : 'off'}. Low stock: ${d.lowStock ? (d.lowStock.nothing ? 'nothing low' : d.lowStock.ok ? 'yes' : d.lowStock.error) : 'off'}. Reminders: ${d.reminders ? `${d.reminders.sent} client(s)` : 'off'}. Week: ${d.weekly ? (d.weekly.ok ? 'yes' : d.weekly.error) : 'off'}. Month: ${d.monthly ? (d.monthly.ok ? 'yes' : d.monthly.error) : 'off'}.`); }}
             className="px-3 py-2 rounded-lg border border-white/15 text-fg/80 hover:bg-white/5 font-bold text-xs uppercase tracking-wider disabled:opacity-50">Send today's now</button>
+        </div>
+      )}
+      {/* Superadmin only: see any automatic email as it would be sent today,
+          and send a [TEST] copy to the owner - switched on or not. A test never
+          goes to a client and marks nothing as sent. */}
+      {isSuperAdmin && (
+        <div className="border-t border-white/10 pt-3 space-y-2">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-fg/70">Test send <span className="normal-case tracking-normal font-normal text-fg/60">· superadmin only</span></p>
+          <div className="flex items-end gap-2 flex-wrap">
+            <select aria-label="Which email" value={testKind} onChange={e => { setTestKind(e.target.value); setPreview(null); }} className={box}>
+              {TEST_KINDS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+            </select>
+            <button type="button" disabled={!!busy} onClick={async () => {
+              setBusy('preview');
+              try {
+                const d = await call(apiFetch, '/api/mail/test-preview', 'POST', { kind: testKind });
+                if (!d.success) return ui.alert(d.error || 'Could not build it.');
+                setPreview(d);
+              } catch { ui.alert('Network error.'); } finally { setBusy(''); }
+            }} className="px-3 py-2 rounded-lg border border-white/15 text-fg/80 hover:bg-white/5 font-bold text-xs uppercase tracking-wider disabled:opacity-50">Preview</button>
+            <button type="button" disabled={!!busy || !state.configured || !state.settings.ownerEmail}
+              title={!state.configured ? 'Email is not set up on this server yet' : !state.settings.ownerEmail ? 'Save the owner email first' : ''}
+              onClick={async () => {
+                setBusy('test-send');
+                try {
+                  const d = await call(apiFetch, '/api/mail/test-send', 'POST', { kind: testKind });
+                  ui.alert(d.success ? `A [TEST] copy was sent to ${d.to}.` : (d.error || 'It was not sent.'));
+                } catch { ui.alert('Network error.'); } finally { setBusy(''); }
+              }} className="bg-brand text-on-brand px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-50">Send test to owner</button>
+          </div>
+          {!state.configured && <p className="text-xs text-fg/60">Sending needs the mail account on the server; Preview works now.</p>}
+          {preview && (
+            <div className="bg-white/5 border border-white/10 rounded-lg p-3 text-xs">
+              {preview.empty ? <p className="text-fg/75">{preview.empty}</p> : (
+                <>
+                  <p className="text-fg font-bold break-words">{preview.subject}</p>
+                  {preview.wouldGoTo && <p className="text-fg/60 mt-0.5">To the client: {preview.wouldGoTo}</p>}
+                  <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] text-fg/85 max-h-80 overflow-y-auto">{preview.text}</pre>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

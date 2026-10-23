@@ -7,6 +7,9 @@
 //   the week in review        to the owner, Monday evening, for last Mon-Sun
 //   the month in review       to the owner, on the 1st, for last month
 //
+// A superadmin can also preview any of these, or send a [TEST] copy of one to
+// the owner's address, without waiting for its day (see TEST SEND below).
+//
 // The three that send on their own are OFF until switched on in Settings, and
 // none of them can run without a mail account. A client is only ever written
 // to at the email address on their own record - this is not a way to send
@@ -39,7 +42,7 @@ const REMINDER_GAP_DAYS = 7;
 export default function registerNotify(ctx) {
   const {
     app, mongoose, IS_PROD, BUSINESS_TYPE, tenantScope, Order, Inventory, ClientAccount, Settings, logAudit, log,
-    verifyToken, requireStaff, requirePermission,
+    verifyToken, requireStaff, requirePermission, requireSuperAdmin,
   } = ctx;
   const fail = (req, res, err) => (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   const businessName = () => process.env.BUSINESS_NAME || process.env.VITE_BUSINESS_NAME || 'Your business';
@@ -217,16 +220,33 @@ export default function registerNotify(ctx) {
 
   // One email per client with something due soon or overdue, to the address on
   // their record, and not again within a week.
-  async function sendReminders(now, settings) {
+  function reminderMessage(c, list, now) {
+    const total = list.reduce((t, o) => t + arBalance(o), 0);
+    const anyLate = list.some(o => new Date(o.arDueDate) < now);
+    const text = [`Dear ${c.name},`, '',
+      anyLate ? 'A friendly reminder that the following is now due:' : 'A friendly reminder of what falls due soon:', '',
+      ...list.slice(0, 40).map(o => `- ${o.orderNumber}: ${peso(arBalance(o))}, due ${businessDateStr(new Date(o.arDueDate))}${new Date(o.arDueDate) < now ? ' (overdue)' : ''}`),
+      '', `Total: ${peso(total)}`, '', 'If you have already paid, please disregard this and thank you. Tell us if anything here does not match your records.', '', businessName()].join('\n');
+    return { subject: `${businessName()}: payment reminder - ${peso(total)}`, text };
+  }
+
+  // Open invoices due by the horizon, per client account (walk-ins have no address).
+  async function dueByClient(now, settings) {
     const horizon = new Date(now.getTime() + settings.reminderDaysBefore * 86400000);
     const due = (await openReceivables()).filter(o => o.arDueDate && new Date(o.arDueDate) <= horizon && arBalance(o) > 0);
     const byClient = new Map();
     for (const o of due) {
       const id = String(o.clientAccountId || o.clientId || '');
-      if (!mongoose.Types.ObjectId.isValid(id)) continue;                 // a walk-in name has no address to write to
+      if (!mongoose.Types.ObjectId.isValid(id)) continue;
       if (!byClient.has(id)) byClient.set(id, []);
       byClient.get(id).push(o);
     }
+    for (const list of byClient.values()) list.sort((a, b) => new Date(a.arDueDate) - new Date(b.arDueDate));
+    return byClient;
+  }
+
+  async function sendReminders(now, settings) {
+    const byClient = await dueByClient(now, settings);
     if (!byClient.size) return { sent: 0, skipped: 0 };
     const clients = await ClientAccount.find({ _id: { $in: [...byClient.keys()] }, isActive: { $ne: false } }, { name: 1, email: 1 }).lean();
     const sentRow = (await Settings.findOne({ key: 'mailRemindersSent' }).lean())?.value || {};
@@ -236,14 +256,7 @@ export default function registerNotify(ctx) {
       const last = sentRow[String(c._id)];
       const tooSoon = last && (dayStart(today).getTime() - dayStart(last).getTime()) < REMINDER_GAP_DAYS * 86400000;
       if (!isEmail(c.email) || tooSoon) { skipped++; continue; }
-      const list = byClient.get(String(c._id)).sort((a, b) => new Date(a.arDueDate) - new Date(b.arDueDate));
-      const total = list.reduce((t, o) => t + arBalance(o), 0);
-      const anyLate = list.some(o => new Date(o.arDueDate) < now);
-      const text = [`Dear ${c.name},`, '',
-        anyLate ? 'A friendly reminder that the following is now due:' : 'A friendly reminder of what falls due soon:', '',
-        ...list.slice(0, 40).map(o => `- ${o.orderNumber}: ${peso(arBalance(o))}, due ${businessDateStr(new Date(o.arDueDate))}${new Date(o.arDueDate) < now ? ' (overdue)' : ''}`),
-        '', `Total: ${peso(total)}`, '', 'If you have already paid, please disregard this and thank you. Tell us if anything here does not match your records.', '', businessName()].join('\n');
-      const r = await sendMail({ to: c.email, subject: `${businessName()}: payment reminder - ${peso(total)}`, text });
+      const r = await sendMail({ to: c.email, ...reminderMessage(c, byClient.get(String(c._id)), now) });
       if (r.ok) { sent++; sentRow[String(c._id)] = today; } else skipped++;
     }
     if (sent) await Settings.findOneAndUpdate({ key: 'mailRemindersSent' }, { key: 'mailRemindersSent', value: sentRow }, { upsert: true });
@@ -291,6 +304,63 @@ export default function registerNotify(ctx) {
       const out = await runDailyMail(new Date(), { force: true });
       if (!out.ran) return res.status(409).json({ success: false, error: out.reason });
       res.json({ success: true, ...out });
+    } catch (err) { fail(req, res, err); }
+  });
+
+  // ── TEST SEND (superadmin) ─────────────────────────────────────────────────
+  // Any of the automatic emails, built exactly as the real run builds it,
+  // whether or not it is switched on and whatever the day. Preview needs no
+  // mail account. A test SEND goes only to the owner's address with [TEST] in
+  // the subject - never to a client - and marks nothing as sent: tomorrow's
+  // real run, and a client's once-a-week reminder, are untouched.
+  const TEST_KINDS = ['summary', 'lowStock', 'weekly', 'monthly', 'reminder'];
+  async function testMessage(kind, now = new Date()) {
+    const today = businessDateStr(now);
+    if (kind === 'summary') return { subject: `${businessName()}: ${today} summary`, text: await summaryText(now) };
+    if (kind === 'lowStock') {
+      const text = await lowStockText();
+      return text ? { subject: `${businessName()}: stock running low`, text } : { empty: 'Nothing is at or below its alert level, so tonight this email would not go out.' };
+    }
+    if (kind === 'weekly') {
+      const [from, to, pf, pt] = lastWeek(today, businessClock(now).weekday);
+      return { subject: `${businessName()}: week of ${from}`, text: await reviewText('Week in review', from, to, pf, pt, now) };
+    }
+    if (kind === 'monthly') {
+      const [from, to, pf, pt] = lastMonth(today);
+      return { subject: `${businessName()}: ${to.slice(0, 7)} month in review`, text: await reviewText('Month in review', from, to, pf, pt, now) };
+    }
+    // reminder: the first client with something due, as they would get it.
+    const byClient = await dueByClient(now, await readSettings());
+    const c = byClient.size ? await ClientAccount.findOne({ _id: { $in: [...byClient.keys()] }, isActive: { $ne: false } }, { name: 1, email: 1 }).lean() : null;
+    if (!c) return { empty: 'No client account has an invoice overdue or due soon, so no reminder would go out.' };
+    return { ...reminderMessage(c, byClient.get(String(c._id)), now), wouldGoTo: isEmail(c.email) ? c.email : `${c.name} (no email on file - would be skipped)` };
+  }
+  const canTest = [verifyToken, requireStaff, requireSuperAdmin];
+  const kindOf = (req, res) => {
+    const kind = String(req.body?.kind || '');
+    if (!TEST_KINDS.includes(kind)) { res.status(400).json({ success: false, error: `kind must be one of: ${TEST_KINDS.join(', ')}.` }); return null; }
+    return kind;
+  };
+
+  app.post('/api/mail/test-preview', ...canTest, async (req, res) => {
+    try {
+      const kind = kindOf(req, res); if (!kind) return;
+      res.json({ success: true, kind, ...(await testMessage(kind)) });
+    } catch (err) { fail(req, res, err); }
+  });
+
+  app.post('/api/mail/test-send', ...canTest, async (req, res) => {
+    try {
+      const kind = kindOf(req, res); if (!kind) return;
+      if (!mailConfigured()) return res.status(409).json({ success: false, error: 'Email is not set up on this server yet, so nothing can be sent. Preview still works.' });
+      const s = await readSettings();
+      if (!s.ownerEmail) return res.status(400).json({ success: false, error: 'Save the owner email first - test copies go there.' });
+      const m = await testMessage(kind);
+      if (m.empty) return res.status(409).json({ success: false, error: m.empty });
+      const sent = await sendMail({ to: s.ownerEmail, subject: `[TEST] ${m.subject}`, text: m.text });
+      if (!sent.ok) return res.status(502).json({ success: false, error: sent.error });
+      try { await logAudit?.(req, { action: 'email', entity: 'MailSettings', entityId: 'test', after: { kind, to: s.ownerEmail } }); } catch { /* non-fatal */ }
+      res.json({ success: true, kind, to: s.ownerEmail });
     } catch (err) { fail(req, res, err); }
   });
 

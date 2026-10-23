@@ -2379,9 +2379,19 @@ const UserSchema = new mongoose.Schema({
   totpSecret:      { type: String, default: '', select: false },
   totpPending:     { type: String, default: '', select: false },     // set up but not yet confirmed with a code
   totpBackupCodes: { type: [String], default: [], select: false },   // sha256 of each unused code
+  // Devices that passed the second step and need not again for a while. Only
+  // the sha256 of each device's token is kept; the token itself lives in an
+  // httpOnly cookie on that device (see features/users.js, TRUSTED DEVICES).
+  trustedDevices: {
+    type: [{ _id: false, hash: String, label: String, createdAt: Date, lastUsedAt: Date, expiresAt: Date }],
+    default: [], select: false,
+  },
   // Failed attempts on this PIN, so a short code cannot simply be guessed.
   pinFailedCount:  { type: Number, default: 0 },
   pinLockedUntil:  { type: Date, default: null },
+  // On the payroll: Payroll offers this account by name when lines are added,
+  // so the name - and the numbers below - match the account exactly.
+  isEmployee:      { type: Boolean, default: false },
   sssNumber:       { type: String, default: '' },
   philhealthNumber:{ type: String, default: '' },
   pagibigNumber:   { type: String, default: '' },

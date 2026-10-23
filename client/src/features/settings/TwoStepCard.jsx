@@ -6,8 +6,10 @@ import { ShieldCheck } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
 // Two-step sign-in for your own account: after the password, the six digits an
-// authenticator app shows. Off until you turn it on. The owner can also switch
-// it off for someone who lost their phone (and their backup codes).
+// authenticator app shows. For Owner accounts; off until turned on. A device
+// that has passed the code is remembered for 30 days, so the code is asked on
+// a new device (or a forgotten one), not at every sign-in. The superadmin can
+// also switch it off for someone who lost their phone and backup codes.
 const box = 'bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg';
 const btn = 'px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-50';
 const call = async (apiFetch, path, method = 'GET', body) => (await apiFetch(path, { method, ...(body ? { body: JSON.stringify(body) } : {}) })).json();
@@ -50,6 +52,13 @@ export default function TwoStepCard({ apiFetch, isSuperAdmin }) {
     setPassword(''); setCodes(null); load();
     ui.toast('Two-step sign-in is off.', { tone: 'success' });
   }); };
+  const forgetAll = () => run(async () => {
+    if (!(await ui.confirm({ title: 'Forget all devices?', message: 'Every device, this one too, will ask for the code at its next sign-in.', confirmLabel: 'Forget them' }))) return;
+    const d = await call(apiFetch, '/api/users/me/two-step/forget-devices', 'POST');
+    if (!d.success) return ui.alert(d.error || 'Could not forget them.');
+    load();
+    ui.toast('Every device will ask for the code next time.', { tone: 'success' });
+  });
   const resetOther = (e) => { e.preventDefault(); run(async () => {
     const d = await call(apiFetch, `/api/users/${reset.id}/two-step/reset`, 'POST', { confirmPassword: reset.password });
     if (!d.success) return ui.alert(d.error || 'Could not switch it off.');
@@ -59,11 +68,16 @@ export default function TwoStepCard({ apiFetch, isSuperAdmin }) {
   }); };
 
   if (!status) return null;
+  // Not an Owner and never turned on: nothing of your own to show - only the
+  // superadmin's way back for others, if anyone needs it.
+  const ownSection = status.allowed || status.enabled;
+  if (!ownSection && !(isSuperAdmin && users.length > 0)) return null;
+  const when = (d) => (d ? new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
   return (
     <div className="bg-surface border border-white/10 rounded-2xl p-5 space-y-3">
       <h3 className="text-sm font-black text-fg flex items-center gap-2"><ShieldCheck size={16} className="text-brand-text" /> Two-step sign-in</h3>
 
-      {codes ? (
+      {!ownSection ? null : codes ? (
         <div className="space-y-2">
           <p className="text-sm font-bold text-success">It is on. Keep these backup codes somewhere that is not your phone.</p>
           <p className="text-xs text-fg/70">Each one signs you in once if you lose the phone. They are shown only now.</p>
@@ -77,7 +91,18 @@ export default function TwoStepCard({ apiFetch, isSuperAdmin }) {
         </div>
       ) : status.enabled ? (
         <div className="space-y-2">
-          <p className="text-xs text-fg/80">On for your account. Signing in takes your password and the code from your authenticator app. <span className="font-bold">{status.backupCodesLeft}</span> backup code(s) left.</p>
+          <p className="text-xs text-fg/80">On for your account. A new device asks for your password and the code from your authenticator app; after that, it is remembered for {status.trustDays || 30} days. <span className="font-bold">{status.backupCodesLeft}</span> backup code(s) left.</p>
+          {(status.trustedDevices || []).length > 0 && (
+            <div className="space-y-1">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-fg/70">Remembered devices</p>
+              <ul className="text-xs text-fg/80 space-y-0.5">
+                {status.trustedDevices.map((d, i) => (
+                  <li key={i}>{d.label}{d.thisDevice && <span className="text-success font-bold"> · this device</span>} <span className="text-fg/55">· last used {when(d.lastUsedAt)}, asks again after {when(d.expiresAt)}</span></li>
+                ))}
+              </ul>
+              <button type="button" onClick={forgetAll} disabled={busy} className={`${btn} border border-white/15 text-fg/80 hover:bg-white/5`}>Forget all devices</button>
+            </div>
+          )}
           <form onSubmit={turnOff} className="flex items-end gap-2 flex-wrap">
             <label className="text-[10px] font-bold uppercase tracking-wider text-fg/70">Your password, to turn it off
               <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" className={`${box} block mt-1`} /></label>
@@ -98,7 +123,7 @@ export default function TwoStepCard({ apiFetch, isSuperAdmin }) {
         </form>
       ) : (
         <div className="space-y-2">
-          <p className="text-xs text-fg/80 leading-relaxed">Off. Turn it on and signing in will take your password and a 6-digit code from an app on your phone - so a password someone saw or guessed is not enough on its own. You need the phone each time you sign in.</p>
+          <p className="text-xs text-fg/80 leading-relaxed">Off. Turn it on and signing in will take your password and a 6-digit code from an app on your phone - so a password someone saw or guessed is not enough on its own. You need the phone the first time on each device; it is then remembered for {status.trustDays || 30} days.</p>
           <button type="button" onClick={start} disabled={busy} className={`${btn} bg-brand text-on-brand`}>Set it up</button>
         </div>
       )}

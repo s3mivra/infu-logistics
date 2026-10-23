@@ -5,7 +5,7 @@ import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 import { codeAt } from '../lib/totp.js';
 
-let ctx, app, ownerTok, anaTok, secret, backupCodes;
+let ctx, app, ownerTok, anaTok, staffTok, secret, backupCodes;
 const as = (m, p, t) => request(app)[m](p).set('Authorization', `Bearer ${t}`);
 const signIn = (body) => request(app).post('/api/users/login').send(body);
 const User = () => mongoose.model('User');
@@ -14,14 +14,22 @@ beforeAll(async () => {
   ctx = await bootApp({ businessType: 'log' });
   app = ctx.app;
   await makeUser({ name: 'twoOwner', role: 'superadmin', password: 'ownerpass1' });
-  await makeUser({ name: 'twoAna', role: 'staff', password: 'anapass123', permissions: ['pos.use'] });
+  await makeUser({ name: 'twoAna', role: 'Owner', password: 'anapass123', permissions: ['pos.use'] });
+  await makeUser({ name: 'twoStaff', role: 'staff', password: 'staffpass1', permissions: ['pos.use'] });
   ownerTok = await loginStaff(app, 'twoOwner', 'ownerpass1');
   anaTok = await loginStaff(app, 'twoAna', 'anapass123');
+  staffTok = await loginStaff(app, 'twoStaff', 'staffpass1');
 }, 120000);
 
 afterAll(async () => { await ctx.stop(); });
 
 describe('turning it on', () => {
+  it('is for Owner accounts only', async () => {
+    expect((await as('get', '/api/users/me/two-step', staffTok)).body).toMatchObject({ enabled: false, allowed: false });
+    expect((await as('post', '/api/users/me/two-step/setup', staffTok)).status).toBe(403);
+    expect((await as('get', '/api/users/me/two-step', anaTok)).body).toMatchObject({ allowed: true, trustDays: 30 });
+  });
+
   it('is off until the person turns it on, and setup alone changes nothing about signing in', async () => {
     expect((await as('get', '/api/users/me/two-step', anaTok)).body).toMatchObject({ enabled: false });
     const setup = await as('post', '/api/users/me/two-step/setup', anaTok);
@@ -107,5 +115,71 @@ describe('the ways back', () => {
     expect(actions.some(a => /enabled/i.test(a))).toBe(true);
     expect(actions.some(a => /disabled/i.test(a))).toBe(true);
     expect(actions.some(a => /backup/i.test(a))).toBe(true);
+  });
+});
+
+// A device that passed the code is remembered for 30 days; supertest has no
+// cookie jar, so each request below carries exactly the cookie it names.
+describe('remembered devices', () => {
+  let user, cookie;
+  const codeSignIn = () => signIn({ name: 'twoAna', password: 'anapass123', code: codeAt(secret) });
+  const deviceCookie = (res) => (res.headers['set-cookie'] || []).find(c => c.startsWith(`semivra_td_${user._id}=`))?.split(';')[0];
+  const withCookie = (c) => request(app).post('/api/users/login').set('Cookie', c).send({ name: 'twoAna', password: 'anapass123' });
+
+  beforeAll(async () => {
+    // Back on, for the Owner account (the ways-back tests turned it off).
+    await User().updateOne({ name: 'twoAna' }, { $set: { totpEnabled: false, totpSecret: '', totpBackupCodes: [], trustedDevices: [] } });
+    const setup = await as('post', '/api/users/me/two-step/setup', anaTok);
+    secret = setup.body.secret;
+    expect((await as('post', '/api/users/me/two-step/enable', anaTok).send({ code: codeAt(secret) })).status).toBe(200);
+    user = await User().findOne({ name: 'twoAna' }).lean();
+  });
+
+  it('a right code trusts the device: the next sign-in there needs only the password', async () => {
+    const r = await codeSignIn();
+    expect(r.body.success).toBe(true);
+    cookie = deviceCookie(r);
+    expect(cookie).toBeTruthy();
+    expect((r.headers['set-cookie'] || []).find(c => c.startsWith(cookie)).toLowerCase()).toContain('httponly');
+    const again = await withCookie(cookie);
+    expect(again.body.success, JSON.stringify(again.body)).toBe(true);
+    expect(again.body.token).toBeTruthy();
+  });
+
+  it('a new device - no cookie, or a made-up one - is asked for the code', async () => {
+    expect((await signIn({ name: 'twoAna', password: 'anapass123' })).body.needsCode).toBe(true);
+    expect((await withCookie(`semivra_td_${user._id}=made-up-token`)).body.needsCode).toBe(true);
+  });
+
+  it('is never a way past a wrong password', async () => {
+    const r = await request(app).post('/api/users/login').set('Cookie', cookie).send({ name: 'twoAna', password: 'wrong-pass' });
+    expect(r.status).toBe(401);
+    expect(r.body.success).toBe(false);
+  });
+
+  it('keeps only a hash of the device token, and shows the device in the list', async () => {
+    const raw = cookie.split('=')[1];
+    const stored = (await User().findById(user._id).select('+trustedDevices').lean()).trustedDevices;
+    expect(JSON.stringify(stored)).not.toContain(raw);
+    const st = await request(app).get('/api/users/me/two-step').set('Authorization', `Bearer ${anaTok}`).set('Cookie', cookie);
+    expect(st.body.trustedDevices.some(d => d.thisDevice)).toBe(true);
+  });
+
+  it('asks again once the 30 days are up', async () => {
+    await User().updateOne({ _id: user._id }, { $set: { 'trustedDevices.$[].expiresAt': new Date(Date.now() - 1000) } });
+    expect((await withCookie(cookie)).body.needsCode).toBe(true);
+  });
+
+  it('"Forget all devices" and a password change both make every device ask again', async () => {
+    cookie = deviceCookie(await codeSignIn());
+    expect((await withCookie(cookie)).body.success).toBe(true);
+    expect((await as('post', '/api/users/me/two-step/forget-devices', anaTok)).status).toBe(200);
+    expect((await withCookie(cookie)).body.needsCode).toBe(true);
+
+    cookie = deviceCookie(await codeSignIn());
+    const tok = (await codeSignIn()).body.token;
+    expect((await as('patch', '/api/users/me/password', tok).send({ currentPassword: 'anapass123', newPassword: 'anapass456' })).status).toBe(200);
+    const r = await request(app).post('/api/users/login').set('Cookie', cookie).send({ name: 'twoAna', password: 'anapass456' });
+    expect(r.body.needsCode).toBe(true);
   });
 });

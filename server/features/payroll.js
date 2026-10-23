@@ -120,6 +120,16 @@ export default function registerPayroll(ctx) {
   });
 
   // ── LIST ──────────────────────────────────────────────────────────────────
+  // The accounts ticked "Employee" in User Control - who Payroll offers when
+  // lines are added. Pay rate and employee number come along; the statutory
+  // numbers are copied onto the run when it is saved (see fillNumbers above).
+  app.get('/api/payroll/employees', verifyToken, ...canView, async (req, res) => {
+    try {
+      const employees = await mongoose.model('User').find({ isEmployee: true }, { name: 1, employeeNumber: 1, dailyRate: 1, role: 1 }).sort({ name: 1 }).lean();
+      res.json({ success: true, employees: employees.map(e => ({ _id: e._id, name: e.name, employeeNumber: e.employeeNumber || '', dailyRate: e.dailyRate || 0, role: e.role })) });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
   app.get('/api/payroll-runs', verifyToken, ...canView, async (req, res) => {
     try {
       const q = { businessType: BUSINESS_TYPE, ...tenantScope(req) };

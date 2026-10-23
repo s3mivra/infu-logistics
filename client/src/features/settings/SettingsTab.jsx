@@ -356,7 +356,7 @@ export default function SettingsTab({ ctx }) {
       <div className="space-y-6">
         {/* QR display first: it is what a counter tablet is set up for. */}
         {BUSINESS_TYPE !== 'log' && (isSuperAdmin || ctx.can?.('settings.manage')) && <QrDevicesCard apiFetch={apiFetch} />}
-        {(isSuperAdmin || ctx.can?.('settings.manage')) && <MailSettingsCard apiFetch={apiFetch} />}
+        {(isSuperAdmin || ctx.can?.('settings.manage')) && <MailSettingsCard apiFetch={apiFetch} isSuperAdmin={isSuperAdmin} />}
         {/* Everyone can protect their own account. */}
         <TwoStepCard apiFetch={apiFetch} isSuperAdmin={isSuperAdmin} />
 

@@ -2,6 +2,8 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { newSecret, verifyCode, otpauthUrl, newBackupCodes, hashBackupCode } from '../lib/totp.js';
+import { randomBytes } from 'node:crypto';
+import { OWNER_ROLE_NAME } from '../lib/authz.js';
 import { captureError } from '../lib/errorLog.js';
 import { signApproval } from '../lib/approval.js';
 import { hasPermission } from '../lib/authz.js';
@@ -424,7 +426,7 @@ app.post('/api/users/login', loginLimiter, validate(loginSchema), async (req, re
       targetReference: String(req.ip || '').slice(0, 60) || 'unknown',
       details: { device: String(req.headers['user-agent'] || '').slice(0, 200) },
     }).catch(() => {});
-    const user = await User.findOne({ name }).select('+totpSecret +totpBackupCodes');
+    const user = await User.findOne({ name }).select('+totpSecret +totpBackupCodes +trustedDevices');
     if (!user) { await noteSignIn(false); return res.status(401).json({ success: false, message: 'Invalid name or password' }); }
     const isMatch = await bcrypt.compare(password, user.password);
     if (isMatch && user.totpEnabled && user.totpSecret) {
@@ -433,6 +435,16 @@ app.post('/api/users/login', loginLimiter, validate(loginSchema), async (req, re
       // ever said AFTER a correct password, so it gives nothing away to
       // someone guessing names.
       const code = String(req.body.code || '').trim();
+      // A device that passed the second step in the last 30 days is let
+      // through on the password alone. A new device - or a cleared cookie, or
+      // one past its 30 days - is asked again.
+      const known = !code && trustedDeviceOf(req, user);
+      if (known) {
+        await User.updateOne({ _id: user._id, 'trustedDevices.hash': known.hash }, { $set: { 'trustedDevices.$.lastUsedAt': new Date() } });
+        const token = await issueSession(res, user, { userAgent: req.headers['user-agent'] });
+        await noteSignIn(true, user.name);
+        return res.json({ success: true, token, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user) } });
+      }
       // Answered 200, not 401: asking for the second step is not a failed
       // attempt, and the sign-in limiter counts every 4xx against the whole
       // shop's shared address. A WRONG code below is still a 401, and counted.
@@ -448,6 +460,8 @@ app.post('/api/users/login', loginLimiter, validate(loginSchema), async (req, re
         }
       }
       if (!ok) { await noteSignIn(false, user.name); return res.status(401).json({ success: false, needsCode: true, message: 'That code is not right. Check the app and try the newest code.' }); }
+      // The code was right: this device need not be asked again for 30 days.
+      await trustThisDevice(req, res, user);
     }
     if (isMatch) {
       const token = await issueSession(res, user, { userAgent: req.headers['user-agent'] });
@@ -573,7 +587,7 @@ app.put('/api/users/:id', verifyToken, requireUserAdmin, async (req, res) => {
     }
 
     const updated = await User.findByIdAndUpdate(req.params.id, updateData, { returnDocument: 'after' }).select('-password -pinHash -pinFailedCount -pinLockedUntil');
-    if (updateData.password) await revokeUserSessions(req.params.id); // force re-login after password change
+    if (updateData.password) { await revokeUserSessions(req.params.id); await forgetDevices(req.params.id); } // force re-login, and the code on every device, after a password change
     res.json({ success: true, user: updated });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -594,6 +608,7 @@ app.patch('/api/users/:id', verifyToken, requireUserAdmin, async (req, res) => {
     for (const key of ['sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin', 'employeeNumber']) {
       if (req.body[key] !== undefined) updates[key] = String(req.body[key] || '').trim().slice(0, 40);
     }
+    if (typeof req.body.isEmployee === 'boolean') updates.isEmployee = req.body.isEmployee;
     if (req.body.dailyRate !== undefined) {
       const rate = Number(req.body.dailyRate);
       if (!Number.isFinite(rate) || rate < 0 || rate > 1_000_000) return res.status(400).json({ success: false, error: 'Daily rate must be a positive amount.' });
@@ -676,11 +691,55 @@ app.delete('/api/users/:id', verifyToken, requireUserAdmin, async (req, res) => 
 // them somewhere other than the phone.
 const twoStepIssuer = () => process.env.BUSINESS_NAME || process.env.VITE_BUSINESS_NAME || 'Semivra';
 
+// Who may turn it on: accounts with the Owner role. Someone else who already
+// had it on keeps it (and can still turn it off) - it is never silently
+// dropped from an account that asked for it.
+const isOwnerAccount = (u) => String(u?.role || '').toLowerCase() === OWNER_ROLE_NAME.toLowerCase();
+
+// ── TRUSTED DEVICES ──────────────────────────────────────────────────────────
+// After the code is entered once, that device gets a random token in an
+// httpOnly cookie (one per account, so two owners can share a laptop) and the
+// account keeps its sha256. For 30 days that device signs in with the password
+// alone. Turning two-step off, an owner reset, a password change or "Forget
+// all devices" empties the list, so every device is asked again.
+const TRUST_DAYS = 30;
+const MAX_TRUSTED = 10;
+const trustCookie = (u) => `semivra_td_${u._id}`;
+const trustCookieOptions = () => ({ ...refreshCookieOptions(), maxAge: TRUST_DAYS * 86400000 });
+const deviceLabel = (req) => {
+  const ua = String(req.headers['user-agent'] || '');
+  const os = /Android/i.test(ua) ? 'Android' : /iPhone|iPad/i.test(ua) ? 'iPhone/iPad' : /Windows/i.test(ua) ? 'Windows' : /Mac OS/i.test(ua) ? 'Mac' : /Linux/i.test(ua) ? 'Linux' : 'Device';
+  const browser = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'browser';
+  return `${browser} on ${os}`;
+};
+function trustedDeviceOf(req, user) {
+  const raw = req.cookies?.[trustCookie(user)];
+  if (!raw) return null;
+  const hash = hashToken(String(raw));
+  return (user.trustedDevices || []).find(d => d.hash === hash && d.expiresAt > new Date()) || null;
+}
+async function trustThisDevice(req, res, user) {
+  const raw = randomBytes(32).toString('base64url');
+  const now = new Date();
+  const kept = (user.trustedDevices || []).filter(d => d.expiresAt > now).slice(-(MAX_TRUSTED - 1));
+  const entry = { hash: hashToken(raw), label: deviceLabel(req), createdAt: now, lastUsedAt: now, expiresAt: new Date(now.getTime() + TRUST_DAYS * 86400000) };
+  await User.updateOne({ _id: user._id }, { $set: { trustedDevices: [...kept, entry] } });
+  res.cookie(trustCookie(user), raw, trustCookieOptions());
+}
+const forgetDevices = (id) => User.updateOne({ _id: id }, { $set: { trustedDevices: [] } });
+
 app.get('/api/users/me/two-step', verifyToken, requireStaff, async (req, res) => {
   try {
-    const me = await User.findById(req.user._id).select('+totpBackupCodes').lean();
+    const me = await User.findById(req.user._id).select('+totpBackupCodes +trustedDevices').lean();
     if (!me) return res.status(404).json({ success: false, error: 'User not found.' });
-    res.json({ success: true, enabled: !!me.totpEnabled, backupCodesLeft: me.totpEnabled ? (me.totpBackupCodes || []).length : 0 });
+    const mine = trustedDeviceOf(req, me);
+    const devices = (me.trustedDevices || []).filter(d => d.expiresAt > new Date())
+      .map(d => ({ label: d.label, createdAt: d.createdAt, lastUsedAt: d.lastUsedAt, expiresAt: d.expiresAt, thisDevice: !!mine && mine.hash === d.hash }));
+    res.json({
+      success: true, enabled: !!me.totpEnabled, allowed: isOwnerAccount(me), trustDays: TRUST_DAYS,
+      backupCodesLeft: me.totpEnabled ? (me.totpBackupCodes || []).length : 0,
+      trustedDevices: me.totpEnabled ? devices : [],
+    });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
@@ -690,6 +749,7 @@ app.post('/api/users/me/two-step/setup', verifyToken, requireStaff, async (req, 
   try {
     const me = await User.findById(req.user._id);
     if (!me) return res.status(404).json({ success: false, error: 'User not found.' });
+    if (!isOwnerAccount(me)) return res.status(403).json({ success: false, error: 'Two-step sign-in is for Owner accounts.' });
     if (me.totpEnabled) return res.status(409).json({ success: false, error: 'Two-step sign-in is already on. Turn it off first to set it up again.' });
     const secret = newSecret();
     await User.updateOne({ _id: me._id }, { $set: { totpPending: secret } });
@@ -703,12 +763,15 @@ app.post('/api/users/me/two-step/enable', verifyToken, requireStaff, async (req,
   try {
     const me = await User.findById(req.user._id).select('+totpPending');
     if (!me) return res.status(404).json({ success: false, error: 'User not found.' });
+    if (!isOwnerAccount(me)) return res.status(403).json({ success: false, error: 'Two-step sign-in is for Owner accounts.' });
     if (me.totpEnabled) return res.status(409).json({ success: false, error: 'Two-step sign-in is already on.' });
     if (!me.totpPending) return res.status(400).json({ success: false, error: 'Start the setup again.' });
     if (!verifyCode(me.totpPending, req.body?.code)) return res.status(400).json({ success: false, error: 'That code is not right. Check the app shows this account and try the newest code.' });
     const codes = newBackupCodes();
     await User.updateOne({ _id: me._id }, { $set: { totpEnabled: true, totpSecret: me.totpPending, totpPending: '', totpBackupCodes: codes.map(hashBackupCode) } });
     await logAudit(req, { action: 'two-step-enabled', entity: 'User', entityId: me._id, after: { name: me.name } });
+    // The device it was just proven on counts as checked.
+    await trustThisDevice(req, res, { ...me.toObject(), trustedDevices: [] });
     res.json({ success: true, backupCodes: codes });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
@@ -720,7 +783,8 @@ app.post('/api/users/me/two-step/disable', verifyToken, requireStaff, async (req
     const me = await User.findById(req.user._id);
     if (!me) return res.status(404).json({ success: false, error: 'User not found.' });
     if (!req.body?.password || !(await bcrypt.compare(String(req.body.password), me.password))) return res.status(401).json({ success: false, error: 'Your password is incorrect.' });
-    await User.updateOne({ _id: me._id }, { $set: { totpEnabled: false, totpSecret: '', totpPending: '', totpBackupCodes: [] } });
+    await User.updateOne({ _id: me._id }, { $set: { totpEnabled: false, totpSecret: '', totpPending: '', totpBackupCodes: [], trustedDevices: [] } });
+    res.clearCookie(trustCookie(me), { ...trustCookieOptions(), maxAge: undefined });
     await logAudit(req, { action: 'two-step-disabled', entity: 'User', entityId: me._id, after: { name: me.name, by: 'self' } });
     res.json({ success: true });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
@@ -736,9 +800,22 @@ app.post('/api/users/:id/two-step/reset', verifyToken, requireSuperAdmin, async 
     if (!me || !req.body?.confirmPassword || !(await bcrypt.compare(String(req.body.confirmPassword), me.password))) return res.status(401).json({ success: false, error: 'Your password is incorrect.' });
     const target = await User.findById(req.params.id);
     if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
-    await User.updateOne({ _id: target._id }, { $set: { totpEnabled: false, totpSecret: '', totpPending: '', totpBackupCodes: [] } });
+    await User.updateOne({ _id: target._id }, { $set: { totpEnabled: false, totpSecret: '', totpPending: '', totpBackupCodes: [], trustedDevices: [] } });
     await logAudit(req, { action: 'two-step-disabled', entity: 'User', entityId: target._id, after: { name: target.name, by: me.name } });
     res.json({ success: true, name: target.name });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// "Forget all devices": every device - this one too - is asked for the code
+// at its next sign-in. For a lost or shared device.
+app.post('/api/users/me/two-step/forget-devices', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const me = await User.findById(req.user._id).lean();
+    if (!me) return res.status(404).json({ success: false, error: 'User not found.' });
+    await forgetDevices(me._id);
+    res.clearCookie(trustCookie(me), { ...trustCookieOptions(), maxAge: undefined });
+    await logAudit(req, { action: 'two-step-devices-forgotten', entity: 'User', entityId: me._id, after: { name: me.name } });
+    res.json({ success: true });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
@@ -762,6 +839,7 @@ app.patch('/api/users/me/password', verifyToken, requireStaff, async (req, res) 
     // Invalidate all existing sessions (other devices), then re-issue one for the
     // current device so the user who just changed their password stays logged in here.
     await revokeUserSessions(user._id);
+    await forgetDevices(user._id);
     // Re-read: revoking bumped tokenVersion, and a token minted from the copy
     // loaded above would carry the old version and be refused immediately.
     const fresh = await User.findById(user._id);
