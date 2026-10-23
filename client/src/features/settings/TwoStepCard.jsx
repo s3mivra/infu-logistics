@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import QRCode from 'react-qr-code';
+// Named, as everywhere else: the default export is a CommonJS module object
+// in the production build, which React refuses to render (error #130).
+import { QRCode } from 'react-qr-code';
 import { ShieldCheck } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
