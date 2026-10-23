@@ -197,3 +197,47 @@ describe('test send (superadmin only)', () => {
     expect((await M('Settings').findOne({ key: 'mailRemindersSent' }).lean())?.value || {}).toEqual(before);
   });
 });
+
+describe('the mail account, set up in the app (superadmin)', () => {
+  const account = { host: 'smtp.gmail.com', port: 587, user: 'shop@gmail.com', pass: 'abcd efgh ijkl mnop', from: 'Infusions <shop@gmail.com>' };
+
+  it('saves it with the password sealed, and never hands the password back', async () => {
+    setMailTransportForTests(null);
+    expect((await as('get', '/api/mail/status')).body.configured).toBe(false);
+
+    const put = await as('put', '/api/mail/account').send(account);
+    expect(put.status, JSON.stringify(put.body)).toBe(200);
+    expect(JSON.stringify(put.body)).not.toContain('abcd');
+    expect(put.body.account).toMatchObject({ host: 'smtp.gmail.com', user: 'shop@gmail.com', hasPassword: true });
+
+    const stored = (await M('Settings').findOne({ key: 'mailAccount' }).lean()).value;
+    expect(stored.passSealed).toMatch(/^v1\./);
+    expect(JSON.stringify(stored)).not.toMatch(/abcd|efgh/);
+
+    const st = (await as('get', '/api/mail/status')).body;
+    expect(st).toMatchObject({ configured: true, source: 'settings', from: 'Infusions <shop@gmail.com>' });
+    const got = (await as('get', '/api/mail/account')).body;
+    expect(JSON.stringify(got)).not.toContain('abcd');
+  });
+
+  it('a blank password keeps the saved one; bad input is refused', async () => {
+    const before = (await M('Settings').findOne({ key: 'mailAccount' }).lean()).value.passSealed;
+    expect((await as('put', '/api/mail/account').send({ ...account, pass: '', from: 'Infusions Two <shop@gmail.com>' })).status).toBe(200);
+    expect((await M('Settings').findOne({ key: 'mailAccount' }).lean()).value.passSealed).toBe(before);
+    expect((await as('put', '/api/mail/account').send({ ...account, host: 'not a host' })).status).toBe(400);
+    expect((await as('put', '/api/mail/account').send({ ...account, from: 'nobody' })).status).toBe(400);
+    expect((await as('put', '/api/mail/account').send({ ...account, port: 70000 })).status).toBe(400);
+  });
+
+  it('is the superadmin\u2019s alone', async () => {
+    await makeUser({ name: 'acctManager', role: 'staff', permissions: ['settings.manage'] });
+    const mgr = await loginStaff(app, 'acctManager');
+    expect((await as('get', '/api/mail/account', mgr)).status).toBe(403);
+    expect((await as('put', '/api/mail/account', mgr).send(account)).status).toBe(403);
+  });
+
+  it('can be removed, and then nothing is set up', async () => {
+    expect((await as('put', '/api/mail/account').send({ clear: true })).status).toBe(200);
+    expect((await as('get', '/api/mail/status')).body.configured).toBe(false);
+  });
+});

@@ -20,7 +20,8 @@ import { businessDateStr } from '../lib/businessTime.js';
 import { businessClock } from '../lib/salePricing.js';
 import { RECEIVABLE_STATUSES, arBalance } from '../lib/credit.js';
 import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
-import { mailConfigured, sendMail, isEmail, mailFrom } from '../lib/mailer.js';
+import { mailConfigured, sendMail, isEmail, mailFrom, mailSource, setStoredMailConfig } from '../lib/mailer.js';
+import { seal, open } from '../lib/secretBox.js';
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const peso = (n) => `PHP ${r2(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -62,7 +63,7 @@ export default function registerNotify(ctx) {
   const canSet = [verifyToken, requireStaff, requirePermission('settings.manage')];
 
   app.get('/api/mail/status', ...canSet, async (req, res) => {
-    try { res.json({ success: true, configured: mailConfigured(), from: mailConfigured() ? mailFrom() : '', settings: await readSettings() }); }
+    try { res.json({ success: true, configured: mailConfigured(), source: mailSource(), from: mailConfigured() ? mailFrom() : '', settings: await readSettings() }); }
     catch (err) { fail(req, res, err); }
   });
 
@@ -91,6 +92,66 @@ export default function registerNotify(ctx) {
       await Settings.findOneAndUpdate({ key: SETTINGS_KEY }, { key: SETTINGS_KEY, value: next }, { upsert: true });
       try { await logAudit?.(req, { action: 'update', entity: 'MailSettings', entityId: 'mail', before: current, after: next }); } catch { /* non-fatal */ }
       res.json({ success: true, settings: next });
+    } catch (err) { fail(req, res, err); }
+  });
+
+  // ── THE MAIL ACCOUNT (superadmin) ──────────────────────────────────────────
+  // Set up in the app instead of on the server. Kept under 'mailAccount' with
+  // the password sealed (lib/secretBox.js); it never comes back out - the form
+  // only learns whether one is saved. Settings on the server, when present,
+  // still win, and the form says so.
+  const ACCOUNT_KEY = 'mailAccount';
+  const HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+  const readAccount = async () => (await Settings.findOne({ key: ACCOUNT_KEY }).lean())?.value || null;
+  const loadAccount = async () => {
+    const a = await readAccount();
+    const pass = a ? open(a.passSealed) : '';
+    // A password sealed under a rotated JWT_SECRET cannot be opened: treat the
+    // account as not set up rather than sending with a blank password.
+    setStoredMailConfig(a?.host && a?.from && pass !== null ? { host: a.host, port: a.port, user: a.user, pass, from: a.from } : null);
+    return { a, unreadable: !!a?.passSealed && pass === null };
+  };
+  // Once at start-up; again after every change below.
+  loadAccount().catch(err => log?.error?.({ err }, 'Could not load the mail account'));
+  const canAccount = [verifyToken, requireStaff, requireSuperAdmin];
+
+  app.get('/api/mail/account', ...canAccount, async (req, res) => {
+    try {
+      const { a, unreadable } = await loadAccount();
+      res.json({
+        success: true, source: mailSource(), configured: mailConfigured(),
+        account: a ? { host: a.host, port: a.port, user: a.user, from: a.from, hasPassword: !!a.passSealed } : null,
+        passwordUnreadable: unreadable,
+      });
+    } catch (err) { fail(req, res, err); }
+  });
+
+  // Body: { host, port, user, pass?, from } - a blank pass keeps the saved one.
+  // { clear: true } removes the account.
+  app.put('/api/mail/account', ...canAccount, async (req, res) => {
+    try {
+      const b = req.body || {};
+      if (b.clear === true) {
+        await Settings.deleteOne({ key: ACCOUNT_KEY });
+        await loadAccount();
+        try { await logAudit?.(req, { action: 'delete', entity: 'MailAccount', entityId: 'mail' }); } catch { /* non-fatal */ }
+        return res.json({ success: true, account: null, configured: mailConfigured() });
+      }
+      const host = String(b.host || '').trim().toLowerCase();
+      const port = Math.round(Number(b.port || 587));
+      const user = String(b.user || '').trim().slice(0, 200);
+      const from = String(b.from || '').trim().slice(0, 200);
+      if (!HOST.test(host) || host.length > 253) return res.status(400).json({ success: false, error: 'The mail server should look like smtp.gmail.com.' });
+      if (!(port >= 1 && port <= 65535)) return res.status(400).json({ success: false, error: 'The port is a number such as 587 or 465.' });
+      if (/[\r\n]/.test(from) || !isEmail((from.match(/<([^>]+)>/) || [, from])[1])) return res.status(400).json({ success: false, error: 'Send from should be an address, e.g. Infusions <you@gmail.com>.' });
+      const prev = await readAccount();
+      const typed = String(b.pass ?? '').replace(/\s+/g, '');   // Google shows app passwords in groups of four
+      const passSealed = typed ? seal(typed) : (prev?.passSealed || '');
+      if (user && !passSealed) return res.status(400).json({ success: false, error: 'Enter the password for that login.' });
+      await Settings.findOneAndUpdate({ key: ACCOUNT_KEY }, { key: ACCOUNT_KEY, value: { host, port, user, from, passSealed } }, { upsert: true });
+      await loadAccount();
+      try { await logAudit?.(req, { action: 'update', entity: 'MailAccount', entityId: 'mail', after: { host, port, user, from, passwordChanged: !!typed } }); } catch { /* non-fatal */ }
+      res.json({ success: true, account: { host, port, user, from, hasPassword: !!passSealed }, configured: mailConfigured(), source: mailSource() });
     } catch (err) { fail(req, res, err); }
   });
 
@@ -267,7 +328,7 @@ export default function registerNotify(ctx) {
   // "Send now" and the tests; the timer goes through the once-a-day guard.
   async function runDailyMail(now = new Date(), { force = false } = {}) {
     const out = { ran: false, summary: null, lowStock: null, reminders: null, weekly: null, monthly: null };
-    if (!mailConfigured()) return { ...out, reason: 'Email is not set up on this server.' };
+    if (!mailConfigured()) return { ...out, reason: 'Email is not set up yet.' };
     const s = await readSettings();
     const today = businessDateStr(now);
     if (!force) {
@@ -352,7 +413,7 @@ export default function registerNotify(ctx) {
   app.post('/api/mail/test-send', ...canTest, async (req, res) => {
     try {
       const kind = kindOf(req, res); if (!kind) return;
-      if (!mailConfigured()) return res.status(409).json({ success: false, error: 'Email is not set up on this server yet, so nothing can be sent. Preview still works.' });
+      if (!mailConfigured()) return res.status(409).json({ success: false, error: 'Email is not set up yet, so nothing can be sent. Preview still works.' });
       const s = await readSettings();
       if (!s.ownerEmail) return res.status(400).json({ success: false, error: 'Save the owner email first - test copies go there.' });
       const m = await testMessage(kind);

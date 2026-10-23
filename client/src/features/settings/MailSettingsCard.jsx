@@ -4,8 +4,9 @@ import * as ui from '../../shared/ui';
 
 // Email the app sends on its own: the day's summary and low-stock list to the
 // owner, and payment reminders to clients. Each is off until switched on here,
-// and none can run until a mail account is set up on the server - this card
-// says plainly when it is not, instead of offering switches that do nothing.
+// and none can run until a mail account is set up. The superadmin sets that up
+// right here (Mail account, below); everyone else only ever sees whether email
+// is on - none of the technical side.
 const box = 'bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg';
 const call = async (apiFetch, path, method = 'GET', body) => (await apiFetch(path, { method, ...(body ? { body: JSON.stringify(body) } : {}) })).json();
 
@@ -14,6 +15,58 @@ const TEST_KINDS = [
   ['summary', 'Daily summary'], ['lowStock', 'Low-stock alert'], ['weekly', 'Week in review'],
   ['monthly', 'Month in review'], ['reminder', 'Payment reminder'],
 ];
+
+// Superadmin only: the account the app sends from. The password is never
+// shown back - only whether one is saved; leave it blank to keep it.
+function MailAccountForm({ apiFetch, onSaved }) {
+  const [d, setD] = useState(null);
+  const [f, setF] = useState({ host: 'smtp.gmail.com', port: 587, user: '', pass: '', from: '' });
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    try {
+      const r = await call(apiFetch, '/api/mail/account');
+      if (!r.success) return;
+      setD(r);
+      if (r.account) setF({ host: r.account.host, port: r.account.port, user: r.account.user, pass: '', from: r.account.from });
+    } catch { /* stays hidden */ }
+  }, [apiFetch]);
+  useEffect(() => { load(); }, [load]);
+  if (!d) return null;
+  const put = async (body) => {
+    setBusy(true);
+    try {
+      const r = await call(apiFetch, '/api/mail/account', 'PUT', body);
+      if (!r.success) return ui.alert(r.error || 'Could not save.');
+      ui.toast(body.clear ? 'Mail account removed.' : 'Mail account saved.', { tone: 'success' });
+      await load(); onSaved?.();
+    } catch { ui.alert('Network error.'); } finally { setBusy(false); }
+  };
+  const field = (k, label, props = {}) => (
+    <label className="text-[10px] font-bold uppercase tracking-wider text-fg/70 block">{label}
+      <input value={f[k]} onChange={e => setF(x => ({ ...x, [k]: e.target.value }))} className={`${box} w-full mt-1 normal-case tracking-normal`} {...props} /></label>
+  );
+  const saved = d.account;
+  return (
+    <div className="border border-white/10 rounded-xl p-3 space-y-2 bg-white/[0.02]">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-fg/70">Mail account <span className="normal-case tracking-normal font-normal text-fg/60">· superadmin only - the owner does not see this</span></p>
+      {d.source === 'server' && <p className="text-xs text-warning">The server has its own mail settings, and those are used. What you save here applies only if they are removed.</p>}
+      {d.passwordUnreadable && <p className="text-xs text-danger font-bold">The saved password can no longer be read (the server's secret was changed). Type the app password again and save.</p>}
+      <form onSubmit={e => { e.preventDefault(); put({ ...f, port: Number(f.port) || 587 }); }} className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {field('host', 'Mail server', { placeholder: 'smtp.gmail.com', autoComplete: 'off' })}
+        {field('port', 'Port', { type: 'number', min: 1, max: 65535, placeholder: '587' })}
+        {field('user', 'Login (email)', { type: 'email', placeholder: 'you@gmail.com', autoComplete: 'off' })}
+        {field('pass', saved?.hasPassword ? 'App password (saved - leave blank to keep)' : 'App password', { type: 'password', autoComplete: 'new-password', placeholder: saved?.hasPassword ? '••••••••' : 'For Gmail: an app password, not the real one' })}
+        <div className="sm:col-span-2">{field('from', 'Send from', { placeholder: 'Infusions Quarters <you@gmail.com>' })}</div>
+        <div className="sm:col-span-2 flex gap-2 flex-wrap items-center">
+          <button type="submit" disabled={busy} className="bg-brand text-on-brand px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-50">Save account</button>
+          {saved && <button type="button" disabled={busy} onClick={async () => { if (await ui.confirm({ title: 'Remove the mail account?', message: 'The app stops sending email until one is set up again.', confirmLabel: 'Remove' })) put({ clear: true }); }}
+            className="px-3 py-2 rounded-lg border border-danger/40 text-danger hover:bg-danger/10 font-bold text-xs uppercase tracking-wider disabled:opacity-50">Remove</button>}
+          <span className="text-[10px] text-fg/60">Gmail: Google Account → Security → turn on 2-Step Verification → App passwords. Then use "Send a test" below.</span>
+        </div>
+      </form>
+    </div>
+  );
+}
 
 export default function MailSettingsCard({ apiFetch, isSuperAdmin = false }) {
   const [state, setState] = useState(null);
@@ -57,11 +110,12 @@ export default function MailSettingsCard({ apiFetch, isSuperAdmin = false }) {
   return (
     <div className="bg-surface border border-white/10 rounded-2xl p-5 space-y-3">
       <h3 className="text-sm font-black text-fg flex items-center gap-2"><Mail size={16} className="text-brand-text" /> Email</h3>
+      {isSuperAdmin && <MailAccountForm apiFetch={apiFetch} onSaved={load} />}
       {!state.configured ? (
         <p className="text-xs text-fg/80 leading-relaxed">
-          Email is not set up on this server, so the app sends none. To turn it on, whoever looks after the server adds a mail account
-          to its settings (<span className="font-mono">SMTP_HOST</span>, <span className="font-mono">SMTP_USER</span>, <span className="font-mono">SMTP_PASS</span>, <span className="font-mono">MAIL_FROM</span>) and restarts it.
-          Until then, statements can still be sent from your own mail app.
+          {isSuperAdmin
+            ? 'Email is not set up yet. Fill in the mail account above, save, then send a test.'
+            : 'Email is not set up yet, so the app sends none. Ask your administrator to connect a mail account. Until then, statements can still be sent from your own mail app.'}
         </p>
       ) : (
         <p className="text-xs text-fg/70">Sent from <span className="font-bold text-fg/80">{state.from}</span>. Everything below is off until you switch it on.</p>
@@ -113,7 +167,7 @@ export default function MailSettingsCard({ apiFetch, isSuperAdmin = false }) {
               } catch { ui.alert('Network error.'); } finally { setBusy(''); }
             }} className="px-3 py-2 rounded-lg border border-white/15 text-fg/80 hover:bg-white/5 font-bold text-xs uppercase tracking-wider disabled:opacity-50">Preview</button>
             <button type="button" disabled={!!busy || !state.configured || !state.settings.ownerEmail}
-              title={!state.configured ? 'Email is not set up on this server yet' : !state.settings.ownerEmail ? 'Save the owner email first' : ''}
+              title={!state.configured ? 'Set up the mail account above first' : !state.settings.ownerEmail ? 'Save the owner email first' : ''}
               onClick={async () => {
                 setBusy('test-send');
                 try {
@@ -122,7 +176,7 @@ export default function MailSettingsCard({ apiFetch, isSuperAdmin = false }) {
                 } catch { ui.alert('Network error.'); } finally { setBusy(''); }
               }} className="bg-brand text-on-brand px-3 py-2 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-50">Send test to owner</button>
           </div>
-          {!state.configured && <p className="text-xs text-fg/60">Sending needs the mail account on the server; Preview works now.</p>}
+          {!state.configured && <p className="text-xs text-fg/60">Sending needs the mail account above; Preview works now.</p>}
           {preview && (
             <div className="bg-white/5 border border-white/10 rounded-lg p-3 text-xs">
               {preview.empty ? <p className="text-fg/75">{preview.empty}</p> : (
