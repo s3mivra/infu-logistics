@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  // Unit tests only; e2e/ holds Playwright specs (npm run e2e).
+  test: { exclude: ['e2e/**', 'node_modules/**', 'dist/**'] },
   server: {
     host: '0.0.0.0',
     port: 3000
