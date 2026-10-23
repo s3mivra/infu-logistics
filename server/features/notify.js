@@ -4,6 +4,8 @@
 //   the day's summary         to the owner, each evening
 //   low stock                 to the owner, when something has run low
 //   payment reminders         to clients, before and after an invoice is due
+//   the week in review        to the owner, Monday evening, for last Mon-Sun
+//   the month in review       to the owner, on the 1st, for last month
 //
 // The three that send on their own are OFF until switched on in Settings, and
 // none of them can run without a mail account. A client is only ever written
@@ -20,7 +22,17 @@ import { mailConfigured, sendMail, isEmail, mailFrom } from '../lib/mailer.js';
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const peso = (n) => `PHP ${r2(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const SETTINGS_KEY = 'mailSettings';
-const DEFAULTS = { ownerEmail: '', dailySummary: false, lowStock: false, reminders: false, reminderDaysBefore: 3, sendHour: 20 };
+const DEFAULTS = { ownerEmail: '', dailySummary: false, lowStock: false, reminders: false, weeklyReport: false, monthlyReport: false, reminderDaysBefore: 3, sendHour: 20 };
+// Calendar arithmetic on YYYY-MM-DD business dates (noon UTC dodges DST edges).
+const addDays = (str, n) => new Date(Date.parse(`${str}T12:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+const pct = (now, before) => (before > 0 ? `${now >= before ? '+' : ''}${(((now - before) / before) * 100).toFixed(1)}%` : 'n/a');
+// Last Monday-to-Sunday, and last calendar month, as of `today` (weekday 0=Sun).
+// Each returns [from, to, previousFrom, previousTo].
+export const lastWeek = (today, weekday) => { const end = addDays(today, -((weekday + 6) % 7) - 1); return [addDays(end, -6), end, addDays(end, -13), addDays(end, -7)]; };
+export const lastMonth = (today) => {
+  const end = addDays(`${today.slice(0, 8)}01`, -1); const from = `${end.slice(0, 8)}01`;
+  const prevEnd = addDays(from, -1); return [from, end, `${prevEnd.slice(0, 8)}01`, prevEnd];
+};
 // The same client is not reminded again within this many days.
 const REMINDER_GAP_DAYS = 7;
 
@@ -39,6 +51,7 @@ export default function registerNotify(ctx) {
     return {
       ownerEmail: isEmail(v.ownerEmail) ? String(v.ownerEmail).trim() : '',
       dailySummary: v.dailySummary === true, lowStock: v.lowStock === true, reminders: v.reminders === true,
+      weeklyReport: v.weeklyReport === true, monthlyReport: v.monthlyReport === true,
       reminderDaysBefore: days >= 0 && days <= 30 ? days : DEFAULTS.reminderDaysBefore,
       sendHour: hour >= 0 && hour <= 23 ? hour : DEFAULTS.sendHour,
     };
@@ -60,7 +73,7 @@ export default function registerNotify(ctx) {
         if (e && !isEmail(e)) return res.status(400).json({ success: false, error: 'The owner email is not an email address.' });
         next.ownerEmail = e;
       }
-      for (const k of ['dailySummary', 'lowStock', 'reminders']) if (typeof b[k] === 'boolean') next[k] = b[k];
+      for (const k of ['dailySummary', 'lowStock', 'reminders', 'weeklyReport', 'monthlyReport']) if (typeof b[k] === 'boolean') next[k] = b[k];
       if (b.reminderDaysBefore !== undefined) {
         const d = Math.round(Number(b.reminderDaysBefore));
         if (!(d >= 0 && d <= 30)) return res.status(400).json({ success: false, error: 'Remind between 0 and 30 days before the due date.' });
@@ -71,7 +84,7 @@ export default function registerNotify(ctx) {
         if (!(h >= 0 && h <= 23)) return res.status(400).json({ success: false, error: 'The hour must be between 0 and 23.' });
         next.sendHour = h;
       }
-      if ((next.dailySummary || next.lowStock) && !next.ownerEmail) return res.status(400).json({ success: false, error: 'Give the owner email first - that is where the summary and the low-stock list go.' });
+      if ((next.dailySummary || next.lowStock || next.weeklyReport || next.monthlyReport) && !next.ownerEmail) return res.status(400).json({ success: false, error: 'Give the owner email first - that is where the summary and the low-stock list go.' });
       await Settings.findOneAndUpdate({ key: SETTINGS_KEY }, { key: SETTINGS_KEY, value: next }, { upsert: true });
       try { await logAudit?.(req, { action: 'update', entity: 'MailSettings', entityId: 'mail', before: current, after: next }); } catch { /* non-fatal */ }
       res.json({ success: true, settings: next });
@@ -137,12 +150,69 @@ export default function registerNotify(ctx) {
     ].join('\n');
   }
 
+  // ── THE WEEK / MONTH IN REVIEW ─────────────────────────────────────────────
+  // A closed period beside the one before it: what came in, what went out as
+  // discounts and refunds, the best sellers, and what customers still owe.
+  async function periodStats(from, to) {
+    const match = { ...scope, status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: dayStart(from), $lte: dayEnd(to) } };
+    const [tot, top] = await Promise.all([
+      Order.aggregate([{ $match: match }, { $group: { _id: null, total: { $sum: '$total' }, gross: { $sum: '$subtotal' }, discount: { $sum: '$discount' }, refunded: { $sum: { $ifNull: ['$refundedAmount', 0] } }, orders: { $sum: 1 } } }]),
+      Order.aggregate([{ $match: match }, { $unwind: '$items' },
+        { $group: { _id: '$items.name', qty: { $sum: { $ifNull: ['$items.quantity', { $ifNull: ['$items.qty', 1] }] } }, sales: { $sum: { $multiply: [{ $ifNull: ['$items.price', 0] }, { $ifNull: ['$items.quantity', { $ifNull: ['$items.qty', 1] }] }] } } } },
+        { $sort: { sales: -1 } }, { $limit: 5 }]),
+    ]);
+    const t = tot[0] || {};
+    return { total: t.total || 0, gross: t.gross || 0, discount: t.discount || 0, refunded: t.refunded || 0, orders: t.orders || 0, top };
+  }
+
+  async function reviewText(label, from, to, prevFrom, prevTo, now) {
+    const [cur, prev, owed] = await Promise.all([periodStats(from, to), periodStats(prevFrom, prevTo), openReceivables()]);
+    const avg = (p) => (p.orders ? p.total / p.orders : 0);
+    const overdue = owed.filter(o => o.arDueDate && new Date(o.arDueDate) < now);
+    return [
+      `${businessName()} - ${label}, ${from} to ${to}`, '',
+      `Sales: ${peso(cur.total)} from ${cur.orders} order(s)  (${pct(cur.total, prev.total)} vs the period before)`,
+      `Average order: ${peso(avg(cur))}  (was ${peso(avg(prev))})`,
+      `Discounts given: ${peso(cur.discount)}   Refunds: ${peso(cur.refunded)}`, '',
+      cur.top.length ? 'Best sellers:' : 'No sales in this period.',
+      ...cur.top.map((p, i) => `  ${i + 1}. ${p._id || '(unnamed)'} - ${peso(p.sales)} (${r2(p.qty)} sold)`), '',
+      `Customers owe: ${peso(owed.reduce((t, o) => t + arBalance(o), 0))} on ${owed.length} invoice(s), ${overdue.length} overdue`, '',
+      'Open Owner Overview in the app for the full books.',
+    ].join('\n');
+  }
+
+  // One send per period, even across restarts or two servers (same trick as the daily claim).
+  const claim = (key, period) => Settings.updateOne({ key, value: { $ne: period } }, { $set: { key, value: period } }, { upsert: true })
+    .then(r => (r.modifiedCount || r.upsertedCount) > 0, () => false);
+
   async function lowStockText() {
     const low = await lowStockItems();
     if (!low.length) return null;
-    return [`${businessName()} - ${low.length} item(s) are at or below their alert level:`, '',
-      ...low.slice(0, 100).map(i => `- ${i.itemName}${i.itemCode ? ` (${i.itemCode})` : ''}: ${i.stockQty || 0} ${i.unit || ''} left, alert at ${i.lowStockThreshold}`),
-      ...(low.length > 100 ? [`...and ${low.length - 100} more.`] : []), '', 'Reports -> Reorder Forecast suggests what to order.'].join('\n');
+    // Who it was last bought from and at what cost, from the newest PO line for
+    // the item - so the email is a ready shopping list, grouped by supplier.
+    const shown = low.slice(0, 100);
+    const lastBuy = new Map();
+    try {
+      const pos = await mongoose.model('PurchaseOrder').find({ ...scope, 'lines.invId': { $in: shown.map(i => i._id) } }, { supplier: 1, lines: 1, createdAt: 1 })
+        .sort({ createdAt: -1 }).limit(500).lean();
+      for (const po of pos) for (const l of po.lines || []) {
+        const k = String(l.invId || '');
+        if (k && !lastBuy.has(k)) lastBuy.set(k, { supplier: po.supplier || '', unitCost: Number(l.unitCost) || 0, qty: Number(l.orderedQty) || 0 });
+      }
+    } catch { /* the list still goes out without supplier hints */ }
+    const groups = new Map();
+    for (const i of shown) {
+      const lb = lastBuy.get(String(i._id));
+      // Back up to twice the alert level, or the last order size if that is bigger.
+      const suggest = Math.max(0, Math.ceil(Math.max(i.lowStockThreshold * 2 - (i.stockQty || 0), lb?.qty || 0)));
+      const key = lb?.supplier || 'No previous supplier';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(`  - ${i.itemName}${i.itemCode ? ` (${i.itemCode})` : ''}: ${i.stockQty || 0} ${i.unit || ''} left, alert at ${i.lowStockThreshold} -> order about ${suggest}${lb?.unitCost ? ` at ~${peso(lb.unitCost)}` : ''}`);
+    }
+    return [`${businessName()} - ${low.length} item(s) are at or below their alert level.`, 'Suggested order, by last supplier:', '',
+      ...[...groups].flatMap(([sup, lines]) => [`${sup}:`, ...lines, '']),
+      ...(low.length > 100 ? [`...and ${low.length - 100} more.`, ''] : []),
+      'Procurement -> New PO to place it. Reports -> Reorder Forecast has quantities based on actual usage.'].join('\n');
   }
 
   // One email per client with something due soon or overdue, to the address on
@@ -183,7 +253,7 @@ export default function registerNotify(ctx) {
   // Everything that is switched on, once for the business day. `force` is for
   // "Send now" and the tests; the timer goes through the once-a-day guard.
   async function runDailyMail(now = new Date(), { force = false } = {}) {
-    const out = { ran: false, summary: null, lowStock: null, reminders: null };
+    const out = { ran: false, summary: null, lowStock: null, reminders: null, weekly: null, monthly: null };
     if (!mailConfigured()) return { ...out, reason: 'Email is not set up on this server.' };
     const s = await readSettings();
     const today = businessDateStr(now);
@@ -203,6 +273,15 @@ export default function registerNotify(ctx) {
       out.lowStock = text ? await sendMail({ to: s.ownerEmail, subject: `${businessName()}: stock running low`, text }) : { ok: true, nothing: true };
     }
     if (s.reminders) out.reminders = await sendReminders(now, s);
+    const clock = businessClock(now);
+    if (s.weeklyReport && s.ownerEmail && (force || clock.weekday === 1)) {
+      const [from, to, pf, pt] = lastWeek(today, clock.weekday);
+      if (force || await claim('mailLastWeekly', to)) out.weekly = await sendMail({ to: s.ownerEmail, subject: `${businessName()}: week of ${from}`, text: await reviewText('Week in review', from, to, pf, pt, now) });
+    }
+    if (s.monthlyReport && s.ownerEmail && (force || today.endsWith('-01'))) {
+      const [from, to, pf, pt] = lastMonth(today);
+      if (force || await claim('mailLastMonthly', to.slice(0, 7))) out.monthly = await sendMail({ to: s.ownerEmail, subject: `${businessName()}: ${to.slice(0, 7)} month in review`, text: await reviewText('Month in review', from, to, pf, pt, now) });
+    }
     return out;
   }
 

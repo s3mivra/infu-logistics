@@ -2,6 +2,7 @@
 // transport stands in for the mail server, so nothing leaves the machine and
 // every message can be read back.
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { lastWeek, lastMonth } from '../features/notify.js';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
@@ -125,5 +126,37 @@ describe('what goes out on its own each day', () => {
     const run = await as('post', '/api/mail/run-now');
     expect(run.body).toMatchObject({ summary: null, lowStock: null, reminders: null });
     expect(sentMail).toHaveLength(0);
+  });
+});
+
+describe('the week and month in review', () => {
+  it('go to the owner with sales, best sellers and what is owed, once switched on', async () => {
+    await as('put', '/api/mail/settings').send({ ownerEmail: 'owner@example.com', dailySummary: false, lowStock: false, reminders: false, weeklyReport: true, monthlyReport: true });
+    const run = await as('post', '/api/mail/run-now');
+    expect(run.status).toBe(200);
+    expect(run.body.weekly.ok).toBe(true);
+    expect(run.body.monthly.ok).toBe(true);
+    const week = sentMail.find(m => /week of/.test(m.subject));
+    const month = sentMail.find(m => /month in review/.test(m.subject));
+    expect(week.text).toMatch(/Week in review, \d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2}/);
+    expect(month.text).toMatch(/Customers owe/);
+  });
+
+  it('cover last Monday-to-Sunday and last calendar month', async () => {
+    // Wednesday 2026-10-21 -> Mon 12th to Sun 18th; 1 March -> all of February.
+    expect(lastWeek('2026-10-21', 3)).toEqual(['2026-10-12', '2026-10-18', '2026-10-05', '2026-10-11']);
+    expect(lastMonth('2026-03-01')).toEqual(['2026-02-01', '2026-02-28', '2026-01-01', '2026-01-31']);
+  });
+});
+
+describe('the low-stock list', () => {
+  it('groups items by the supplier they were last bought from, with a suggested quantity', async () => {
+    const inv = await M('Inventory').create({ businessType: 'log', itemName: 'MILK', unit: 'L', stockQty: 2, lowStockThreshold: 10, unitCost: 80 });
+    await M('PurchaseOrder').create({ businessType: 'log', poNumber: 'PO-T-1', supplier: 'Dairy Co', status: 'Complete',
+      lines: [{ invId: inv._id, itemName: 'MILK', unit: 'L', orderedQty: 24, unitCost: 85 }] });
+    await as('put', '/api/mail/settings').send({ ownerEmail: 'owner@example.com', lowStock: true, dailySummary: false, reminders: false, weeklyReport: false, monthlyReport: false });
+    await as('post', '/api/mail/run-now');
+    const low = sentMail.find(m => /running low/.test(m.subject));
+    expect(low.text).toMatch(/Dairy Co:\n\s+- MILK.*order about 24 at ~PHP 85\.00/);
   });
 });

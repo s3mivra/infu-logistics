@@ -69,7 +69,9 @@ export default function MailSettingsCard({ apiFetch }) {
       </form>
       <div>
         <Toggle k="dailySummary" title="Daily summary to the owner" desc="Sales today and this month, what customers owe and what is overdue, and what is running low." />
-        <Toggle k="lowStock" title="Low-stock alert to the owner" desc="Only on days something is at or below its alert level." />
+        <Toggle k="lowStock" title="Low-stock alert to the owner" desc="Only on days something is at or below its alert level. Grouped by the supplier each item was last bought from, with a suggested quantity." />
+        <Toggle k="weeklyReport" title="Week in review to the owner" desc="Monday evening: last week's sales against the week before, best sellers, discounts, refunds and what is owed." />
+        <Toggle k="monthlyReport" title="Month in review to the owner" desc="On the 1st: the same review for last month, against the month before." />
         <Toggle k="reminders" title="Payment reminders to clients" desc={`To the email on each client's record, for invoices overdue or due within ${form.reminderDaysBefore} day(s). The same client is not reminded again within a week.`} />
       </div>
       {form.reminders && (
@@ -80,7 +82,7 @@ export default function MailSettingsCard({ apiFetch }) {
         <div className="flex gap-2 flex-wrap pt-1">
           <button type="button" disabled={!!busy || !state.settings.ownerEmail} onClick={() => run('/api/mail/test', d => `A test message was sent to ${d.to}. If it does not arrive in a minute or two, check the spam folder.`)}
             className="px-3 py-2 rounded-lg border border-white/15 text-fg/80 hover:bg-white/5 font-bold text-xs uppercase tracking-wider disabled:opacity-50">Send a test</button>
-          <button type="button" disabled={!!busy} onClick={async () => { if (await ui.confirm({ title: "Send today's emails now?", message: 'Everything switched on above is sent now, including reminders to clients.', confirmLabel: 'Send now' })) run('/api/mail/run-now', d => `Sent. Summary: ${d.summary ? (d.summary.ok ? 'yes' : d.summary.error) : 'off'}. Low stock: ${d.lowStock ? (d.lowStock.nothing ? 'nothing low' : d.lowStock.ok ? 'yes' : d.lowStock.error) : 'off'}. Reminders: ${d.reminders ? `${d.reminders.sent} client(s)` : 'off'}.`); }}
+          <button type="button" disabled={!!busy} onClick={async () => { if (await ui.confirm({ title: "Send today's emails now?", message: 'Everything switched on above is sent now, including reminders to clients.', confirmLabel: 'Send now' })) run('/api/mail/run-now', d => `Sent. Summary: ${d.summary ? (d.summary.ok ? 'yes' : d.summary.error) : 'off'}. Low stock: ${d.lowStock ? (d.lowStock.nothing ? 'nothing low' : d.lowStock.ok ? 'yes' : d.lowStock.error) : 'off'}. Reminders: ${d.reminders ? `${d.reminders.sent} client(s)` : 'off'}. Week: ${d.weekly ? (d.weekly.ok ? 'yes' : d.weekly.error) : 'off'}. Month: ${d.monthly ? (d.monthly.ok ? 'yes' : d.monthly.error) : 'off'}.`); }}
             className="px-3 py-2 rounded-lg border border-white/15 text-fg/80 hover:bg-white/5 font-bold text-xs uppercase tracking-wider disabled:opacity-50">Send today's now</button>
         </div>
       )}
