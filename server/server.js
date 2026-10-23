@@ -75,6 +75,7 @@ import registerChangeRequests from './features/change-requests.js';
 import registerNotifications from './features/notifications.js';
 import registerClients from './features/clients.js';
 import registerHub from './features/hub.js';
+import registerBranchNetwork from './features/branch-network.js';
 import registerInventorySheet from './features/inventory-sheet.js';
 import registerAttachments from './features/attachments.js';
 import registerBudgets from './features/budgets.js';
@@ -3528,6 +3529,7 @@ registerChangeRequests(ctx);
 registerNotifications(ctx);
 registerClients(ctx);
 registerHub(ctx);
+registerBranchNetwork(ctx);
 registerInventorySheet(ctx);
 
 app.use((req, res) => {
