@@ -5,6 +5,7 @@ import { todayStr } from '../../shared/businessDay.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import RangePresets from '../../shared/RangePresets';
 import { useRefreshTick } from '../../shared/refreshBus';
+import BranchNetworkPanel from './BranchNetworkPanel';
 const statusColor = {
   // Awaiting our own approval before the partner is even told about it.
   Requested: 'bg-orange-500/15 text-warning',
@@ -969,6 +970,12 @@ export default function HubTab({ ctx }) {
           )}
         </div>
       )}
+
+      {/* ── Multi-branch: consolidated reports, branch transfers, shared catalog ── */}
+      {partners.some(p => p.status === 'active') || isSuperAdmin ? (
+        <BranchNetworkPanel authFetch={authFetch} partners={partners} inventory={inventory} peso={peso}
+          isSuperAdmin={isSuperAdmin} can={can} fetchERPData={fetchERPData} card={card} input={input} btn={btn} />
+      ) : null}
 
       {/* ── Connect ── */}
       {isSuperAdmin && (
