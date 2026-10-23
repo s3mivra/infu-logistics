@@ -1,18 +1,9 @@
-// Multi-branch: consolidated reports, branch-to-branch stock transfers and the
-// shared product catalog, on top of the hub's existing links.
-//
+// The shared product catalog across linked branches (see lib/branchNetwork.js).
 // Branches find and trust each other exactly as the rest of the hub does - a
-// LinkedBusiness row and its link token (see features/hub.js). The bookkeeping
-// lives in lib/branchNetwork.js; this file is the routes, the calls between
-// branches, and the retry sweep for a partner that was out of reach.
-import { AsyncResource } from 'node:async_hooks';
-import { dayStart, dayEnd } from '../lib/reportRange.js';
-import { businessDateStr } from '../lib/businessTime.js';
+// LinkedBusiness row and its link token (see features/hub.js), which already
+// covers transfers and the consolidated books.
 import { requirePermission as permit } from '../lib/authz.js';
-import {
-  defineBranchModels, createTransfer, approveTransfer, shipTransfer, receiveTransfer, closeTransfer,
-  applyPartnerState, syncPayload, applyCatalog, setPriceOverride, branchReport, mergeBranchReports, httpError,
-} from '../lib/branchNetwork.js';
+import { defineBranchModels, applyCatalog, setPriceOverride, httpError } from '../lib/branchNetwork.js';
 
 const TENANT = (() => {
   const m = (process.env.MONGO_URI || '').match(/\/semivra_([^?/]+)/);
@@ -22,14 +13,14 @@ const TENANT = (() => {
 export default function registerBranchNetwork(ctx) {
   const {
     app, BUSINESS_TYPE, mongoose,
-    LinkedBusiness, Inventory, StockCard, JournalEntry, Order, Product, Settings,
-    verifyToken, requireStaff: requireAuth, requireSuperAdmin,
-    logAudit, acctMeta, log,
+    LinkedBusiness, Product,
+    verifyToken, requireStaff: requireAuth,
+    logAudit, log,
   } = ctx;
-  const { BranchTransfer, CatalogItem, CatalogLink } = defineBranchModels(mongoose.connection);
+  const { CatalogItem, CatalogLink } = defineBranchModels(mongoose.connection);
   const env = {
     conn: mongoose.connection, businessType: BUSINESS_TYPE, self: TENANT,
-    models: { BranchTransfer, CatalogItem, CatalogLink, Inventory, StockCard, JournalEntry, Order, Product: Product || mongoose.model('Product') },
+    models: { CatalogItem, CatalogLink, Product: Product || mongoose.model('Product') },
   };
 
   const fail = (res, err) => {
@@ -60,126 +51,6 @@ export default function registerBranchNetwork(ctx) {
     if (!r.ok) throw Object.assign(new Error(data.error || `Partner returned ${r.status}`), { status: r.status });
     return data;
   }
-
-  // ── Transfers ──────────────────────────────────────────────────────────────
-
-  // Tell the partner our copy's state. Our own step is already committed, so
-  // a failure here only means they are behind: the flag stays up and the
-  // sweep tries again. A partner that answers "no" will not change its mind.
-  async function pushToPartner(doc) {
-    const link = await linkFor(doc.partnerSlug);
-    if (!link) return 'Saved here - the link to that branch is not active, so it has not been told.';
-    try {
-      await partnerFetch(link, '/api/hub/internal/branch-transfer', { method: 'POST', body: syncPayload(doc) });
-      await BranchTransfer.updateOne({ _id: doc._id }, { $set: { partnerSync: false } });
-    } catch (err) {
-      if (err.status >= 400 && err.status < 500) {
-        await BranchTransfer.updateOne({ _id: doc._id }, { $set: { partnerSync: false } });
-        return `Saved here, but ${doc.partnerSlug} did not accept it: ${err.message}`;
-      }
-      scheduleSweep(60_000);
-      return `Saved here. ${doc.partnerSlug} could not be reached (${err.message}) - it will be sent again automatically.`;
-    }
-  }
-
-  const sweepAll = async () => {
-    const behind = await BranchTransfer.find({ businessType: BUSINESS_TYPE, partnerSync: true }).limit(200);
-    for (const doc of behind) await pushToPartner(doc);
-  };
-  // Started outside any request, so it does not inherit a finished transaction.
-  const outside = new AsyncResource('branch-transfer-sweep');
-  let sweepTimer = null;
-  const scheduleSweep = (delayMs) => {
-    if (sweepTimer) return;
-    outside.runInAsyncScope(() => {
-      sweepTimer = setTimeout(() => {
-        sweepTimer = null;
-        if (mongoose.connection.readyState !== 1) return;
-        sweepAll().catch(err => log?.error?.({ err }, 'Branch transfer sweep failed'));
-      }, delayMs);
-      sweepTimer.unref?.();
-    });
-  };
-  setInterval(() => scheduleSweep(0), 10 * 60 * 1000).unref?.();
-
-  app.get('/api/hub/branch-transfers', verifyToken, requireAuth, async (req, res) => {
-    const transfers = await BranchTransfer.find({ businessType: BUSINESS_TYPE }).sort({ createdAt: -1 }).limit(200).lean();
-    res.json({ self: TENANT, transfers });
-  });
-
-  // Body: { partnerSlug, direction: 'send'|'receive', items: [{itemId?|itemCode?|itemName, unit?, qty}], note }
-  app.post('/api/hub/branch-transfers', verifyToken, requireAuth, permit('inventory.manage'), async (req, res) => {
-    try {
-      const { partnerSlug, direction, items, note } = req.body || {};
-      if (!partnerSlug || !(await linkFor(partnerSlug))) throw httpError(404, 'No active link with that branch.');
-      const doc = await createTransfer(env, { partnerSlug, direction, items, note, by: req.user?.name });
-      const warning = await pushToPartner(doc);
-      await audit(req, { action: 'create', entity: 'BranchTransfer', entityId: doc.transferRef, after: { partnerSlug, direction, lines: doc.lines.length } });
-      res.json({ ok: true, transfer: await BranchTransfer.findById(doc._id).lean(), warning });
-    } catch (err) { fail(res, err); }
-  });
-
-  const step = (name, fn, guards) => app.post(`/api/hub/branch-transfers/:ref/${name}`, verifyToken, requireAuth, ...guards, async (req, res) => {
-    try {
-      const doc = await fn(req);
-      const warning = doc.partnerSync ? await pushToPartner(doc) : undefined;
-      await audit(req, { action: name, entity: 'BranchTransfer', entityId: doc.transferRef, after: { status: doc.status, totalValue: doc.totalValue } });
-      res.json({ ok: true, transfer: await BranchTransfer.findById(doc._id).lean(), warning });
-    } catch (err) { fail(res, err); }
-  });
-  const by = (req) => req.user?.name || '';
-  step('approve', (req) => approveTransfer(env, req.params.ref, { by: by(req) }), [requireSuperAdmin]);
-  step('ship', (req) => shipTransfer(env, req.params.ref, { by: by(req) }), [permit('inventory.manage')]);
-  step('receive', (req) => receiveTransfer(env, req.params.ref, { by: by(req), targets: req.body?.targets || {} }), [permit('inventory.manage')]);
-  step('reject', (req) => closeTransfer(env, req.params.ref, { action: 'reject', by: by(req), reason: req.body?.reason }), [requireSuperAdmin]);
-  step('cancel', (req) => closeTransfer(env, req.params.ref, { action: 'cancel', by: by(req), reason: req.body?.reason }), [permit('inventory.manage')]);
-
-  // The partner's copy moved on; mirror it. Who is calling comes from the link
-  // token, never the body.
-  app.post('/api/hub/internal/branch-transfer', requireLinkToken, async (req, res) => {
-    try {
-      const out = await applyPartnerState(env, req.linkedPartner.partnerSlug, req.body || {});
-      res.json({ ok: true, status: out.doc?.status, ignored: out.ignored });
-    } catch (err) { fail(res, err); }
-  });
-
-  // ── Consolidated reports ───────────────────────────────────────────────────
-
-  const parseRange = (q) => {
-    const start = q.start ? dayStart(String(q.start).slice(0, 10)) : dayStart(businessDateStr(new Date(new Date().getFullYear(), new Date().getMonth(), 1)));
-    const end = dayEnd(q.end ? String(q.end).slice(0, 10) : businessDateStr(new Date()));
-    return { start, end };
-  };
-  const ownBranchCode = async () => String((await Settings.findOne({ key: 'branchCode' }).lean())?.value || '').trim().toUpperCase();
-
-  app.get('/api/hub/internal/branch-report', requireLinkToken, async (req, res) => {
-    try {
-      res.json({ tenant: TENANT, branchCode: await ownBranchCode(), ...(await branchReport(env, parseRange(req.query), acctMeta)) });
-    } catch (err) { fail(res, err); }
-  });
-
-  // Sales, P&L and stock value for every linked branch, with the breakdown.
-  // As with the consolidated books, a branch that cannot be reached is named,
-  // never quietly left out of a total presented as complete.
-  app.get('/api/hub/consolidated-report', verifyToken, requireAuth, requireSuperAdmin, async (req, res) => {
-    try {
-      const range = parseRange(req.query);
-      const qs = `start=${businessDateStr(range.start)}&end=${businessDateStr(range.end)}`;
-      const links = await LinkedBusiness.find({ businessType: BUSINESS_TYPE, status: 'active' }).lean();
-      const own = { slug: TENANT, name: 'This Business', self: true, branchCode: await ownBranchCode(), ...(await branchReport(env, range, acctMeta)) };
-      const fetched = await Promise.all(links.map(async (link) => {
-        try {
-          const data = await partnerFetch(link, `/api/hub/internal/branch-report?${qs}`);
-          return { slug: link.partnerSlug, name: link.partnerName || link.partnerSlug, ok: true, branchCode: data.branchCode || '', sales: data.sales, pnl: data.pnl, stock: data.stock };
-        } catch (err) {
-          return { slug: link.partnerSlug, name: link.partnerName || link.partnerSlug, ok: false, error: err.message };
-        }
-      }));
-      const unreachable = fetched.filter(b => !b.ok).map(({ slug, name, error }) => ({ slug, name, error }));
-      const merged = mergeBranchReports([own, ...fetched.filter(b => b.ok).map(({ ok: _ok, ...b }) => b)]);
-      res.json({ success: true, complete: unreachable.length === 0, unreachable, period: range, ...merged });
-    } catch (err) { fail(res, err); }
-  });
 
   // ── Shared catalog ─────────────────────────────────────────────────────────
 

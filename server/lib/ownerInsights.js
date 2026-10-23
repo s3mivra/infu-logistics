@@ -2,7 +2,6 @@
 // the plain-language "what changed" lines, the product profitability ranking,
 // and the 30/60/90-day cash outlook. No DB - the routes feed them rows.
 import { roundMoney } from './money.js';
-import { bucketFor } from './credit.js';
 
 const DAY = 86400000;
 const pct1 = (n) => Math.round(n * 10) / 10;
@@ -136,11 +135,6 @@ export function rankProfitability(rows = [], limit = 5) {
   };
 }
 
-// The share of an open invoice we expect to collect in the next 30 days, by
-// how old it is. Older debt is less likely to arrive - and is never assumed
-// to arrive later instead, which would only flatter the far horizons.
-export const COLLECTION_RATES = { current: 1, d31_60: 0.85, d61_90: 0.6, d90_plus: 0.3 };
-
 /**
  * When the next payrolls fall and how much each will be, from recent runs.
  * `runs` are { payDate, net, status } newest first. Runs already approved but
@@ -169,40 +163,4 @@ export function projectPayroll(runs = [], today, horizonDays = 90) {
     events.push({ date: new Date(next), amount: averageNet, kind: 'payroll', label: 'Expected payroll', projected: true });
   }
   return { events, cadenceDays, averageNet };
-}
-
-/**
- * Walk dated money in and out from today's cash to 30/60/90-day totals, and
- * find the lowest point on the way. `events` are { date, amount, direction:
- * 'in'|'out', kind }.
- */
-export function buildOutlook({ cashNow, events = [], today, horizons = [30, 60, 90] }) {
-  const sorted = [...events].sort((a, b) => a.date - b.date);
-  const dayOf = (d) => Math.max(0, Math.floor((new Date(d).getTime() - today.getTime()) / DAY));
-  const rows = horizons.map(h => {
-    const inside = sorted.filter(e => dayOf(e.date) < h);
-    const sum = (pred) => roundMoney(inside.filter(pred).reduce((s, e) => s + e.amount, 0));
-    const cin = sum(e => e.direction === 'in');
-    const out = { bills: sum(e => e.direction === 'out' && e.kind === 'bill'), payroll: sum(e => e.direction === 'out' && e.kind === 'payroll') };
-    const totalOut = roundMoney(out.bills + out.payroll);
-    return { days: h, in: cin, out: { ...out, total: totalOut }, net: roundMoney(cin - totalOut), endingBalance: roundMoney(cashNow + cin - totalOut) };
-  });
-  let balance = cashNow, lowest = { balance: roundMoney(cashNow), day: 0 };
-  const last = Math.max(...horizons);
-  for (const e of sorted) {
-    const d = dayOf(e.date);
-    if (d >= last) break;
-    balance += e.direction === 'in' ? e.amount : -e.amount;
-    if (balance < lowest.balance - 0.005) lowest = { balance: roundMoney(balance), day: d };
-  }
-  return { horizons: rows, lowest, shortfall: lowest.balance < 0 };
-}
-
-/** Expected collection for one open invoice: { date, amount } or null. */
-export function expectedCollection({ balance, due, createdAt }, today) {
-  if (!(balance > 0)) return null;
-  if (due && new Date(due).getTime() >= today.getTime()) return { date: new Date(due), amount: roundMoney(balance), rate: 1 };
-  const age = Math.floor((today.getTime() - new Date(createdAt || today).getTime()) / DAY);
-  const rate = COLLECTION_RATES[bucketFor(age)];
-  return { date: today, amount: roundMoney(balance * rate), rate };
 }

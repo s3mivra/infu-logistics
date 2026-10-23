@@ -1,10 +1,11 @@
 ﻿import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bell, AlertTriangle, AlertCircle, Info, RefreshCw } from 'lucide-react';
+import { Bell, AlertTriangle, AlertCircle, Info, RefreshCw, ChevronDown } from 'lucide-react';
 import { useDashboard } from '../dashboard/DashboardContext';
 
 // Header bell: one collapsible panel aggregating everything that needs
-// attention, with every row clickable straight through to the offending record.
+// attention, grouped by area (stock, expiry, receivables...), with every row
+// clickable straight through to the offending record.
 //
 // The whole point is that an alert nobody navigates to is an alert nobody acts
 // on - so each item carries `tab`/`sub`/`focusId` from the server and this
@@ -15,6 +16,28 @@ const SEVERITY = {
   warn:     { Icon: AlertTriangle,  dot: 'bg-yellow-500', text: 'text-warning', ring: 'border-yellow-500/30' },
   info:     { Icon: Info,           dot: 'bg-brand',      text: 'text-brand-text',      ring: 'border-brand/30' },
 };
+
+// Groups, so one long list becomes a few short ones. Keyed by the server's
+// `kind`; anything new the server starts sending lands in "Other" rather than
+// disappearing. Order here is the order the sections are shown in.
+export const NOTIF_GROUPS = [
+  { key: 'stock',    label: 'Stock levels',  kinds: ['below_zero', 'low_stock'] },
+  { key: 'expiry',   label: 'Expiry',        kinds: ['expired', 'expiring'] },
+  { key: 'orders',   label: 'Orders',        kinds: ['parked_order'] },
+  { key: 'ar',       label: 'Receivables',   kinds: ['ar_overdue'] },
+  { key: 'purchase', label: 'Purchasing',    kinds: ['po_short', 'po_overdue'] },
+  { key: 'sheets',   label: 'Stock sheets',  kinds: ['sheet_changed', 'sheet_error'] },
+];
+const groupOf = (kind) => NOTIF_GROUPS.find(g => g.kinds.includes(kind))?.key || 'other';
+export function groupNotifications(items = []) {
+  const all = [...NOTIF_GROUPS, { key: 'other', label: 'Other', kinds: [] }];
+  return all
+    .map(g => {
+      const list = items.filter(i => groupOf(i.kind) === g.key);
+      return { ...g, items: list, critical: list.filter(i => i.severity === 'critical').length };
+    })
+    .filter(g => g.items.length > 0);
+}
 
 // How often to refresh while the tab is open. Deliberately slow - none of these
 // signals change second-to-second, and the POS tablet has better things to do.
@@ -29,6 +52,10 @@ export default function NotificationBell({ align = 'right', full = false }) {
   // numbers for the same stock. One feed, read in both places, cannot.
   const { setActiveTab, setLedgerSubTab, setInvSubTab, notifData, notifLoading, loadNotifications } = useDashboard();
   const [open, setOpen] = useState(false);
+  // Which group tab is showing ('all' = every group, in sections), and which
+  // sections are folded away. Both are only for this sitting.
+  const [groupKey, setGroupKey] = useState('all');
+  const [folded, setFolded] = useState({});
   const data = notifData || { items: [], count: 0, criticalCount: 0 };
   const loading = !!notifLoading;
   const panelRef = useRef(null);
@@ -100,6 +127,42 @@ export default function NotificationBell({ align = 'right', full = false }) {
   };
 
   const count = data.count;
+  const groups = groupNotifications(data.items);
+  // A tab whose items have all been dealt with falls back to All.
+  const current = groupKey === 'all' ? null : groups.find(g => g.key === groupKey) || null;
+  const shown = current ? [current] : groups;
+
+  const Row = (item) => {
+    const s = SEVERITY[item.severity] || SEVERITY.info;
+    return (
+      <button
+        key={item.id}
+        onClick={() => go(item)}
+        className="w-full text-left flex items-start gap-3 px-4 py-3 border-b border-white/5 hover:bg-white/5 transition group"
+      >
+        <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${s.dot}`} />
+        <span className="min-w-0 flex-1">
+          <span className={`block text-sm font-bold ${s.text} break-words`}>{item.title}</span>
+          {item.detail && (
+            <span className="block text-fg/70 text-xs mt-0.5 break-words">{item.detail}</span>
+          )}
+        </span>
+        <span className="text-fg/65 group-hover:text-fg/75 text-xs font-black shrink-0 mt-0.5">›</span>
+      </button>
+    );
+  };
+  const tab = (key, label, n, crit) => (
+    <button
+      key={key}
+      onClick={() => setGroupKey(key)}
+      aria-pressed={(current?.key || 'all') === key}
+      className={`shrink-0 px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider border transition min-h-[32px] ${
+        (current?.key || 'all') === key ? 'bg-brand text-on-brand border-brand' : 'bg-white/5 text-fg/80 border-white/10 hover:bg-white/10'
+      }`}
+    >
+      {label} <span className={crit ? 'text-danger' : ''}>{n}</span>
+    </button>
+  );
   const badge = count > 99 ? '99+' : String(count);
 
   return (
@@ -156,6 +219,12 @@ export default function NotificationBell({ align = 'right', full = false }) {
             </button>
           </div>
 
+          {groups.length > 1 && (
+            <div className="flex gap-1.5 px-3 py-2 border-b border-white/10 overflow-x-auto shrink-0" role="toolbar" aria-label="Notification groups">
+              {tab('all', 'All', count, data.criticalCount > 0)}
+              {groups.map(g => tab(g.key, g.label, g.items.length, g.critical > 0))}
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto custom-scrollbar">
             {count === 0 ? (
               <div className="px-4 py-10 text-center">
@@ -163,25 +232,22 @@ export default function NotificationBell({ align = 'right', full = false }) {
                 <p className="text-fg/65 text-xs mt-1">Stock, expiry, A/R and POs all look fine.</p>
               </div>
             ) : (
-              data.items.map((item) => {
-                const s = SEVERITY[item.severity] || SEVERITY.info;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => go(item)}
-                    className="w-full text-left flex items-start gap-3 px-4 py-3 border-b border-white/5 hover:bg-white/5 transition group"
-                  >
-                    <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${s.dot}`} />
-                    <span className="min-w-0 flex-1">
-                      <span className={`block text-sm font-bold ${s.text} break-words`}>{item.title}</span>
-                      {item.detail && (
-                        <span className="block text-fg/70 text-xs mt-0.5 break-words">{item.detail}</span>
-                      )}
-                    </span>
-                    <span className="text-fg/65 group-hover:text-fg/75 text-xs font-black shrink-0 mt-0.5">›</span>
-                  </button>
-                );
-              })
+              shown.map(g => (
+                <section key={g.key} aria-label={g.label}>
+                  {/* Section headers only when several groups share the list. */}
+                  {!current && (
+                    <button
+                      onClick={() => setFolded(f => ({ ...f, [g.key]: !f[g.key] }))}
+                      aria-expanded={!folded[g.key]}
+                      className="w-full flex items-center justify-between px-4 py-2 bg-white/[0.03] border-b border-white/5 text-[10px] font-black uppercase tracking-widest text-fg/70 hover:text-fg sticky top-0 backdrop-blur"
+                    >
+                      <span>{g.label} · {g.items.length}{g.critical > 0 && <span className="text-danger"> · {g.critical} critical</span>}</span>
+                      <ChevronDown size={13} className={`transition ${folded[g.key] ? '-rotate-90' : ''}`} />
+                    </button>
+                  )}
+                  {(current || !folded[g.key]) && g.items.map(Row)}
+                </section>
+              ))
             )}
           </div>
         </div>,

@@ -48,7 +48,7 @@ afterAll(async () => { await ctx.stop(); });
 
 describe('permissions', () => {
   it('keeps every insight behind reports.view', async () => {
-    for (const p of ['/api/insights/what-changed', '/api/insights/product-profitability', '/api/insights/cash-outlook']) {
+    for (const p of ['/api/insights/what-changed', '/api/insights/product-profitability']) {
       expect((await request(app).get(p)).status).toBe(401);
       expect((await as('get', p, staffTok)).status).toBe(403);
     }
@@ -104,7 +104,7 @@ describe('product profitability', () => {
   });
 });
 
-describe('cash outlook', () => {
+describe('the cash forecast', () => {
   it('puts bills, collections and payroll into 30/60/90 days', async () => {
     const client = (await as('post', '/api/client-accounts').send({ username: 'outco', password: 'secret123', name: 'Outlook Co', paymentMethod: 'On Account' })).body.client;
     const owe = (total, over) => M('Order').create({
@@ -125,21 +125,16 @@ describe('cash outlook', () => {
     const run = (payDate, net, status = 'Paid') => M('PayrollRun').create({ businessType: 'log', periodStart: daysAgo(30), periodEnd: payDate, payDate, status, totals: { net } });
     await run(daysAgo(35), 1000); await run(daysAgo(20), 1000); await run(daysAgo(5), 1000);
 
-    const res = await as('get', '/api/insights/cash-outlook');
+    const res = await as('get', '/api/reports/cash-forecast?days=91');
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     const b = res.body;
-    expect(b.horizons.map(h => h.days)).toEqual([30, 60, 90]);
-    const [d30, d60, d90] = b.horizons;
-    expect(b.payroll).toMatchObject({ cadenceDays: 15, averageNet: 1000 });
-    // Payroll on days 10, 25 | 40, 55 | 70, 85.
-    expect([d30.out.payroll, d60.out.payroll, d90.out.payroll]).toEqual([2000, 4000, 6000]);
-    expect([d30.out.bills, d60.out.bills, d90.out.bills]).toEqual([700, 700, 1200]);
-    expect([d30.in, d60.in, d90.in]).toEqual([600, 1600, 1600]);
-    expect(b.receivables).toMatchObject({ total: 3000, notExpected: 1400 });
+    // The ONE forecast now carries payroll: days 10, 25, 40, 55, 70, 85.
+    expect(b.payroll).toMatchObject({ cadenceDays: 15, averageNet: 1000, total: 6000, runs: 6 });
+    expect(b.weeks.reduce((t, w) => t + w.payroll, 0)).toBe(6000);
+    // Each week walks from today's cash by what goes in and out.
+    let bal = b.cashNow;
+    for (const w of b.weeks) { bal = Math.round((bal + w.in - w.out) * 100) / 100; expect(w.balance).toBeCloseTo(bal, 2); }
     expect(b.awaitingApproval).toBe(300);
-    for (const h of b.horizons) expect(h.endingBalance).toBeCloseTo(b.cashNow + h.in - h.out.total, 2);
     expect(b.lowest.balance).toBeLessThanOrEqual(b.cashNow);
-    expect(b.shortfall).toBe(b.lowest.balance < 0);
-    expect(b.upcoming.length).toBeGreaterThan(0);
   });
 });

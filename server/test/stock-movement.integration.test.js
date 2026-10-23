@@ -170,7 +170,8 @@ describe('logistics: whole units', () => {
     for (const r of res.body.rows) expect(Number.isInteger(r.recommend)).toBe(true);
     const syr = res.body.rows.find(r => r.itemCode === 'SYR-2L');
     // 30 bottles over the days it was on sale; enough for 30 + 7 + 3 days, less the 3 on the shelf, rounded UP to a whole bottle.
-    expect(syr.adu).toBeCloseTo(30 / syr.inStockDays, 2);
+    // adu comes back rounded to 2 decimals; allow that rounding, not more.
+    expect(Math.abs(syr.adu - 30 / syr.inStockDays)).toBeLessThanOrEqual(0.0051);
     const st = res.body.settings, horizon = st.coverDays + st.leadTimeDays + st.safetyDays;   // 14 + 7 + 3 by default
     expect(syr.recommend).toBe(Math.ceil((30 / syr.inStockDays) * horizon - 3));
     expect(res.body.rows.find(r => r.itemCode === 'OLD').recommend).toBe(0);           // nothing to buy for dead stock
@@ -214,7 +215,8 @@ describe('logistics: whole units', () => {
     }
     const r = (await as('get', '/api/analytics/stock-movement')).body.rows.find(x => x.itemCode === 'NEG');
     expect(r.outDays).toBe(0);
-    expect(r.adu).toBeCloseTo(60 / r.inStockDays, 2);
+    // adu comes back rounded to 2 decimals; allow that rounding, not more.
+    expect(Math.abs(r.adu - 60 / r.inStockDays)).toBeLessThanOrEqual(0.0051);
     expect(r.inStockDays).toBeGreaterThan(25);                                   // the whole window, not a sliver of it
     expect(r.adu).toBeLessThan(2.5);                                             // ~2 a day, not 60 / a few days
   });

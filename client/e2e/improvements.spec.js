@@ -38,9 +38,10 @@ test('collect once from a client, repeating bills, the closing check, no-cost st
   await page.getByRole('option', { name: new RegExp(buyer) }).first().click();
   await page.getByLabel('Amount received').fill('600');
   await expect(page.getByText('It will settle:')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Collect', exact: true })).toBeDisabled();   // no reference yet
+  // The form's own button: other clients' rows on the page have one too.
+  await expect(page.locator('form').getByRole('button', { name: 'Collect', exact: true })).toBeDisabled();   // no reference yet
   await page.getByLabel('Reference number').fill('OR-7001');
-  await page.getByRole('button', { name: 'Collect', exact: true }).click();
+  await page.locator('form').getByRole('button', { name: 'Collect', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Collect', exact: true }).click();   // the confirmation
   await expect.poll(async () => {
     const ar = await (await request.get(`${API}/api/finance/ar-outstanding`, { headers })).json();
@@ -58,7 +59,10 @@ test('collect once from a client, repeating bills, the closing check, no-cost st
   await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
   await page.getByRole('button', { name: 'Daily Closing Check' }).click();
   await expect(page.getByRole('heading', { name: 'Sold' })).toBeVisible({ timeout: 20000 });
-  await expect(page.getByText('2 completed sale(s)')).toBeVisible();
+  // At least this test's two sales; specs before it share the server and may add more.
+  const sold = page.getByText(/^\d+ completed sale\(s\)$/);
+  await expect(sold).toBeVisible();
+  expect(Number((await sold.textContent()).match(/\d+/)[0])).toBeGreaterThanOrEqual(2);
   await expect(page.getByRole('heading', { name: 'To the bank' })).toBeVisible();
 
   // ── stock with no cost ──

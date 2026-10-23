@@ -12,6 +12,7 @@ import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { RECEIVABLE_STATUSES, arBalance } from '../lib/credit.js';
 import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
+import { projectPayroll } from '../lib/ownerInsights.js';
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -23,7 +24,7 @@ const SALES_TARGETS_KEY = 'salesTargets';
 export default function registerInsights(ctx) {
   const {
     app, IS_PROD, BUSINESS_TYPE, tenantScope, Order, Inventory, StockCard, Settings,
-    Bill, PurchaseOrder, JournalEntry, User, logAudit,
+    Bill, PurchaseOrder, JournalEntry, User, PayrollRun, logAudit,
     verifyToken, requireStaff, requirePermission,
   } = ctx;
   const canView = [requireStaff, requirePermission('reports.view')];
@@ -173,8 +174,10 @@ export default function registerInsights(ctx) {
 
   // ── CASH FLOW FORECAST ─────────────────────────────────────────────────────
   // The next few weeks, from what is already on the books: the cash there is
-  // now, what customers owe and when it falls due, and the supplier bills to
-  // be paid and when. Not a prediction of sales - only money already promised
+  // now, what customers owe and when it falls due, the supplier bills to be
+  // paid and when, and payroll (approved runs, then the usual amount at the
+  // usual gap - see projectPayroll). This is the app's ONE cash forecast; the
+  // Owner Overview card is a summary of this same response. Not a prediction of sales - only money already promised
   // either way. Overdue amounts are counted in the first week, as the money
   // most likely to move next; anything with no due date is shown apart and
   // left out of the weeks, because nothing says when it will move.
@@ -185,7 +188,7 @@ export default function registerInsights(ctx) {
       const today = dayStart(businessDateStr(new Date()));
       const scope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
 
-      const [cashRows, owedRows, billRows] = await Promise.all([
+      const [cashRows, owedRows, billRows, payrollRuns] = await Promise.all([
         JournalEntry.aggregate([
           { $unwind: '$lines' },
           { $match: { 'lines.accountCode': { $regex: '^11' } } },
@@ -195,6 +198,7 @@ export default function registerInsights(ctx) {
           { orderNumber: 1, customerName: 1, total: 1, arPaidAmount: 1, refundedAmount: 1, arDueDate: 1, createdAt: 1 }).limit(5000).lean(),
         Bill.find({ ...scope, status: { $in: ['Pending', 'Approved', 'Partially Paid'] } },
           { billNumber: 1, supplierName: 1, amount: 1, paidAmount: 1, dueDate: 1, status: 1, description: 1 }).limit(5000).lean(),
+        PayrollRun ? PayrollRun.find({ ...scope, status: { $in: ['Approved', 'Paid'] } }, { payDate: 1, status: 1, 'totals.net': 1 }).sort({ payDate: -1 }).limit(6).lean() : [],
       ]);
       // Money that can be spent: cash, bank, e-wallets, petty cash and checks
       // in hand - not the unassigned holding account, nor the heading itself.
@@ -230,12 +234,15 @@ export default function registerInsights(ctx) {
         amount: r2((Number(b.amount) || 0) - (Number(b.paidAmount) || 0)),
       })).filter(x => x.amount > 0);
       for (const x of payables) place(x.amount, x.due, 'out', outSide);
+      // Payroll, inside the window only (projectPayroll stops at its horizon).
+      const payroll = projectPayroll(payrollRuns.map(r => ({ payDate: r.payDate, net: r.totals?.net, status: r.status })), today, weeks * 7 - 1);
+      for (const e of payroll.events) { place(e.amount, e.date, 'out', outSide); grid[weekOf(e.date)].payroll = (grid[weekOf(e.date)].payroll || 0) + e.amount; }
 
       let balance = cashNow, lowest = { balance: cashNow, week: 0 };
       const rows = grid.map((g) => {
         balance = r2(balance + g.in - g.out);
         if (balance < lowest.balance) lowest = { balance, week: g.week };
-        return { ...g, in: r2(g.in), out: r2(g.out), net: r2(g.in - g.out), balance };
+        return { ...g, in: r2(g.in), out: r2(g.out), payroll: r2(g.payroll || 0), net: r2(g.in - g.out), balance };
       });
       const tidy = (t) => Object.fromEntries(Object.entries(t).map(([k, v]) => [k, r2(v)]));
       const byDue = (x, y) => (x.due ? new Date(x.due).getTime() : Infinity) - (y.due ? new Date(y.due).getTime() : Infinity);
@@ -247,6 +254,7 @@ export default function registerInsights(ctx) {
         lowest, shortfall: lowest.balance < 0,
         expectedIn: tidy(inSide), expectedOut: tidy(outSide),
         awaitingApproval: r2(payables.filter(x => x.awaitingApproval).reduce((t, x) => t + x.amount, 0)),
+        payroll: { cadenceDays: payroll.cadenceDays, averageNet: payroll.averageNet, total: r2(payroll.events.reduce((t, e) => t + e.amount, 0)), runs: payroll.events.length },
         receivables: receivables.sort(byDue).slice(0, 100), payables: payables.sort(byDue).slice(0, 100),
       });
     } catch (err) { fail(req, res, err); }

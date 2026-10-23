@@ -11,12 +11,9 @@
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { businessDateStr } from '../lib/businessTime.js';
-import { RECEIVABLE_STATUSES, arBalance } from '../lib/credit.js';
-import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 import { roundMoney } from '../lib/money.js';
 import {
   pctChange, marginOf, explainChanges, costMovers, rankProfitability,
-  projectPayroll, buildOutlook, expectedCollection, COLLECTION_RATES,
 } from '../lib/ownerInsights.js';
 
 const DAY = 86400000;
@@ -26,7 +23,7 @@ const shiftKey = (key, days) => businessDateStr(new Date(dayStart(key).getTime()
 export default function registerOwnerInsights(ctx) {
   const {
     app, IS_PROD, BUSINESS_TYPE, tenantScope, Order, Product, Inventory, AddOn, StockCard,
-    Bill, JournalEntry, PayrollRun, acctMeta, reportLinesForItem,
+    JournalEntry, acctMeta, reportLinesForItem,
     verifyToken, requireStaff, requirePermission,
   } = ctx;
   const canView = [verifyToken, requireStaff, requirePermission('reports.view')];
@@ -161,63 +158,4 @@ export default function registerOwnerInsights(ctx) {
     } catch (err) { fail(req, res, err); }
   });
 
-  // ── CASH OUTLOOK ───────────────────────────────────────────────────────────
-  // Cash on hand now, plus collections we can expect (due dates where set,
-  // otherwise this month at a rate that falls with the invoice's age), less
-  // approved bills by due date (overdue and undated ones now) and payroll at
-  // the usual cycle. Bills still awaiting approval are shown, not counted.
-  app.get('/api/insights/cash-outlook', ...canView, async (req, res) => {
-    try {
-      const today = dayStart(businessDateStr(new Date()));
-      const scope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
-      const [cashRows, owed, bills, runs] = await Promise.all([
-        JournalEntry.aggregate([
-          { $unwind: '$lines' },
-          { $match: { 'lines.accountCode': { $regex: '^11[1-5]' } } },
-          { $group: { _id: null, debit: { $sum: '$lines.debit' }, credit: { $sum: '$lines.credit' } } },
-        ]),
-        Order.find({ ...scope, status: { $in: RECEIVABLE_STATUSES }, paymentMethod: AR_PAYMENT_METHOD_FILTER, isComplimentary: { $ne: true }, arSettled: { $ne: true } },
-          { orderNumber: 1, customerName: 1, total: 1, arPaidAmount: 1, refundedAmount: 1, arDueDate: 1, createdAt: 1 }).limit(5000).lean(),
-        Bill.find({ ...scope, status: { $in: ['Pending', 'Approved', 'Partially Paid'] } },
-          { billNumber: 1, supplierName: 1, amount: 1, paidAmount: 1, dueDate: 1, status: 1 }).limit(5000).lean(),
-        PayrollRun.find({ ...scope, status: { $in: ['Approved', 'Paid'] } }, { payDate: 1, status: 1, 'totals.net': 1 })
-          .sort({ payDate: -1 }).limit(6).lean(),
-      ]);
-      const cashNow = roundMoney(cashRows.reduce((t, r) => t + (r.debit || 0) - (r.credit || 0), 0));
-
-      const events = [];
-      let receivableTotal = 0, doubtful = 0;
-      for (const o of owed) {
-        const balance = arBalance(o);
-        const exp = expectedCollection({ balance, due: o.arDueDate, createdAt: o.createdAt }, today);
-        if (!exp) continue;
-        receivableTotal += balance;
-        doubtful += balance - exp.amount;
-        if (exp.amount > 0) events.push({ date: exp.date, amount: exp.amount, direction: 'in', kind: 'collection', ref: o.orderNumber, name: o.customerName || '' });
-      }
-      let awaitingApproval = 0;
-      for (const b of bills) {
-        const left = roundMoney((Number(b.amount) || 0) - (Number(b.paidAmount) || 0));
-        if (left <= 0) continue;
-        if (b.status === 'Pending') { awaitingApproval += left; continue; }
-        const due = b.dueDate && new Date(b.dueDate) > today ? new Date(b.dueDate) : today;
-        events.push({ date: due, amount: left, direction: 'out', kind: 'bill', ref: b.billNumber, name: b.supplierName || '' });
-      }
-      const payroll = projectPayroll(runs.map(r => ({ payDate: r.payDate, net: r.totals?.net, status: r.status })), today, 90);
-      for (const e of payroll.events) events.push({ ...e, direction: 'out' });
-
-      const outlook = buildOutlook({ cashNow, events, today });
-      const upcoming = events.filter(e => e.date.getTime() < today.getTime() + 90 * DAY)
-        .sort((a, b) => a.date - b.date).slice(0, 50)
-        .map(e => ({ ...e, date: businessDateStr(e.date) }));
-      res.json({
-        success: true, asOf: businessDateStr(today), cashNow, ...outlook,
-        lowest: { ...outlook.lowest, date: businessDateStr(new Date(today.getTime() + outlook.lowest.day * DAY)) },
-        receivables: { total: roundMoney(receivableTotal), notExpected: roundMoney(doubtful), rates: COLLECTION_RATES },
-        awaitingApproval: roundMoney(awaitingApproval),
-        payroll: { cadenceDays: payroll.cadenceDays, averageNet: payroll.averageNet },
-        upcoming,
-      });
-    } catch (err) { fail(req, res, err); }
-  });
 }

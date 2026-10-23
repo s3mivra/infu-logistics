@@ -971,10 +971,9 @@ export default function HubTab({ ctx }) {
         </div>
       )}
 
-      {/* ── Multi-branch: consolidated reports, branch transfers, shared catalog ── */}
+      {/* ── Shared catalog across linked branches ── */}
       {partners.some(p => p.status === 'active') || isSuperAdmin ? (
-        <BranchNetworkPanel authFetch={authFetch} partners={partners} inventory={inventory} peso={peso}
-          isSuperAdmin={isSuperAdmin} can={can} fetchERPData={fetchERPData} card={card} input={input} btn={btn} />
+        <BranchNetworkPanel authFetch={authFetch} partners={partners} peso={peso} can={can} card={card} input={input} btn={btn} />
       ) : null}
 
       {/* ── Connect ── */}

@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 
 // The owner insights under the overview: what changed against the period
-// before (in sentences), which products earn and which do not, and the cash
-// outlook for the next 30/60/90 days. Read-only, from /api/insights/*.
+// before (in sentences), which products earn and which do not, and where cash
+// stands over the next 30/60/90 days. That last card is a summary of the one
+// cash forecast (Reports -> Cash Forecast), never a second calculation.
 const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const TONE = { good: 'text-success', bad: 'text-danger', neutral: 'text-fg/80' };
 const ICON = { good: TrendingUp, bad: TrendingDown, neutral: Minus };
@@ -52,7 +53,7 @@ export default function OwnerInsights({ apiFetch, range }) {
   const q = `start=${range.start}&end=${range.end}`;
   const changed = useInsight(apiFetch, `/api/insights/what-changed?${q}`);
   const profit = useInsight(apiFetch, `/api/insights/product-profitability?${q}`);
-  const cash = useInsight(apiFetch, '/api/insights/cash-outlook');
+  const cash = useInsight(apiFetch, '/api/reports/cash-forecast?days=91');
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
@@ -96,35 +97,37 @@ export default function OwnerInsights({ apiFetch, range }) {
       </Card>
 
       <Card title="Cash outlook">
-        {!cash || cash.error ? <Status d={cash} /> : (
-          <div className="space-y-2">
-            <p className="text-fg/65 text-[11px]">From {peso(cash.cashNow)} today: expected collections, approved bills and payroll.</p>
-            <table className="w-full text-xs tabular-nums">
-              <thead>
-                <tr className="text-fg/60 text-[10px] uppercase tracking-wider">
-                  <th className="text-left font-bold py-1">Days</th><th className="text-right font-bold">In</th>
-                  <th className="text-right font-bold">Out</th><th className="text-right font-bold">Cash after</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cash.horizons.map(h => (
-                  <tr key={h.days} className="border-t border-white/5">
-                    <td className="py-1 text-fg/80 font-bold">{h.days}</td>
-                    <td className="text-right text-success">{peso(h.in)}</td>
-                    <td className="text-right text-fg/80" title={`Bills ${peso(h.out.bills)} · Payroll ${peso(h.out.payroll)}`}>{peso(h.out.total)}</td>
-                    <td className={`text-right font-bold ${h.endingBalance < 0 ? 'text-danger' : 'text-fg'}`}>{peso(h.endingBalance)}</td>
+        {!cash || cash.error ? <Status d={cash} /> : (() => {
+          // Weeks 4, 9 and 13 end nearest to 30, 60 and 90 days out.
+          const at = (n) => cash.weeks[Math.min(n, cash.weeks.length) - 1];
+          const rows = [[30, at(4)], [60, at(9)], [90, at(13)]].filter(([, w]) => w);
+          return (
+            <div className="space-y-2">
+              <p className="text-fg/65 text-[11px]">From {peso(cash.cashNow)} today: what customers owe, bills and payroll as they fall due.</p>
+              <table className="w-full text-xs tabular-nums">
+                <thead>
+                  <tr className="text-fg/60 text-[10px] uppercase tracking-wider">
+                    <th className="text-left font-bold py-1">By</th><th className="text-right font-bold">Cash after</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {cash.shortfall
-              ? <p className="text-[11px] text-danger font-bold">Cash runs short around {cash.lowest.date}, down to {peso(cash.lowest.balance)}.</p>
-              : <p className="text-[11px] text-fg/65">Lowest point: {peso(cash.lowest.balance)} on {cash.lowest.date}.</p>}
-            {cash.payroll.cadenceDays && <p className="text-[11px] text-fg/65">Payroll of about {peso(cash.payroll.averageNet)} every {cash.payroll.cadenceDays} days.</p>}
-            {cash.receivables.notExpected > 0 && <p className="text-[11px] text-fg/65">{peso(cash.receivables.notExpected)} of old receivables is not counted on.</p>}
-            {cash.awaitingApproval > 0 && <p className="text-[11px] text-warning">{peso(cash.awaitingApproval)} in bills awaiting approval is left out.</p>}
-          </div>
-        )}
+                </thead>
+                <tbody>
+                  {rows.map(([d, w]) => (
+                    <tr key={d} className="border-t border-white/5">
+                      <td className="py-1 text-fg/80 font-bold">{d} days <span className="text-fg/50 font-normal">({w.to})</span></td>
+                      <td className={`text-right font-bold ${w.balance < 0 ? 'text-danger' : 'text-fg'}`}>{peso(w.balance)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {cash.shortfall
+                ? <p className="text-[11px] text-danger font-bold">Cash runs short in week {cash.lowest.week}, down to {peso(cash.lowest.balance)}.</p>
+                : <p className="text-[11px] text-fg/65">Lowest point: {peso(cash.lowest.balance)}.</p>}
+              {cash.payroll?.cadenceDays && <p className="text-[11px] text-fg/65">Includes payroll of about {peso(cash.payroll.averageNet)} every {cash.payroll.cadenceDays} days.</p>}
+              {cash.awaitingApproval > 0 && <p className="text-[11px] text-warning">{peso(cash.awaitingApproval)} of it is bills still awaiting approval.</p>}
+              <p className="text-[11px] text-fg/55">Week by week: Reports → Cash Forecast.</p>
+            </div>
+          );
+        })()}
       </Card>
     </div>
   );
