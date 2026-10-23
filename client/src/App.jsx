@@ -29,6 +29,7 @@ function ModeMismatchBanner() {
 import UiProvider from './shared/ui/UiProvider';
 
 const CustomerMenu = lazy(() => import('./features/menu/CustomerMenu'));
+const CustomerDisplay = lazy(() => import('./features/orders/CustomerDisplay'));
 const AdminDashboard = lazy(() => import('./features/dashboard/AdminDashboard'));
 const SuperAdminPanel = lazy(() => import('./features/super-admin/SuperAdminPanel'));
 const QRCodeComponent = lazy(() => import('./features/qr/QRCode'));
@@ -97,6 +98,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/admin" replace />} />
             <Route path="/menu/:table" element={<CustomerMenu />} />
+            <Route path="/display" element={<CustomerDisplay />} />
             <Route path="/admin" element={<AdminDashboard />} />
             <Route path="/admin/admin-panel" element={<SuperAdminPanel />} />
             <Route path="/generate-qr" element={<QRCodeComponent />} />

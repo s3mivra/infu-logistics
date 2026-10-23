@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   canInstall, onInstallAvailabilityChange, promptInstall,
-  getQueuedOrders, flushQueue, getRejectedOrders, dismissRejectedOrder,
+  getQueuedOrders, flushQueue, getRejectedOrders, dismissRejectedOrder, restoreQueueFromIdb,
 } from './pwa';
 
 /* React hook exposing PWA runtime state to components:
@@ -26,6 +26,8 @@ export function usePwa() {
     window.addEventListener('online', goOnline);
     window.addEventListener('offline', goOffline);
     const off = onInstallAvailabilityChange(setInstallable);
+    // Orders localStorage lost (cleared under disk pressure) come back from IndexedDB.
+    restoreQueueFromIdb().then(n => { if (n) setQueuedCount(getQueuedOrders().length); }).catch(() => {});
     return () => {
       window.removeEventListener('online', goOnline);
       window.removeEventListener('offline', goOffline);

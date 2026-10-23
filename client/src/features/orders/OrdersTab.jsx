@@ -4,6 +4,10 @@ import React from 'react';
 import QtyInput from '../../shared/ui/QtyInput';
 import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Footprints, Utensils, ShoppingBag, Bike, Car, UserX, UserCheck, Flame } from 'lucide-react';
 import * as ui from '../../shared/ui';
+import ScanBox from '../../shared/ScanBox';
+import { socket as staffSocket } from '../../shared/staffSocket';
+import { publishCart, displayState, getDisplayCode } from '../../shared/customerDisplay';
+import { lookupBarcode, needsChoice, scannedLine, addScanned } from './barcodeCart';
 
 // Icon-based replacement for a native <select> - browsers can't render custom
 // icons inside native <option> popups, so this is a real dropdown (button +
@@ -145,6 +149,41 @@ export default function OrdersTab({ ctx }) {
     systemSettings = {},
     can,
   } = ctx;
+
+  // Mirror the cart to the customer-facing display (/display).
+  React.useEffect(() => {
+    publishCart(displayState({
+      cart: posCart, subtotal: posSubtotal, total: posGrandTotal, business: BIZ_NAME,
+      discount: Number(posDiscountAmt || 0) + Number(posItemDiscountAmt || 0),
+    }), staffSocket);
+  }, [posCart, posSubtotal, posGrandTotal, posDiscountAmt, posItemDiscountAmt, BIZ_NAME]);
+  const openCustomerDisplay = () => {
+    const code = getDisplayCode();
+    window.open('/display', 'semivra-customer-display', 'popup');
+    ui.alert(`Customer display opened. On another device, open ${window.location.origin}/display?code=${code}`);
+  };
+
+  // A barcode scan rings the item straight up. Several products sharing the
+  // code, or one that needs a size/required option, opens the usual picker so
+  // a person chooses - a scan never guesses a variant.
+  const onBarcodeScan = async (code) => {
+    const r = await lookupBarcode(apiFetch, code);
+    if (r.kind === 'missing') return { ok: false, text: `No product with barcode ${code}.` };
+    if (r.kind === 'error') return { ok: false, text: r.text };
+    if (r.kind === 'ambiguous') {
+      setPosSearch(code); setPosPage(1);
+      setPosSelectedProduct(r.product);
+      return { ok: false, text: `${r.n} products share ${code} - check it is the right one.` };
+    }
+    const p = r.product;
+    if (needsChoice(p, modifierGroups)) {
+      setPosSelectedProduct(p);
+      return { ok: true, text: `${p.name} - choose an option.` };
+    }
+    const department = categories.find(c => c.name === p.category)?.department || DEFAULT_DEPARTMENT;
+    setPosCart(prev => addScanned(prev, scannedLine(p, { department, discountPercent: posBuyerDiscounts?.[p._id] || 0 })));
+    return { ok: true, text: `Added ${p.name}.` };
+  };
 
   // The POS VAT row follows the business's registration in Settings. A non-VAT
   // business has no VAT line to show at all - printing "VAT (0%)" on screen just
@@ -447,6 +486,10 @@ export default function OrdersTab({ ctx }) {
 
                   {/* Search + Category pills */}
                   <div className="px-4 pt-3 pb-2 shrink-0 space-y-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <ScanBox onScan={onBarcodeScan} placeholder="Scan barcode" className="pos-scan" />
+                      <button type="button" onClick={openCustomerDisplay} className="ml-auto px-3 py-2 rounded-lg text-xs font-bold bg-white/5 border border-white/10 text-fg/80 hover:text-fg">Customer display</button>
+                    </div>
                     <div className="relative">
                       <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/65" />
                       <input
