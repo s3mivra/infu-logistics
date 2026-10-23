@@ -26,14 +26,47 @@ const STATUS_TONE = {
   Paid: 'text-success bg-green-400/10',
 };
 
+// `grossPay` here is the BASIC pay typed on the line; `allowances` is extra
+// pay on top. The server stores both and makes gross = basic + extra. `sel`
+// is only this screen's tick for "apply to the ticked lines".
 const blankLine = () => ({
-  employeeName: '', employeeId: '', grossPay: '', sss: '', philhealth: '',
-  pagibig: '', withholdingTax: '', otherDeductions: '', notes: '',
+  employeeName: '', employeeId: '', grossPay: '', allowances: '', sss: '', philhealth: '',
+  pagibig: '', withholdingTax: '', otherDeductions: '', notes: '', sel: false,
 });
 
 const num = (v) => Number(v) || 0;
-const netOf = (l) => num(l.grossPay) - num(l.sss) - num(l.philhealth) - num(l.pagibig)
+const round2 = (n) => Math.round(n * 100) / 100;
+const grossOf = (l) => num(l.grossPay) + num(l.allowances);
+const netOf = (l) => grossOf(l) - num(l.sss) - num(l.philhealth) - num(l.pagibig)
   - num(l.withholdingTax) - num(l.otherDeductions);
+
+// What "Apply to lines" can fill. Extra pay and other deductions ADD to what a
+// line already has (a bonus on top of an allowance); the statutory amounts
+// REPLACE it (a line has one SSS amount). A percent of extra pay is of basic
+// pay; a percent of anything taken off is of gross (basic + extra).
+export const APPLY_TARGETS = [
+  { key: 'allowances',      label: 'Extra pay (allowance / bonus)', mode: 'add', base: 'basic' },
+  { key: 'otherDeductions', label: 'Other deduction',               mode: 'add', base: 'gross' },
+  { key: 'sss',             label: 'SSS',                           mode: 'set', base: 'gross' },
+  { key: 'philhealth',      label: 'PhilHealth',                    mode: 'set', base: 'gross' },
+  { key: 'pagibig',         label: 'Pag-IBIG',                      mode: 'set', base: 'gross' },
+  { key: 'withholdingTax',  label: 'Withholding tax',               mode: 'set', base: 'gross' },
+];
+
+/** The lines after applying one rule: `how` is 'pct' or 'fixed', `scope` 'all' or 'selected'. */
+export function applyToLines(lines, { key, how, value, scope }) {
+  const t = APPLY_TARGETS.find(x => x.key === key);
+  const v = Number(value);
+  if (!t || !(v >= 0)) return lines;
+  return lines.map(l => {
+    if (!String(l.employeeName).trim()) return l;            // a blank row is not an employee yet
+    if (scope === 'selected' && !l.sel) return l;
+    const base = t.base === 'basic' ? num(l.grossPay) : grossOf(l);
+    const amount = round2(how === 'pct' ? base * v / 100 : v);
+    const next = t.mode === 'add' ? round2(num(l[key]) + amount) : amount;
+    return { ...l, [key]: next ? String(next) : '' };
+  });
+}
 
 export default function PayrollTab() {
   const { apiFetch, systemSettings = {} } = useDashboard();
@@ -222,6 +255,14 @@ function DraftModal({ apiFetch, onClose, onDone }) {
   // line to that account, so the payslip carries its numbers; a name typed by
   // hand still works for someone with no login.
   const [employees, setEmployees] = useState([]);
+  const [rule, setRule] = useState({ key: 'allowances', how: 'pct', value: '', scope: 'all' });
+  const applyRule = () => {
+    const target = APPLY_TARGETS.find(t => t.key === rule.key);
+    const touched = lines.filter(l => String(l.employeeName).trim() && (rule.scope === 'all' || l.sel)).length;
+    if (!touched) return ui.alert(rule.scope === 'all' ? 'Add the employees first.' : 'Tick the lines to apply it to.');
+    setLines(prev => applyToLines(prev, rule));
+    ui.toast(`${target.label}: ${rule.how === 'pct' ? `${rule.value}%` : `₱${rule.value}`} ${target.mode === 'add' ? 'added to' : 'set on'} ${touched} line(s).`, { tone: 'success' });
+  };
   useEffect(() => {
     let alive = true;
     apiFetch('/api/payroll/employees').then(r => r.json())
@@ -266,7 +307,7 @@ function DraftModal({ apiFetch, onClose, onDone }) {
     finally { setFilling(false); }
   };
   const totals = lines.reduce((acc, l) => ({
-    gross: acc.gross + num(l.grossPay),
+    gross: acc.gross + grossOf(l),
     net: acc.net + Math.max(0, netOf(l)),
   }), { gross: 0, net: 0 });
 
@@ -285,7 +326,8 @@ function DraftModal({ apiFetch, onClose, onDone }) {
           periodStart, periodEnd, payDate: payDate || periodEnd,
           lines: filled.map(l => ({
             employeeName: l.employeeName, employeeId: l.employeeId,
-            grossPay: num(l.grossPay), sss: num(l.sss), philhealth: num(l.philhealth),
+            basicPay: num(l.grossPay), allowances: num(l.allowances), grossPay: num(l.grossPay),
+            sss: num(l.sss), philhealth: num(l.philhealth),
             pagibig: num(l.pagibig), withholdingTax: num(l.withholdingTax),
             otherDeductions: num(l.otherDeductions), notes: l.notes,
           })),
@@ -299,7 +341,7 @@ function DraftModal({ apiFetch, onClose, onDone }) {
   };
 
   const COLS = [
-    ['grossPay', 'Gross'], ['sss', 'SSS'], ['philhealth', 'PhilHealth'],
+    ['grossPay', 'Basic'], ['allowances', 'Extra'], ['sss', 'SSS'], ['philhealth', 'PhilHealth'],
     ['pagibig', 'Pag-IBIG'], ['withholdingTax', 'Tax'], ['otherDeductions', 'Other'],
   ];
 
@@ -331,10 +373,50 @@ function DraftModal({ apiFetch, onClose, onDone }) {
           </label>
         </div>
 
+        {/* One amount for everyone, or for the ticked lines: a percent of pay or
+            a fixed peso amount. Each cell stays editable afterwards, so anyone
+            who differs is just typed over. */}
+        <div className="flex items-end gap-2 flex-wrap mb-3 p-3 border border-white/10 rounded-lg bg-white/[0.02]">
+          <label className="block">
+            <span className="block text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1">Apply</span>
+            <select className={inputCls} value={rule.key} onChange={e => setRule(r => ({ ...r, key: e.target.value }))}>
+              {APPLY_TARGETS.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1">As</span>
+            <select className={inputCls} value={rule.how} onChange={e => setRule(r => ({ ...r, how: e.target.value }))}>
+              <option value="pct">% of {APPLY_TARGETS.find(t => t.key === rule.key)?.base === 'basic' ? 'basic pay' : 'gross pay'}</option>
+              <option value="fixed">Fixed amount (₱)</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1">{rule.how === 'pct' ? 'Percent' : 'Amount'}</span>
+            <input type="number" min="0" step="0.01" className={`${inputCls} w-28`} value={rule.value} onChange={e => setRule(r => ({ ...r, value: e.target.value }))} placeholder={rule.how === 'pct' ? '10' : '500'} />
+          </label>
+          <label className="block">
+            <span className="block text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1">To</span>
+            <select className={inputCls} value={rule.scope} onChange={e => setRule(r => ({ ...r, scope: e.target.value }))}>
+              <option value="all">All lines</option>
+              <option value="selected">Ticked lines ({lines.filter(l => l.sel && String(l.employeeName).trim()).length})</option>
+            </select>
+          </label>
+          <button onClick={applyRule} disabled={rule.value === '' || (rule.scope === 'selected' && !lines.some(l => l.sel))}
+            className="text-[10px] bg-brand text-on-brand px-3 py-2 rounded-lg font-bold uppercase tracking-wider disabled:opacity-40">Apply</button>
+          <span className="text-[10px] text-fg/65 basis-full">
+            {APPLY_TARGETS.find(t => t.key === rule.key)?.mode === 'add' ? 'Adds to what each line already has.' : 'Replaces what each line has in that column.'}
+          </span>
+        </div>
+
         <div className="overflow-x-auto border border-white/10 rounded-lg">
-          <table className="w-full text-xs min-w-[860px]">
+          <table className="w-full text-xs min-w-[960px]">
             <thead>
               <tr className="text-[9px] font-black uppercase tracking-widest text-fg/70 border-b border-white/10">
+                <th className="w-8 px-2 py-2">
+                  <input type="checkbox" aria-label="Tick every line"
+                    checked={lines.length > 0 && lines.every(l => l.sel)}
+                    onChange={e => setLines(prev => prev.map(l => ({ ...l, sel: e.target.checked })))} />
+                </th>
                 <th className="text-left px-2 py-2">Employee</th>
                 {COLS.map(([k, label]) => <th key={k} className="text-right px-2 py-2">{label}</th>)}
                 <th className="text-right px-2 py-2">Net</th>
@@ -346,6 +428,9 @@ function DraftModal({ apiFetch, onClose, onDone }) {
                 const net = netOf(l);
                 return (
                   <tr key={i} className="border-b border-white/5">
+                    <td className="px-2 py-1.5 text-center">
+                      <input type="checkbox" aria-label={`Tick ${l.employeeName || 'this line'}`} checked={!!l.sel} onChange={e => setLine(i, 'sel', e.target.checked)} />
+                    </td>
                     <td className="px-2 py-1.5">
                       <input className={`${numCls} text-left`} value={l.employeeName} list="payroll-employees"
                         onChange={e => pickName(i, e.target.value)} placeholder="Name" aria-label="Employee" />
@@ -443,7 +528,10 @@ function printPayslip(run, line, settings) {
       { label: 'Amount', key: 'amount', align: 'right', money: true },
     ],
     items: [
-      { desc: 'Gross pay', ref: '', amount: line.grossPay },
+      ...(Number(line.allowances) > 0
+        ? [{ desc: 'Basic pay', ref: '', amount: line.basicPay ?? (Number(line.grossPay) - Number(line.allowances)) },
+           { desc: 'Extra pay (allowances, bonus)', ref: '', amount: line.allowances }]
+        : [{ desc: 'Gross pay', ref: '', amount: line.grossPay }]),
       ...deductions.map(([label, amt, ref]) => ({ desc: `Less: ${label}`, ref: ref || '', amount: amt })),
     ],
     totals: [

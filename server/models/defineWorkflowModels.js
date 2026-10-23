@@ -809,6 +809,11 @@ export default function defineWorkflowModels({ BUSINESS_TYPE, currentBranchCode,
       philhealthNumber: { type: String, default: '' },
       pagibigNumber:    { type: String, default: '' },
       tin:              { type: String, default: '' },
+      // Gross = basic pay + extra pay (allowances, bonuses). Both parts are kept
+      // so the payslip can show them; gross is what the books and every total
+      // use. Older runs have no split: basicPay is null and gross is the basic.
+      basicPay:     { type: Number, default: null },
+      allowances:   { type: Number, default: 0 },
       grossPay:     { type: Number, default: 0 },
       sss:          { type: Number, default: 0 },
       philhealth:   { type: Number, default: 0 },

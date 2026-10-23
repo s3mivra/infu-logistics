@@ -51,7 +51,13 @@ export default function registerPayroll(ctx) {
 
   // One employee's line, with the arithmetic done once and stored.
   function buildLine(raw) {
-    const gross = money(raw?.grossPay);
+    // Basic pay is `basicPay` when the caller sends the split (the draft
+    // screen does), else `grossPay` as it always was. Extra pay is added on
+    // top; a stored line sent back carries basicPay, so it is never added twice.
+    const hasSplit = raw?.basicPay !== undefined && raw?.basicPay !== null && raw?.basicPay !== '';
+    const basic = money(hasSplit ? raw.basicPay : raw?.grossPay);
+    const allowances = Math.max(0, money(raw?.allowances));
+    const gross = money(basic + allowances);
     if (!(gross > 0)) throw new Error(`${raw?.employeeName || 'A line'} needs a gross pay above zero.`);
     if (!String(raw?.employeeName || '').trim()) throw new Error('Every line needs an employee name.');
 
@@ -76,7 +82,7 @@ export default function registerPayroll(ctx) {
       philhealthNumber: String(raw.philhealthNumber || '').trim(),
       pagibigNumber: String(raw.pagibigNumber || '').trim(),
       tin: String(raw.tin || '').trim(),
-      grossPay: gross, sss, philhealth, pagibig, withholdingTax, otherDeductions,
+      basicPay: basic, allowances, grossPay: gross, sss, philhealth, pagibig, withholdingTax, otherDeductions,
       netPay: money(gross - deductions),
       notes: String(raw.notes || '').slice(0, 200),
     };

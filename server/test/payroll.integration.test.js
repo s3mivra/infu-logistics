@@ -250,3 +250,21 @@ describe('employees linked to accounts', () => {
     expect((await auth('get', '/api/payroll/employees')).status).toBe(404);
   }, 30000);
 });
+
+describe('extra pay', () => {
+  it('gross is basic + extra; the payslip keeps both; the books use gross', async () => {
+    const res = await auth('post', '/api/payroll-runs').send({
+      periodStart: '2026-03-01', periodEnd: '2026-03-31', payDate: '2026-04-05',
+      lines: [{ employeeName: 'Ana Cruz', basicPay: 20000, grossPay: 20000, allowances: 2000, sss: 900 }],
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const l = res.body.run.lines[0];
+    expect(l).toMatchObject({ basicPay: 20000, allowances: 2000, grossPay: 22000, netPay: 21100 });
+    expect(res.body.run.totals.gross).toBe(22000);
+  }, 30000);
+
+  it('a line sent the old way (grossPay only) is unchanged', async () => {
+    const res = await draft();
+    expect(res.body.run.lines[0]).toMatchObject({ grossPay: 20000, allowances: 0 });
+  }, 30000);
+});
