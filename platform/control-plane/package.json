@@ -6,7 +6,8 @@
   "description": "Provisions and manages per-client Semivra stacks on a single VPS.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "express": "^4.21.2"

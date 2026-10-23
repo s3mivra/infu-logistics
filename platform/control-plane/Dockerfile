@@ -10,7 +10,7 @@ RUN apk add --no-cache docker-cli docker-cli-compose openssl curl git bash
 WORKDIR /app
 COPY package*.json ./
 RUN npm install --omit=dev
-COPY server.js ./
+COPY server.js billing.js ./
 COPY public ./public
 
 EXPOSE 9000

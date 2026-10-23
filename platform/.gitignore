@@ -7,3 +7,5 @@ tenants-caddy/
 caddy-logs/
 backups/
 .env
+# Written by "Update all apps": what the last update replaced, for rollback.
+update-state.json

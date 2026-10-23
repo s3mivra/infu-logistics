@@ -228,6 +228,7 @@
             you've confirmed the client's payment (bank transfer, GCash, cash, whatever channel they use)
             and are recording it here, for your own reference.
           </p>
+          <div id="billingSummary"></div>
           <div id="billingList"><p class="muted">Loading&hellip;</p></div>
         </div>
       </div>
@@ -402,6 +403,7 @@
       <pre id="um_detail" class="hide" style="max-height:200px"></pre>
       <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end">
         <button class="ghost" id="um_close">Close</button>
+        <button class="ghost" id="um_rollback">Undo last update</button>
         <button id="um_start">Start update</button>
       </div>
     </div>
@@ -1020,8 +1022,35 @@ function monthLabel(ym) {
   return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 }
 
+// Totals and per-client owed/usage, from /api/billing/report. Unpaid months
+// count from each client's setup month up to this one.
+async function loadBillingSummary() {
+  try {
+    const r = await api('/api/billing/report');
+    const peso = (n) => n == null ? '-' : '₱' + Number(n).toLocaleString();
+    const rows = r.tenants.map((t) => `<tr>
+        <td><strong>${esc(t.businessName)}</strong></td>
+        <td>${peso(t.monthlyFee)}</td>
+        <td>${t.unpaidMonths.length ? t.unpaidMonths.map(monthLabel).join(', ') : '<span class="muted">none</span>'}</td>
+        <td><strong>${peso(t.outstanding)}</strong></td>
+        <td class="muted">${t.usage.requests30d != null ? Number(t.usage.requests30d).toLocaleString() : '-'} req · ${t.usage.dbBytes != null ? fmtBytes(t.usage.dbBytes) : '-'} db</td>
+      </tr>`).join('');
+    $('billingSummary').innerHTML = `
+      <div style="display:flex;gap:18px;flex-wrap:wrap;margin:0 0 12px">
+        <div><div class="muted">Monthly recurring</div><strong>${peso(r.totals.monthlyRecurring)}</strong></div>
+        <div><div class="muted">Outstanding</div><strong>${peso(r.totals.outstanding)}</strong></div>
+        <div><div class="muted">Collected to date</div><strong>${peso(r.totals.collected)}</strong></div>
+        <div><div class="muted">Clients with unpaid months</div><strong>${r.totals.unpaidClients}</strong></div>
+      </div>
+      ${r.tenants.length ? `<div style="overflow-x:auto;margin-bottom:14px"><table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr class="muted" style="text-align:left"><th>Client</th><th>Fee</th><th>Unpaid months</th><th>Owed</th><th>Usage (30 days)</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>` : ''}`;
+  } catch (e) { $('billingSummary').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+}
+
 async function loadBilling() {
   $('billingList').innerHTML = '<p class="muted">Loading&hellip;</p>';
+  loadBillingSummary();
   try {
     const { tenants } = await api('/api/tenants');
     if (!tenants.length) { $('billingList').innerHTML = '<p class="muted">No clients yet.</p>'; return; }
@@ -1235,7 +1264,11 @@ async function runUpdateAll() {
       const api_ = t.status?.api || '?', web = t.status?.web || '?';
       return `  ${t.slug}: api ${api_}, web ${web}`;
     });
-    $('um_status').textContent = 'Update complete.';
+    if (applied.rolledBack) {
+      umPhase(3, 'failed');
+      $('um_status').textContent = 'The new version did not start properly, so every app was put back on the previous version. Nothing was lost.';
+      lines.unshift('Rolled back because:', ...(applied.rollback?.reason || []).map((r) => '  ' + r), '', 'Now running:');
+    } else $('um_status').textContent = 'Update complete.';
     $('um_detail').classList.remove('hide');
     const cpNote = applied.controlPlane?.updated ? '\nThis control panel is updating itself too - it will be back in about a minute; reload then.' : '';
     $('um_detail').textContent = (gitNote ? gitNote + '\n' : '') + lines.join('\n') + cpNote;
@@ -1259,6 +1292,21 @@ async function runUpdateAll() {
 $('updateAllBtn').addEventListener('click', openUpdateModal);
 $('um_close').addEventListener('click', closeUpdateModal);
 $('um_start').addEventListener('click', runUpdateAll);
+
+// Manual undo: every app back onto the images it ran before the last update.
+$('um_rollback').addEventListener('click', async () => {
+  if (!confirm('Put every app back on the version it ran before the last update? Apps restart briefly. Data is not touched.')) return;
+  const b = $('um_rollback'); b.disabled = true; $('um_start').disabled = true;
+  $('um_status').textContent = 'Going back to the previous version - apps are restarting…';
+  try {
+    const r = await api('/api/update/rollback', { method: 'POST', body: '{}' });
+    $('um_status').textContent = 'Back on the previous version.';
+    $('um_detail').classList.remove('hide');
+    $('um_detail').textContent = (r.tenants || []).map((t) => `  ${t.slug}: api ${t.status?.api || '?'}, web ${t.status?.web || '?'}`).join('\n');
+    refresh();
+  } catch (e) { $('um_status').textContent = 'Could not go back: ' + e.message; }
+  finally { b.disabled = false; $('um_start').disabled = false; }
+});
 
 $('loginBtn').addEventListener('click', login);
 $('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); });

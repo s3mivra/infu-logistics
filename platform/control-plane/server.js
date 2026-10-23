@@ -7,6 +7,7 @@
 // Never publish it on a public interface, even behind a login form.
 
 import express from 'express';
+import { billingRow, monthRe } from './billing.js';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import crypto from 'node:crypto';
@@ -569,10 +570,66 @@ async function tryGitPull() {
   }
 }
 
+// ── ROLLBACK ──────────────────────────────────────────────────────────────────
+// Before a build replaces them, the running images are tagged :previous. If the
+// update leaves any app unhealthy, /apply puts every tenant back on :previous
+// by itself; /rollback does the same on request. Only the images go back - the
+// pulled code stays on disk, so the next update rebuilds from it (fix forward,
+// or `git reset` by hand). Tenant data is never touched either way.
+const API_IMAGE = 'semivra-api:shared';
+const webImage = (slug) => `semivra-web:${slug}`;
+const prevTag = (img) => img === API_IMAGE ? 'semivra-api:previous' : img.replace(/:([^:]+)$/, ':previous-$1');
+const UPDATE_STATE = () => path.join(PLATFORM_DIR, 'update-state.json');
+const imageExists = (img) => docker(['image', 'inspect', img], { timeout: 30_000 }).then(() => true, () => false);
+const readUpdateState = () => fs.readFile(UPDATE_STATE(), 'utf8').then(JSON.parse, () => ({}));
+const writeUpdateState = async (patch) => fs.writeFile(UPDATE_STATE(), JSON.stringify({ ...(await readUpdateState()), ...patch }, null, 2)).catch(() => {});
+
+async function snapshotImages(slugs) {
+  const saved = [];
+  for (const img of [API_IMAGE, ...slugs.map(webImage)]) {
+    if (await imageExists(img)) { await docker(['tag', img, prevTag(img)], { timeout: 30_000 }); saved.push(img); }
+  }
+  return saved;
+}
+
+async function restoreImages(slugs) {
+  const restored = [];
+  for (const img of [API_IMAGE, ...slugs.map(webImage)]) {
+    if (await imageExists(prevTag(img))) { await docker(['tag', prevTag(img), img], { timeout: 30_000 }); restored.push(img); }
+  }
+  return restored;
+}
+
+// Recreate every tenant onto whatever the current tags point at.
+const recreateAll = (slugs) => Promise.all(slugs.map(async (slug) => {
+  try {
+    await docker([...composeArgs(slug), 'up', '-d'], { timeout: 5 * 60_000 });
+    return { slug, status: await tenantStatus(slug) };
+  } catch (err) {
+    return { slug, error: String(err.stderr || err.message).slice(-1500) };
+  }
+}));
+
+// Wait out the containers' start period: 'starting' is not yet a verdict.
+async function settle(slugs, { timeoutMs = 150_000, everyMs = 5_000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const rows = await Promise.all(slugs.map(async (slug) => ({ slug, status: await tenantStatus(slug) })));
+    const pending = rows.some((r) => [r.status.api, r.status.web].some((v) => ['starting', 'created', 'restarting'].includes(v)));
+    if (!pending || Date.now() > deadline) return rows;
+    await new Promise((r) => setTimeout(r, everyMs));
+  }
+}
+const isHealthy = (st = {}) => [st.api, st.web].every((v) => v === 'healthy' || v === 'running');
+
 app.post('/api/update/prepare', requireAuth, async (req, res) => {
   const slugs = await listSlugs();
   if (slugs.length === 0) return res.status(400).json({ error: 'No tenants to update.' });
   try {
+    // Keep a way back before anything is rebuilt.
+    const commitBefore = await run('git', ['-C', STACK_ROOT, 'rev-parse', '--short', 'HEAD'], { timeout: 30_000 }).then((o) => String(o.stdout).trim(), () => null);
+    const snapshot = await snapshotImages(slugs);
+    await writeUpdateState({ preparedAt: new Date().toISOString(), commitBefore, snapshot, appliedAt: null, rolledBack: false });
     const git = await tryGitPull();
 
     // Build the shared API image ONCE (any tenant's compose produces the same
@@ -606,19 +663,46 @@ app.post('/api/update/apply', requireAuth, async (req, res) => {
   // Recreate all tenants IN PARALLEL. `up -d` (no --build) just swaps
   // containers onto the images built in /prepare — it's fast, so running
   // them concurrently is safe and cuts the restart window significantly.
-  const results = await Promise.all(
-    slugs.map(async (slug) => {
-      try {
-        await docker([...composeArgs(slug), 'up', '-d'], { timeout: 5 * 60_000 });
-        return { slug, status: await tenantStatus(slug) };
-      } catch (err) {
-        return { slug, error: String(err.stderr || err.message).slice(-1500) };
-      }
-    }),
-  );
+  const applied = await recreateAll(slugs);
+  // Then give them their start period. If any app is not healthy, EVERY
+  // tenant goes back on the previous images - they share the API image, so a
+  // half-updated fleet is worse than an un-updated one.
+  let results = LOCAL_MODE ? applied : await settle(slugs);
+  const bad = results.filter((r) => r.error || !isHealthy(r.status));
+  let rollback = null;
+  if (bad.length && !LOCAL_MODE) {
+    const restored = await restoreImages(slugs);
+    if (restored.length) {
+      await recreateAll(slugs);
+      results = await settle(slugs);
+      rollback = { reason: bad.map((r) => `${r.slug}: ${r.error || `api ${r.status.api}, web ${r.status.web}`}`), restored };
+    }
+  }
   const platformServices = await ensurePlatformServices();
-  const selfUpdate = await maybeUpdateControlPlane();
-  res.json({ ok: true, tenants: results, platformServices, controlPlane: selfUpdate });
+  // A rolled-back update leaves the panel on its current version too.
+  const selfUpdate = rollback ? { updated: false, reason: 'rolled back' } : await maybeUpdateControlPlane();
+  await writeUpdateState({ appliedAt: new Date().toISOString(), rolledBack: !!rollback });
+  res.json({ ok: !rollback, tenants: results, rolledBack: !!rollback, rollback, platformServices, controlPlane: selfUpdate });
+});
+
+app.get('/api/update/state', requireAuth, async (_req, res) => {
+  res.json({ ...(await readUpdateState()), canRollback: await imageExists(prevTag(API_IMAGE)) });
+});
+
+// "Undo the last update": every tenant back onto the images it ran before.
+app.post('/api/update/rollback', requireAuth, async (_req, res) => {
+  const slugs = await listSlugs();
+  if (slugs.length === 0) return res.status(400).json({ error: 'No tenants.' });
+  try {
+    const restored = await restoreImages(slugs);
+    if (!restored.length) return res.status(409).json({ error: 'There is no previous version to go back to yet. One is kept from the next update on.' });
+    await recreateAll(slugs);
+    const tenants = LOCAL_MODE ? await Promise.all(slugs.map(async (slug) => ({ slug, status: await tenantStatus(slug) }))) : await settle(slugs);
+    await writeUpdateState({ rolledBackAt: new Date().toISOString() });
+    res.json({ ok: true, restored, tenants });
+  } catch (err) {
+    res.status(500).json({ error: String(err.stderr || err.message).slice(-4000) });
+  }
 });
 
 // Background services added to the platform after it was installed (the
@@ -652,7 +736,7 @@ async function ensurePlatformServices() {
 // after this reply has gone out. The panel reconnects a few seconds later.
 async function maybeUpdateControlPlane() {
   if (LOCAL_MODE) return { updated: false, reason: 'local mode' };
-  const files = ['server.js', 'public/index.html', 'Dockerfile', 'package.json'];
+  const files = ['server.js', 'billing.js', 'public/index.html', 'Dockerfile', 'package.json'];
   let changed = false;
   for (const f of files) {
     const [a, b] = await Promise.all([
@@ -717,7 +801,6 @@ app.patch('/api/tenants/:slug/resources', requireAuth, async (req, res) => {
 // happened and is recording it here, not that money moved through this
 // system. meta.billing = { monthlyFee: number|null, paidMonths: ['YYYY-MM',...] }.
 const currentYearMonth = () => new Date().toISOString().slice(0, 7);
-const monthRe = /^\d{4}-\d{2}$/;
 
 app.patch('/api/tenants/:slug/billing', requireAuth, async (req, res) => {
   const slug = req.params.slug;
@@ -732,6 +815,11 @@ app.patch('/api/tenants/:slug/billing', requireAuth, async (req, res) => {
         return res.status(400).json({ error: 'monthlyFee must be a non-negative number.' });
       }
       billing.monthlyFee = fee;
+    }
+    if (req.body?.billFrom !== undefined) {
+      const from = req.body.billFrom;
+      if (from !== null && from !== '' && !monthRe.test(from)) return res.status(400).json({ error: 'billFrom must be YYYY-MM.' });
+      billing.billFrom = from || null;
     }
     await fs.writeFile(tenantMetaPath(slug), JSON.stringify({ ...meta, billing }, null, 2));
     res.json({ ok: true, billing });
@@ -775,6 +863,33 @@ app.post('/api/tenants/:slug/billing/unmark-paid', requireAuth, async (req, res)
 // tenants explicitly created with the test-tenant flag on (see POST
 // /api/tenants above). Results are saved as JSON under
 // platform/tenants/<slug>/testlab-runs/ and listed via GET .../testlab/runs.
+
+// What each client owes and uses: every month billed since setup (or billFrom)
+// that is not marked paid, beside the last 30 days of load. See billing.js.
+app.get('/api/billing/report', requireAuth, async (_req, res) => {
+  try {
+    const slugs = await listSlugs();
+    const sinceMs = Date.now() - 30 * 24 * 3600_000;
+    const [dbs, egress, metas] = await Promise.all([
+      readDbSizes(slugs).catch(() => ({})),
+      Promise.all(slugs.map((s) => readEgress(s, sinceMs).catch(() => ({ bytes: null, requests: null })))),
+      Promise.all(slugs.map((s) => readMeta(s))),
+    ]);
+    const thisMonth = currentYearMonth();
+    const tenants = slugs.map((slug, i) => {
+      const meta = metas[i] || {};
+      const db = dbs[slug];
+      return {
+        slug, businessName: meta.businessName || slug, ...billingRow(meta, thisMonth),
+        usage: { dbBytes: db ? (db.storageSize || 0) + (db.indexSize || 0) : null, requests30d: egress[i].requests, egressBytes30d: egress[i].bytes, memMb: meta.memMb ?? MEM_MB_DEFAULT },
+      };
+    });
+    const sum = (k) => tenants.reduce((t, r) => t + (r[k] || 0), 0);
+    res.json({ month: thisMonth, tenants, totals: { monthlyRecurring: sum('monthlyFee'), outstanding: sum('outstanding'), collected: sum('collected'), unpaidClients: tenants.filter((t) => t.unpaidMonths.length).length } });
+  } catch (err) {
+    res.status(500).json({ error: String(err.message).slice(-2000) });
+  }
+});
 
 app.get('/api/tenants/:slug/testlab/runs', requireAuth, requireTestTenant, async (req, res) => {
   res.json({ runs: await listTestlabRuns(req.params.slug) });
