@@ -3,6 +3,7 @@ import { RefreshCw, ChevronRight } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import RangePresets from '../../shared/RangePresets';
 import { presetRange, matchPreset, RANGE_PRESETS } from '../../shared/businessDay.js';
+import OwnerInsights from './OwnerInsights';
 
 // What a business owner opens the app to find out, on one page: how sales are
 // going, whether the month is making money, where the cash is, who owes the
@@ -166,6 +167,8 @@ export default function OwnerOverview({ apiFetch, go, can }) {
           <Line label="Running low" value={`${stock.low} item(s)`} tone={stock.low > 0 ? 'text-warning' : 'text-fg/80'} />
         </Card>
       </div>
+
+      {can('reports.view') && <OwnerInsights apiFetch={apiFetch} range={range} />}
 
       <Card title={`Waiting for a decision (${waitingTotal})`} onOpen={open('approvals')}>
         {waitingTotal === 0 ? <p className="text-fg/70 text-xs">Nothing is waiting.</p> : (
