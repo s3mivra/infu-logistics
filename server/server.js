@@ -2531,6 +2531,25 @@ io.on('connection', (socket) => {
   // handshake already placed them correctly above.
   socket.on('joinRoom', () => { /* intentionally no-op; rooms are server-decided */ });
 
+  // Customer-facing display on a second device. The till picks a random
+  // pairing code; the display joins that code's room with no sign-in (it shows
+  // only the cart being rung up). Only a signed-in staff connection may
+  // publish, so a stranger who guesses a code can watch but never write.
+  const displayRoom = (code) => {
+    const c = String(code || '').trim();
+    return /^[A-Za-z0-9]{6,32}$/.test(c) ? `display:${c}` : null;
+  };
+  socket.on('display:join', (code) => {
+    const room = displayRoom(code);
+    if (room) socket.join(room);
+  });
+  socket.on('display:cart', (msg) => {
+    if (!user || user.aud === 'client' || role === 'client') return;
+    const room = displayRoom(msg?.code);
+    if (!room || JSON.stringify(msg?.state || null).length > 50_000) return;
+    socket.to(room).emit('display:cart', msg.state);
+  });
+
   socket.on('updateOrderStatus', async () => { /* stub - HTTP PUT handles all mutations */ });
 
   socket.on('disconnect', () => {

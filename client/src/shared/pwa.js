@@ -131,13 +131,68 @@ function askToPersist() {
   try { globalThis.navigator?.storage?.persist?.().catch(() => {}); } catch { /* not supported */ }
 }
 
+// ── IndexedDB copy of the offline order queue ────────────────────────────────
+// localStorage stays the working copy (synchronous, so a sale is queued before
+// the checkout handler returns), but it is small and the first thing a browser
+// clears. Every queued order is also written to IndexedDB, and on start-up
+// anything there that localStorage lost is put back. Entries keep their id,
+// which is the Idempotency-Key the server dedupes on, so restoring an order
+// that did in fact reach the server replays the original sale - never a second.
+const IDB_NAME = 'semivra_offline';
+const IDB_STORE = 'orders';
+let _idb = null;
+function openIdb() {
+  if (_idb) return _idb;
+  _idb = new Promise((resolve) => {
+    try {
+      const idb = globalThis.indexedDB;
+      if (!idb) return resolve(null);
+      const req = idb.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => { req.result.createObjectStore(IDB_STORE, { keyPath: 'id' }); };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+  return _idb;
+}
+async function idbDo(mode, fn) {
+  const db = await openIdb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, mode);
+      const out = fn(tx.objectStore(IDB_STORE));
+      tx.oncomplete = () => resolve(out?.result ?? true);
+      tx.onerror = tx.onabort = () => resolve(null);
+    } catch { resolve(null); }
+  });
+}
+function idbPut(entry) { return idbDo('readwrite', st => { st.put(entry); }); }
+function idbDelete(ids) { return idbDo('readwrite', st => { ids.forEach(id => st.delete(id)); }); }
+
+// Put back any queued order localStorage lost. Returns how many came back.
+export async function restoreQueueFromIdb() {
+  const all = await idbDo('readonly', st => st.getAll());
+  if (!Array.isArray(all) || !all.length) return 0;
+  const queue = getQueuedOrders();
+  const rejected = new Set(getRejectedOrders().map(e => e.id));
+  const have = new Set(queue.map(e => e.id));
+  const back = all.filter(e => !have.has(e.id) && !rejected.has(e.id));
+  if (!back.length) return 0;
+  const merged = [...queue, ...back].sort((a, b) => (a.queuedAt || 0) - (b.queuedAt || 0));
+  localStorage.setItem(QUEUE_KEY, JSON.stringify(merged));
+  return back.length;
+}
+
 export function queueOrder(payload, id) {
   askToPersist();
   const queue = getQueuedOrders();
   const entryId = id || `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   if (queue.some(e => e.id === entryId)) return queue.length; // already queued - don't double
-  queue.push({ id: entryId, payload, queuedAt: Date.now() });
+  const entry = { id: entryId, payload, queuedAt: Date.now() };
+  queue.push(entry);
   localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+  idbPut(entry);
   return queue.length;
 }
 
@@ -192,6 +247,7 @@ export async function flushQueue(sender) {
     // Re-read: anything queued during the awaits above is still there.
     const now = getQueuedOrders().filter(e => !settled.has(e.id));
     localStorage.setItem(QUEUE_KEY, JSON.stringify(now));
+    if (settled.size) await idbDelete([...settled]);
     if (refused.length) {
       localStorage.setItem(REJECTED_KEY, JSON.stringify([...getRejectedOrders(), ...refused]));
     }
