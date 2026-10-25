@@ -10,7 +10,7 @@ import { bootApp, makeUser, makeClient, loginStaff, loginClient } from './helper
 
 let ctx, app;
 const T = {};            // role tokens
-let clientTok;
+let _clientTok;
 const ids = {};          // captured resource ids
 
 const req = (m, p, tok) => {
@@ -29,7 +29,7 @@ beforeAll(async () => {
     T[k] = await loginStaff(app, `fc_${k}`);
   }
   await makeClient({ username: 'fc_client', paymentMethod: 'Bank Transfer' });
-  clientTok = await loginClient(app, 'fc_client');
+  _clientTok = await loginClient(app, 'fc_client');
 
   const Inventory = mongoose.model('Inventory');
   const Product = mongoose.model('Product');

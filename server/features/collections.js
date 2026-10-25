@@ -325,7 +325,7 @@ export default function registerCollections(ctx) {
     try {
       const found = await findCheck(req, res);
       if (!found) return;
-      const { order, payment } = found;
+      const { payment } = found;
       if ((payment.checkStatus || 'On Hand') !== 'On Hand')
         return res.status(400).json({ success: false, error: `Only a check On Hand can be deposited (currently ${payment.checkStatus}).` });
 
@@ -355,7 +355,7 @@ export default function registerCollections(ctx) {
     try {
       const found = await findCheck(req, res);
       if (!found) return;
-      const { order, payment } = found;
+      const { payment } = found;
       if (!['On Hand', 'Deposited'].includes(payment.checkStatus || 'On Hand'))
         return res.status(400).json({ success: false, error: `Check is already ${payment.checkStatus}.` });
 

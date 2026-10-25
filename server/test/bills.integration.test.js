@@ -6,7 +6,7 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 
-let ctx, app, tok, supplierId, inv, prod;
+let ctx, app, tok, supplierId, inv, _prod;
 const auth = (method, path, token) => request(app)[method](path).set('Authorization', `Bearer ${token}`);
 
 beforeAll(async () => {
@@ -23,7 +23,7 @@ beforeAll(async () => {
   const supplier = await Supplier.create({ name: 'Acme Supplies', supplierCode: 'SUP-TEST-1' });
   supplierId = String(supplier._id);
   inv = await Inventory.create({ itemName: 'Widget', itemCode: 'WID-1', stockQty: 100, unit: 'pcs', unitCost: 5 });
-  prod = await Product.create({ name: 'Widget', category: 'BillsCat', basePrice: 20, baseRecipe: [] });
+  _prod = await Product.create({ name: 'Widget', category: 'BillsCat', basePrice: 20, baseRecipe: [] });
 }, 120000);
 
 afterAll(async () => { await ctx.stop(); });

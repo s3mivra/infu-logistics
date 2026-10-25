@@ -26,7 +26,6 @@ export default function registerPriceTiers(ctx) {
     Product,
     verifyToken,
     requireStaff,
-    requireSuperAdmin,
     Settings,
   } = ctx;
 

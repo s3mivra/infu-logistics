@@ -5,7 +5,6 @@
 // accounts, receivables and credit settings together. Composing that in the UI
 // meant matching rows by NAME, which breaks the moment two clients share one.
 // Here everything is keyed by account id.
-/* eslint-disable no-unused-vars */
 import { roundMoney } from '../lib/money.js';
 import { ageingBuckets, resolveCreditLimit, withArBalance, DEFAULT_CREDIT_MODE, isReceivableStatus } from '../lib/credit.js';
 

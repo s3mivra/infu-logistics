@@ -7,7 +7,7 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 
-let app, stop, superToken, cashierToken, invAId, invBId, productAId, productBId;
+let app, stop, superToken, cashierToken, invAId, _invBId, productAId, productBId;
 
 const auth = (t) => ({ Authorization: `Bearer ${t}` });
 
@@ -32,7 +32,7 @@ beforeAll(async () => {
     itemCode: 'PR-WIDGET-B', itemName: 'Widget Beta', stockQty: 1000, unit: 'pcs',
     unitCost: 20, displayUnit: 'pcs', unitMultiplier: 1, packSize: 1, businessType: 'log',
   });
-  invBId = String(invB._id);
+  _invBId = String(invB._id);
   const prodB = await request(app).post('/api/products').set(auth(superToken))
     .send({ name: 'Widget Beta', category: 'Dry Goods', basePrice: 50 });
   productBId = prodB.body.product._id;

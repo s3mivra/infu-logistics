@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import mongoose from 'mongoose';
-import { code } from '../lib/normalize.js';
+import { } from '../lib/normalize.js';
 
 // Database definitions: categories, products, add-ons, combos, promotions and orders.
 // Moved out of server.js as it was. It is called once, at the same point in

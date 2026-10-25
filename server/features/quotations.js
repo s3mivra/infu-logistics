@@ -19,7 +19,7 @@ import { dayStart, dayEnd } from '../lib/reportRange.js';
 export default function registerQuotations(ctx) {
   const {
     app, mongoose, IS_PROD, log, BUSINESS_TYPE, tenantScope, logAudit,
-    Quotation, ClientAccount, Product, Order,
+    Quotation, ClientAccount, Order,
     mkSeqRef, currentBranchCode, emitToMgr,
     verifyToken, requireStaff, requirePermission, verifyClientToken,
   } = ctx;

@@ -14,7 +14,7 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 // Fixture resets may clear journal entries, which are otherwise append-only.
-import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
+import { } from '../lib/ledgerGuard.js';
 
 let ctx, app, tok;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);

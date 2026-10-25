@@ -2,7 +2,7 @@
 // ScheduledShiftSchema comment in server.js for why this is separate from the
 // cash-drawer `Shift` and attendance `ClockEntry` records.
 import { captureError } from '../lib/errorLog.js';
-import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
+import { businessDateStr } from '../lib/businessTime.js';
 
 export default function registerScheduling(ctx) {
   const {

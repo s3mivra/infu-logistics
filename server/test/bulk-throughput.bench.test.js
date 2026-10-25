@@ -125,15 +125,10 @@ describe('bulk throughput at onboarding volumes', () => {
       }, null, 2));
     }
 
-    // eslint-disable-next-line no-console
     console.log('\n===== BULK THROUGHPUT =====');
-    // eslint-disable-next-line no-console
     console.table(report);
-    // eslint-disable-next-line no-console
     console.log('===== STORAGE AFTER =====');
-    // eslint-disable-next-line no-console
     console.table(sizes);
-    // eslint-disable-next-line no-console
     console.log(`DB dataSize: ${Math.round((stats.dataSize || 0) / 1024)} KB, storageSize: ${Math.round((stats.storageSize || 0) / 1024)} KB\n`);
 
     expect(report.length).toBeGreaterThan(0);

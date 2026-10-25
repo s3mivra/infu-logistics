@@ -52,7 +52,6 @@ describe('accounting.view - reading the books', () => {
 });
 
 describe('accounting.manage - posting to the books', () => {
-  const entry = { date: new Date().toISOString(), memo: 't', lines: [] };
   it('finance & superadmin may POST /api/expenses; admin & granted-viewer may not', async () => {
     notForbidden((await request(app).post('/api/expenses').set(auth(superT)).send({})).status);
     notForbidden((await request(app).post('/api/expenses').set(auth(financeT)).send({})).status);

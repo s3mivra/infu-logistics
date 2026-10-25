@@ -398,7 +398,7 @@ export default function registerStockMovement(ctx) {
       const out = await computeMovement(req, req.query);
       if (out.error) return res.status(out.status).json({ success: false, error: out.error });
       // baseUnits is for the Suggested PO only.
-      res.json({ success: true, ...out, rows: out.rows.map(({ baseUnits, ...r }) => r) });
+      res.json({ success: true, ...out, rows: out.rows.map(({ ...r }) => r) });
     } catch (err) { fail(req, res, err); }
   });
 }

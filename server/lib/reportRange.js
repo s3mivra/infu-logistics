@@ -10,24 +10,6 @@ import { businessDayStart, businessDayEnd } from './businessTime.js';
 export const DEFAULT_MAX_RANGE_DAYS = 92;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-// Parse a report date to the START of that day in the SERVER'S LOCAL timezone.
-//
-// WHY this exists: `new Date('2026-07-26')` is parsed by JS as UTC midnight,
-// but `.setHours()` operates in local time. Mixing the two gave a window of
-// local 08:00 → 23:59 in UTC+8 - so a "today" report silently dropped every
-// sale made between midnight and 8am, and the business never saw them in any
-// day's report. Both bounds must share one basis; local is the correct one,
-// because a shop's "day" is its own wall clock.
-//
-// A plain YYYY-MM-DD is built component-wise (local). Anything richer (a full
-// ISO timestamp) is passed through to Date, which already carries its own zone.
-function parseDayStart(value) {
-  const s = String(value).trim();
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
-  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0, 0);
-  return new Date(s);
-}
-
 export function validateDateRange(start, end, maxDays = DEFAULT_MAX_RANGE_DAYS) {
   if (!start || !end) {
     return { ok: false, error: 'A start and end date are both required.' };

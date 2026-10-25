@@ -197,13 +197,13 @@ describe('listing & deletion guards', () => {
 });
 
 describe('supplier CRUD + permission gating', () => {
-  let supplierId;
+  let _supplierId;
   it('manager can create a supplier', async () => {
     const res = await request(app).post('/api/suppliers').set(auth(managerToken))
       .send({ name: 'Best Beans Co', contactPerson: 'Jo', phone: '0917', email: 'jo@beans.test', address: 'Cebu' });
     expect(res.status).toBe(201);
     expect(res.body.supplier.supplierCode).toMatch(/^SUP-\d{4}-\d{6}$/);
-    supplierId = res.body.supplier._id;
+    _supplierId = res.body.supplier._id;
   });
 
   it('requires a name', async () => {

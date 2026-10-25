@@ -85,10 +85,6 @@ const INVENTORY_INFO_COLUMNS = [
   'Category', 'Category Source', 'Display Unit', 'Qty (display unit)', 'Cost per Display Unit',
   'Total Value', 'Low Stock At', 'Location', 'Base Unit', 'Qty (base)', 'Cost per Base Unit',
 ];
-// The same trailing-size pattern the importer uses (PACK_SIZE_RE in
-// AdminDashboard's inventory parser). A name that already ends in a size is
-// left alone rather than given a second one.
-const IMPORT_PACK_RE = /\s+([0-9]+(?:\.[0-9]+)?)\s*(kg|g|L|l|ml|pcs|pc|piece)(?:\s*\/\s*(pack|box|bag|sleeve|case|pk))?\b(\s*\([^)]*\))?\s*$/i;
 const round9 = (n) => Math.round((Number(n) || 0) * 1e9) / 1e9;
 const isoDay = (d) => {
   if (!d) return '';
@@ -111,16 +107,6 @@ const packColumns = (packBase, base) => {
   if (base === 'g') return packBase >= 1000 ? { pack: t(packBase / 1000), unit: 'kg' } : { pack: t(packBase), unit: 'g' };
   if (base === 'ml') return packBase >= 1000 ? { pack: t(packBase / 1000), unit: 'L' } : { pack: t(packBase), unit: 'ml' };
   return { pack: t(packBase), unit: 'pcs' };
-};
-const basePackLabel = (packBase, base) => {
-  const t = (x) => String(Math.round(x * 1000) / 1000);
-  if (base === 'g') return packBase >= 1000 ? `${t(packBase / 1000)}kg` : `${t(packBase)}g`;
-  if (base === 'ml') return packBase >= 1000 ? `${t(packBase / 1000)}L` : `${t(packBase)}ml`;
-  // "/pack", because the importer reads a bare piece size as describing a
-  // pack while the number beside it is the count - "50pcs | 104" is 104 cups.
-  // This sheet writes the count in PACKS for a packed item, so it has to say
-  // so, or re-importing it would bring back a fiftieth of the stock.
-  return `${t(packBase)}pcs/pack`;
 };
 // One sheet row per stock lot, or one row for the item when its lots do not
 // account for all of it. Repeating a code in one import is how the importer

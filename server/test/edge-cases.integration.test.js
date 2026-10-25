@@ -267,7 +267,7 @@ describe('backfill-ledger repairs backdated orders left without a journal entry'
     // Simulates what the pre-transaction bug could leave behind: the Order
     // write succeeded but no JournalEntry was ever created for it.
     const Order = mongoose.model('Order');
-    const orphan = await Order.create({
+    await Order.create({
       orderNumber: 'ORD-BF-TEST-1', table: 'Backdated', status: 'Completed',
       createdAt: new Date('2021-03-01'), cashier: 'Backdated Entry', customerName: 'Walk-in (backdated)',
       paymentMethod: 'Cash', items: [{ name: 'Historical Sale', price: 500, quantity: 1, productDiscountPercent: 0 }],

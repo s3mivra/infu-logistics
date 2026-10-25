@@ -23,7 +23,6 @@ export default function registerRequisitions(ctx) {
     emitToAll,
     mkSeqRef,
     generateNextSequence,
-    assertBalanced,
     acctMeta,
     JournalEntry,
     RevolvingFund,
@@ -37,7 +36,6 @@ export default function registerRequisitions(ctx) {
   // Dedicated permissions (#11) - decoupled from accounting.view/manage so
   // granting someone the general ledger doesn't silently also hand them the
   // Approvals queue, and vice versa.
-  const canViewReq = [requireStaff, requirePermission('requisitions.view')];
   const canApproveReq = [requireStaff, requirePermission('requisitions.approve')];
 
   // ── LIST ──────────────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ import { releaseCancelledOrderNumbers } from './lib/orderNumbers.js';
 import { repairBackdatedSalesOnPayables } from './lib/saleAccounts.js';
 import { LEDGER_WRITE_OPS, inLedgerMaintenance, refuseLedgerRewrite, withLedgerMaintenance } from './lib/ledgerGuard.js';
 import express from 'express';
-import { businessDayStart, businessDateStr, businessClosingDateStr, setBusinessTimeZone, isValidTimeZone, DEFAULT_BUSINESS_TZ } from './lib/businessTime.js';
+import { businessDayStart, businessDateStr, businessClosingDateStr, setBusinessTimeZone, DEFAULT_BUSINESS_TZ } from './lib/businessTime.js';
 import { deliveryFeeVat } from './lib/vatPosting.js';
 import { seriesPrefix } from './lib/docSeries.js';
 import http from 'http';
@@ -29,11 +29,11 @@ import { assertBalanced, debitAccountFor, suggestedSettleAccount } from './lib/l
 import { createIdempotencyMiddleware } from './lib/idempotency.js';
 import { ACCOUNTS, EXPENSE_CATEGORIES, CODE_MAP } from './lib/chartOfAccounts.js';
 import { resolveUnit, displayToBase, effectiveDisplay, UNIT_TO_BASE, unitTypeOf, basePerPack } from './lib/units.js';
-import { title, code, lower, freeText, zTitle, zText, zMoneyLoose, zMoneyStrict, MONEY_MAX } from './lib/normalize.js';
+import { zTitle, zText, zMoneyLoose, zMoneyStrict, MONEY_MAX } from './lib/normalize.js';
 import { addBatch, consumeBatches, consumeSpecificBatch, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
 import { stripQueryOperators, forwardAsyncErrors } from './lib/requestSafety.js';
 import { withFloorActions, withSplitScreens } from './lib/authz.js';
-import { requireStaff, evaluateStaffAccess, evaluateClientAccess, requirePermission, requireAnyPermission, requireUserAdmin, guardStaffEscalation, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS, setCustomRolePermissions } from './lib/authz.js';
+import { requireStaff, evaluateStaffAccess, evaluateClientAccess, requirePermission, requireAnyPermission, requireUserAdmin, guardStaffEscalation, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
 import { computeOrderVat, extractVat, normaliseVatRate, DEFAULT_VAT_RATE } from './lib/vat.js';
 import { validateDateRange } from './lib/reportRange.js';
@@ -369,7 +369,7 @@ const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // direction (one deployment per business, not shared multi-tenant), tenant
 // scoping is paused rather than finished - always return {} so it's a true
 // no-op everywhere it's used, until/unless multi-tenancy is revisited.
-const tenantScope = (req) => ({});
+const tenantScope = (_req) => ({});
 
 // bcrypt work factor - 12 rounds (OWASP-recommended minimum for 2025+).
 const BCRYPT_ROUNDS = 12;
@@ -1335,7 +1335,7 @@ mongoose.connect(process.env.MONGO_URI, {
         });
       }
       next();
-    } catch (error) {
+    } catch {
       // 401 (not 403) for an expired/invalid token so the client silently refreshes
       // and retries - otherwise an idle session shows "Forbidden" until manual reload.
       return res.status(401).json({ success: false, message: 'Unauthorized: Invalid or expired token' });
@@ -1371,7 +1371,7 @@ mongoose.connect(process.env.MONGO_URI, {
     let decoded;
     try {
       decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
-    } catch (error) {
+    } catch {
       return res.status(401).json({ success: false, error: 'Unauthorized: Invalid or expired token' });
     }
     if (!evaluateClientAccess(decoded).ok) {
@@ -2512,7 +2512,7 @@ io.use((socket, next) => {
     const decoded = jwt.verify(raw, process.env.JWT_SECRET);
     socket.data.user = decoded;        // { _id, name, role, ... }
     return next();
-  } catch (err) {
+  } catch {
     // Invalid / expired token - treat as anonymous rather than refusing the
     // connection, so public surfaces keep working without auth.
     socket.data.user = null;

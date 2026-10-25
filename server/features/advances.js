@@ -30,7 +30,6 @@ export default function registerAdvances(ctx) {
     Bill,
     Order,
     ClientAccount,
-    CheckVoucher,
     issueCheckVoucher,
     JournalEntry,
     assertBalanced,

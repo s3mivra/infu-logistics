@@ -6,7 +6,7 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 
-let ctx, app, tok, fast, idle;
+let ctx, app, tok, fast, _idle;
 const auth = (m, p) => request(app)[m](p).set('Authorization', `Bearer ${tok}`);
 
 beforeAll(async () => {
@@ -18,7 +18,7 @@ beforeAll(async () => {
   const Product = mongoose.model('Product');
   await mongoose.model('Category').create({ name: 'FcCat', department: 'Kitchen' });
   fast = await Inventory.create({ itemName: 'Fast Syrup', itemCode: 'FC-1', stockQty: 40, unit: 'pcs', unitCost: 10 });
-  idle = await Inventory.create({ itemName: 'Idle Syrup', itemCode: 'FC-2', stockQty: 40, unit: 'pcs', unitCost: 10 });
+  _idle = await Inventory.create({ itemName: 'Idle Syrup', itemCode: 'FC-2', stockQty: 40, unit: 'pcs', unitCost: 10 });
   const prod = await Product.create({ name: 'Fast Syrup', productCode: 'FC-1', category: 'FcCat', basePrice: 100, baseRecipe: [] });
   // 20 sold today, the first day of trading: 20 a day.
   const placed = await auth('post', '/api/orders').send({

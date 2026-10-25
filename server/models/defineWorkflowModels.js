@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { code } from '../lib/normalize.js';
+import { } from '../lib/normalize.js';
 
 // Database definitions: purchase orders, bills, check vouchers, journals awaiting approval, attachments, budgets, leave, advances, stock reservations, fixed assets, bank reconciliation, quotations and payroll.
 // Moved out of server.js as it was. It is called once, at the same point in
@@ -302,7 +302,7 @@ export default function defineWorkflowModels({ BUSINESS_TYPE, currentBranchCode,
     lastMonth:          { type: String, default: '' },
     createdBy:          { type: String, default: '' },
   }, { timestamps: true });
-  const RecurringBill = mongoose.model('RecurringBill', RecurringBillSchema);
+  mongoose.model('RecurringBill', RecurringBillSchema);   // read by name in features/bills.js
 
   // --- CHECK VOUCHER ---
   // The actual paper trail for a disbursement - standard PH bookkeeping

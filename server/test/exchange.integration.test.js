@@ -9,7 +9,7 @@ import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 
 let app, stop, superToken, cashierToken;
-let invOldId, invCheapId, invPricyId, productOldId, productCheapId, productPricyId;
+let invOldId, _invCheapId, invPricyId, productOldId, productCheapId, productPricyId;
 
 const auth = (t) => ({ Authorization: `Bearer ${t}` });
 
@@ -35,7 +35,7 @@ beforeAll(async () => {
   const cheap = await mk('EX-CHEAP', 'Widget Cheaper', 20, 60);    // downgrade replacement: ₱60
   const pricy = await mk('EX-PRICY', 'Widget Pricier', 60, 150);   // upgrade replacement: ₱150
   invOldId = old.invId; productOldId = old.productId;
-  invCheapId = cheap.invId; productCheapId = cheap.productId;
+  _invCheapId = cheap.invId; productCheapId = cheap.productId;
   invPricyId = pricy.invId; productPricyId = pricy.productId;
 }, 120000);
 

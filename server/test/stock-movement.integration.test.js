@@ -125,15 +125,15 @@ const order = (businessType, over) => M('Order').create({
 });
 
 describe('logistics: whole units', () => {
-  let ctx, as, syrup, cups, gloves, oldStock, newStock;
+  let ctx, as, _syrup, _cups, _gloves, _oldStock, _newStock;
   beforeAll(async () => {
     ({ ctx, as } = await boot('log'));
     // A 2-litre bottle: stock is kept in litres, sold and bought by the bottle.
-    syrup = await item({ itemCode: 'SYR-2L', itemName: 'VANILLA SYRUP 2L', unit: 'L', unitMultiplier: 2, stockQty: 6, createdAt: ago(200) });   // 3 bottles
-    cups = await item({ itemCode: 'CUP-12', itemName: 'PAPER CUP 12OZ', stockQty: 40, createdAt: ago(200) });
-    gloves = await item({ itemCode: 'GLV', itemName: 'GLOVES', stockQty: 25, createdAt: ago(200) });
-    oldStock = await item({ itemCode: 'OLD', itemName: 'OLD STOCK NOBODY BUYS', stockQty: 7, createdAt: ago(200) });
-    newStock = await item({ itemCode: 'NEW', itemName: 'BRAND NEW ITEM', stockQty: 5, createdAt: ago(3) });
+    _syrup = await item({ itemCode: 'SYR-2L', itemName: 'VANILLA SYRUP 2L', unit: 'L', unitMultiplier: 2, stockQty: 6, createdAt: ago(200) });   // 3 bottles
+    _cups = await item({ itemCode: 'CUP-12', itemName: 'PAPER CUP 12OZ', stockQty: 40, createdAt: ago(200) });
+    _gloves = await item({ itemCode: 'GLV', itemName: 'GLOVES', stockQty: 25, createdAt: ago(200) });
+    _oldStock = await item({ itemCode: 'OLD', itemName: 'OLD STOCK NOBODY BUYS', stockQty: 7, createdAt: ago(200) });
+    _newStock = await item({ itemCode: 'NEW', itemName: 'BRAND NEW ITEM', stockQty: 5, createdAt: ago(3) });
     await order('log', { createdAt: ago(120), items: [{ productCode: 'CUP-12', name: 'Paper Cup', quantity: 1 }] });   // history is long enough
     // Syrup: a bottle or two on most days - fast.
     for (let d = 1; d <= 20; d++) await order('log', { createdAt: ago(d), items: [{ productCode: 'SYR-2L', name: 'Vanilla Syrup 2L', quantity: d % 2 ? 2 : 1 }] });
@@ -222,7 +222,7 @@ describe('logistics: whole units', () => {
   });
 
   it('a bulk order on one day is held down to a typical day when working out what to buy', async () => {
-    const bulk = await item({ itemCode: 'BULK', itemName: 'BULK BUY ITEM', stockQty: 5, createdAt: ago(200) });
+    await item({ itemCode: 'BULK', itemName: 'BULK BUY ITEM', stockQty: 5, createdAt: ago(200) });
     for (let d = 2; d <= 11; d++) await order('log', { createdAt: ago(d), items: [{ productCode: 'BULK', name: 'Bulk', quantity: 2 }] });
     await order('log', { createdAt: ago(1), items: [{ productCode: 'BULK', name: 'Bulk', quantity: 300 }] });
     const res = (await as('get', '/api/analytics/stock-movement')).body;

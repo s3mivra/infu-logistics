@@ -6,7 +6,7 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 
-let ctx, app, fresh, onboarded, lapsed;
+let ctx, app, fresh, onboarded, _lapsed;
 const tok = {};
 const as = (t, m, p) => request(app)[m](p).set('Authorization', `Bearer ${t}`);
 const M = (n) => mongoose.model(n);
@@ -24,7 +24,7 @@ beforeAll(async () => {
   tok.inviter = await loginStaff(app, 'clInviter');
   fresh = await M('ClientAccount').create({ name: 'Reyes Hardware', clientCode: 'CL-1', username: '_pending_cl-1', password: 'x' });
   onboarded = await M('ClientAccount').create({ name: 'Kasa Lokal', clientCode: 'CL-2', username: 'kasalokal', password: 'x' });
-  lapsed = await M('ClientAccount').create({ name: 'Old Link Co', clientCode: 'CL-3', username: '_pos_cl-3', password: 'x', onboardingToken: 'expired-token', onboardingTokenExpiresAt: new Date(Date.now() - 1000) });
+  _lapsed = await M('ClientAccount').create({ name: 'Old Link Co', clientCode: 'CL-3', username: '_pos_cl-3', password: 'x', onboardingToken: 'expired-token', onboardingTokenExpiresAt: new Date(Date.now() - 1000) });
 }, 120000);
 afterAll(async () => { await ctx.stop(); });
 

@@ -4,7 +4,7 @@
 // booked (the POS applies the result through the existing order-level
 // discountPercent field).
 import { captureError } from '../lib/errorLog.js';
-import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
+import { businessTimeZone } from '../lib/businessTime.js';
 
 export default function registerDiscountRules(ctx) {
   const {

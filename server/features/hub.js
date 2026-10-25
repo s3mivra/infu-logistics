@@ -16,7 +16,7 @@ import { rollUpByLocation, parseBranchCode } from '../lib/branchCode.js';
 // .manage key (see lib/authz.js PERMISSIONS). `permit` is the same
 // requirePermission the context hands out, imported under a short name so
 // it reads the same in every file.
-import { requirePermission as permit, requireAnyPermission as permitAny } from '../lib/authz.js';
+import { requirePermission as permit } from '../lib/authz.js';
 
 const TENANT = (() => {
   const m = (process.env.MONGO_URI || '').match(/\/semivra_([^?/]+)/);
@@ -60,10 +60,8 @@ export default function registerHub(ctx) {
     verifyToken,
     requireStaff: requireAuth, requireSuperAdmin,
     logAudit,
-    mkSeqRef,
     acctMeta,
     Settings,
-    requirePermission,
     log,
   } = ctx;
 

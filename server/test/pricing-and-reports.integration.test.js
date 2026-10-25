@@ -6,7 +6,7 @@ import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
-let ctx, app, superTok, staffTok, cat;
+let ctx, app, superTok, staffTok, _cat;
 
 const auth = (method, path, token) =>
   request(app)[method](path).set('Authorization', `Bearer ${token}`);
@@ -18,7 +18,7 @@ beforeAll(async () => {
   await makeUser({ name: 'pr_staff', role: 'staff' });
   superTok = await loginStaff(app, 'pr_super');
   staffTok = await loginStaff(app, 'pr_staff');
-  cat = await mongoose.model('Category').create({ name: 'PR-Cat', department: 'Kitchen' });
+  _cat = await mongoose.model('Category').create({ name: 'PR-Cat', department: 'Kitchen' });
 }, 120000);
 
 afterAll(async () => { await ctx.stop(); });

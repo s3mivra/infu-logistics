@@ -7,7 +7,6 @@
 // already got a free pass - can start a shift without a starting-cash figure,
 // and it is recorded at ₱0 rather than rejected.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 

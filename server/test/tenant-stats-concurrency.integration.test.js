@@ -3,7 +3,7 @@
 // singleton TenantStats document via atomic $inc. This test fires a batch of
 // completions in parallel and asserts every one succeeds and the counters land
 // exactly on the sum - no lost updates, no silent under/over count.
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';

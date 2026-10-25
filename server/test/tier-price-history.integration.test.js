@@ -7,7 +7,7 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 
-let ctx, app, superTok, staffTok, cat;
+let ctx, app, superTok, staffTok, _cat;
 const auth = (m, p, t) => request(app)[m](p).set('Authorization', `Bearer ${t}`);
 
 beforeAll(async () => {
@@ -17,7 +17,7 @@ beforeAll(async () => {
   await makeUser({ name: 'tphStaff', role: 'staff' });
   superTok = await loginStaff(app, 'tphSuper');
   staffTok = await loginStaff(app, 'tphStaff');
-  cat = await mongoose.model('Category').create({ name: 'TphCat', department: 'Logistics' });
+  _cat = await mongoose.model('Category').create({ name: 'TphCat', department: 'Logistics' });
 }, 120000);
 
 afterAll(async () => { await ctx.stop(); });
