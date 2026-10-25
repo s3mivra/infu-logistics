@@ -14,12 +14,8 @@ import { BUSINESS_TYPE } from '../../shared/businessType.js';
 // All state and handlers come in via the `ctx` prop.
 export default function HistoryTab({ ctx }) {
   // Destructure everything from ctx
-  // ── Auto-generated from ctx - do NOT edit manually.
-  // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx - do NOT edit manually.
-  // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
-  // ── Auto-generated from ctx - do NOT edit manually.
-  // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
+  // What this tab reads from ctx - only the names it uses. Add one here when
+  // the tab needs it (scripts_temp/fix_tab_destructures.cjs would re-add all ~300).
   const {
     BIZ_NAME, 
     SHIFT_HIST_PAGE_SIZE, 
