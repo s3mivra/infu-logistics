@@ -1,4 +1,4 @@
-import { Download, Check, Receipt } from 'lucide-react';
+import { Download, Receipt } from 'lucide-react';
 import Attachments from '../../shared/Attachments';
 import RangePresets from '../../shared/RangePresets';
 import ManualVoucherForm from './ManualVoucherForm';

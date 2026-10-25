@@ -1,5 +1,4 @@
-import React from 'react';
-import { Clock, Network } from 'lucide-react';
+import { } from 'lucide-react';
 import { queueClock, getQueuedClock } from '../../shared/pwa';
 import * as auth from '../auth/auth';
 import * as ui from '../../shared/ui';

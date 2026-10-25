@@ -1,4 +1,4 @@
-import { Check } from 'lucide-react';
+import { } from 'lucide-react';
 import RangePresets from '../../shared/RangePresets';
 
 // The collection report and the check register.

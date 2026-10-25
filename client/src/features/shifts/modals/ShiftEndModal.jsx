@@ -3,7 +3,7 @@ import { useDashboard } from '../../dashboard/DashboardContext';
 
 // Extracted from AdminDashboard; reads shared state via useDashboard().
 export default function ShiftEndModal() {
-  const { DENOMS, denomCounts, denomTotal, depositAmount, depositError, depositLoading, handleBankDeposit, handleEndShift, performLogout, setDenomCounts, setDepositAmount, setDepositError, setShiftEndModal, setShiftReconcile, shiftEndLoading, shiftEndModal, shiftReconcile, startingCash } = useDashboard();
+  const { DENOMS, denomCounts, denomTotal, depositAmount, depositError, depositLoading, handleBankDeposit, handleEndShift, performLogout, setDenomCounts, setDepositAmount, setDepositError, setShiftEndModal, setShiftReconcile, shiftEndLoading, shiftEndModal, shiftReconcile } = useDashboard();
 
   if (!(shiftEndModal)) return null;
 

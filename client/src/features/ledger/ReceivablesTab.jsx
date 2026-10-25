@@ -1,4 +1,4 @@
-import { X, Download, Check, Wallet } from 'lucide-react';
+import { Download } from 'lucide-react';
 import Pager from '../../shared/Pager';
 import { dateStr } from '../../shared/businessDay.js';
 import CollectFromClient from './CollectFromClient';

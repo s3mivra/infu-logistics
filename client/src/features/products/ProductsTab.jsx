@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
-import { Copy, Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Flame, Calendar, ToggleLeft, ToggleRight, Upload } from 'lucide-react';
+import { Copy, X, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Download, Check, Coffee, ChevronRight, ChevronLeft, Search, Flame, Calendar, ToggleLeft, ToggleRight, Upload } from 'lucide-react';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import * as ui from '../../shared/ui';
 import RecipeMatrix from './RecipeMatrix';
@@ -41,7 +41,6 @@ function SaleStatusBadge({ sale }) {
 
 function RuleRow({ rule, products, onRemove }) {
   const prod = products.find(p => p._id === rule.productId);
-  const discProd = rule.ruleType === 'threshold' ? products.find(p => p._id === rule.productId) : null;
   return (
     <div className="flex items-start gap-2 bg-surface border border-white/8 rounded-lg px-3 py-2 text-xs">
       <div className="flex-1 min-w-0">
@@ -287,74 +286,31 @@ export default function ProductsTab({ ctx }) {
   // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
   const {
-    API_URL, AUDIT_PAGE_SIZE, BIZ_NAME, COMP_REASON_LABELS, FRONTEND_URL,
-    HIST_PAGE_SIZE, POS_PER_PAGE, SHIFT_HIST_PAGE_SIZE, accountingItemsPerPage, accountingPage,
-    activeAdmin, activeInventoryItem, activeTab, addInventory, addMaterialToRecipe, addNonStockToRecipe,
-    addOnForm, addSize, analyticsData, analyticsLoading, apiFetch,
-    applyComplimentary, applyDiscount, applyItemDiscount, arOutstanding, archiveDay,
-    archivedOrders, auditCancelPage, auditCompPage, auditDiscPage, auditFilter,
-    auditStaffPage, bsData, calcRecipeCost, cashOnHand, cashTendered,
-    catForm, categories, clientAccounts, priceTiers, closeRfFund, collapsedOrders, compOverride,
-    compReasonNotes, compReasonTypes, compSelections, confirmPosItem, currentEntries,
-    currentInventory, currentOrders, currentPage, currentPricingProducts, currentProducts,
-    dailyMovement, deleteAddOn, deleteCategory, deleteInventory, deleteProduct,
-    departmentFilter, discountForm, discountInputs, discountList, discounts,
-    displayOrders, downloadImportTemplate, editInvForm, editInvModal,
-    editInvSubmitting, editPriceId, editPriceVal, editingCategory, editingProduct,
-    packInfo, effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
-    expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
-    exportDayToPDF, exportInventoryToPDF, exportLedgerToPDF, fetchAnalytics, fetchArOutstanding,
+    addOnForm, apiFetch,
+    calcRecipeCost, 
+    catForm, categories, clientAccounts, priceTiers, 
+    currentPage, currentProducts,
+    deleteAddOn, deleteCategory, deleteProduct,
+    editingCategory, editingProduct,
+    packInfo, 
     exportMenuItemsPDF,
-    fetchBalanceSheet, fetchData, fetchEODData, fetchERPData, fetchExpenseCategories,
-    fetchOrders, fetchPnl, fetchRfFunds, fetchRfTxs, fetchShiftHistory,
-    fetchStockHistory, filteredOrders, formData, getEstimatedStock, globalAddOns,
-    groupedArchives, handleImageUpload, handleInlinePriceUpdate, handleRestockSubmit, handleSaveAddOn,
-    handleSaveCategory, handleSaveProduct, busyForms, handleVoidOrder, historyItemName, historyModalOpen,
-    historyPage, historySubTab, importModal, importRows, importSubmitting,
-    invBadgeCount, invForm, invItemsPerPage, invPage, invSubTab,
-    inventory, isPosOpen, isStatusMenuOpen, isSuperAdmin, can, itemDisplay,
-    itemsPerPage, jeForm, journalEntries, ledgerSubTab, navMode,
-    newDiscount, openEditInventory, openProductModal, orderFilter, orders,
-    ordersItemsPerPage, ordersPage, parseImportFile, paymentSelections, peso,
-    physicalCounts, pnlData, pnlRange, posActiveAddOns, posActiveSize,
-    posCart, posCashTendered, posCategory, posCheckoutModal, posCustomerName,
-    posCustomerPhone, posDeliveryAddress, posDeliveryFee, posDeliveryFeeNum, posDiscountAmt,
-    posDiscountType, posDiscountValue, posGrandTotal, posPage, posPayment,
-    posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable,
-    pricingItemsPerPage, pricingPage, printOrderSlip, printXReading, products,
-    removeAddOnFromOrder, removeComplimentary, removeMaterial, removeSize, restockData,
-    rfActiveFund, rfDisbForm, rfDisbModal, rfDisbSubmitting, rfFunds,
-    rfLoading, rfNewForm, rfNewModal, rfNewSubmitting, rfReplForm,
-    rfReplModal, rfReplSubmitting, rfTxPage, rfTxPages, rfTxTotal,
-    rfTxs, scpwdOpen, setAccountingPage, setActiveInventoryItem, setActiveTab,
-    setAddOnForm, setAuditCancelPage, setAuditCompPage, setAuditDiscPage, setAuditFilter,
-    setAuditStaffPage, setCashTendered, setCatForm, setCollapsedOrders, setCompOverride,
-    setCompReasonNotes, setCompReasonTypes, setCompSelections, setCurrentPage, setDepartmentFilter,
-    setDiscountForm, setDiscountInputs, setEditInvForm, setEditInvModal, setEditPriceId,
-    setEditPriceVal, setEditingCategory, setEditingProduct, setExpandedBatchRows, setExpenseModal,
-    setFormData, setHistoryItemName, setHistoryModalOpen, setHistoryPage, setHistorySubTab,
-    setImportModal, setImportRows, setInvForm, setInvPage, setInvSubTab,
+    fetchData, 
+    formData, getEstimatedStock, globalAddOns,
+    handleImageUpload, handleSaveAddOn,
+    handleSaveCategory, handleSaveProduct, busyForms, 
+    inventory, can, 
+    peso,
+    products,
+    setAddOnForm, 
+    setCatForm, 
+    setCurrentPage, 
+    setEditingCategory, setEditingProduct, 
+    setFormData, 
     menuBackupBusy, downloadMenuBackup, menuRestoreModal, setMenuRestoreModal, openMenuRestore, runMenuRestore,
     rsFile, rsPreview, rsBusy, rsCreateMissing, setRsCreateMissing, openRecipeSheet, closeRecipeSheet, submitRecipeSheet,
     msFile, msPreview, msBusy, openMenuSheet, closeMenuSheet, submitMenuSheet,
     rsDrafts = [], rsPrices = {}, setRsPrice = () => {},
-    setIsPosOpen, setIsStatusMenuOpen, setJeForm, setJournalEntries, setLedgerSubTab,
-    setNewDiscount, setOrderFilter, setOrdersPage, setPaymentSelections, setPhysicalCounts,
-    setPnlRange, setPosActiveAddOns, setPosActiveSize, setPosCart, setPosCashTendered,
-    setPosCategory, setPosCheckoutModal, setPosCustomerName, setPosCustomerPhone, setPosDeliveryAddress,
-    setPosDeliveryFee, setPosDiscountType, setPosDiscountValue, setPosPage, setPosPayment,
-    setPosScheduledTime, setPosSearch, setPosSelectedProduct, setPosTable, setPricingPage,
-    setRestockData, setRfActiveFund, setRfDisbForm, setRfDisbModal, setRfNewForm,
-    setRfNewModal, setRfReplForm, setRfReplModal, setRfTxs, setScpwdOpen,
-    setSettleForm, setSettleModal, setSettleSubmitting, setShiftFilter, setShiftHistoryPage,
-    setSpoilageForm, setSpoilageModal, setStockHistory, setVarianceNoteMode, setVarianceReasons,
-    settleForm, settleModal, settleSubmitting, shiftFilter, shiftHistory,
-    shiftHistoryPage, shiftHistoryTotal, spoilageForm, spoilageLoading, spoilageModal,
-    standardAccounts, stockHistory, submitManualOrder, submitPhysicalCounts, submitRfDisb,
-    submitRfNew, submitRfRepl, toggleDay, toggleOrderList,
-    totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
-    updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
-    users, varianceNoteMode, varianceReasons,
+    totalPages, 
     modifierGroups,
     editingModifier, setEditingModifier, modForm, setModForm, saveModifierGroup, editModifierGroup, deleteModifierGroup,
     combos, editingCombo, setEditingCombo, comboForm, setComboForm, saveCombo, editCombo, deleteCombo,
@@ -517,7 +473,7 @@ export default function ProductsTab({ ctx }) {
   React.useEffect(() => {
     if (!editorOpen || editingProduct) return;
     writeLS(sessionStorage, DRAFT_KEY, JSON.stringify(formData));
-  }, [editorOpen, editingProduct, formData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [editorOpen, editingProduct, formData]);
   const saveFromEditor = async (e) => {
     e.preventDefault();
     const category = formData.category;

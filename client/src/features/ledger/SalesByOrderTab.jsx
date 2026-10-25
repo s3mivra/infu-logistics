@@ -1,4 +1,4 @@
-import { Download, RefreshCw, Wallet } from 'lucide-react';
+import { Download, RefreshCw } from 'lucide-react';
 import RangePresets from '../../shared/RangePresets';
 
 // Sales, by order and by day.

@@ -1,4 +1,3 @@
-import React from 'react';
 import { QRCode as QR } from 'react-qr-code';
 
 // Drawn in the browser - the link is never sent to a third-party QR service.

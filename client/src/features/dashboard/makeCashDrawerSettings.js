@@ -1,4 +1,4 @@
-import { Lock } from 'lucide-react';
+import { } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
 // Shared cash drawer settings.

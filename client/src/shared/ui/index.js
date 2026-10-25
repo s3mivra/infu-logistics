@@ -83,7 +83,7 @@ export function undoable(undo, { message, seconds = DEFAULT_WINDOW, undoMessage 
       onExpire: () => resolve(false),
       onUndo: async () => {
         try { await undo(); toast(undoMessage, { tone: 'info' }); resolve(true); }
-        catch (e) { toast('Could not undo that.', { tone: 'error' }); resolve(false); }
+        catch { toast('Could not undo that.', { tone: 'error' }); resolve(false); }
       },
     });
   });

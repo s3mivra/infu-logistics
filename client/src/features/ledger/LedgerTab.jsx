@@ -1,7 +1,7 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import { roundMoney } from '../../shared/money.js';
 import SplitPayEditor, { newSplit, splitReady, splitPayload } from './SplitPayEditor';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, Upload, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Receipt, History, HandCoins, Wallet } from 'lucide-react';
+import { X, Lock, Unlock, FileText, AlertTriangle, Plus, Trash2, Download, Upload, RefreshCw, Clock, ChevronRight, ChevronLeft, ShieldCheck, Search, History } from 'lucide-react';
 import { isCancelledRow, isCancelledSheet, partitionCancelledGroups } from '../../shared/backdateCancelled';
 import { usePagination } from '../../shared/usePagination';
 import Pager from '../../shared/Pager';
@@ -13,19 +13,15 @@ import * as auth from '../auth/auth';
 
 import { dateStr, monthStartStr, todayStr } from '../../shared/businessDay.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
-import TemplatesCard from './TemplatesCard';
 import ManualJournalApprovals from './ManualJournalApprovals';
 import { CashFlowReport, SalesByChannelReport, SalesByCustomerReport, BudgetReport, ExceptionsReport, ClosingChecklist } from './ProcessReports';
 import Attachments from '../../shared/Attachments';
 import RangePresets from '../../shared/RangePresets';
-import RevolvingFundLiquidation from './RevolvingFundLiquidation';
 import FundSpendsToCheck from './FundSpendsToCheck';
-import ManualVoucherForm from './ManualVoucherForm';
 import RecurringBills from './RecurringBills';
 import { PrepListReport, FeedbackReport } from '../cafe/CafeExtras';
 import { SupplierStatementReport } from '../ops/OpsExtras';
 import { WasteReport, SalesByHourReport, CashForecastReport, CashierPerformanceReport, SupplierPricesReport, SalesTargetsReport, DeliverySheetReport } from './InsightReports';
-import CollectFromClient from './CollectFromClient';
 import AdvancesTab from './AdvancesTab';
 import CollectionsTab from './CollectionsTab';
 import ReceivablesTab from './ReceivablesTab';
@@ -56,12 +52,12 @@ export default function LedgerTab({ ctx }) {
   // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
   const {
-    API_URL, AUDIT_PAGE_SIZE, BIZ_NAME, COMP_REASON_LABELS, FRONTEND_URL,
-    HIST_PAGE_SIZE, POS_PER_PAGE, SHIFT_HIST_PAGE_SIZE, accountingItemsPerPage, accountingPage,
+    BIZ_NAME, 
+    accountingPage,
     journalSearch, setJournalSearch,
-    activeAdmin, activeInventoryItem, activeTab, addInventory, addMaterialToRecipe, can,
-    addOnForm, addSize, analyticsData, analyticsLoading, apiFetch,
-    applyComplimentary, applyDiscount, applyItemDiscount, arOutstanding, arAgeing, fetchArAgeing, archiveDay, fetchExpenses,
+    activeAdmin, activeTab, can,
+    apiFetch,
+    arOutstanding, arAgeing, fetchArAgeing, fetchExpenses,
     openArHistory, todayLocal,
     arReport, arReportAsOf, setArReportAsOf, fetchArReport,
     apReport, apReportAsOf, setApReportAsOf, fetchApReport,
@@ -70,65 +66,29 @@ export default function LedgerTab({ ctx }) {
     checkRegister, checkFilter, setCheckFilter, fetchChecks, actOnCheck,
     changeRequests, canApprovePricing, fetchChangeRequests, actOnChangeRequest,
     priceChangeLog, priceLogRange, setPriceLogRange, fetchPriceChangeLog,
-    archivedOrders, auditCancelPage, auditCompPage, auditDiscPage, auditFilter,
-    auditStaffPage, bsData, calcRecipeCost, cashOnHand, cashTendered,
-    catForm, categories, closeRfFund, collapsedOrders, compOverride,
-    compReasonNotes, compReasonTypes, compSelections, confirmPosItem, currentEntries,
-    currentInventory, currentOrders, currentPage, currentPricingProducts, currentProducts,
-    dailyMovement, deleteAddOn, deleteCategory, deleteInventory, deleteProduct,
-    departmentFilter, discountForm, discountInputs, discountList, discounts,
-    displayOrders, downloadImportTemplate, editInvForm, editInvModal,
-    editInvSubmitting, editPriceId, editPriceVal, editingCategory, editingProduct,
-    effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
-    expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
-    exportDayToPDF, exportInventoryToPDF, exportLedgerToPDF, fetchAnalytics, fetchArOutstanding,
-    fetchBalanceSheet, fetchData, fetchEODData, fetchERPData, fetchExpenseCategories, setBulkOpInProgress,
+    bsData, cashOnHand, 
+    closeRfFund, 
+    currentEntries,
+    exportLedgerToPDF, fetchArOutstanding,
+    fetchBalanceSheet, fetchERPData, fetchExpenseCategories, setBulkOpInProgress,
     exportRevolvingFundsPDF,
-    fetchOrders, fetchPnl, fetchRfFunds, fetchRfTxs, fetchShiftHistory,
-    fetchStockHistory, filteredOrders, formData, getEstimatedStock, globalAddOns,
-    groupedArchives, handleImageUpload, handleInlinePriceUpdate, handleRestockSubmit, handleSaveAddOn,
-    handleSaveCategory, handleSaveProduct, handleVoidOrder, historyItemName, historyModalOpen,
-    historyPage, historySubTab, importModal, importRows, importSubmitting,
-    invBadgeCount, invForm, invItemsPerPage, invPage, invSubTab,
-    inventory, isPosOpen, isStatusMenuOpen, isSuperAdmin, itemDisplay,
-    itemsPerPage, jeForm, journalEntries, ledgerSubTab, navMode,
-    newDiscount, openEditInventory, openProductModal, orderFilter, orders,
-    ordersItemsPerPage, ordersPage, parseImportFile, paymentSelections, peso,
-    physicalCounts, pnlData, pnlRange, pnlMonthly, pnlmRange, setPnlmRange, pnlmView, setPnlmView, fetchPnlMonthly, exportPnlMonthlyPDF, bsMonthly, bsmRange, setBsmRange, bsmView, setBsmView, fetchBsMonthly, exportBsMonthlyPDF, posActiveAddOns, posActiveSize,
-    posCart, posCashTendered, posCategory, posCheckoutModal, posCustomerName,
-    posCustomerPhone, posDeliveryAddress, posDeliveryFee, posDeliveryFeeNum, posDiscountAmt,
-    posDiscountType, posDiscountValue, posGrandTotal, posPage, posPayment,
-    posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable,
-    pricingItemsPerPage, pricingPage, printOrderSlip, printXReading, products,
-    removeAddOnFromOrder, removeComplimentary, removeMaterial, removeSize, restockData,
-    rfActiveFund, rfDisbForm, rfDisbModal, rfDisbSubmitting, rfFunds,
-    rfLoading, rfNewForm, rfNewModal, rfNewSubmitting, rfReplForm,
-    rfReplModal, rfReplSubmitting, rfTxPage, rfTxPages, rfTxTotal,
-    rfTxs, scpwdOpen, setAccountingPage, setActiveInventoryItem, setActiveTab,
-    setAddOnForm, setAuditCancelPage, setAuditCompPage, setAuditDiscPage, setAuditFilter,
-    setAuditStaffPage, setCashTendered, setCatForm, setCollapsedOrders, setCompOverride,
-    setCompReasonNotes, setCompReasonTypes, setCompSelections, setCurrentPage, setDepartmentFilter,
-    setDiscountForm, setDiscountInputs, setEditInvForm, setEditInvModal, setEditPriceId,
-    setEditPriceVal, setEditingCategory, setEditingProduct, setExpandedBatchRows, setExpenseModal,
-    setFormData, setHistoryItemName, setHistoryModalOpen, setHistoryPage, setHistorySubTab,
-    setImportModal, setImportRows, setInvForm, setInvPage, setInvSubTab,
-    setIsPosOpen, setIsStatusMenuOpen, setJeForm, setJournalEntries, setLedgerSubTab,
-    setNewDiscount, setOrderFilter, setOrdersPage, setPaymentSelections, setPhysicalCounts,
-    setPnlRange, setPosActiveAddOns, setPosActiveSize, setPosCart, setPosCashTendered,
-    setPosCategory, setPosCheckoutModal, setPosCustomerName, setPosCustomerPhone, setPosDeliveryAddress,
-    setPosDeliveryFee, setPosDiscountType, setPosDiscountValue, setPosPage, setPosPayment,
-    setPosScheduledTime, setPosSearch, setPosSelectedProduct, setPosTable, setPricingPage,
-    setRestockData, setRfActiveFund, setRfDisbForm, setRfDisbModal, setRfNewForm,
-    setRfNewModal, setRfReplForm, setRfReplModal, setRfTxs, setScpwdOpen,
-    setSettleForm, setSettleModal, setSettleSubmitting, setShiftFilter, setShiftHistoryPage,
-    setSpoilageForm, setSpoilageModal, setStockHistory, setVarianceNoteMode, setVarianceReasons,
-    settleForm, settleModal, settleSubmitting, shiftFilter, shiftHistory,
-    shiftHistoryPage, shiftHistoryTotal, spoilageForm, spoilageLoading, spoilageModal,
-    standardAccounts, stockHistory, submitManualOrder, submitPhysicalCounts, submitRfDisb,
-    submitRfNew, submitRfRepl, toggleDay, toggleOrderList,
-    totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
-    updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
-    users, varianceNoteMode, varianceReasons,
+    fetchPnl, fetchRfFunds, fetchRfTxs, 
+    isSuperAdmin, 
+    jeForm, ledgerSubTab, 
+    parseImportFile, peso,
+    pnlData, pnlRange, pnlMonthly, pnlmRange, setPnlmRange, pnlmView, setPnlmView, fetchPnlMonthly, exportPnlMonthlyPDF, bsMonthly, bsmRange, setBsmRange, bsmView, setBsmView, fetchBsMonthly, exportBsMonthlyPDF, 
+    products,
+    rfActiveFund, rfFunds,
+    rfLoading, 
+    rfTxPage, rfTxPages, rfTxTotal,
+    rfTxs, setAccountingPage, 
+    setJeForm, setLedgerSubTab,
+    setPnlRange, 
+    setRfActiveFund, setRfDisbForm, setRfDisbModal, 
+    setRfNewModal, setRfReplForm, setRfReplModal, setRfTxs, 
+    setSettleForm, setSettleModal, 
+    standardAccounts, 
+    totalAccountingPages, 
     apData, fetchApData, apPayModal, setApPayModal, apPayForm, setApPayForm, apPaySubmitting, submitApPayment, suppliers, fetchSuppliers,
     bills, billsFilter, setBillsFilter, fetchBills, billBusy,
     billCreate, setBillCreate, submitCreateBill,
@@ -151,22 +111,20 @@ export default function LedgerTab({ ctx }) {
     salesByPayment, sbpRange, setSbpRange, fetchSalesByPayment,
     salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
     salesLineItems, sliRange, setSliRange, salesSource, setSalesSource, fetchSalesLineItems, exportSalesLineItemsPDF,
-    menuEngineering, fetchMenuEngineering, cashierVariance, fetchCashierVariance, purchaseOrder, fetchPurchaseOrder,
+    menuEngineering, fetchMenuEngineering, cashierVariance, fetchCashierVariance, 
     commissions, fetchCommissions,
-    exportPnlPDF, exportBalanceSheetPDF, exportPurchaseOrderPDF, reconcileInventory,
+    exportPnlPDF, exportBalanceSheetPDF, reconcileInventory,
     exportArPDF, exportApPDF, exportPaymentsPDF,
     exportProfitByCategoryPDF, exportMenuEngineeringPDF, exportVariancePDF, exportCommissionsPDF,
-    exportBillsPDF, exportAuditLogPDF, loadPdfLibs, addLogoToPDF, pdfMoney,
+    exportBillsPDF, loadPdfLibs, addLogoToPDF, pdfMoney,
     coaAccounts, fetchCoa, coaParent, setCoaParent, coaNewName, setCoaNewName,
     coaEditId, setCoaEditId, coaEditName, setCoaEditName, coaBusy,
     addCoaChild, renameCoaChild, deleteCoaChild, toggleAccountActive, seedPaymentSubaccounts,
     cashAndBankAccounts, apAccounts, arAccounts,
     closedPeriods, fetchClosedPeriods, closePeriod, reopenPeriod,
     periodCloseForm, setPeriodCloseForm,
-    auditLogEntries, auditLogPage, auditLogPages, auditLogFilter, setAuditLogFilter, fetchAuditLog,
     paymentMap, fetchPaymentMap, savePaymentMapping, resetPaymentMapping,
     tenancyReport, tenancyBusy, tenancyError, tenancyProgress, fetchTenancyReport, runTenancyRebackfill,
-    backdateForm, setBackdateForm, backdateBusy, submitBackdateSale,
     clientAccounts,
     systemSettings = {},
   } = ctx;
@@ -1262,7 +1220,6 @@ It posts only what is not already accrued for that month.`)) return;
   // triggers the movement (see requisitions.js on the server).
   const [reqSlips, setReqSlips] = useState([]);
   const [reqSlipsLoading, setReqSlipsLoading] = useState(false);
-  const [reqSlipStatusFilter, setReqSlipStatusFilter] = useState('Pending');
   const [reqSlipView, setReqSlipView] = useState('pending'); // 'pending' | 'all'
   const [reqSlipPreview, setReqSlipPreview] = useState(null);
   const [reqSlipRejecting, setReqSlipRejecting] = useState(null); // slip being rejected (reason prompt)
@@ -1504,14 +1461,12 @@ It posts only what is not already accrued for that month.`)) return;
   const arPage   = usePagination(arOutstanding?.orders, 10);
   const apPage   = usePagination(apData?.recent, 10);
   const sbpPage  = usePagination(salesByPayment?.breakdown, 10);
-  const sssPage  = usePagination(sssRows, 15);
   const sliPage  = usePagination(salesLineItems?.rows, 15);
   const pbcPage  = usePagination(profitByCategory?.categories, 10);
   const mePage   = usePagination(menuEngineering?.items, 10);
   const cvPage   = usePagination(cashierVariance?.cashiers, 10);
   const cmPage   = usePagination(commissions?.sellers, 10);
   const billsPage = usePagination(bills, 12);
-  const poPage   = usePagination(purchaseOrder?.lines, 10);
 
   // Sub-tab nav, grouped. These used to be one long horizontally-scrolling
   // strip of 17 (reports) / 12 (ledger) buttons, which meant scrolling blind to

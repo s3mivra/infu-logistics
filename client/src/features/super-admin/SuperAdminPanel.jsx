@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as auth from '../auth/auth';
 import { effectivePermissions, togglePermission, pageLocked } from '../../shared/permissions.js';
@@ -488,7 +488,7 @@ export default function SuperAdminPanel() {
       (by[p.group] = by[p.group] || []).push(p);
     }
     return Object.entries(by);
-  }, [permCatalog]);
+  }, [permCatalog, isDelegate]);
   const permLabel = useMemo(() => Object.fromEntries(permCatalog.map(p => [p.key, p.label])), [permCatalog]);
   // One checkbox, for either editor. A page shows what it actually grants -
   // every page of an open tab with none named is ticked - and is greyed out

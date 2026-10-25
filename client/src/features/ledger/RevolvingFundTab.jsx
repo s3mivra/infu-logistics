@@ -1,4 +1,4 @@
-import { X, FileText, Plus, RefreshCw, Minus, History } from 'lucide-react';
+import { X, FileText, Plus, RefreshCw, Minus } from 'lucide-react';
 import RevolvingFundLiquidation from './RevolvingFundLiquidation';
 
 // Revolving funds: release, spend and replenish.

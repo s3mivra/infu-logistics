@@ -1,4 +1,4 @@
-import { Menu } from 'lucide-react';
+import { } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { todayStr } from '../../shared/businessDay.js';
 

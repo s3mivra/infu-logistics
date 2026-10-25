@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 // A manager's approval, asked for on this screen: the approver types their
 // PIN, the server checks they hold the permission, and hands back a signed

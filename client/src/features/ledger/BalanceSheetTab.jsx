@@ -1,4 +1,4 @@
-import { Package, Download, RefreshCw, Check } from 'lucide-react';
+import { Package, Download, RefreshCw } from 'lucide-react';
 
 // The balance sheet.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.

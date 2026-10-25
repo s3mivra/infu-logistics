@@ -1,5 +1,5 @@
-import { Settings, Printer } from 'lucide-react';
-import { resolveLetterhead } from '../../shared/receiptTemplate';
+import { } from 'lucide-react';
+import { } from '../../shared/receiptTemplate';
 import * as ui from '../../shared/ui';
 import { todayStr } from '../../shared/businessDay.js';
 import { BUSINESS_TYPE, DEFAULT_DEPARTMENT, DELIVERY_METHODS } from '../../shared/businessType.js';
@@ -403,33 +403,6 @@ export default function makePdfExports(deps) {
     doc.save(`Analytics_Report_${todayStr()}.pdf`);
   };
 
-  const exportMonthlyToPDF = async () => {
-    // STRICT FILTER: Only Completed orders.
-    const allCompletedOrders = [...orders.filter(o => o.status === 'Completed'), ...archivedOrders.filter(o => o.status === 'Completed')].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    if (allCompletedOrders.length === 0) return ui.alert("No orders to export.");
-    
-    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    await addLogoToPDF(doc);
-    doc.setFontSize(18); doc.text(`${BIZ_NAME} - Monthly Sales Summary`, 14, 15);
-    const groupedByMonth = {};
-    allCompletedOrders.forEach(o => {
-      const month = new Date(o.createdAt).toLocaleString('default', { month: 'long', year: 'numeric' });
-      if (!groupedByMonth[month]) groupedByMonth[month] = { cash: 0, bank: 0, ewallet: 0, total: 0 };
-      groupedByMonth[month].cash += (o.paymentMethod === 'Cash' || !o.paymentMethod) ? o.total : 0;
-      groupedByMonth[month].bank += (o.paymentMethod === 'Bank Transfer') ? o.total : 0;
-      groupedByMonth[month].ewallet += (o.paymentMethod === 'E-Wallet') ? o.total : 0;
-      groupedByMonth[month].total += o.total;
-    });
-    const rows = Object.keys(groupedByMonth).map(month => [
-      month, `P${groupedByMonth[month].cash.toFixed(2)}`, `P${groupedByMonth[month].bank.toFixed(2)}`, `P${groupedByMonth[month].ewallet.toFixed(2)}`, `P${groupedByMonth[month].total.toFixed(2)}`
-    ]);
-    autoTable(doc, {
-      startY: 25, head: [['Month', 'Cash', 'Bank', 'E-Wallet', 'Total Revenue']],
-      body: rows, theme: 'grid', headStyles: { fillColor: [40, 40, 40] }
-    });
-    doc.save(`Monthly_Summary_${todayStr()}.pdf`);
-  };
-
   // 4. Sales History PDF Helper
   const handleSaveCategory = onceAtATime('category', async (e) => {
     e.preventDefault(); 
@@ -497,9 +470,6 @@ export default function makePdfExports(deps) {
   const addSize = () => setFormData({ ...formData, sizes: [...formData.sizes, { name: '', price: 0 }] });
   const updateSize = (index, field, value) => { const newSizes = [...formData.sizes]; newSizes[index][field] = field === 'price' ? parseFloat(value) || 0 : value; setFormData({ ...formData, sizes: newSizes }); };
   const removeSize = (index) => setFormData({ ...formData, sizes: formData.sizes.filter((_, i) => i !== index) });
-  const addAddOn = () => setFormData({ ...formData, addOns: [...(formData.addOns || []), { name: '', price: 0, recipe: [] }] });
-  const updateAddOn = (index, field, value) => { const newAddOns = [...formData.addOns]; newAddOns[index][field] = field === 'price' ? parseFloat(value) || 0 : value; setFormData({ ...formData, addOns: newAddOns }); };
-  const removeAddOn = (index) => setFormData({ ...formData, addOns: formData.addOns.filter((_, i) => i !== index) });
 
   const addMaterialToRecipe = (invId, sizeIndex = null) => {
     if (!invId) return;

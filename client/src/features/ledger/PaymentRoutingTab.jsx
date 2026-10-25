@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Lock, Settings, ChevronRight, ChevronDown, CreditCard, Wallet } from 'lucide-react';
+import { X, Lock, Settings, ChevronRight, ChevronDown, CreditCard } from 'lucide-react';
 
 // Which account each payment method lands in.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
@@ -94,39 +94,6 @@ export default function PaymentRoutingTab({
               groups[k].childMethods.sort();
               groups[k].subAccounts.sort((a, b) => a.code.localeCompare(b.code));
             }
-            const renderRow = (m, indent = false) => {
-              const def = paymentMap?.defaults?.[m] || '111000';
-              const eff = paymentMap?.effective?.[m] || def;
-              const isOverride = paymentMap?.overrides?.[m];
-              const effName = (allEligible.find(a => a.code === eff)?.name) || (coaAccounts.find(a => a.code === eff)?.name) || eff;
-              return (
-                <tr key={m} className="border-b border-white/5 hover:bg-page-bg/30">
-                  <td className={`py-2 text-fg font-bold text-sm ${indent ? 'pl-10' : 'pl-3'}`}>
-                    {indent && <span className="text-fg/65 mr-2">↳</span>}{m}
-                  </td>
-                  <td className="py-2 text-fg/70 text-xs font-mono">{def}</td>
-                  <td className="py-2">
-                    {canEdit ? (
-                      <select value={eff} onChange={e => savePaymentMapping(m, e.target.value)}
-                        className="bg-page-bg border border-white/10 rounded-lg px-2 py-1 text-fg text-xs font-bold outline-none focus:border-brand/60">
-                        {allEligible.map(a => (
-                          <option key={a.code} value={a.code}>{a.name} ({a.code})</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className="text-fg text-xs font-bold font-mono">{effName} <span className="text-fg/65">({eff})</span></span>
-                    )}
-                    {canEdit && <span className="ml-2 text-[10px] text-fg/65">{effName}</span>}
-                    {isOverride && <span className="ml-2 text-[9px] uppercase tracking-widest font-black text-warning bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded">Override</span>}
-                  </td>
-                  <td className="py-2 pr-3 text-right">
-                    {canEdit && isOverride && (
-                      <button onClick={() => resetPaymentMapping(m)} className="text-[10px] uppercase tracking-widest font-black bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg px-3 py-1 rounded-lg transition">Reset</button>
-                    )}
-                  </td>
-                </tr>
-              );
-            };
             return (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
@@ -140,7 +107,7 @@ export default function PaymentRoutingTab({
                   </thead>
                   <tbody>
                     {PARENT_ORDER.filter(pc => groups[pc]).map(parentCode => {
-                      const { parentMethods, childMethods, subAccounts } = groups[parentCode];
+                      const { parentMethods, subAccounts } = groups[parentCode];
                       const isExpanded = expandedPayRouteGroups.has(parentCode);
                       // Count sub-accounts (real children of the parent in the COA),
                       // not just methods. Adding Metrobank under Cash in Bank should

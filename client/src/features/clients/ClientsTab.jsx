@@ -1,4 +1,4 @@
-﻿import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+﻿import { Fragment, useCallback, useEffect, useState } from 'react';
 import { HAS_CLIENT_LOGIN, BUSINESS_NAME } from '../../shared/businessType.js';
 import { downloadClientRecord } from '../ops/OpsExtras';
 import { Users, Search, ChevronDown, ChevronRight, RefreshCw, AlertCircle, Upload, FileText, Download, Link2, UserPlus, Trash2, Mail } from 'lucide-react';

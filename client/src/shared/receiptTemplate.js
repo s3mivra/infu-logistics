@@ -240,8 +240,8 @@ export function printReceiptHTML(html) {
     iframe.contentDocument.close();
 
     iframe.onload = () => {
-      try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch (e) { /* fall through */ }
-      setTimeout(() => { try { iframe.remove(); } catch (e) {} }, 30000);
+      try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch { /* fall through */ }
+      setTimeout(() => { try { iframe.remove(); } catch {} }, 30000);
     };
     setTimeout(() => {
       try {
@@ -249,7 +249,7 @@ export function printReceiptHTML(html) {
           iframe.contentWindow.focus();
           iframe.contentWindow.print();
         }
-      } catch (e) {}
+      } catch {}
     }, 400);
   } catch (fallbackErr) {
     console.error('iframe print failed:', fallbackErr);

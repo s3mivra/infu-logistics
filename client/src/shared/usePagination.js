@@ -3,7 +3,8 @@ import { useState, useMemo, useEffect } from 'react';
 // Lightweight client-side pagination for report tables.
 // Returns the current page's slice plus controls. Safe with undefined/empty input.
 export function usePagination(items, pageSize = 10) {
-  const list = Array.isArray(items) ? items : [];
+  // Memoized: a fresh [] for missing input each render would re-slice every render.
+  const list = useMemo(() => (Array.isArray(items) ? items : []), [items]);
   const [page, setPage] = useState(1);
   const total = list.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));

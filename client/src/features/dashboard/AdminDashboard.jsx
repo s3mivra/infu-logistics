@@ -1,17 +1,17 @@
-﻿import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
+﻿import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { socket, reconnectSocket } from '../../shared/staffSocket.js';
 import { broadcastRefresh } from '../../shared/refreshBus';
 import JustQr from '../qr/JustQr';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag, Wifi, WifiOff, CloudOff, Network, Factory, Landmark, Receipt , BookOpen } from 'lucide-react';
+import { Menu, Maximize, Minimize, X, Lock, QrCode, Users, Settings, AlertCircle, AlertTriangle, Download, RefreshCw, Clock, LogOut, ChevronRight, ChevronDown, ChevronUp, Banknote, Bell, ShieldCheck, Search, WifiOff, CloudOff, BookOpen } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 import { usePwa } from '../../shared/usePwa';
 import { usePaymentMethods } from '../../shared/usePaymentMethods';
 import { buildReceiptHTML as buildSharedReceipt, printReceiptHTML, resolveLetterhead } from '../../shared/receiptTemplate';
-import { buildEscposReceiptBytes, sleep as escposSleep, readPrinterMode, writePrinterMode } from '../../shared/escpos';
+import { buildEscposReceiptBytes, sleep as escposSleep, readPrinterMode } from '../../shared/escpos';
 import { useModules } from '../finance-modules/useModules';
-import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
-import { queueOrder, requestNotificationPermission, notify, queueClock, getQueuedClock, flushClockQueue } from '../../shared/pwa';
+import { } from '../../shared/billingDocument';
+import { queueOrder, requestNotificationPermission, notify, getQueuedClock, flushClockQueue } from '../../shared/pwa';
 import * as auth from '../auth/auth';
 import { DashboardProvider } from './DashboardContext';
 // Modals extracted out of this file. They read shared state via useDashboard()
@@ -44,7 +44,7 @@ import CashDrawerModal from './modals/CashDrawerModal';
 import {
   normaliseInventoryRow, isCategoryHeaderCode, inventoryImportPayload,
   groupMenuRows, menuImportPayload, isStockSheetHeader, isMenuSheetHeader,
-  parseSheetNumber, SHEET_PACK_SIZE_RE, isSectionRow, describeSheetColumns,
+  isSectionRow, describeSheetColumns,
 } from '../../shared/importSheets';
 import { LEDGER_REPORT_SPEC, ledgerReportTable } from '../../shared/ledgerReport';
 import * as ui from '../../shared/ui';
@@ -147,7 +147,7 @@ const playKitchenDing = () => {
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
     osc.start(ctx.currentTime);
     osc.stop(ctx.currentTime + 0.6);
-  } catch (e) {
+  } catch {
     console.log('Audio ding blocked');
   }
 };
@@ -171,27 +171,30 @@ const playReadyChime = () => {
     playNote(660, 0,    0.25);
     playNote(880, 0.28, 0.35);
     playNote(1100, 0.56, 0.5);
-  } catch (e) {
+  } catch {
     console.log('Audio chime blocked');
   }
 };
 
+// Time left until midnight, as "05h 54m" (short) or "05h 54m 12s".
+const untilMidnight = (short) => {
+  const now = new Date();
+  const midnight = new Date();
+  midnight.setHours(24, 0, 0, 0);
+  const d = midnight - now;
+  const h = Math.floor(d / 3600000).toString().padStart(2, '0');
+  const m = Math.floor((d % 3600000) / 60000).toString().padStart(2, '0');
+  const s = Math.floor((d % 60000) / 1000).toString().padStart(2, '0');
+  return short ? `${h}h ${m}m` : `${h}h ${m}m ${s}s`;
+};
+
 function MidnightCountdown({ className, short = false } = {}) {
-  const calc = () => {
-    const now = new Date();
-    const midnight = new Date();
-    midnight.setHours(24, 0, 0, 0);
-    const d = midnight - now;
-    const h = Math.floor(d / 3600000).toString().padStart(2, '0');
-    const m = Math.floor((d % 3600000) / 60000).toString().padStart(2, '0');
-    const s = Math.floor((d % 60000) / 1000).toString().padStart(2, '0');
-    return short ? `${h}h ${m}m` : `${h}h ${m}m ${s}s`;
-  };
-  const [t, setT] = useState(calc);
+  const [t, setT] = useState(() => untilMidnight(short));
   useEffect(() => {
-    const id = setInterval(() => setT(calc()), short ? 30000 : 1000);
+    setT(untilMidnight(short));
+    const id = setInterval(() => setT(untilMidnight(short)), short ? 30000 : 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [short]);
   return <span className={className || 'text-brand-text font-black text-xs'}>{t}</span>;
 }
 
@@ -496,7 +499,7 @@ export default function AdminDashboard() {
   const [editCostVal, setEditCostVal] = useState('');
 
   // --- ITEM-LEVEL DISCOUNT TRACKING ---
-  const [discountedItems, setDiscountedItems] = useState({});
+  const [discountedItems] = useState({});
   const [scpwdOpen, setScpwdOpen] = useState({});
   const [collapsedOrders, setCollapsedOrders] = useState({}); // true = collapsed
   const [depositAmount, setDepositAmount] = useState('');
@@ -800,8 +803,9 @@ export default function AdminDashboard() {
   // account menu.
   const [guideOpen, setGuideOpen] = useState(false);
   useEffect(() => {
-    if (!showsGuide(activeAdmin) || !activeAdmin?._id) return;
-    const key = GUIDE_SEEN_KEY(activeAdmin._id);
+    const id = activeAdmin?._id;
+    if (!id || !showsGuide({ role: activeAdmin?.role })) return;
+    const key = GUIDE_SEEN_KEY(id);
     let seen = true;
     try { seen = localStorage.getItem(key) === '1'; } catch { /* storage blocked: never nag */ }
     if (seen) return;
@@ -1285,22 +1289,6 @@ export default function AdminDashboard() {
     return order.items.map((_, i) => i); // Default: All items selected
   };
 
-  const toggleItemDiscount = (orderId, idx) => {
-    setDiscountedItems(prev => {
-      const current = prev[orderId] || [];
-      if (current.includes(idx)) return { ...prev, [orderId]: current.filter(i => i !== idx) };
-      return { ...prev, [orderId]: [...current, idx] };
-    });
-  };
-
-  const toggleAllItems = (orderId, itemCount) => {
-    setDiscountedItems(prev => {
-      const current = prev[orderId] || [];
-      if (current.length === itemCount) return { ...prev, [orderId]: [] }; // Deselect all
-      return { ...prev, [orderId]: Array.from({length: itemCount}, (_, i) => i) }; // Select all
-    });
-  };
-
   // Say plainly when an edit saved but its price was held for approval. The
   // server returns `pendingApproval` on exactly that case.
   const reportHeldChange = async (res) => {
@@ -1508,14 +1496,14 @@ export default function AdminDashboard() {
         setEodLockedAt(data.lockedAt);
         setDailyMovement(data.movement);
       }
-    } catch (err) { console.error("Failed to fetch EOD data"); }
+    } catch { console.error("Failed to fetch EOD data"); }
   };
 
   const fetchDiscounts = async () => {
     try {
       const res = await apiFetch(`/api/discounts`);
       if (res.ok) setDiscountList((await res.json()).discounts);
-    } catch (err) { console.error("Failed to fetch discounts"); }
+    } catch { console.error("Failed to fetch discounts"); }
   };
 
   const fetchUsers = async () => {
@@ -1527,7 +1515,7 @@ export default function AdminDashboard() {
         const employeesOnly = data.users.filter(u => u.role !== 'superadmin');
         setUsers(employeesOnly);
       }
-    } catch (err) { 
+    } catch { 
       console.error("Failed to fetch users"); 
     }
   };
@@ -1604,30 +1592,6 @@ export default function AdminDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOnline, isAuthenticated, queuedCount]);
 
-  const injectOwnerCapital = async () => {
-    const amountStr = prompt("Enter amount of capital to inject from Owner's Equity:");
-    const amount = parseFloat(amountStr);
-    if (!amount || amount <= 0) return;
-
-    const jePayload = {
-      description: 'Owner Capital Injection',
-      lines: [
-        { accountCode: '111000', accountName: 'Cash on Hand', debit: amount, credit: 0 },
-        { accountCode: '310000', accountName: 'Owner Equity', debit: 0, credit: amount }
-      ]
-    };
-
-    const res = await apiFetch(`/api/journal`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(jePayload)
-    });
-    const d = await res.json().catch(() => ({}));
-    if (!d.success) { ui.alert(d.error || 'Nothing was posted.'); return; }
-    fetchERPData();
-    ui.alert(d.pending
-      ? `Capital injection of ₱${amount.toFixed(2)} saved as ${d.draft?.draftNumber} - it reaches Cash on Hand once an approver signs off.`
-      : `₱${amount.toFixed(2)} injected into Cash on Hand.`);
-  };
-
   // Pricing Control's "History" button - same idea as Inventory's Stock Card,
   // but reads the price-change audit trail (see PUT /api/products/:id) rather
   // than a movement ledger. "as of [date]: price" comes straight from that.
@@ -1648,7 +1612,7 @@ export default function AdminDashboard() {
       } else {
         ui.alert(data.error || 'Could not load price history.');
       }
-    } catch (err) {
+    } catch {
       ui.alert('Failed to load price history. Check your connection.');
     } finally {
       setPriceHistoryLoading(false);
@@ -1743,7 +1707,7 @@ export default function AdminDashboard() {
   const [coaBusy, setCoaBusy]       = useState(false);
   const fetchCoa = useCallback(async () => {
     try { const r = await apiFetch('/api/coa'); const d = await r.json(); if (d.success) setCoaAccounts(d.accounts); } catch { /* ignore */ }
-  }, []);
+  }, [apiFetch]);
   const addCoaChild = async () => {
     if (!coaParent || !coaNewName.trim()) return ui.alert('Pick a parent account and enter a name.');
     setCoaBusy(true);
@@ -1808,7 +1772,7 @@ export default function AdminDashboard() {
   const [periodCloseForm, setPeriodCloseForm] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() || 12, notes: '' });
   const fetchClosedPeriods = useCallback(async () => {
     try { const r = await apiFetch('/api/periods'); const d = await r.json(); if (d.success) setClosedPeriods(d.periods || []); } catch { /* ignore */ }
-  }, []);
+  }, [apiFetch]);
   const closePeriod = async () => {
     const y = Number(periodCloseForm.year), m = Number(periodCloseForm.month);
     if (!y || !m || m < 1 || m > 12) return ui.alert('Pick a valid year and month.');
@@ -1948,7 +1912,7 @@ export default function AdminDashboard() {
   const [paymentMap, setPaymentMap] = useState({ defaults: {}, overrides: {}, effective: {} });
   const fetchPaymentMap = useCallback(async () => {
     try { const r = await apiFetch('/api/payment-method-map'); const d = await r.json(); if (d.success) setPaymentMap({ defaults: d.defaults || {}, overrides: d.overrides || {}, effective: d.effective || {} }); } catch { /* ignore */ }
-  }, []);
+  }, [apiFetch]);
   const savePaymentMapping = async (method, accountCode) => {
     try {
       const r = await apiFetch('/api/payment-method-map', { method: 'PUT', body: JSON.stringify({ method, accountCode }) });
@@ -1984,7 +1948,7 @@ export default function AdminDashboard() {
       const d = await r.json();
       if (d.success) { setAuditLogEntries(d.entries || []); setAuditLogPage(d.page || 1); setAuditLogPages(d.pages || 1); }
     } catch { /* ignore */ }
-  }, [auditLogFilter]);
+  }, [apiFetch, auditLogFilter]);
 
   // ── Derive selectable account lists (canonical + custom children) ───────────
   // Used by every "Paid From / Charge To" dropdown across procurement, expenses,
@@ -2051,7 +2015,7 @@ export default function AdminDashboard() {
       const d = await r.json();
       if (d.success) setClientAccounts(d.clients || []);
     } catch { /* ignore */ }
-  }, []);
+  }, [apiFetch]);
 
   // ── Price tiers (customer classes for the per-product segment picker) ──
   const [priceTiers, setPriceTiers] = useState([]);
@@ -2062,7 +2026,7 @@ export default function AdminDashboard() {
       const d = await r.json();
       if (d.success) setPriceTiers(d.tiers || []);
     } catch { /* ignore */ }
-  }, []);
+  }, [apiFetch]);
 
   // The full tier x product matrix - what every tier actually charges for every
   // product. Powers the Market Segment Pricing table on Pricing Control, so
@@ -2076,7 +2040,7 @@ export default function AdminDashboard() {
       const d = await r.json();
       if (d.success) setPricingTable(d);
     } catch { /* ignore */ }
-  }, []);
+  }, [apiFetch]);
 
   // Inline single-cell edit for a 'per_product' tier's price list. Percent-mode
   // tiers have no per-product rows to edit here - their whole column is a flat
@@ -2220,6 +2184,9 @@ export default function AdminDashboard() {
       else ui.alert(d.error || 'Failed to drop remaining.');
     } catch { ui.alert('Failed to drop remaining.'); }
   };
+  // Once per sign-in. The fetchers are rebuilt every render; listing them would
+  // refetch on every render. They only load and store, so the first ones are fine.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (isAuthenticated) { fetchSettings(); fetchClockStatus(); fetchParked(); } }, [isAuthenticated]);
 
   // --- REAL-TIME AUTO REFRESH ---
@@ -2266,6 +2233,9 @@ export default function AdminDashboard() {
       socket.off('erpUpdated', handleERPForEOD);
       socket.off('orderUpdated', handleERPForEOD);
     };
+    // Re-subscribed per sub-tab on purpose; scheduleERPRefresh is rebuilt every
+    // render and only debounces a fetch, so the captured one behaves the same.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invSubTab]);
 
   // Inventory's page, like the Ledger's, is one this person may open.
@@ -2418,6 +2388,10 @@ export default function AdminDashboard() {
       socket.off('erpUpdated',     handleERPUpdate);
       socket.off('mgrAlert',       handleMgrAlert);
     };
+    // Socket listeners are attached once per sign-in. Listing the fetchers (new
+    // every render) would detach and re-attach them on every render. The role
+    // sent in joinRoom is ignored by the server (rooms come from the token).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
 
   // --- MANUAL POS LOGIC ---
@@ -2447,7 +2421,7 @@ export default function AdminDashboard() {
       } catch { /* non-fatal - cart falls back to no live discount preview */ }
     })();
     return () => { cancelled = true; };
-  }, [posClientId]);
+  }, [apiFetch, posClientId]);
 
   // Re-price whatever's already in the cart when the client changes (added
   // before picking a client, or picked a different one mid-order) - so
@@ -2537,7 +2511,6 @@ export default function AdminDashboard() {
     ? (posSubtotal - posItemDiscountAmt) * (Math.min(100, parseFloat(posDiscountValue) || 0) / 100)
     : Math.min(posSubtotal - posItemDiscountAmt, parseFloat(posDiscountValue) || 0);
   const posGrandTotal = Math.max(0, posSubtotal - posItemDiscountAmt - posDiscountAmt + posDeliveryFeeNum);
-  const posCashChange = Math.max(0, (parseFloat(posCashTendered) || 0) - posGrandTotal);
 
   const submitManualOrder = async () => {
     // Synchronous double-tap guard - blocks a second submit before React re-renders.
@@ -3325,7 +3298,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
       setRfNewModal(false);
       setRfNewForm({ name: '', initialAmount: '', description: '', sourceAccount: '111000' });
       ui.alert(`Requisition Slip ${data.slip.slipNumber} filed. Awaiting approval - the fund won't exist until then.`);
-    } catch (err) { ui.alert('Network error.'); }
+    } catch { ui.alert('Network error.'); }
     finally { setRfNewSubmitting(false); }
   };
 
@@ -3364,7 +3337,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
       setRfFunds(prev => prev.map(f => f._id === data.fund._id ? data.fund : f));
       setRfActiveFund(data.fund);
       await fetchRfTxs(rfActiveFund._id, 1);
-    } catch (err) { ui.alert('Network error.'); }
+    } catch { ui.alert('Network error.'); }
     finally { setRfDisbSubmitting(false); }
   };
 
@@ -3388,7 +3361,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
       setRfReplModal(false);
       setRfReplForm({ amount: '', note: '', sourceAccount: '111000' });
       ui.alert(`Requisition Slip ${data.slip.slipNumber} filed. Awaiting approval - the fund balance won't change until then.`);
-    } catch (err) { ui.alert('Network error.'); }
+    } catch { ui.alert('Network error.'); }
     finally { setRfReplSubmitting(false); }
   };
 
@@ -3400,7 +3373,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
       if (!data.success) return ui.alert(data.error || 'Failed.');
       setRfFunds(prev => prev.filter(f => f._id !== fundId));
       if (rfActiveFund?._id === fundId) { setRfActiveFund(null); setRfTxs([]); }
-    } catch (err) { ui.alert('Network error.'); }
+    } catch { ui.alert('Network error.'); }
   };
   // ────────────────────────────────────────────────────────────────────────────
 
@@ -3437,7 +3410,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
       } else {
         ui.alert(data.error || 'Failed to record expense.');
       }
-    } catch (err) {
+    } catch {
       ui.alert('Network error.');
     } finally {
       setExpenseSubmitting(false);
@@ -3666,7 +3639,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
       } else {
         ui.alert(data.error || 'Failed to record the collection.');
       }
-    } catch (err) {
+    } catch {
       ui.alert('Network error.');
     } finally {
       setSettleSubmitting(false);
@@ -4012,7 +3985,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
         setQrExpiresAt(data.expiresAt ? new Date(data.expiresAt).getTime() : null);
         setShowQR(true);
       }
-    } catch (err) {
+    } catch {
       console.error("Failed to generate secure QR session");
     }
   };
@@ -6386,13 +6359,6 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     : invNotifs.some(n => n.kind === 'low_stock') ? 'bg-red-500'
     : invNotifs.some(n => n.kind === 'expiring') ? 'bg-orange-500'
     : 'bg-red-500';
-  const todayCompleted = orders.filter(o => o.status === 'Completed');
-  const todayComplimentary = todayCompleted.filter(o => o.isComplimentary);
-  const todayCompAmount = todayComplimentary.reduce((sum, o) => sum + o.subtotal, 0);
-  const todayGross = todayCompleted.reduce((sum, o) => sum + o.subtotal, 0); // ALL orders incl. comp (gross stays visible)
-  const todayDiscounts = todayCompleted.reduce((sum, o) => o.isComplimentary ? sum + o.subtotal : sum + (o.discount || 0), 0); // comp = 100% discount
-  const todayRevenue = todayGross - todayDiscounts; // Net cash-collected (comp cancels out)
-  const todayVat = todayCompleted.filter(o => !o.isComplimentary).reduce((sum, o) => sum + o.vatAmount, 0);
 
   const groupedArchives = archivedOrders.reduce((acc, order) => {
     const date = new Date(order.createdAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
@@ -6406,129 +6372,6 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
   const toggleDay = (date) => setExpandedDays(prev => ({ ...prev, [date]: !prev[date] }));
   const toggleOrderList = (date) => setExpandedOrderLists(prev => ({ ...prev, [date]: !prev[date] })); 
-
-  // ==========================================
-  // 🔥 ANALYTICS ENGINE 🔥 - memoized so the 1-second countdown doesn't re-run this
-  // ==========================================
-  const {
-    allCompletedOrders, totalAllTimeRevenue, totalAllTimeComplimentary,
-    dailyRevenueList, bestDay, topProducts,
-    mostUsedStock, lowestStock, highestStock
-  } = useMemo(() => {
-    const completed = [
-      ...orders.filter(o => o.status === 'Completed'),
-      ...archivedOrders.filter(o => o.status === 'Completed')
-    ];
-
-    // 1. Daily Sales & Best Day
-    const dailyRevenueMap = {};
-    let totalRev = 0, totalComp = 0;
-    completed.forEach(o => {
-      const dateStr = new Date(o.createdAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-      if (!dailyRevenueMap[dateStr]) dailyRevenueMap[dateStr] = { net: 0, comp: 0 };
-      if (o.isComplimentary) { dailyRevenueMap[dateStr].comp += o.subtotal; totalComp += o.subtotal; }
-      else { dailyRevenueMap[dateStr].net += o.total; totalRev += o.total; }
-    });
-    let best = { date: 'N/A', revenue: 0 };
-    const revList = Object.entries(dailyRevenueMap).map(([date, data]) => {
-      const revenue = data.net;
-      if (revenue > best.revenue) best = { date, revenue };
-      return { date, revenue };
-    });
-
-    // 2. Top Products
-    const productStats = {};
-    completed.forEach(o => {
-      o.items.forEach(item => {
-        const baseName = item.name.replace(/\s*\(.*?\)\s*/g, '').trim();
-        if (!productStats[baseName]) productStats[baseName] = { qty: 0, revenue: 0 };
-        productStats[baseName].qty += item.quantity;
-        productStats[baseName].revenue += (item.price * item.quantity);
-      });
-    });
-    const top5 = Object.entries(productStats).map(([name, stats]) => ({ name, ...stats }))
-      .sort((a, b) => b.qty - a.qty).slice(0, 5);
-
-    // 3. Raw Material Velocity (Weighted ADU)
-    const nowMs = Date.now();
-    const MS_DAY = 86400000;
-    const orders7d  = completed.filter(o => (nowMs - new Date(o.createdAt).getTime()) <= 7  * MS_DAY);
-    const orders30d = completed.filter(o => (nowMs - new Date(o.createdAt).getTime()) <= 30 * MS_DAY);
-
-    let daysElapsed = 1;
-    if (completed.length > 0) {
-      const ts = completed.map(o => new Date(o.createdAt).getTime());
-      daysElapsed = Math.max(1, Math.ceil((Math.max(...ts) - Math.min(...ts)) / MS_DAY));
-    }
-    const days7  = Math.min(7,  Math.max(1, daysElapsed));
-    const days30 = Math.min(30, Math.max(1, daysElapsed));
-
-    const computeIngUsage = (subset) => {
-      const usage = {};
-      subset.forEach(o => {
-        o.items.forEach(orderItem => {
-          let product = products.find(p => p._id === orderItem.productId);
-          if (!product) {
-            const baseName = orderItem.name.replace(/\s*\(.*?\)\s*/g, '').trim();
-            product = products.find(p => p.name === baseName);
-          }
-          if (!product) return;
-          let recipe = product.baseRecipe || [];
-          const sizeMatch = orderItem.name.match(/\(([^)]+)\)$/);
-          if (sizeMatch) {
-            const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
-            if (sizeObj?.recipe?.length > 0) recipe = sizeObj.recipe;
-          }
-          recipe.forEach(ing => {
-            if (!usage[ing.name]) {
-              const invItem = inventory.find(i => i.itemName.toLowerCase() === ing.name.toLowerCase());
-              usage[ing.name] = { name: ing.name, qtyUsed: 0, unit: ing.unit, currentStock: invItem ? invItem.stockQty : 0 };
-            }
-            usage[ing.name].qtyUsed += ing.qty * orderItem.quantity;
-          });
-        });
-      });
-      return usage;
-    };
-
-    const usage7d  = computeIngUsage(orders7d);
-    const usage30d = computeIngUsage(orders30d);
-
-    const rawMaterialUsage = {};
-    const allIngNames = new Set([...Object.keys(usage7d), ...Object.keys(usage30d)]);
-    allIngNames.forEach(name => {
-      const u7 = usage7d[name], u30 = usage30d[name];
-      const adu7 = u7 ? u7.qtyUsed / days7 : 0;
-      const adu30 = u30 ? u30.qtyUsed / days30 : 0;
-      const weightedAdu = adu7 * 0.7 + adu30 * 0.3;
-      const trend = adu30 > 0 ? (adu7 - adu30) / adu30 : 0;
-      const ref = u7 || u30;
-      rawMaterialUsage[name] = { name, unit: ref.unit, currentStock: ref.currentStock, qtyUsed: (u30 || u7).qtyUsed, weightedAdu, adu7, adu30, trend };
-    });
-
-    const mostUsed = Object.values(rawMaterialUsage)
-      .filter(item => item.weightedAdu > 0).sort((a, b) => b.weightedAdu - a.weightedAdu).slice(0, 5)
-      .map(item => {
-        const daysLeft = item.weightedAdu > 0 ? item.currentStock / item.weightedAdu : Infinity;
-        return { ...item, dailyAvg: item.weightedAdu, daysLeft: isFinite(daysLeft) ? Math.floor(daysLeft) : Infinity, weeklyNeed: Math.ceil(item.weightedAdu * 7), monthlyNeed: Math.ceil(item.weightedAdu * 30), reorderPoint: Math.ceil(item.weightedAdu * 3) };
-      });
-
-    const usageEntries = Object.values(rawMaterialUsage);
-    const lowest = inventory
-      .map(item => { const u = usageEntries.find(e => e.name.toLowerCase() === item.itemName.toLowerCase()); const adu = u ? u.weightedAdu : 0; const daysOfSupply = adu > 0 ? item.stockQty / adu : (item.stockQty <= 0 ? 0 : Infinity); return { ...item, adu, daysOfSupply }; })
-      .filter(item => item.daysOfSupply < Infinity).sort((a, b) => a.daysOfSupply - b.daysOfSupply).slice(0, 5);
-
-    const highest = inventory
-      .map(item => { const u = usageEntries.find(e => e.name.toLowerCase() === item.itemName.toLowerCase()); const adu = u ? u.weightedAdu : 0; const daysOfSupply = adu > 0 ? item.stockQty / adu : (item.stockQty > 0 ? Infinity : 0); const tiedUpCapital = item.stockQty * (item.unitCost || 0); return { ...item, adu, daysOfSupply, tiedUpCapital }; })
-      .filter(item => item.daysOfSupply > 30 && item.stockQty > 0).sort((a, b) => b.tiedUpCapital - a.tiedUpCapital).slice(0, 5);
-
-    return {
-      allCompletedOrders: completed, totalAllTimeRevenue: totalRev, totalAllTimeComplimentary: totalComp,
-      dailyRevenueList: revList, bestDay: best, topProducts: top5,
-      mostUsedStock: mostUsed, lowestStock: lowest, highestStock: highest
-    };
-  }, [orders, archivedOrders, inventory, products]);
-
   // --- DEPARTMENT ROUTING LOGIC (fb: Kitchen/Bar · log: Logistics/Warehouse) ---
   const displayOrders = filteredOrders.filter(order => {
     if (departmentFilter === 'All') return true;

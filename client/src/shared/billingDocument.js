@@ -300,7 +300,7 @@ export function printBillingDoc(html) {
     // Close the print window once the dialog is dismissed (printed or cancelled)
     // so it doesn't linger. onafterprint covers Chrome/Edge; the timeout is a
     // fallback for browsers that never fire it.
-    win.onafterprint = () => { try { win.close(); } catch (e) {} };
+    win.onafterprint = () => { try { win.close(); } catch {} };
     win.print();
   };
 }

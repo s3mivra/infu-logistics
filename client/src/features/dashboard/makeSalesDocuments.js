@@ -1,7 +1,7 @@
-import { Receipt } from 'lucide-react';
+import { } from 'lucide-react';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
 import * as ui from '../../shared/ui';
-import { dateStr } from '../../shared/businessDay.js';
+import { } from '../../shared/businessDay.js';
 
 // Printed sales documents: the billing statement and the delivery receipt.
 // Moved out of AdminDashboard.jsx as it was. The dashboard calls this once per

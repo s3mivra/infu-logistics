@@ -1,7 +1,7 @@
-﻿import React, { useState, useEffect, useRef, memo, useMemo, useCallback } from 'react';
+﻿import { useState, useEffect, useRef, memo, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { io } from 'socket.io-client';
-import { Coffee, ShoppingCart, Plus, Minus, X, Clock, CheckCircle, Package, AlertCircle, Users, Lock, RefreshCw, ChevronLeft, Search } from 'lucide-react';
+import { Coffee, ShoppingCart, Plus, Minus, X, CheckCircle, Package, AlertCircle, ChevronLeft, Search } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { loadDraft, saveDraft, clearDraft } from '../../shared/draft';
 import LegalLinks from '../../shared/LegalLinks';
@@ -10,7 +10,7 @@ import LegalLinks from '../../shared/LegalLinks';
 // - an UNSET var still falls back to the dev LAN box.
 import { API_URL } from '../../shared/apiBase.js';
 import { RateOrder } from '../cafe/CafeExtras';
-import { BUSINESS_TYPE, DEFAULT_DEPARTMENT, IS_FB } from '../../shared/businessType.js';
+import { DEFAULT_DEPARTMENT, IS_FB } from '../../shared/businessType.js';
 // Order routing station. Every other order-entry surface (AdminDashboard,
 // OrdersTab, ProductsTab) resolves this per BUSINESS_TYPE - this QR-scanned
 // customer menu was the one place still hardcoded to 'Kitchen', so every
@@ -47,7 +47,7 @@ const playCustomerDing = () => {
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
     osc.start(ctx.currentTime);
     osc.stop(ctx.currentTime + 0.5);
-  } catch (e) {
+  } catch {
     console.log('Audio blocked');
   }
 };
@@ -156,6 +156,10 @@ export default function CustomerMenu() {
   const [finishedOrderId, setFinishedOrderId] = useState('');
 
   const [isVibrating, setIsVibrating] = useState(false);
+  // The ready-alert effect below reads the latest value without re-running on
+  // it - re-running would replay the chime and cut the vibration short.
+  const isVibratingRef = useRef(isVibrating);
+  isVibratingRef.current = isVibrating;
   const vibrationInterval = useRef(null);
   const [isFinished, setIsFinished] = useState(false);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
@@ -259,7 +263,7 @@ export default function CustomerMenu() {
         } else {
           setIsAuthorized(false);
         }
-      } catch (err) {
+      } catch {
         setIsAuthorized(false);
       }
       setIsCheckingSession(false);
@@ -393,7 +397,7 @@ export default function CustomerMenu() {
         });
       }
 
-      if (!isVibrating) {
+      if (!isVibratingRef.current) {
         setIsVibrating(true);
         if (navigator.vibrate) navigator.vibrate([1000, 500, 1000]);
         vibrationInterval.current = setInterval(() => {
@@ -453,7 +457,7 @@ export default function CustomerMenu() {
       const cbData = await cbRes.json();
       if (cbData.success) setCombos(cbData.combos || []);
 
-    } catch (err) {
+    } catch {
       console.error("Failed to fetch menu data");
     }
   };
@@ -547,7 +551,7 @@ export default function CustomerMenu() {
         await navigator.serviceWorker.register('/sw.js');
       }
       return permission === 'granted';
-    } catch (error) { return false; }
+    } catch { return false; }
   };
 
   const confirmOrder = async () => {

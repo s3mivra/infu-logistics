@@ -1,7 +1,6 @@
-﻿import React, { useState, useEffect } from 'react';
-import { Menu, Maximize, Minimize, X, Lock, Unlock, QrCode, TrendingUp, TrendingDown, Package, Users, Settings, DollarSign, ShoppingCart, ChefHat, BarChart3, FileText, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Eye, Download, RefreshCw, CheckCircle, Check, Clock, Coffee, Minus, LogOut, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Building2, Printer, ArrowUp, ArrowDown, Gift, XCircle, Zap, BarChart2, CreditCard, Banknote, Smartphone, Truck, Bell, ShieldCheck, Search, Tag } from 'lucide-react';
-import { usePagination } from '../../shared/usePagination';
-import Pager from '../../shared/Pager';
+﻿import { useState, useEffect } from 'react';
+import { FileText, RefreshCw, ChevronDown, ChevronUp, Printer, Search } from 'lucide-react';
+import { } from '../../shared/usePagination';
 import RangePresets from '../../shared/RangePresets';
 import DailyClosingCheck from './DailyClosingCheck';
 import { TipsPanel } from '../cafe/CafeExtras';
@@ -22,73 +21,27 @@ export default function HistoryTab({ ctx }) {
   // ── Auto-generated from ctx - do NOT edit manually.
   // Run scripts_temp/fix_tab_destructures.cjs to regenerate.
   const {
-    API_URL, AUDIT_PAGE_SIZE, BIZ_NAME, COMP_REASON_LABELS, FRONTEND_URL,
-    HIST_PAGE_SIZE, POS_PER_PAGE, SHIFT_HIST_PAGE_SIZE, accountingItemsPerPage, accountingPage,
-    activeAdmin, activeInventoryItem, activeTab, addInventory, addMaterialToRecipe,
-    addOnForm, addSize, analyticsData, analyticsLoading, apiFetch,
-    applyComplimentary, applyDiscount, applyItemDiscount, arOutstanding, archiveDay,
-    archivedOrders, auditCancelPage, auditCompPage, auditDiscPage, auditFilter,
-    auditStaffPage, bsData, calcRecipeCost, cashOnHand, cashTendered,
-    catForm, categories, closeRfFund, collapsedOrders, compOverride,
-    compReasonNotes, compReasonTypes, compSelections, confirmPosItem, currentEntries,
-    currentInventory, currentOrders, currentPage, currentPricingProducts, currentProducts,
-    dailyMovement, deleteAddOn, deleteCategory, deleteInventory, deleteProduct,
-    departmentFilter, discountForm, discountInputs, discountList, discounts,
-    displayOrders, downloadImportTemplate, editInvForm, editInvModal,
-    editInvSubmitting, editPriceId, editPriceVal, editingCategory, editingProduct,
-    effectiveDisplay, eodLockedAt, eodStatus, expandedBatchRows, expandedDays,
-    expandedOrderLists, expenseCategories, expenseModal, exportAllToPDF, exportAnalyticsToPDF,
-    exportDayToPDF, exportInventoryToPDF, exportLedgerToPDF, fetchAnalytics, fetchArOutstanding,
+    BIZ_NAME, 
+    SHIFT_HIST_PAGE_SIZE, 
+    apiFetch,
+    archiveDay,
+    expandedDays,
+    expandedOrderLists, exportAllToPDF, 
+    exportDayToPDF, 
     loadPdfLibs, addLogoToPDF, pdfMoney, exportShiftHistoryPDF, exportTimesheetsPDF,
-    fetchBalanceSheet, fetchData, fetchEODData, fetchERPData, fetchExpenseCategories,
-    fetchOrders, fetchPnl, fetchRfFunds, fetchRfTxs, fetchShiftHistory,
-    fetchStockHistory, filteredOrders, formData, getEstimatedStock, globalAddOns,
-    groupedArchives, handleImageUpload, handleInlinePriceUpdate, handleRestockSubmit, handleSaveAddOn,
-    handleSaveCategory, handleSaveProduct, handleVoidOrder, historyItemName, historyModalOpen,
-    historyPage, historySubTab, importModal, importRows, importSubmitting,
-    invBadgeCount, invForm, invItemsPerPage, invPage, invSubTab,
-    inventory, isPosOpen, isStatusMenuOpen, isSuperAdmin, itemDisplay,
-    itemsPerPage, jeForm, journalEntries, ledgerSubTab, navMode,
-    newDiscount, openEditInventory, openProductModal, orderFilter, orders,
-    ordersItemsPerPage, ordersPage, parseImportFile, paymentSelections, peso,
-    physicalCounts, pnlData, pnlRange, posActiveAddOns, posActiveSize,
-    posCart, posCashTendered, posCategory, posCheckoutModal, posCustomerName,
-    posCustomerPhone, posDeliveryAddress, posDeliveryFee, posDeliveryFeeNum, posDiscountAmt,
-    posDiscountType, posDiscountValue, posGrandTotal, posPage, posPayment,
-    posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable,
-    pricingItemsPerPage, pricingPage, printOrderSlip, printXReading, printZReading, products,
+    fetchOrders, fetchShiftHistory,
+    groupedArchives, 
+    historySubTab, 
+    orders,
+    printXReading, printZReading, 
     archiveSearch, setArchiveSearch, archiveDateRange, setArchiveDateRange, archiveTotal,
-    clockEntries, clockEntriesTotal, clockEntriesPage, fetchClockEntries,
-    salesSummary, sssRange, setSssRange, sssGroup, setSssGroup, sssRows, fetchSalesSummary, exportSalesSummaryPDF,
-    removeAddOnFromOrder, removeComplimentary, removeMaterial, removeSize, restockData,
-    rfActiveFund, rfDisbForm, rfDisbModal, rfDisbSubmitting, rfFunds,
-    rfLoading, rfNewForm, rfNewModal, rfNewSubmitting, rfReplForm,
-    rfReplModal, rfReplSubmitting, rfTxPage, rfTxPages, rfTxTotal,
-    rfTxs, scpwdOpen, setAccountingPage, setActiveInventoryItem, setActiveTab,
-    setAddOnForm, setAuditCancelPage, setAuditCompPage, setAuditDiscPage, setAuditFilter,
-    setAuditStaffPage, setCashTendered, setCatForm, setCollapsedOrders, setCompOverride,
-    setCompReasonNotes, setCompReasonTypes, setCompSelections, setCurrentPage, setDepartmentFilter,
-    setDiscountForm, setDiscountInputs, setEditInvForm, setEditInvModal, setEditPriceId,
-    setEditPriceVal, setEditingCategory, setEditingProduct, setExpandedBatchRows, setExpenseModal,
-    setFormData, setHistoryItemName, setHistoryModalOpen, setHistoryPage, setHistorySubTab,
-    setImportModal, setImportRows, setInvForm, setInvPage, setInvSubTab,
-    setIsPosOpen, setIsStatusMenuOpen, setJeForm, setJournalEntries, setLedgerSubTab,
-    setNewDiscount, setOrderFilter, setOrdersPage, setPaymentSelections, setPhysicalCounts,
-    setPnlRange, setPosActiveAddOns, setPosActiveSize, setPosCart, setPosCashTendered,
-    setPosCategory, setPosCheckoutModal, setPosCustomerName, setPosCustomerPhone, setPosDeliveryAddress,
-    setPosDeliveryFee, setPosDiscountType, setPosDiscountValue, setPosPage, setPosPayment,
-    setPosScheduledTime, setPosSearch, setPosSelectedProduct, setPosTable, setPricingPage,
-    setRestockData, setRfActiveFund, setRfDisbForm, setRfDisbModal, setRfNewForm,
-    setRfNewModal, setRfReplForm, setRfReplModal, setRfTxs, setScpwdOpen,
-    setSettleForm, setSettleModal, setSettleSubmitting, setShiftFilter, setShiftHistoryPage,
-    setSpoilageForm, setSpoilageModal, setStockHistory, setVarianceNoteMode, setVarianceReasons,
-    settleForm, settleModal, settleSubmitting, shiftFilter, shiftHistory,
-    shiftHistoryPage, shiftHistoryTotal, spoilageForm, spoilageLoading, spoilageModal,
-    standardAccounts, stockHistory, submitManualOrder, submitPhysicalCounts, submitRfDisb,
-    submitRfNew, submitRfRepl, toggleDay, toggleOrderList,
-    totalAccountingPages, totalInvPages, totalOrdersPages, totalPages, totalPricingPages,
-    updateItemStatus, updateMaterialQty, updateSize, updateStatus, updatingOrders,
-    users, varianceNoteMode, varianceReasons,
+    clockEntries, clockEntriesTotal, fetchClockEntries,
+    setHistorySubTab,
+    setShiftFilter, 
+    shiftFilter, shiftHistory,
+    shiftHistoryPage, shiftHistoryTotal, 
+    toggleDay, toggleOrderList,
+    users, 
   } = ctx;
 
   // Bank Deposits (read-only list; deposits are posted during shift close).
@@ -117,32 +70,14 @@ export default function HistoryTab({ ctx }) {
     doc.save(`Bank-Deposits-${todayStr()}.pdf`);
   };
 
-  const sssPage = usePagination(sssRows, 15);
-  // Fixed Summary-Sales columns (always shown), each summing one or more raw methods.
-  const SSS_COLS = [
-    ['Cash',             ['Cash']],
-    ['Bank',             ['Bank Transfer']],
-    ['GCash',            ['GCash']],
-    ['Maya',             ['Maya']],
-    ['Maribank/SeaBank', ['Maribank']],
-    ['Other E-Wallet',   ['E-Wallet', 'Other E-Wallet']],
-    ['GrabFood',         ['Grab Delivery']],
-    ...(BUSINESS_TYPE === 'log' ? [['Lalamove', ['Lalamove']]] : [['Foodpanda', ['Foodpanda']]]),
-    ['Manual/Direct',    ['Manual Delivery']],
-  ];
-  const sssColVal = (row, methods) => methods.reduce((s, m) => s + (row?.methods?.[m] || 0), 0);
-  const sssColTotal = (methods) => methods.reduce((s, m) => s + (salesSummary?.totals?.methods?.[m] || 0), 0);
-
   // todayCompleted comes from today's live orders
   const todayCompleted     = orders.filter(o => o.status === 'Completed');
   const todayShiftOrders   = todayCompleted.filter(o => shiftFilter === 'All' || o.cashier === shiftFilter);
-  const shiftPaid          = todayShiftOrders.filter(o => !o.isComplimentary);
   const shiftComp          = todayShiftOrders.filter(o =>  o.isComplimentary);
   const shiftGross         = todayShiftOrders.reduce((sum, o) => sum + o.subtotal, 0);
   const shiftDisc          = todayShiftOrders.reduce((sum, o) => o.isComplimentary ? sum + o.subtotal : sum + (o.discount || 0), 0);
   const shiftRevenue       = shiftGross - shiftDisc;
   const shiftCompAmount    = shiftComp.reduce((sum, o) => sum + o.subtotal, 0);
-  const shiftVat           = shiftPaid.reduce((sum, o) => sum + o.vatAmount, 0);
 
   const histSubTabUI = (
     <div className="flex items-center gap-2 mb-6 flex-wrap">

@@ -1,4 +1,4 @@
-import { X, FileText, AlertTriangle, Download, CreditCard, Truck, History } from 'lucide-react';
+import { X, FileText, AlertTriangle, Download, CreditCard, Truck } from 'lucide-react';
 import Pager from '../../shared/Pager';
 import SearchSelect from '../../shared/ui/SearchSelect';
 

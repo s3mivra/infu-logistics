@@ -92,7 +92,7 @@ describe('importing it', () => {
 
   it('reports a sheet the server refused, without stopping the rest', async () => {
     const steps = await readSetupWorkbook(XLSX, book(sheets), availableTemplates(can, true, 'fb'), server());
-    const apiFetch = async (path, init) => {
+    const apiFetch = async (path, _init) => {
       if (path.includes('template=1')) return { json: async () => ({ success: true, example: [] }) };
       if (path.includes('suppliers')) return { json: async () => ({ success: false, error: 'Supplier name is required.' }) };
       return { json: async () => ({ success: true, created: 1 }) };

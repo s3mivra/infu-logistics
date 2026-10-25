@@ -15,10 +15,6 @@ import {
 } from 'lucide-react';
 
 let _pdfLibPromise = null;
-const loadPdfLib = () => {
-  if (!_pdfLibPromise) _pdfLibPromise = import('jspdf').then(m => m.default);
-  return _pdfLibPromise;
-};
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.

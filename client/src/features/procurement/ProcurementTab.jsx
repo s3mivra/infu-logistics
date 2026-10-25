@@ -1,6 +1,6 @@
-﻿import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+﻿import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import ScanBox, { findByCode } from '../../shared/ScanBox';
-import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, ChevronDown, Search, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin, Download, Sparkles, Box, Upload } from 'lucide-react';
+import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, ChevronDown, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin, Download, Sparkles, Box, Upload } from 'lucide-react';
 import Attachments from '../../shared/Attachments';
 import * as ui from '../../shared/ui';
 import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocument';
@@ -35,6 +35,10 @@ const StatusBadge = ({ status }) => (
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
 import { BUSINESS_TYPE } from '../../shared/businessType.js';
+
+// The stand-in when ctx.can is missing: one function, not a new one per
+// render, or every effect that lists `can` would run on every render.
+const ALLOW_ALL = () => true;
 
 export default function ProcurementTab({ ctx }) {
   const { apiFetch, peso, inventory = [], isSuperAdmin, packInfo, effectiveDisplay, systemSettings = {}, loadPdfLibs,
@@ -94,7 +98,7 @@ export default function ProcurementTab({ ctx }) {
     }));
   };
   // Permission gating (server also enforces). Fall back to role-ish defaults if ctx.can missing.
-  const can = ctx.can || (() => true);
+  const can = ctx.can || ALLOW_ALL;
   const canManage = can('procurement.manage');
   const canDelete = can('procurement.delete');
 
@@ -144,7 +148,7 @@ export default function ProcurementTab({ ctx }) {
       const d = await res.json();
       if (d.success) setPos(d.purchaseOrders || []);
       else setError(d.error || 'Failed to load purchase orders.');
-    } catch (e) { setError('Network error loading purchase orders.'); }
+    } catch { setError('Network error loading purchase orders.'); }
     finally { setLoading(false); }
   }, [apiFetch]);
 
@@ -259,7 +263,7 @@ export default function ProcurementTab({ ctx }) {
       const posOut = [...byPo.values()].filter(p => p.lines.length);
       if (posOut.length === 0) { setError('No item rows found under the header.'); setImporting(false); return; }
       setImportPreview({ pos: posOut, skipped });
-    } catch (e) {
+    } catch {
       setError('Could not read the file. Make sure it is a valid .xlsx / .csv.');
     } finally { setImporting(false); }
   };
@@ -753,7 +757,7 @@ export default function ProcurementTab({ ctx }) {
         }
       }
       else setError(d.error || 'Failed to save.');
-    } catch (e) { setError('Network error saving.'); }
+    } catch { setError('Network error saving.'); }
     finally { setSaving(false); }
   };
 
@@ -766,7 +770,7 @@ export default function ProcurementTab({ ctx }) {
       const res = await apiFetch(`/api/purchase-orders/${po._id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
       const d = await res.json();
       if (d.success) fetchPOs(); else setError(d.error || 'Failed to update status.');
-    } catch (e) { setError('Network error updating status.'); }
+    } catch { setError('Network error updating status.'); }
   };
 
   const deletePO = async (po) => {
@@ -775,7 +779,7 @@ export default function ProcurementTab({ ctx }) {
       const res = await apiFetch(`/api/purchase-orders/${po._id}`, { method: 'DELETE' });
       const d = await res.json();
       if (d.success) fetchPOs(); else setError(d.error || 'Failed to delete.');
-    } catch (e) { setError('Network error deleting purchase order.'); }
+    } catch { setError('Network error deleting purchase order.'); }
   };
 
   // ── Receiving / reconciliation ────────────────────────────────────────────────
@@ -903,7 +907,7 @@ export default function ProcurementTab({ ctx }) {
       const d = await res.json();
       if (d.success) { setReceiveId(null); await fetchPOs(); }
       else setError(d.error || 'Failed to reconcile delivery.');
-    } catch (e) { setError('Network error reconciling delivery.'); }
+    } catch { setError('Network error reconciling delivery.'); }
     finally { setReceiving(false); }
   };
 
@@ -915,7 +919,6 @@ export default function ProcurementTab({ ctx }) {
   const historyPOs = pos.filter(p => ['Complete', 'Cancelled'].includes(p.status));
   // Per-line remaining-to-receive, used to show "the missing ones only".
   const remainingOf = (l) => Math.max(0, (Number(l.orderedQty) || 0) - (Number(l.receivedQty) || 0));
-  const [invSearch, setInvSearch] = useState('');
 
   const inputCls = 'w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60';
 

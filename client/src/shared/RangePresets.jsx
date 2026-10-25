@@ -8,7 +8,7 @@
 // same click that sets the range: it would still see the old dates. Instead the
 // run is armed, and fires on the next render that carries the picked range -
 // by then the parent has re-rendered and `onRun` reads the new dates.
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { RANGE_PRESETS, presetRange, matchPreset } from './businessDay.js';
 
 export default function RangePresets({ value, onChange, onRun, className = '' }) {

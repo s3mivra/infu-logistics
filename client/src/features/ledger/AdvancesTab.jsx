@@ -1,4 +1,4 @@
-import { Plus, Check, Receipt, HandCoins } from 'lucide-react';
+import { Plus, HandCoins } from 'lucide-react';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import RangePresets from '../../shared/RangePresets';
 

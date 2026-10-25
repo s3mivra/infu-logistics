@@ -4,7 +4,6 @@ import * as ui from '../../shared/ui';
 import { reconcileUnitOptions as reconcileUnitsFor, plannedUnitChoice as plannedUnitFor, toBaseQty, inUnit, restateQty } from '../../shared/productionUnits';
 
 import { todayStr } from '../../shared/businessDay.js';
-import { PACK_UNIT } from '../../shared/packUnit.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import { useRefreshTick } from '../../shared/refreshBus';
 
@@ -62,15 +61,6 @@ export default function ProductionTab({ ctx }) {
   };
   // How much is on hand, expressed in a chosen unit.
   const onHandIn = (item, factor) => +(((item?.stockQty || 0) / (factor || 1)).toFixed(4));
-
-  const pieceInfo = (item) => {
-    const d = item && itemDisplay ? itemDisplay(item) : null;
-    // The Hub's counted unit - see StockTransferPanel for why 1 was wrong.
-    const perPiece = Number(d?.packBase) || 1;
-    const label = d?.isPacked ? PACK_UNIT : (d?.unit || item?.unit || 'units');
-    const onHandPieces = item ? +(((item.stockQty || 0) / perPiece).toFixed(4)) : 0;
-    return { perPiece, label, onHandPieces };
-  };
 
   // What the RECONCILE step may count the yield in, and which of those the
   // batch was planned in. The arithmetic lives in shared/productionUnits.js
@@ -265,7 +255,6 @@ export default function ProductionTab({ ctx }) {
     setSaveRecipe(!it || !(it.productionRecipe || []).length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [outputType, outputInvId]);
-  const outputPieceInfo = pieceInfo(outputItem);
   // The same choice the materials get: a batch that yields 12 L of cold brew is
   // entered as 12 L, whatever pack size the item happens to carry.
   const outputUnitOptions = unitOptions(outputItem);
