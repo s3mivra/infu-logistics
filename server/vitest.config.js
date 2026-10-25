@@ -1,4 +1,10 @@
-﻿import { defineConfig } from 'vitest/config';
+import { defineConfig } from 'vitest/config';
+
+// Tests run on the business's clock, the same as production (server/Dockerfile:
+// TZ=Asia/Manila). Day boundaries, "today" and month ends are local times, so
+// without this the suite passed on a laptop in Manila and failed on CI (UTC).
+// Set before any worker forks, which inherit it.
+process.env.TZ = 'Asia/Manila';
 
 export default defineConfig({
   test: {
@@ -18,6 +24,7 @@ export default defineConfig({
     maxWorkers: 2,
     minWorkers: 1,
     fileParallelism: true,
+    env: { TZ: 'Asia/Manila' },
     coverage: {
       provider: 'v8',
       reporter: ['text-summary', 'text'],
