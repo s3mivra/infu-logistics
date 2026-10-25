@@ -143,7 +143,7 @@ export default function registerNotify(ctx) {
       const from = String(b.from || '').trim().slice(0, 200);
       if (!HOST.test(host) || host.length > 253) return res.status(400).json({ success: false, error: 'The mail server should look like smtp.gmail.com.' });
       if (!(port >= 1 && port <= 65535)) return res.status(400).json({ success: false, error: 'The port is a number such as 587 or 465.' });
-      if (/[\r\n]/.test(from) || !isEmail((from.match(/<([^>]+)>/) || [, from])[1])) return res.status(400).json({ success: false, error: 'Send from should be an address, e.g. Infusions <you@gmail.com>.' });
+      if (/[\r\n]/.test(from) || !isEmail((from.match(/<([^>]+)>/)?.[1] ?? from))) return res.status(400).json({ success: false, error: 'Send from should be an address, e.g. Infusions <you@gmail.com>.' });
       const prev = await readAccount();
       const typed = String(b.pass ?? '').replace(/\s+/g, '');   // Google shows app passwords in groups of four
       const passSealed = typed ? seal(typed) : (prev?.passSealed || '');
