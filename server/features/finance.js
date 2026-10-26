@@ -621,6 +621,10 @@ async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, de
   // Validated against the same derived set the picker offers. Checking the
   // hand-written twelve here would have rejected every account the picker had
   // just started offering.
+  // A spreadsheet hands the code over as the number 610000 (or "610000.0");
+  // the accounts are keyed by the text "610000". Without this every imported
+  // expense was refused as an invalid category.
+  categoryCode = String(categoryCode ?? '').trim().replace(/\.0+$/, '');
   const cat = expenseCategoryList().find(c => c.code === categoryCode);
   if (!cat) return { ok: false, error: 'Invalid expense category.' };
   if (!description?.trim()) return { ok: false, error: 'Description required.' };

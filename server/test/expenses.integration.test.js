@@ -149,4 +149,16 @@ describe('POST /api/expenses/import - bulk Excel import', () => {
   it('requires authentication', async () => {
     expect((await request(app).post('/api/expenses/import').send({ rows: [] })).status).toBe(401);
   });
+
+  // Excel stores an account code typed as 610000 as a number, and a sheet that
+  // went through a float shows it as 610000.0 - both are the account "610000".
+  it('takes the category as a number, or as a number with ".0", from a spreadsheet', async () => {
+    const res = await importRows([
+      { amount: 50, categoryCode: 610000, paymentMethod: 'Cash on Hand', description: 'numeric code' },
+      { amount: 60, categoryCode: '760000.0', paymentMethod: 'Cash on Hand', description: 'float-looking code' },
+    ]);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.created).toBe(2);
+    expect(res.body.skipped).toHaveLength(0);
+  });
 });
