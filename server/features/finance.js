@@ -625,6 +625,10 @@ async function createExpenseEntry(req, { amount, categoryCode, paymentMethod, de
   // the accounts are keyed by the text "610000". Without this every imported
   // expense was refused as an invalid category.
   categoryCode = String(categoryCode ?? '').trim().replace(/\.0+$/, '');
+  // The same for every text field: a reference number such as 4250897002
+  // arrives as a number, and `.trim()` on it threw - failing the whole import.
+  const asText = (v) => (v === undefined || v === null ? v : String(v));
+  description = asText(description); vendor = asText(vendor); refNo = asText(refNo); paymentMethod = asText(paymentMethod);
   const cat = expenseCategoryList().find(c => c.code === categoryCode);
   if (!cat) return { ok: false, error: 'Invalid expense category.' };
   if (!description?.trim()) return { ok: false, error: 'Description required.' };

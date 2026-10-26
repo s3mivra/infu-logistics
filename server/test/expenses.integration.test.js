@@ -156,9 +156,11 @@ describe('POST /api/expenses/import - bulk Excel import', () => {
     const res = await importRows([
       { amount: 50, categoryCode: 610000, paymentMethod: 'Cash on Hand', description: 'numeric code' },
       { amount: 60, categoryCode: '760000.0', paymentMethod: 'Cash on Hand', description: 'float-looking code' },
+      // A reference number, vendor and description typed as numbers in Excel.
+      { amount: 70, categoryCode: 760000, paymentMethod: 'Cash on Hand', description: 2026, vendor: 12345, refNo: 4250897002 },
     ]);
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body.created).toBe(2);
+    expect(res.body.created).toBe(3);
     expect(res.body.skipped).toHaveLength(0);
   });
 });
