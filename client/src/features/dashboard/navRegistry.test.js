@@ -89,7 +89,9 @@ describe('the way in is on the screen', () => {
     // folds shut - so a desktop showed nothing that said the app is searchable.
     const sidebar = dash.slice(dash.indexOf('{/* Nav'), dash.indexOf('{/* Nav') + 2000);
     expect(dash).toMatch(/aria-label="Search screens \(Ctrl\+K\)"/);
-    expect(dash.indexOf('aria-label="Search screens (Ctrl+K)"')).toBeLessThan(dash.indexOf('<nav className="p-3'));
+    const nav = dash.indexOf('aria-label="Main"');
+    expect(nav).toBeGreaterThan(-1);
+    expect(dash.indexOf('aria-label="Search screens (Ctrl+K)"')).toBeLessThan(nav);
     expect(sidebar.length).toBeGreaterThan(0);
   });
 });
