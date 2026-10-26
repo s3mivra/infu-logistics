@@ -104,3 +104,15 @@ describe('Approvals', () => {
     expect(ledgerPages).not.toContain('approvals');
   });
 });
+
+describe('icons', () => {
+  // Collapsed to an icon strip, the icon is the only thing on screen that
+  // tells two destinations apart, so no two may share one.
+  it('gives every sidebar destination its own icon', () => {
+    const items = NAV_GROUPS.flatMap((g) => g.items);
+    const byIcon = new Map();
+    for (const it of items) byIcon.set(it.icon, [...(byIcon.get(it.icon) || []), it.id]);
+    const shared = [...byIcon.values()].filter((ids) => ids.length > 1);
+    expect(shared).toEqual([]);
+  });
+});

@@ -1,4 +1,6 @@
 // One list of everywhere you can go in the dashboard.
+// Every entry has its own icon: collapsed to an icon strip, the icon is all
+// that tells two screens apart (navRegistry.test.js holds it to that).
 //
 // The sidebar and the Ctrl+K command palette used to keep separate hand-written
 // copies of this, and they had drifted: the palette was missing Hub, Quotations
@@ -16,6 +18,7 @@ import {
   BarChart3, BarChart2, DollarSign, Clock, ShieldCheck, Building2, Landmark,
   Receipt, Settings, TrendingUp, RefreshCw, Banknote, HandCoins, Download,
   CalendarCheck, AlertTriangle, Target, CalendarDays, Calculator,
+  LayoutDashboard, LineChart, Wallet, ClipboardCheck, UserCog, BookOpen,
 } from 'lucide-react';
 import { REPORT_NAMES, IS_LOG } from '../../shared/businessType.js';
 
@@ -51,10 +54,10 @@ export const NAV_GROUPS = [
     mode: 'negotium',
     items: [
       // The owner's one page: sales, profit, cash, debts, stock, decisions waiting.
-      { id: 'owner', label: 'Owner Overview', icon: BarChart3, perm: 'owner.view', hint: 'The business at a glance' },
-      { id: 'analytics', label: 'Analytics', icon: BarChart3, perm: 'analytics.view', hint: 'Sales dashboard' },
+      { id: 'owner', label: 'Owner Overview', icon: LayoutDashboard, perm: 'owner.view', hint: 'The business at a glance' },
+      { id: 'analytics', label: 'Analytics', icon: LineChart, perm: 'analytics.view', hint: 'Sales dashboard' },
       { id: 'reports', label: 'Reports', icon: BarChart2, perm: 'reports.view', sub: 'salessummary', hint: 'Sales summaries' },
-      { id: 'ledger', label: 'Ledger', icon: FileText, perm: 'accounting.view', sub: 'journal', hint: 'Journal entries' },
+      { id: 'ledger', label: 'Ledger', icon: BookOpen, perm: 'accounting.view', sub: 'journal', hint: 'Journal entries' },
       // Pricing Control's server calls are requireStaff, not superadmin-only,
       // so it is gated on products.manage like Menu Setup - a hardcoded
       // superadmin check here previously left managers unable to find promos.
@@ -69,7 +72,7 @@ export const NAV_GROUPS = [
       // requisitions.view you only see the slips you filed yourself), and
       // Approve / Reject still need requisitions.approve. It is drawn by the
       // Ledger screen in its "approvals only" mode, hence `sub`.
-      { id: 'approvals', label: 'Approvals', icon: ShieldCheck, sub: 'approvals', hint: 'Requisition slips to approve' },
+      { id: 'approvals', label: 'Approvals', icon: ClipboardCheck, sub: 'approvals', hint: 'Requisition slips to approve' },
       { id: 'audit', label: 'Audit Report', icon: ShieldCheck, perm: 'audit.view', hint: 'Who changed what' },
       { id: 'fixedassets', label: 'Fixed Assets', icon: Building2, perm: 'assets.view', hint: 'Register, depreciation' },
       // Optional modules: each appears only where the business has switched it
@@ -77,7 +80,7 @@ export const NAV_GROUPS = [
       // never use is noise in both the sidebar and the search results.
       { id: 'bankrec', label: 'Bank Reconciliation', icon: Landmark, perm: 'bankrec.view', module: 'bankReconciliation', hint: 'Match the statement' },
       { id: 'wht', label: 'Withholding Tax', icon: Receipt, perm: 'accounting.view', module: 'withholdingTax', hint: 'Held for the BIR' },
-      { id: 'payroll', label: 'Payroll', icon: Users, perm: 'payroll.view', module: 'payroll', hint: 'Runs and payslips' },
+      { id: 'payroll', label: 'Payroll', icon: Wallet, perm: 'payroll.view', module: 'payroll', hint: 'Runs and payslips' },
       // Every staff member files their own; roster managers decide.
       { id: 'timeoff', label: 'Leave & Overtime', icon: CalendarDays, hint: 'File and approve time off' },
     ],
@@ -89,7 +92,7 @@ export const NAV_GROUPS = [
     items: [
       { id: 'settings', label: 'Settings', icon: Settings, hint: 'Preferences, appearance' },
       // Not a dashboard tab - a route outside the tabbed shell.
-      { id: 'admin-panel', label: 'Admin Panel', icon: ShieldCheck, superOnly: true, route: '/admin/admin-panel', hint: 'Users, roles, tenants' },
+      { id: 'admin-panel', label: 'Admin Panel', icon: UserCog, superOnly: true, route: '/admin/admin-panel', hint: 'Users, roles, tenants' },
     ],
   },
 ];

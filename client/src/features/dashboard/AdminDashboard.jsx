@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { socket, reconnectSocket } from '../../shared/staffSocket.js';
 import { broadcastRefresh } from '../../shared/refreshBus';
 import JustQr from '../qr/JustQr';
-import { Menu, Maximize, Minimize, X, Lock, QrCode, Users, Settings, AlertCircle, AlertTriangle, Download, RefreshCw, PanelLeftClose, PanelLeftOpen, Clock, LogOut, ChevronRight, ChevronDown, ChevronUp, Banknote, Bell, ShieldCheck, Search, WifiOff, CloudOff, BookOpen } from 'lucide-react';
+import { Menu, Maximize, Minimize, X, Lock, QrCode, Users, Settings, AlertCircle, AlertTriangle, Download, RefreshCw, PanelLeftClose, PanelLeftOpen, UserCog, Clock, LogOut, ChevronRight, ChevronDown, ChevronUp, Banknote, Bell, Search, WifiOff, CloudOff, BookOpen } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 import { usePwa } from '../../shared/usePwa';
 import { usePaymentMethods } from '../../shared/usePaymentMethods';
@@ -6872,7 +6872,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             title={rail ? 'Admin Panel' : undefined} aria-label={rail ? 'Admin Panel' : undefined}
             className={`w-full flex items-center mt-1 rounded-xl text-left transition font-bold text-sm text-fg/75 hover:text-fg hover:bg-white/5 ${rail ? 'justify-center py-2.5' : 'gap-3 px-4 py-3'}`}
           >
-            <ShieldCheck size={rail ? 18 : 16} className="text-brand-text shrink-0" />
+            <UserCog size={rail ? 18 : 16} className="text-brand-text shrink-0" />
             {!rail && <span className="whitespace-nowrap">Admin Panel</span>}
             {!rail && <span className="ml-auto shrink-0 text-[8px] font-black uppercase tracking-widest bg-brand border border-brand text-on-brand px-1.5 py-0.5 rounded">Super</span>}
           </button>
