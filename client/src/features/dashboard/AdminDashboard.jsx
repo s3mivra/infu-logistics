@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { socket, reconnectSocket } from '../../shared/staffSocket.js';
 import { broadcastRefresh } from '../../shared/refreshBus';
 import JustQr from '../qr/JustQr';
-import { Menu, Maximize, Minimize, X, Lock, QrCode, Users, Settings, AlertCircle, AlertTriangle, Download, RefreshCw, Clock, LogOut, ChevronRight, ChevronDown, ChevronUp, Banknote, Bell, ShieldCheck, Search, WifiOff, CloudOff, BookOpen } from 'lucide-react';
+import { Menu, Maximize, Minimize, X, Lock, QrCode, Users, Settings, AlertCircle, AlertTriangle, Download, RefreshCw, PanelLeftClose, PanelLeftOpen, Clock, LogOut, ChevronRight, ChevronDown, ChevronUp, Banknote, Bell, ShieldCheck, Search, WifiOff, CloudOff, BookOpen } from 'lucide-react';
 import { QRCode } from 'react-qr-code';
 import { usePwa } from '../../shared/usePwa';
 import { usePaymentMethods } from '../../shared/usePaymentMethods';
@@ -828,6 +828,13 @@ export default function AdminDashboard() {
   // untouched install looks exactly as it did.
   const [collapsedNavGroups, setCollapsedNavGroups] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem('semivra_nav_collapsed') || '[]')); } catch { return new Set(); }
+  });
+  // The whole sidebar folds to a strip of icons (desktop only), so the screen
+  // goes to the work. Remembered per device; the phone drawer is unaffected.
+  const [navRail, setNavRail] = useState(() => { try { return localStorage.getItem('semivra_nav_rail') === '1'; } catch { return false; } });
+  const toggleNavRail = () => setNavRail(r => {
+    try { localStorage.setItem('semivra_nav_rail', r ? '0' : '1'); } catch { /* ignore */ }
+    return !r;
   });
   const toggleNavGroup = (key) => setCollapsedNavGroups(prev => {
     const next = new Set(prev);
@@ -6747,14 +6754,14 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   }
 
   // Sidebar nav content (inlined twice: desktop + mobile)
-  const renderSidebarNav = (closeFn) => (
+  const renderSidebarNav = (closeFn, { rail = false } = {}) => (
     <>
       {/* Brand header. Two slim rows, not four: on a laptop screen the
           header and the footer between them took two thirds of the sidebar,
           leaving a window of four tabs to scroll through. A long business name
           takes a second line rather than being cut; the full name is its tooltip. */}
-      <div className="px-3 pt-3 pb-2 border-b border-white/5">
-        <div className="flex items-center gap-2.5">
+      <div className={`${rail ? 'px-2' : 'px-3'} pt-3 pb-2 border-b border-white/5`}>
+        <div className={`flex items-center ${rail ? 'flex-col gap-2' : 'gap-2.5'}`}>
           <div className="shrink-0">
             {systemSettings.businessLogo
               ? <img src={systemSettings.businessLogo} alt="" className="w-9 h-9 object-cover" style={{ borderRadius: systemSettings.logoRadius || '10px', ...(systemSettings.logoColor ? { backgroundColor: systemSettings.logoColor } : {}) }} />
@@ -6764,17 +6771,17 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
                 >{BIZ_NAME.charAt(0)}</div>
             }
           </div>
-          <p title={BIZ_NAME} className="text-base font-black text-brand-text tracking-tight leading-tight line-clamp-2 break-words min-w-0 flex-1">{BIZ_NAME}</p>
+          {!rail && <p title={BIZ_NAME} className="text-base font-black text-brand-text tracking-tight leading-tight line-clamp-2 break-words min-w-0 flex-1">{BIZ_NAME}</p>}
           <div className="hidden md:block shrink-0">
             <NotificationBell align="left" />
           </div>
         </div>
-        <div className="flex items-center justify-between gap-2 mt-1.5">
+        {!rail && <div className="flex items-center justify-between gap-2 mt-1.5">
           <p className="text-[9px] text-fg/75 font-bold uppercase tracking-[0.15em] truncate">
             <span className="text-brand-text">{navMode === 'libellus' ? 'Libellus' : 'Negotium'}</span> · {navMode === 'libellus' ? 'Operations' : 'Management'}
           </p>
           <span title={vatRegLabel} className="shrink-0 text-[8px] font-black bg-brand/10 border border-brand/30 text-brand-text px-2 py-0.5 rounded-full uppercase tracking-widest">{vatRegistered ? 'VAT' : 'Non-VAT'}</span>
-        </div>
+        </div>}
       </div>
 
       {/* Nav */}
@@ -6792,26 +6799,26 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           Tools section, so on a desktop nothing on screen said the app could
           be searched at all - and it is the fastest way to any of the fifty
           pages, sub-pages included ("Export All · Ledger → Setup"). */}
-      <div className="px-3 pt-2.5">
-        <button onClick={() => { setPaletteOpen(true); closeFn?.(); }} aria-label="Search screens (Ctrl+K)"
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-fg/70 hover:text-fg hover:border-white/25 transition">
+      <div className={rail ? 'px-2 pt-2.5' : 'px-3 pt-2.5'}>
+        <button onClick={() => { setPaletteOpen(true); closeFn?.(); }} aria-label="Search screens (Ctrl+K)" title={rail ? 'Go to… (Ctrl+K)' : undefined}
+          className={`w-full flex items-center gap-2 py-2 rounded-xl bg-white/5 border border-white/10 text-fg/70 hover:text-fg hover:border-white/25 transition ${rail ? 'justify-center px-0' : 'px-3'}`}>
           <Search size={14} className="shrink-0" />
-          <span className="text-sm font-bold">Go to…</span>
-          <span className="ml-auto text-[9px] font-black tracking-widest text-fg/65 border border-white/10 rounded px-1.5 py-0.5">CTRL K</span>
+          {!rail && <span className="text-sm font-bold">Go to…</span>}
+          {!rail && <span className="ml-auto text-[9px] font-black tracking-widest text-fg/65 border border-white/10 rounded px-1.5 py-0.5">CTRL K</span>}
         </button>
       </div>
 
-      <nav className="p-3 space-y-0.5 md:flex-1 md:min-h-0 md:overflow-y-auto custom-scrollbar">
+      <nav className={`${rail ? 'p-2' : 'p-3'} space-y-0.5 md:flex-1 md:min-h-0 md:overflow-y-auto custom-scrollbar`} aria-label="Main">
         {visibleNavGroups({ can, isSuperAdmin, moduleOn, businessType: BUSINESS_TYPE })
           .filter(g => g.key !== 'system')
           .map(group => {
             const collapsed = collapsedNavGroups.has(group.key);
             // Never let a fold hide where you actually are.
             const holdsActive = group.items.some(it => it.id === activeTab && navMode === group.mode);
-            const hidden = collapsed && !holdsActive;
+            const hidden = collapsed && !holdsActive && !rail;
             return (
               <div key={group.key}>
-                <button
+                {rail ? <div className="mx-2 my-2 border-t border-white/10" role="separator" aria-label={group.label} /> : <button
                   onClick={() => toggleNavGroup(group.key)}
                   aria-expanded={!hidden}
                   className="w-full flex items-center gap-1.5 px-4 pt-4 pb-1 text-[9px] text-fg/80 font-bold uppercase tracking-[0.2em] hover:text-fg transition"
@@ -6819,7 +6826,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
                   {hidden ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
                   {group.label}
                   {hidden && <span className="ml-auto text-[9px] text-fg/65 font-black normal-case tracking-normal">{group.items.length}</span>}
-                </button>
+                </button>}
                 {!hidden && group.items.map(item => {
                   const Icon = item.icon;
                   const label = navLabel(item, BUSINESS_TYPE);
@@ -6837,13 +6844,17 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
                         if (item.sub) setLedgerSubTab(item.sub);
                         // Analytics loads itself when it opens (AnalyticsTab).
                       }}
-                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition font-bold text-sm
+                      title={rail ? label : undefined} aria-label={rail ? label : undefined} aria-current={active ? 'page' : undefined}
+                      className={`w-full flex items-center rounded-xl text-left transition font-bold text-sm relative
+                        ${rail ? 'justify-center py-2.5' : 'gap-3 px-4 py-3'}
                         ${active ? 'bg-brand text-on-brand shadow-sm' : 'text-fg/75 hover:text-fg hover:bg-white/5'}`}
                     >
-                      <Icon size={16} />
-                      {label}
-                      {badgeCount > 0 && <span className={`ml-auto text-[9px] text-fg font-black px-1.5 py-0.5 rounded-full ${badgeColor}`}>{badgeCount}</span>}
-                      {active && badgeCount === 0 && <ChevronRight size={13} className="ml-auto" />}
+                      <Icon size={rail ? 18 : 16} />
+                      {!rail && label}
+                      {badgeCount > 0 && (rail
+                        ? <span className={`absolute top-1 right-1.5 min-w-[16px] h-4 px-1 text-[9px] leading-4 text-center text-fg font-black rounded-full ${badgeColor}`}>{badgeCount > 99 ? '99+' : badgeCount}</span>
+                        : <span className={`ml-auto text-[9px] text-fg font-black px-1.5 py-0.5 rounded-full ${badgeColor}`}>{badgeCount}</span>)}
+                      {!rail && active && badgeCount === 0 && <ChevronRight size={13} className="ml-auto" />}
                     </button>
                   );
                 })}
@@ -6858,11 +6869,12 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           // rendered here rather than in a group because of its own styling.
           <button key="admin-panel"
             onClick={() => { closeFn?.(); navigate('/admin/admin-panel'); }}
-            className="w-full flex items-center gap-3 px-4 py-3 mt-1 rounded-xl text-left transition font-bold text-sm text-fg/75 hover:text-fg hover:bg-white/5"
+            title={rail ? 'Admin Panel' : undefined} aria-label={rail ? 'Admin Panel' : undefined}
+            className={`w-full flex items-center mt-1 rounded-xl text-left transition font-bold text-sm text-fg/75 hover:text-fg hover:bg-white/5 ${rail ? 'justify-center py-2.5' : 'gap-3 px-4 py-3'}`}
           >
-            <ShieldCheck size={16} className="text-brand-text shrink-0" />
-            <span className="whitespace-nowrap">Admin Panel</span>
-            <span className="ml-auto shrink-0 text-[8px] font-black uppercase tracking-widest bg-brand border border-brand text-on-brand px-1.5 py-0.5 rounded">Super</span>
+            <ShieldCheck size={rail ? 18 : 16} className="text-brand-text shrink-0" />
+            {!rail && <span className="whitespace-nowrap">Admin Panel</span>}
+            {!rail && <span className="ml-auto shrink-0 text-[8px] font-black uppercase tracking-widest bg-brand border border-brand text-on-brand px-1.5 py-0.5 rounded">Super</span>}
           </button>
         )}
       </nav>
@@ -6871,12 +6883,20 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           the shared drawer. Everything occasional (switching user, settings,
           fullscreen, the QR, logging out) sits behind the account button, the
           way every workspace app does it, so the tabs above get the height. */}
-      <div className="p-2.5 border-t border-white/5 space-y-1 relative">
+      <div className={`${rail ? 'p-2' : 'p-2.5'} border-t border-white/5 space-y-1 relative`}>
+        {/* Desktop only: the phone drawer is already out of the way. */}
+        {!closeFn && (
+          <button onClick={toggleNavRail} title={rail ? 'Expand sidebar' : 'Collapse sidebar'} aria-label={rail ? 'Expand sidebar' : 'Collapse sidebar'}
+            className={`w-full flex items-center py-2 rounded-xl font-bold text-sm text-fg/60 hover:text-fg hover:bg-white/5 transition ${rail ? 'justify-center' : 'gap-3 px-3'}`}>
+            {rail ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={15} />}
+            {!rail && 'Collapse'}
+          </button>
+        )}
         {sharedDrawer && (
-          <button onClick={openCashDrawer}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-xl font-bold text-sm text-fg/70 hover:text-fg hover:bg-white/5 transition">
+          <button onClick={openCashDrawer} title={rail ? 'Cash Drawer' : undefined} aria-label={rail ? 'Cash Drawer' : undefined}
+            className={`w-full flex items-center py-2 rounded-xl font-bold text-sm text-fg/70 hover:text-fg hover:bg-white/5 transition ${rail ? 'justify-center' : 'gap-3 px-3'}`}>
             <Banknote size={15} />
-            Cash Drawer
+            {!rail && 'Cash Drawer'}
           </button>
         )}
         {/* Clock In/Out/Break - always visible for staff (frequent, critical
@@ -6884,9 +6904,11 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             clock-in gate below (owners aren't tracked for attendance). */}
         {!isSuperAdmin && (
           <button onClick={handleClockButton}
-            className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl font-bold text-sm transition ${clockStatus.onBreak ? 'text-white bg-amber-500 hover:bg-amber-600' : clockStatus.isClockedIn ? 'text-white bg-accent hover:bg-accent/80' : 'text-fg/70 hover:text-fg hover:bg-white/5'}`}>
+            title={rail ? (clockStatus.onBreak ? 'On break - tap to resume' : clockStatus.isClockedIn ? 'Clocked in - tap for break or clock out' : 'Clock In') : undefined}
+            aria-label={rail ? (clockStatus.onBreak ? 'On break - tap to resume' : clockStatus.isClockedIn ? 'Clocked in' : 'Clock In') : undefined}
+            className={`w-full flex items-center py-2 rounded-xl font-bold text-sm transition ${rail ? 'justify-center' : 'gap-3 px-3'} ${clockStatus.onBreak ? 'text-white bg-amber-500 hover:bg-amber-600' : clockStatus.isClockedIn ? 'text-white bg-accent hover:bg-accent/80' : 'text-fg/70 hover:text-fg hover:bg-white/5'}`}>
             <Clock size={15} />
-            {clockStatus.onBreak
+            {rail ? null : clockStatus.onBreak
               ? `On Break - tap to resume`
               : clockStatus.isClockedIn
                 ? `Clocked In · ${clockStatus.entry ? Math.round((Date.now()-new Date(clockStatus.entry.clockIn))/60000) : 0}m`
@@ -6898,7 +6920,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           <>
             <div className="fixed inset-0 z-40" onClick={() => setAccountMenuOpen(false)} aria-hidden="true" />
             <div role="menu" aria-label="Account"
-              className="absolute left-2.5 right-2.5 bottom-full mb-1 z-50 bg-sidebar-bg border border-white/15 rounded-xl shadow-2xl p-1.5 space-y-0.5 animate-scale-in origin-bottom">
+              className={`absolute ${rail ? 'left-2 w-60' : 'left-2.5 right-2.5'} bottom-full mb-1 z-50 bg-sidebar-bg border border-white/15 rounded-xl shadow-2xl p-1.5 space-y-0.5 animate-scale-in origin-bottom`}>
               <p className="px-3 pt-1.5 pb-1 text-[10px] text-fg/65 truncate">
                 Signed in as <span className="text-fg font-bold">{activeAdmin?.name}</span> · <span className="uppercase tracking-widest">{activeAdmin?.role}</span>
               </p>
@@ -6943,17 +6965,18 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
         )}
 
         <button onClick={() => setAccountMenuOpen(o => !o)} aria-haspopup="menu" aria-expanded={accountMenuOpen}
-          className={`w-full flex items-center gap-2.5 p-2 rounded-xl transition text-left ${accountMenuOpen ? 'bg-white/10' : 'bg-white/5 hover:bg-white/10'}`}>
+          title={rail ? `${activeAdmin?.name || ''} - account menu` : undefined} aria-label={rail ? 'Account menu' : undefined}
+          className={`w-full flex items-center p-2 rounded-xl transition text-left ${rail ? 'justify-center' : 'gap-2.5'} ${accountMenuOpen ? 'bg-white/10' : 'bg-white/5 hover:bg-white/10'}`}>
           <div className="w-8 h-8 rounded-lg bg-brand/20 border border-brand/30 flex items-center justify-center flex-shrink-0">
             <span className="text-fg font-black text-xs">{activeAdmin?.name?.charAt(0)?.toUpperCase()}</span>
           </div>
-          <div className="min-w-0 flex-1">
+          {!rail && <div className="min-w-0 flex-1">
             <p className="text-fg text-xs font-bold truncate" title={String((activeAdmin?.name) ?? '')}>{activeAdmin?.name}</p>
             <p className="text-fg/65 text-[10px] truncate" title={`${activeAdmin?.role || ''} · time until the automatic end-of-day close`}>
               Day closes in <MidnightCountdown short className="text-brand-text font-bold" />
             </p>
-          </div>
-          {accountMenuOpen ? <ChevronDown size={14} className="text-fg/65 shrink-0" /> : <ChevronUp size={14} className="text-fg/65 shrink-0" />}
+          </div>}
+          {!rail && (accountMenuOpen ? <ChevronDown size={14} className="text-fg/65 shrink-0" /> : <ChevronUp size={14} className="text-fg/65 shrink-0" />)}
         </button>
       </div>
     </>
@@ -7391,8 +7414,8 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
       {/* Persistent sidebar - from tablet (768px) up. Narrower on iPad portrait
           so the content pane keeps a usable width, full 16rem from lg. */}
-      <aside className="hidden md:flex flex-col w-56 lg:w-64 flex-shrink-0 bg-sidebar-bg border-r border-white/5 h-screen sticky top-0 overflow-hidden">
-        {renderSidebarNav()}
+      <aside className={`hidden md:flex flex-col flex-shrink-0 bg-sidebar-bg border-r border-white/5 h-screen sticky top-0 transition-[width] duration-200 ${navRail ? 'w-16 overflow-visible z-30' : 'w-56 lg:w-64 overflow-hidden'}`}>
+        {renderSidebarNav(undefined, { rail: navRail })}
       </aside>
 
       {/* Main content */}
