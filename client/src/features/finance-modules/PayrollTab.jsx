@@ -306,6 +306,31 @@ function DraftModal({ apiFetch, onClose, onDone }) {
     } catch { ui.alert('Network error.'); }
     finally { setFilling(false); }
   };
+  // Each seller's commission for the period (as on Reports > Commissions),
+  // added to their extra pay - once: a line already noting it is skipped.
+  const addCommissions = async () => {
+    if (!periodStart || !periodEnd) return ui.alert('Set the pay period first.');
+    setFilling(true);
+    try {
+      const d = await (await apiFetch(`/api/payroll/commissions?start=${periodStart}&end=${periodEnd}`)).json();
+      if (!d.success) return ui.alert(d.error || 'Could not read the commissions.');
+      if (!d.sellers.length) return ui.alert('Nobody earned a commission in that period.');
+      const next = [...lines.filter(l => String(l.employeeName).trim())];
+      let added = 0;
+      for (const sl of d.sellers) {
+        const note = `commission ${sl.commissionEarned.toFixed(2)}`;
+        let i = next.findIndex(l => l.employeeName === sl.name);
+        if (i < 0) { next.push({ ...blankLine(), employeeName: sl.name }); i = next.length - 1; }
+        if (String(next[i].notes || '').includes('commission ')) continue;
+        next[i] = { ...next[i], allowances: String(round2(num(next[i].allowances) + sl.commissionEarned)),
+          notes: [next[i].notes, note].filter(Boolean).join(', ') };
+        added++;
+      }
+      setLines(next);
+      ui.toast(added ? `Commission added to extra pay for ${added} person(s). Check each line.` : 'Commissions were already added.', { tone: 'success' });
+    } catch { ui.alert('Network error.'); }
+    finally { setFilling(false); }
+  };
   const totals = lines.reduce((acc, l) => ({
     gross: acc.gross + grossOf(l),
     net: acc.net + Math.max(0, netOf(l)),
@@ -473,6 +498,10 @@ function DraftModal({ apiFetch, onClose, onDone }) {
           <button onClick={fillFromTimesheet} disabled={filling}
             className="flex items-center gap-1.5 text-[10px] border border-brand/40 text-brand hover:bg-brand/10 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-50">
             {filling ? 'Reading…' : 'Fill from timesheet'}
+          </button>
+          <button onClick={addCommissions} disabled={filling}
+            className="flex items-center gap-1.5 text-[10px] border border-brand/40 text-brand hover:bg-brand/10 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-50">
+            Add commissions
           </button>
           </div>
           <p className="text-xs text-fg/65">

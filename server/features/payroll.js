@@ -23,6 +23,7 @@ import { businessDateStr } from '../lib/businessTime.js';
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { requireModule } from '../lib/optionalModules.js';
+import { commissionsFromDb } from '../lib/commissions.js';
 
 import { atomic } from '../lib/atomicRoute.js';
 export default function registerPayroll(ctx) {
@@ -129,6 +130,20 @@ export default function registerPayroll(ctx) {
   // The accounts ticked "Employee" in User Control - who Payroll offers when
   // lines are added. Pay rate and employee number come along; the statutory
   // numbers are copied onto the run when it is saved (see fillNumbers above).
+  // Each seller's commission for the pay period, worked out as the Commissions
+  // report does, so it can be added to their pay as extra.
+  app.get('/api/payroll/commissions', verifyToken, ...canView, async (req, res) => {
+    try {
+      const { start, end } = req.query;
+      if (!start || !end) return res.status(400).json({ success: false, error: 'Set the pay period first.' });
+      const { sellers } = await commissionsFromDb(mongoose, {
+        businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true },
+        createdAt: { $gte: dayStart(start), $lte: dayEnd(end) },
+      });
+      res.json({ success: true, sellers: sellers.filter((x) => x.commissionEarned > 0) });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
   app.get('/api/payroll/employees', verifyToken, ...canView, async (req, res) => {
     try {
       const employees = await mongoose.model('User').find({ isEmployee: true }, { name: 1, employeeNumber: 1, dailyRate: 1, role: 1 }).sort({ name: 1 }).lean();

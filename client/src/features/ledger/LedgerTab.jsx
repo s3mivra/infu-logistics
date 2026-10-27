@@ -14,6 +14,8 @@ import * as auth from '../auth/auth';
 import { dateStr, monthStartStr, todayStr } from '../../shared/businessDay.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import ManualJournalApprovals from './ManualJournalApprovals';
+import LedgerEntryEditor from './LedgerEntryEditor';
+import CommissionRules from './CommissionRules';
 import { CashFlowReport, SalesByChannelReport, SalesByCustomerReport, BudgetReport, ExceptionsReport, ClosingChecklist } from './ProcessReports';
 import Attachments from '../../shared/Attachments';
 import RangePresets from '../../shared/RangePresets';
@@ -324,6 +326,8 @@ export default function LedgerTab({ ctx }) {
   const [cvNewOpen, setCvNewOpen] = useState(false);
   // Cost of goods sold for backdated sales that have products but no cost yet.
   const [bdCosting, setBdCosting] = useState(false);
+  // The Ledger Editor's open entry (superadmin only).
+  const [editingEntryId, setEditingEntryId] = useState(null);
   const bookBackdatedCosts = async () => {
     if (!(await ui.confirm({
       title: 'Book cost of goods sold for backdated sales?',
@@ -1961,11 +1965,23 @@ It posts only what is not already accrued for that month.`)) return;
                 </div>
               )}
               {currentEntries.map(entry => (
-                <div key={entry._id} className="bg-page-bg border border-white/10 rounded-lg p-4">
-                  <div className="flex justify-between items-center mb-3 border-b border-white/10 pb-2">
-                    <span className="text-brand-text font-bold">{entry.reference}</span>
-                    <span className="text-fg text-sm">{new Date(entry.date).toLocaleDateString()}</span>
+                <div key={entry._id} className={`bg-page-bg border border-white/10 rounded-lg p-4 ${entry.reversed ? 'opacity-60' : ''}`}>
+                  <div className="flex justify-between items-center mb-3 border-b border-white/10 pb-2 gap-2 flex-wrap">
+                    <span className="text-brand-text font-bold">
+                      {entry.reference}
+                      {entry.reversed && <span className="ml-2 text-[10px] uppercase tracking-wider text-danger">Changed</span>}
+                      {entry.reverses && <span className="ml-2 text-[10px] uppercase tracking-wider text-fg/70">Reversal</span>}
+                      {entry.correctionOf && <span className="ml-2 text-[10px] uppercase tracking-wider text-fg/70">Correction</span>}
+                    </span>
+                    <span className="flex items-center gap-3">
+                      {isSuperAdmin && !entry.reversed && !entry.reverses && editingEntryId !== entry._id && (
+                        <button type="button" onClick={() => setEditingEntryId(entry._id)}
+                          className="text-[10px] font-bold uppercase tracking-wider text-brand-text hover:text-fg">Edit</button>
+                      )}
+                      <span className="text-fg text-sm">{new Date(entry.date).toLocaleDateString()}</span>
+                    </span>
                   </div>
+                  {entry.changeReason && <p className="text-[11px] text-fg/70 mb-2">Reason: {entry.changeReason}</p>}
                   <p className="text-sm text-fg mb-3 font-semibold">{entry.description}</p>
                   <table className="w-full text-sm">
                     <thead><tr className="text-fg text-left"><th className="pb-2">Account</th><th className="pb-2 text-right">Debit</th><th className="pb-2 text-right">Credit</th></tr></thead>
@@ -1979,6 +1995,10 @@ It posts only what is not already accrued for that month.`)) return;
                       ))}
                     </tbody>
                   </table>
+                  {editingEntryId === entry._id && (
+                    <LedgerEntryEditor entry={entry} accounts={jeAccounts} apiFetch={apiFetch}
+                      onClose={() => setEditingEntryId(null)} onDone={() => { setEditingEntryId(null); fetchERPData(); }} />
+                  )}
                 </div>
               ))}
               {/* --- ACCOUNTING PAGINATION CONTROLS --- */}
@@ -2443,8 +2463,9 @@ It posts only what is not already accrued for that month.`)) return;
           {/* ===== COMMISSIONS ===== */}
           {ledgerSubTab === 'commissions' && (
             <div className="space-y-4 animate-fade-in">
+              <CommissionRules apiFetch={apiFetch} canEdit={isSuperAdmin || can('users.manage')} onSaved={fetchCommissions} />
               <div className="flex justify-between items-center">
-                <p className="text-xs text-fg/65">Sales attributed by cashier, at each staff member's commission rate (set in User Control). Complimentary and unattributed sales earn no commission.</p>
+                <p className="text-xs text-fg/65">Sales by seller, at the rates below and each person's own % (on their account). Complimentary and unattributed sales earn no commission.</p>
                 <div className="flex gap-2">
                   {commissions && <button onClick={exportCommissionsPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
                   <button onClick={fetchCommissions} className="flex items-center gap-2 px-4 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
@@ -2458,7 +2479,7 @@ It posts only what is not already accrued for that month.`)) return;
                 <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[520px]">
                     <thead className="text-fg/65 text-[10px] font-black uppercase tracking-wider border-b border-white/5">
-                      <tr><th className="px-5 py-3">Cashier</th><th className="px-5 py-3 text-right">Orders</th><th className="px-5 py-3 text-right">Sales</th><th className="px-5 py-3 text-right">Rate</th><th className="px-5 py-3 text-right">Commission</th></tr>
+                      <tr><th className="px-5 py-3">Cashier</th><th className="px-5 py-3 text-right">Orders</th><th className="px-5 py-3 text-right">Sales</th><th className="px-5 py-3 text-right">Own rate</th><th className="px-5 py-3 text-right">Effective</th><th className="px-5 py-3 text-right">Commission</th></tr>
                     </thead>
                     <tbody>
                       {cmPage.pageItems.map((c,i) => (
@@ -2466,20 +2487,21 @@ It posts only what is not already accrued for that month.`)) return;
                           <td className="px-5 py-2.5 font-bold text-fg">{c.name}</td>
                           <td className="px-5 py-2.5 text-right text-fg/70 tabular-nums">{c.orderCount}</td>
                           <td className="px-5 py-2.5 text-right text-fg/80 tabular-nums font-mono">₱{c.salesTotal.toFixed(2)}</td>
-                          <td className="px-5 py-2.5 text-right text-fg/75 tabular-nums">{c.commissionRate}%</td>
+                          <td className="px-5 py-2.5 text-right text-fg/75 tabular-nums">{c.rateSource === 'tiers' ? 'Tiers' : `${c.commissionRate}%`}</td>
+                          <td className="px-5 py-2.5 text-right text-fg/75 tabular-nums">{c.effectiveRate ?? c.commissionRate}%</td>
                           <td className="px-5 py-2.5 text-right font-black tabular-nums font-mono text-success">₱{c.commissionEarned.toFixed(2)}</td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-white/10">
-                        <td colSpan={4} className="px-5 py-3 text-right font-bold text-fg/65 uppercase text-[10px] tracking-wider">Total</td>
+                        <td colSpan={5} className="px-5 py-3 text-right font-bold text-fg/65 uppercase text-[10px] tracking-wider">Total</td>
                         <td className="px-5 py-3 text-right font-black tabular-nums font-mono text-success">₱{(commissions.totalCommission||0).toFixed(2)}</td>
                       </tr>
                     </tfoot>
                   </table>
                   <div className="px-3"><Pager {...cmPage} label="sellers" /></div>
-                  <p className="text-[10px] text-fg/65 p-3 text-center">A cashier's rate is set on their user profile in User Control. 0% shows if none is set.</p>
+                  <p className="text-[10px] text-fg/65 p-3 text-center">A person's own rate is on their account (Admin Panel), or set it for everyone above. Effective is what all the rates came to on their sales.</p>
                 </div>
               )}
             </div>

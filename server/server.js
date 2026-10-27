@@ -539,7 +539,7 @@ const zRecipe = z.array(z.object({
 const loginSchema    = z.object({ name: zName, password: z.string().min(1).max(200), code: z.string().max(20).optional() });
 // password min 4 to match the client's staff-PIN policy (SuperAdminPanel validateForm).
 // permissions passes through so the create route can honour an explicit override.
-const userCreateSchema = z.object({ name: zName, password: z.string().min(4).max(200), role: zRole.optional(), permissions: z.array(z.string()).optional() });
+const userCreateSchema = z.object({ name: zName, password: z.string().min(4).max(200), role: zRole.optional(), permissions: z.array(z.string()).optional(), commissionRate: z.coerce.number().min(0).max(100).optional() });
 const addonSchema    = z.object({
   name: zLabel, price: zMoneyLoose(z), category: zTitle(z, 60).optional(),
   // The same shape every other recipe uses. Its own stricter copy required an
@@ -1799,6 +1799,12 @@ const JournalEntrySchema = new mongoose.Schema({
   // midnight auto-close, a boot migration) - there was no person.
   postedBy:     { type: String, default: '' },
   postedById:   { type: String, default: '' },
+  // The Ledger Editor (superadmin) never rewrites an entry: it posts a
+  // reversal (reverses -> the original) and, unless voiding, the corrected
+  // entry (correctionOf -> the original). Both carry the reason given.
+  reverses:     { type: mongoose.Schema.Types.ObjectId, default: null, index: true },
+  correctionOf: { type: mongoose.Schema.Types.ObjectId, default: null, index: true },
+  changeReason: { type: String, default: '' },
 }, { timestamps: true });
 // Per-account lookups (a control-account balance, a ledger drill-down) filter
 // on lines.accountCode; without this each one scanned the whole ledger.

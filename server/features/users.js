@@ -566,7 +566,8 @@ app.post('/api/users', verifyToken, requireUserAdmin, validate(userCreateSchema)
     const permissions = Array.isArray(req.body.permissions)
       ? req.body.permissions.filter((k) => PERMISSION_KEYS.has(k)) : [];
 
-    const newUser = await User.create({ name: req.body.name, password: hashedPassword, userCode, role, permissions, tenantId: req.user?.tenantId || null });
+    const newUser = await User.create({ name: req.body.name, password: hashedPassword, userCode, role, permissions, tenantId: req.user?.tenantId || null,
+      ...(req.body.commissionRate !== undefined ? { commissionRate: req.body.commissionRate } : {}) });
     res.json({ success: true, user: { _id: newUser._id, name: newUser.name, userCode: newUser.userCode, role: newUser.role, permissions: resolvePermissions(newUser) } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));

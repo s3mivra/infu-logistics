@@ -526,7 +526,8 @@ export default function SuperAdminPanel() {
       if (modal.mode === 'create') {
         const res = await apiFetch('/api/users', {
           method: 'POST',
-          body: JSON.stringify({ name: form.name.trim(), password: form.password, role: form.role, permissions: permsPayload }),
+          body: JSON.stringify({ name: form.name.trim(), password: form.password, role: form.role, permissions: permsPayload,
+            ...(form.commissionRate !== '' ? { commissionRate: form.commissionRate } : {}) }),
         });
         const data = await res.json();
         if (data.success) { showToast('User created.'); closeModal(); fetchUsers(); }
@@ -1793,8 +1794,8 @@ export default function SuperAdminPanel() {
                 </select>
               </div>
 
-              {/* Commission rate - edit mode only; a brand-new user has no sales yet */}
-              {modal.mode === 'edit' && (
+              {/* Commission rate - on a new account too, so a seller starts earning from their first sale */}
+              {(
                 <div>
                   <label className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">
                     Commission Rate (%)
@@ -1806,7 +1807,7 @@ export default function SuperAdminPanel() {
                     placeholder="0"
                     className="w-full bg-white/5 border border-white/10 focus:border-brand text-fg placeholder-fg/70 px-4 py-3 rounded-xl outline-none transition text-sm"
                   />
-                  <p className="text-[10px] text-fg/65 mt-1.5">Percent of this cashier's attributed sales, shown on the Commissions report.</p>
+                  <p className="text-[10px] text-fg/65 mt-1.5">Percent of this person's sales, shown on the Commissions report. Product, category and tier rates are in Reports › Commissions.</p>
                 </div>
               )}
               {modal.mode === 'edit' && (

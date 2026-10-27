@@ -227,6 +227,9 @@ app.get('/api/journal', verifyToken, ...canViewAcct, async (req, res) => {
       JournalEntry.find(q).sort({ date: -1 }).skip((pageNum - 1) * pageSize).limit(pageSize).lean(),
       JournalEntry.countDocuments(q)
     ]);
+    // Which of these have been corrected or voided (the Ledger Editor marks them).
+    const reversed = new Set((await JournalEntry.find({ reverses: { $in: entries.map((e) => e._id) } }, { reverses: 1 }).lean()).map((r) => String(r.reverses)));
+    for (const e of entries) if (reversed.has(String(e._id))) e.reversed = true;
     res.json({ success: true, entries, total, page: pageNum, pages: Math.ceil(total / pageSize) });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -363,6 +366,82 @@ app.post('/api/journal/drafts/:id/reject', verifyToken, requireStaff, permit('jo
     res.json({ success: true, draft });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
+
+// ── LEDGER EDITOR (superadmin) ───────────────────────────────────────────────
+// The ledger is append-only, so "editing" an entry posts two new ones: a
+// reversal dated on the original's date (that period nets to zero), then the
+// corrected entry on the date chosen. Voiding posts the reversal alone. The
+// original stays, so every printed or exported report can still be traced.
+// Closed months are allowed on purpose - only the superadmin can do this, and
+// each change is in the audit log with its reason.
+const loadEditable = async (id) => {
+  if (!mongoose.Types.ObjectId.isValid(id)) return { status: 404, error: 'Not found' };
+  const orig = await JournalEntry.findById(id).lean();
+  if (!orig) return { status: 404, error: 'Not found' };
+  if (orig.reverses) return { status: 409, error: 'This is a reversal. Change the entry it reverses instead.' };
+  if (await JournalEntry.exists({ reverses: orig._id })) return { status: 409, error: 'This entry was already corrected or voided. Change the newest version instead.' };
+  return { orig };
+};
+
+const postReversal = async (req, orig, reason) => JournalEntry.create({
+  date: orig.date, reference: await mkSeqRef('REV'),
+  description: `Reversal of ${orig.reference || 'entry'}: ${reason}`,
+  lines: orig.lines.map((l) => ({ accountCode: l.accountCode, accountName: l.accountName, debit: l.credit, credit: l.debit })),
+  supplierId: orig.supplierId || null, supplierName: orig.supplierName || '',
+  reverses: orig._id, changeReason: reason,
+});
+
+app.get('/api/journal/:id/history', verifyToken, requireSuperAdmin, async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+    const id = new mongoose.Types.ObjectId(req.params.id);
+    const related = await JournalEntry.find({ $or: [{ reverses: id }, { correctionOf: id }] }).sort({ createdAt: 1 }).lean();
+    res.json({ success: true, related });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+app.post('/api/journal/:id/correct', verifyToken, requireSuperAdmin, atomic(mongoose, async (req, res) => {
+  try {
+    const reason = String(req.body?.reason || '').trim().slice(0, 500);
+    if (!reason) return res.status(400).json({ success: false, error: 'Say why the entry is being changed.' });
+    const read = readJournalLines(req.body?.lines);
+    if (read.error) return res.status(400).json({ success: false, error: read.error });
+    const when = req.body?.date ? new Date(req.body.date) : null;
+    if (when && Number.isNaN(when.getTime())) return res.status(400).json({ success: false, error: 'Invalid date.' });
+    const found = await loadEditable(req.params.id);
+    if (found.error) return res.status(found.status).json({ success: false, error: found.error });
+    const { orig } = found;
+    const reversal = await postReversal(req, orig, reason);
+    const corrected = await JournalEntry.create({
+      date: when || orig.date, reference: await mkSeqRef('COR'),
+      description: String(req.body?.description ?? orig.description ?? '').trim().slice(0, 500) || `Correction of ${orig.reference}`,
+      lines: read.lines, supplierId: orig.supplierId || null, supplierName: orig.supplierName || '',
+      correctionOf: orig._id, changeReason: reason,
+    });
+    await logAudit(req, { action: 'correct', entity: 'JournalEntry', entityId: orig._id,
+      before: { reference: orig.reference, date: orig.date, description: orig.description, lines: orig.lines },
+      after: { reversal: reversal.reference, corrected: corrected.reference, date: corrected.date, description: corrected.description, lines: corrected.lines, reason } });
+    emitToMgr('erpUpdated');
+    res.json({ success: true, reversal, corrected });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ success: false, error: err.message });
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+}));
+
+app.post('/api/journal/:id/void', verifyToken, requireSuperAdmin, atomic(mongoose, async (req, res) => {
+  try {
+    const reason = String(req.body?.reason || '').trim().slice(0, 500);
+    if (!reason) return res.status(400).json({ success: false, error: 'Say why the entry is being voided.' });
+    const found = await loadEditable(req.params.id);
+    if (found.error) return res.status(found.status).json({ success: false, error: found.error });
+    const reversal = await postReversal(req, found.orig, reason);
+    await logAudit(req, { action: 'void', entity: 'JournalEntry', entityId: found.orig._id,
+      before: { reference: found.orig.reference, lines: found.orig.lines }, after: { reversal: reversal.reference, reason } });
+    emitToMgr('erpUpdated');
+    res.json({ success: true, reversal });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+}));
 
 // ── OPENING BALANCES ─────────────────────────────────────────────────────────
 // Onboarding a business that already has a history: its balance sheet has to

@@ -145,8 +145,8 @@ export default function makeReportExports(deps) {
     doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
-      head: [['Cashier', 'Orders', 'Sales', 'Rate', 'Commission']],
-      body: (commissions.sellers || []).map(c => [c.name, c.orderCount, pdfMoney(c.salesTotal), `${c.commissionRate}%`, pdfMoney(c.commissionEarned)]),
+      head: [['Cashier', 'Orders', 'Sales', 'Effective rate', 'Commission']],
+      body: (commissions.sellers || []).map(c => [c.name, c.orderCount, pdfMoney(c.salesTotal), `${c.effectiveRate ?? c.commissionRate}%`, pdfMoney(c.commissionEarned)]),
       foot: [[{ content: 'Total', colSpan: 4 }, pdfMoney(commissions.totalCommission)]],
       styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], fontStyle: 'bold', textColor: 255 },
       columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 4: { halign: 'right' } },

@@ -77,3 +77,42 @@ describe('commission report', () => {
     expect(res.body.sellers.some((s) => s.name === 'System')).toBe(false);
   });
 });
+
+describe('commission rules, bulk rate, new accounts, payroll', () => {
+  const iso = (d) => d.toISOString().slice(0, 10);
+  const today = iso(new Date());
+
+  it('a category rate overrides the person\'s rate; the cashier cannot change rules', async () => {
+    expect((await auth('put', '/api/commission-rules', cashierTok).send({ categoryRates: [{ category: 'CommCat', rate: 25 }] })).status).toBe(403);
+    expect((await auth('put', '/api/commission-rules', superTok).send({ categoryRates: [{ category: 'CommCat', rate: 150 }] })).status).toBe(400);
+    const put = await auth('put', '/api/commission-rules', superTok).send({ categoryRates: [{ category: 'CommCat', rate: 25 }] });
+    expect(put.status).toBe(200);
+    const res = await auth('get', '/api/reports/commissions', superTok);
+    expect(res.body.sellers.find((s) => s.name === 'commCashier').commissionEarned).toBeCloseTo(50, 2); // 200 x 25%
+    expect((await auth('get', '/api/commission-rules', superTok)).body.rules.categoryRates[0]).toMatchObject({ category: 'CommCat', rate: 25 });
+  });
+
+  it('tiers apply to sellers with no rate of their own', async () => {
+    await auth('put', '/api/commission-rules', superTok).send({ tiers: [{ from: 0, rate: 1 }, { from: 100, rate: 5 }] });
+    await auth('put', '/api/users-commission-rate', superTok).send({ rate: 0, names: ['commCashier'] });
+    const s = (await auth('get', '/api/reports/commissions', superTok)).body.sellers.find((x) => x.name === 'commCashier');
+    expect(s.rateSource).toBe('tiers');
+    expect(s.commissionEarned).toBeCloseTo(1 + 5, 2); // 100 x 1% + 100 x 5%
+  });
+
+  it('one rate for everyone, and a rate set when an account is made', async () => {
+    const r = await auth('put', '/api/users-commission-rate', superTok).send({ rate: 3 });
+    expect(r.body.changed).toBeGreaterThan(0);
+    const made = await auth('post', '/api/users', superTok).send({ name: 'commNew', password: 'Secret123!', role: 'Staff', commissionRate: 7 });
+    expect(made.status).toBe(200);
+    expect((await mongoose.model('User').findOne({ name: 'commNew' }).lean()).commissionRate).toBe(7);
+  });
+
+  it('payroll reads each seller\'s commission for the period', async () => {
+    await mongoose.model('Settings').updateOne({ key: 'payrollEnabled' }, { $set: { value: true } }, { upsert: true });
+    await auth('put', '/api/commission-rules', superTok).send({});
+    const r = await auth('get', `/api/payroll/commissions?start=${today}&end=${today}`, superTok);
+    expect(r.status).toBe(200);
+    expect(r.body.sellers.find((s) => s.name === 'commCashier').commissionEarned).toBeCloseTo(6, 2); // 200 x 3%
+  });
+});

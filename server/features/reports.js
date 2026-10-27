@@ -13,6 +13,7 @@ import { sectionAncestor } from '../lib/chartOfAccounts.js';
 import { buildBalanceSheet } from '../lib/consolidate.js';
 import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 import { itemSuppliers } from '../lib/itemSuppliers.js';
+import { readCommissionRules, loadCommissionRulesFrom, commissionsFromDb, COMMISSION_RULES_KEY } from '../lib/commissions.js';
 
 export default function registerReports(ctx) {
   const {
@@ -194,6 +195,7 @@ export default function registerReports(ctx) {
     requireSuperOrAdmin,
     verifyOrderAuth,
     requirePermission,
+    requireUserAdmin,
   } = ctx;
 
   // Reporting gates (superadmin bypasses inside requirePermission); requireStaff is the floor.
@@ -1383,6 +1385,42 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, requi
 // every existing caller is unchanged.
 const salesSourceFilter = (source) => (source === 'backdated' ? { isBackdated: true }
   : source === 'live' ? { isBackdated: { $ne: true } } : {});
+// Product, category and tier rates (lib/commissions.js); the person's own %
+// is on their account. Payroll reads the same figures.
+const loadCommissionRules = () => loadCommissionRulesFrom(Settings);
+const commissionsFor = (match) => commissionsFromDb(mongoose, match);
+
+app.get('/api/commission-rules', verifyToken, ...canViewReports, requirePermission('screen.reports.commissions'), async (req, res) => {
+  try { res.json({ success: true, rules: await loadCommissionRules() }); }
+  catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+app.put('/api/commission-rules', verifyToken, requireUserAdmin, async (req, res) => {
+  try {
+    const read = readCommissionRules(req.body);
+    if (read.error) return res.status(400).json({ success: false, error: read.error });
+    const before = await loadCommissionRules();
+    await Settings.findOneAndUpdate({ key: COMMISSION_RULES_KEY }, { $set: { value: read.rules } }, { upsert: true });
+    await logAudit(req, { action: 'update', entity: 'CommissionRules', before, after: read.rules });
+    res.json({ success: true, rules: read.rules });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// Same % for several people at once (or everyone): Admin Panel > Commission.
+app.put('/api/users-commission-rate', verifyToken, requireUserAdmin, async (req, res) => {
+  try {
+    const rate = Number(req.body?.rate);
+    if (!Number.isFinite(rate) || rate < 0 || rate > 100) return res.status(400).json({ success: false, error: 'A rate is a percent from 0 to 100.' });
+    const names = Array.isArray(req.body?.names) ? req.body.names.map(String) : null;
+    const q = names ? { name: { $in: names } } : {};
+    // A delegate (users.manage) cannot change a superadmin's account.
+    if (String(req.user?.role || '').toLowerCase() !== 'superadmin') q.role = { $not: /^superadmin$/i };
+    const r = await User.updateMany(q, { $set: { commissionRate: rate } });
+    await logAudit(req, { action: 'update', entity: 'CommissionRate', after: { rate, names: names || 'everyone', changed: r.modifiedCount } });
+    res.json({ success: true, changed: r.modifiedCount });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 app.get('/api/reports/commissions', verifyToken, ...canViewReports, requirePermission('screen.reports.commissions'), async (req, res) => {
   try {
     const { start, end } = req.query;
@@ -1392,34 +1430,8 @@ app.get('/api/reports/commissions', verifyToken, ...canViewReports, requirePermi
       if (start) match.createdAt.$gte = dayStart(start);
       if (end) { match.createdAt.$lte = dayEnd(end); }
     }
-    const [agg, users] = await Promise.all([
-      Order.aggregate([
-        { $match: match },
-        { $group: {
-            _id: { $cond: [{ $gt: [{ $strLenCP: { $ifNull: ['$salesperson', ''] } }, 0] }, '$salesperson', '$cashier'] },
-            salesTotal: { $sum: '$total' }, orderCount: { $sum: 1 },
-        } },
-      ]),
-      User.find({}, { name: 1, userCode: 1, commissionRate: 1 }).lean(),
-    ]);
-    const userByName = new Map(users.map(u => [u.name, u]));
-    const sellers = agg
-      .filter(r => r._id && r._id !== 'System') // unattributed/system-placed sales earn no one a commission
-      .map(r => {
-        const u = userByName.get(r._id);
-        const rate = u?.commissionRate || 0;
-        const salesTotal = +(r.salesTotal || 0).toFixed(2);
-        return {
-          name: r._id,
-          userCode: u?.userCode || null,
-          salesTotal,
-          orderCount: r.orderCount,
-          commissionRate: rate,
-          commissionEarned: +((salesTotal * rate) / 100).toFixed(2),
-        };
-      })
-      .sort((a, b) => b.commissionEarned - a.commissionEarned);
-    res.json({ success: true, sellers, totalCommission: +sellers.reduce((s, x) => s + x.commissionEarned, 0).toFixed(2) });
+    const { sellers, totalCommission } = await commissionsFor(match);
+    res.json({ success: true, sellers, totalCommission });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
