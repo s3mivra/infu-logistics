@@ -16,6 +16,7 @@ import SearchSelect from '../../shared/ui/SearchSelect';
 import ManualJournalApprovals from './ManualJournalApprovals';
 import LedgerEntryEditor from './LedgerEntryEditor';
 import CommissionRules from './CommissionRules';
+import PaymentMethodPicker, { paymentDetailsPayload, missingPaymentDetail, notePaymentMethodUsed, mostUsedMethod, NEEDS_REFERENCE } from '../../shared/PaymentMethodPicker';
 import { CashFlowReport, SalesByChannelReport, SalesByCustomerReport, BudgetReport, ExceptionsReport, ClosingChecklist } from './ProcessReports';
 import Attachments from '../../shared/Attachments';
 import RangePresets from '../../shared/RangePresets';
@@ -235,7 +236,7 @@ export default function LedgerTab({ ctx }) {
   //    then record it against a past date (optionally reducing today's stock). ──
   const [bd, setBd] = useState({
     date: todayStr(),
-    customerName: '', paymentMethod: 'Cash', notes: '', checkNumber: '', checkDate: '',
+    customerName: '', paymentMethod: mostUsedMethod(['Cash', 'Bank Transfer', 'GCash', 'Maya', 'Check', 'On Account']), notes: '', checkNumber: '', checkBank: '', checkDate: '', reference: '',
     discountPercent: 0, affectInventory: false, isComplimentary: false,
   });
   const [bdCart, setBdCart] = useState([]); // [{ productId, productCode, name, price, quantity }]
@@ -483,7 +484,7 @@ export default function LedgerTab({ ctx }) {
   const submitBackdateCart = async () => {
     if (!bd.date) return ui.alert('Pick the sale date.');
     if (bdCart.length === 0) return ui.alert('Add at least one product to the sale.');
-    if (!bd.isComplimentary && bd.paymentMethod === 'Check' && !bd.checkNumber.trim()) return ui.alert('Enter the check number.');
+    if (!bd.isComplimentary && missingPaymentDetail(bd.paymentMethod, bd)) return ui.alert(missingPaymentDetail(bd.paymentMethod, bd));
     if (!bd.isComplimentary && bd.paymentMethod === 'Split' && !splitReady(bdTotal, bd.payments || [])) return ui.alert('The split payments must add up to the sale total, with at least two parts.');
     const label = bd.isComplimentary ? 'complimentary (₱0)' : `₱${bdTotal.toFixed(2)}`;
     const stockNote = bd.affectInventory ? '\n\nThis WILL reduce current inventory.' : '';
@@ -492,7 +493,7 @@ export default function LedgerTab({ ctx }) {
     try {
       const r = await apiFetch('/api/admin/backdate-sale', { method: 'POST', body: JSON.stringify({
         date: bd.date, customerName: bd.customerName, paymentMethod: bd.paymentMethod, notes: bd.notes,
-        ...(bd.paymentMethod === 'Check' ? { paymentReference: bd.checkNumber.trim(), paymentCheckDate: bd.checkDate || null } : {}),
+        ...(bd.isComplimentary ? {} : paymentDetailsPayload(bd.paymentMethod, bd)),
         ...(bd.paymentMethod === 'Split' && !bd.isComplimentary ? { payments: splitPayload(bd.payments) } : {}),
         discountPercent: bdPct, affectInventory: bd.affectInventory, isComplimentary: bd.isComplimentary,
         items: bdCart.map(x => ({ name: x.name, price: x.price, quantity: x.quantity, discountPercent: bdLinePct(x), productId: x.productId, productCode: x.productCode })),
@@ -501,7 +502,8 @@ export default function LedgerTab({ ctx }) {
       if (d.success) {
         ui.alert(`Backdated sale recorded: ${d.order.orderNumber}\nJournal ref: ${d.journalReference}`);
         setBdCart([]);
-        setBd(b => ({ ...b, customerName: '', notes: '', discountPercent: 0, isComplimentary: false, checkNumber: '', checkDate: '' }));
+        notePaymentMethodUsed(bd.paymentMethod);
+        setBd(b => ({ ...b, customerName: '', notes: '', discountPercent: 0, isComplimentary: false, checkNumber: '', checkBank: '', checkDate: '', reference: '' }));
         fetchERPData();
         fetchBdHistory(1);
       } else ui.alert(d.error || 'Failed to record backdated sale.');
@@ -984,7 +986,7 @@ Cost of goods sold booked for ${costed} order(s) - ${php(costSum)}.` : '')
               body: JSON.stringify({
                 date: g.date, customerName: g.client, paymentMethod: g.paymentMethod || bdImportSettings.paymentMethod,
                 ...(g.paymentMethod === 'Split' ? { payments: splitPayload(g.payments) } : {}),
-                ...((g.paymentMethod || bdImportSettings.paymentMethod) === 'Check' ? { paymentReference: (g.checkNumber || '').trim(), paymentCheckDate: g.checkDate || null } : {}),
+                ...paymentDetailsPayload(g.paymentMethod || bdImportSettings.paymentMethod, g),
                 ...(bdImportSettings.replaceExisting ? { replaceExisting: true } : {}),
                 notes: g.transNo ? `Imported - ${g.transNo}` : 'Imported from Excel',
                 // The sheet's own transaction/invoice number - lets the server skip
@@ -1087,7 +1089,7 @@ Cost of goods sold booked for ${costed} order(s) - ${php(costSum)}.` : '')
   const saveBdQueueItem = async () => {
     if (!bdQueueResolve) return;
     if (!bdQueueResolve.paymentMethod) { ui.alert('Pick a payment method.'); return; }
-    if (bdQueueResolve.paymentMethod === 'Check' && !(bdQueueResolve.checkNumber || '').trim()) { ui.alert('Enter the check number.'); return; }
+    if (missingPaymentDetail(bdQueueResolve.paymentMethod, bdQueueResolve)) { ui.alert(missingPaymentDetail(bdQueueResolve.paymentMethod, bdQueueResolve)); return; }
     setBdQueueSaving(true);
     try {
       const row = bdQueueResolve.row;
@@ -1095,7 +1097,7 @@ Cost of goods sold booked for ${costed} order(s) - ${php(costSum)}.` : '')
         method: 'POST',
         body: JSON.stringify({
           paymentMethod: bdQueueResolve.paymentMethod, affectInventory: !!bdQueueResolve.affectInventory,
-          ...(bdQueueResolve.paymentMethod === 'Check' ? { paymentReference: (bdQueueResolve.checkNumber || '').trim(), paymentCheckDate: bdQueueResolve.checkDate || null } : {}),
+          ...paymentDetailsPayload(bdQueueResolve.paymentMethod, bdQueueResolve),
         }),
       });
       const d = await r.json();
@@ -3023,31 +3025,19 @@ It posts only what is not already accrued for that month.`)) return;
                           onChange={e => setBd({ ...bd, date: e.target.value })}
                           className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
                       </div>
-                      <div>
+                      <div className="sm:col-span-2">
                         <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Payment Method</label>
-                        <select value={bd.paymentMethod} onChange={e => setBd({ ...bd, paymentMethod: e.target.value, ...(e.target.value === 'Split' ? { payments: newSplit(bdTotal) } : {}) })}
-                          disabled={bd.isComplimentary}
-                          className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60 disabled:opacity-40">
-                          <optgroup label="In-Store Payments">
-                            <option value="Cash">Cash</option>
-                            <option value="Bank Transfer">Bank Transfer</option>
-                            <option value="Check">Check</option>
-                          </optgroup>
-                          <optgroup label="Paid in parts"><option value="Split">Split payment (e.g. part cash, part on account)</option></optgroup>
-                          <optgroup label="E-Wallets">
-                            <option value="GCash">GCash</option>
-                            <option value="Maya">Maya</option>
+                        <PaymentMethodPicker value={bd.paymentMethod} disabled={bd.isComplimentary} saleDate={bd.date}
+                          onChange={m => setBd({ ...bd, paymentMethod: m, ...(m === 'Split' ? { payments: newSplit(bdTotal) } : {}) })}
+                          details={bd} onDetails={patch => setBd({ ...bd, ...patch })}
+                          more={<>
                             <option value="Maribank">Maribank / Seabank</option>
                             <option value="Other E-Wallet">Other E-Wallet</option>
                             <option value="QR">QR / Scan to Pay</option>
-                          </optgroup>
-                          <optgroup label="Delivery Partners">
                             <option value="Grab Delivery">Grab Delivery</option>
                             {BUSINESS_TYPE === 'log' ? <option value="Lalamove">Lalamove</option> : <option value="Foodpanda">Foodpanda</option>}
-                            <option value="Manual Delivery">Manual/Direct</option>
-                          </optgroup>
-                          <optgroup label="Credit"><option value="On Account">On Account (A/R)</option></optgroup>
-                        </select>
+                            <option value="Manual Delivery">Manual/Direct delivery</option>
+                          </>} />
                       </div>
                       {bd.paymentMethod === 'Split' && !bd.isComplimentary && (
                         <div className="sm:col-span-2">
@@ -3055,20 +3045,6 @@ It posts only what is not already accrued for that month.`)) return;
                           <SplitPayEditor total={bdTotal} parts={bd.payments || newSplit(bdTotal)} onChange={parts => setBd({ ...bd, payments: parts })} />
                         </div>
                       )}
-                      {bd.paymentMethod === 'Check' && !bd.isComplimentary && (<>
-                        <div>
-                          <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Check No. *</label>
-                          <input type="text" value={bd.checkNumber} maxLength={60} placeholder="e.g. 0012345"
-                            onChange={e => setBd({ ...bd, checkNumber: e.target.value })}
-                            className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60 placeholder-fg/65" />
-                        </div>
-                        <div>
-                          <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Check Date</label>
-                          <input type="date" value={bd.checkDate}
-                            onChange={e => setBd({ ...bd, checkDate: e.target.value })}
-                            className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60" />
-                        </div>
-                      </>)}
                     </div>
 
                     {/* Toggles: reduce inventory (default off) + complimentary */}
@@ -3290,26 +3266,10 @@ It posts only what is not already accrued for that month.`)) return;
                 <div className="px-5 py-4 space-y-3">
                   <div>
                     <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Payment Method *</label>
-                    <select value={bdQueueResolve.paymentMethod} onChange={e => setBdQueueResolve(s => ({ ...s, paymentMethod: e.target.value }))}
-                      className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
-                      <option value="Cash">Cash</option>
-                      <option value="Bank Transfer">Bank Transfer</option>
-                      <option value="GCash">GCash</option>
-                      <option value="Maya">Maya</option>
-                      <option value="Check">Check</option>
-                      <option value="On Account">On Account (A/R)</option>
-                    </select>
+                    <PaymentMethodPicker value={bdQueueResolve.paymentMethod} methods={['Cash', 'Bank Transfer', 'GCash', 'Maya', 'Check', 'On Account']}
+                      onChange={m => setBdQueueResolve(st => ({ ...st, paymentMethod: m }))}
+                      details={bdQueueResolve} onDetails={patch => setBdQueueResolve(st => ({ ...st, ...patch }))} />
                   </div>
-                  {bdQueueResolve.paymentMethod === 'Check' && (
-                    <div className="grid grid-cols-2 gap-2">
-                      <input value={bdQueueResolve.checkNumber || ''} onChange={e => setBdQueueResolve(s => ({ ...s, checkNumber: e.target.value }))}
-                        placeholder="Check number *" aria-label="Check number" maxLength={60}
-                        className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand/60" />
-                      <input type="date" value={bdQueueResolve.checkDate || ''} onChange={e => setBdQueueResolve(s => ({ ...s, checkDate: e.target.value }))}
-                        aria-label="Check date" title="Check date"
-                        className="bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand/60" />
-                    </div>
-                  )}
                   <button onClick={() => setBdQueueResolve(s => ({ ...s, affectInventory: !s.affectInventory }))}
                     className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition ${bdQueueResolve.affectInventory ? 'bg-amber-500/10 border-amber-500/40' : 'bg-page-bg border-white/10'}`}>
                     <span className="text-left">
@@ -3377,15 +3337,8 @@ It posts only what is not already accrued for that month.`)) return;
                 <div className="px-5 py-4 space-y-3">
                   <div>
                     <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Payment Method (applies to all)</label>
-                    <select value={bdImportSettings.paymentMethod} onChange={e => setBdImportSettings(s => ({ ...s, paymentMethod: e.target.value }))}
-                      className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
-                      <option value="Cash">Cash</option>
-                      <option value="Bank Transfer">Bank Transfer</option>
-                      <option value="GCash">GCash</option>
-                      <option value="Maya">Maya</option>
-                      <option value="Check">Check</option>
-                      <option value="On Account">On Account (A/R)</option>
-                    </select>
+                    <PaymentMethodPicker value={bdImportSettings.paymentMethod} methods={['Cash', 'Bank Transfer', 'GCash', 'Maya', 'Check', 'On Account']} showDetails={false}
+                      onChange={m => setBdImportSettings(st => ({ ...st, paymentMethod: m }))} />
                   </div>
                   <button onClick={() => setBdImportSettings(s => ({ ...s, affectInventory: !s.affectInventory }))}
                     className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition ${bdImportSettings.affectInventory ? 'bg-amber-500/10 border-amber-500/40' : 'bg-page-bg border-white/10'}`}>
@@ -3438,15 +3391,8 @@ It posts only what is not already accrued for that month.`)) return;
                 <div className="px-5 py-4 border-b border-white/10 grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Payment Method (default - override any sale below)</label>
-                    <select value={bdImportSettings.paymentMethod} onChange={e => setBdImportSettings(s => ({ ...s, paymentMethod: e.target.value }))}
-                      className="w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg font-bold outline-none focus:border-brand/60">
-                      <option value="Cash">Cash</option>
-                      <option value="Bank Transfer">Bank Transfer</option>
-                      <option value="GCash">GCash</option>
-                      <option value="Maya">Maya</option>
-                      <option value="Check">Check</option>
-                      <option value="On Account">On Account (A/R)</option>
-                    </select>
+                    <PaymentMethodPicker value={bdImportSettings.paymentMethod} methods={['Cash', 'Bank Transfer', 'GCash', 'Maya', 'Check', 'On Account']} showDetails={false}
+                      onChange={m => setBdImportSettings(st => ({ ...st, paymentMethod: m }))} />
                   </div>
                   <div className="flex items-end">
                     <button onClick={() => setBdImportSettings(s => ({ ...s, affectInventory: !s.affectInventory }))}
@@ -3497,8 +3443,8 @@ It posts only what is not already accrued for that month.`)) return;
                           <option value="Bank Transfer">Bank Transfer</option>
                           <option value="GCash">GCash</option>
                           <option value="Maya">Maya</option>
-                          <option value="Check">Check</option>
-                          <option value="On Account">On Account (A/R)</option>
+                          <option value="Check">Check / Dated Check</option>
+                          <option value="On Account">On Account (A/R) - pays later</option>
                           <option value="Split">Split payment</option>
                         </select>
                         {g.paymentMethod && (
@@ -3516,6 +3462,17 @@ It posts only what is not already accrued for that month.`)) return;
                               onChange={e => { const v = e.target.value; setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, checkDate: v } : x) })); }}
                               className="bg-page-bg border border-white/10 rounded-lg px-2 py-1 text-fg text-xs outline-none" />
                           </label>
+                          <input value={g.checkBank || ''} placeholder="Bank" aria-label="Bank" maxLength={20}
+                            onChange={e => { const v = e.target.value; setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, checkBank: v } : x) })); }}
+                            className="w-28 bg-page-bg border border-white/10 rounded-lg px-2 py-1 text-fg text-xs outline-none" />
+                          {g.checkDate && g.checkDate > g.date && <span className="text-[10px] font-bold text-warning">Post-dated</span>}
+                        </div>
+                      )}
+                      {NEEDS_REFERENCE.includes(g.paymentMethod || bdImportSettings.paymentMethod) && (
+                        <div className="mb-2">
+                          <input value={g.reference || ''} placeholder="Reference number" aria-label="Reference number" maxLength={60}
+                            onChange={e => { const v = e.target.value; setBdImportPreview(p => ({ ...p, groups: p.groups.map((x, i) => i === gi ? { ...x, reference: v } : x) })); }}
+                            className="w-56 bg-page-bg border border-white/10 rounded-lg px-2 py-1 text-fg text-xs outline-none" />
                         </div>
                       )}
                       {g.paymentMethod === 'Split' && (
