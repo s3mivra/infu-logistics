@@ -30,9 +30,11 @@ test('collect once from a client, repeating bills, the closing check, no-cost st
   await login(page);
 
   // ── one payment across both sales: ₱600 settles the first in full, the second in part ──
-  await page.getByRole('button', { name: 'Ledger', exact: true }).first().click();
-  await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
-  await page.getByRole('button', { name: /AR & AP/ }).first().click();
+  // Receivables are one page in Reports; open invoices is its first view.
+  await page.getByRole('button', { name: 'Reports', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Receivable', exact: true }).first().click();
+  await page.getByRole('button', { name: /^Receivables/ }).first().click();
+  await expect(page.getByRole('tab', { name: 'Open invoices' })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('button', { name: /Collect one payment from a client/ }).click();
   await page.getByPlaceholder('Which client?').fill(buyer);
   await page.getByRole('option', { name: new RegExp(buyer) }).first().click();
@@ -49,7 +51,11 @@ test('collect once from a client, repeating bills, the closing check, no-cost st
   }, { timeout: 30000 }).toBe(200);
 
   // ── repeating bills ──
-  await page.getByRole('button', { name: 'Bills (AP)' }).first().click();
+  // Bills are a view of Reports > Payables now.
+  await page.getByRole('button', { name: 'Reports', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Payable', exact: true }).first().click();
+  await page.getByRole('button', { name: /^Payables/ }).first().click();
+  await page.getByRole('tab', { name: 'Bills' }).click();
   await page.getByRole('button', { name: /Repeating bills/ }).click();
   await expect(page.getByRole('button', { name: 'Add repeating bill' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add repeating bill' })).toBeDisabled();
@@ -74,9 +80,13 @@ test('collect once from a client, repeating bills, the closing check, no-cost st
   await expect(noCost).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByText(`NOCOST ${stamp}`).first()).toBeVisible();
 
-  // ── one forecast on Analytics ──
-  await page.getByRole('button', { name: 'Analytics', exact: true }).first().click();
+  // ── one forecast, in Procurement ──
+  // The reorder forecast lives in Procurement now; Analytics points there.
+  await page.getByRole('button', { name: 'Sales & Stock Analytics', exact: true }).first().click();
   await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
+  await expect(page.getByText(/Reorder forecast.*is now in Procurement/i)).toBeVisible({ timeout: 20000 });
+  await page.getByRole('button', { name: 'Procurement', exact: true }).first().click();
+  await page.getByRole('button', { name: /^Reorder forecast/ }).click();
   await expect(page.getByRole('heading', { name: /Reorder Forecast/i })).toBeVisible({ timeout: 20000 });
   await expect(page.getByText('High Velocity & Forecast')).toHaveCount(0);
 

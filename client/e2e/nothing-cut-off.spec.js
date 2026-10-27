@@ -7,7 +7,7 @@ import { login } from './helpers.js';
 // scrolling, simply loses whatever is below. This opens every screen in a
 // short window and fails on any such box big enough to matter.
 const SCREENS = ['Orders & POS', 'Inventory & Stock', 'Hub', 'Production', 'Procurement', 'Clients', 'Quotations',
-  'Owner Overview', 'Analytics', 'Reports', 'Ledger', 'Pricing Control', 'Shifts & Cash', 'Approvals', 'Audit Report', 'Fixed Assets', 'Settings'];
+  'Owner Overview', 'Sales & Stock Analytics', 'Reports', 'Ledger', 'Pricing Control', 'Shifts & Cash', 'Approvals', 'Audit Report', 'Fixed Assets', 'Settings'];
 
 // Boxes that hide overflow on purpose: one line of text cut with "…", a
 // picture cropped to its frame, a bar drawn as a share of its track.

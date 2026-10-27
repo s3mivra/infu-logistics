@@ -126,6 +126,17 @@ describe('the client agrees', () => {
     })(),
   };
 
+  // Keys that are a view inside a page rather than a menu row: recording
+  // payments and paying bills (Reports > Receivables / Payables) and
+  // collections. The page checks each one itself.
+  const ledgerSrc = client('features/ledger/LedgerTab.jsx');
+  for (const [tab, ids] of [['ledger', ['araap', 'bills']], ['reports', ['collections']]]) {
+    for (const id of ids) {
+      expect(ledgerSrc).toContain(`can('screen.${tab}.${id}')`);
+      clientPages[tab].push(id);
+    }
+  }
+
   for (const f of SCREENS) {
     it(`${f.tab}: the same pages on both sides`, () => {
       expect(clientPages[f.tab].slice().sort()).toEqual(f.pages.map(([p]) => p).sort());

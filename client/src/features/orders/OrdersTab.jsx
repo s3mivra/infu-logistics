@@ -222,7 +222,7 @@ export default function OrdersTab({ ctx }) {
 
   // Delivering now, collecting later (logistics). The order goes out on
   // "Credit": the sale is booked to Accounts Receivable, the drawer does not
-  // expect the money, and it is settled later in Ledger → AR & AP - the same
+  // expect the money, and it is settled later in Reports → Receivables - the same
   // path a bank transfer waiting to clear already takes. Someone has to owe it,
   // so it needs a customer name; with a client account the credit limit applies.
   const isUnpaidOnAccount = (order) => BUSINESS_TYPE === 'log' && order.paymentMethod === 'Credit'
@@ -236,7 +236,7 @@ export default function OrdersTab({ ctx }) {
     const ok = await ui.confirm({
       title: `Send ${order.orderNumber} without payment?`,
       message: `${peso(total)} is recorded as owed by ${who}. Nothing is expected in the cash drawer for it.`,
-      detail: 'When they pay, tell the owner - it is recorded in Ledger → AR & AP, and the tag comes off.',
+      detail: 'When they pay, tell the owner - it is recorded in Reports → Receivables, and the tag comes off.',
       confirmLabel: 'Send - not paid yet',
     });
     if (!ok) return;
@@ -1250,7 +1250,7 @@ export default function OrdersTab({ ctx }) {
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${ORDER_STATUS_TONE[order.status] || 'bg-white/10 text-fg/70'}`}>{order.status}</span>
                             {isUnpaidOnAccount(order) && (
-                              <span title="Sent without payment - the owner records it in Ledger → AR & AP when it is paid"
+                              <span title="Sent without payment - the owner records it in Reports → Receivables when it is paid"
                                 className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-warning">
                                 Not paid yet
                               </span>

@@ -140,8 +140,10 @@ export const SCREENS = [
     ['orders', 'Purchase orders'], ['receiving', 'Receiving'], ['suppliers', 'Suppliers'],
   ] },
   { tab: 'ledger', label: 'Ledger', parent: 'accounting.view', pages: [
-    ['journal', 'General Ledger'], ['trial', 'Trial Balance'], ['pnl', 'P&L'], ['balance', 'Balance Sheet'],
-    ['araap', 'AR & AP'], ['bills', 'Bills (AP)'],
+    ['journal', 'General Ledger'], ['trial', 'Trial Balance'],
+    // Views of Reports > Receivables / Payables, kept as their own keys so a
+    // role can still be given or denied recording payments and paying bills.
+    ['araap', 'Receivables & Payables: record payments'], ['bills', 'Payables: approve & pay bills'],
     ['revolving', 'Revolving Funds'], ['expenses', 'Expenses'],
     ['accperiods', 'Accounts & Periods'], ['closing', 'Month-End Close'], ['backdate', 'Backdate Sale'],
     ['tenancy', 'Tenancy Health'], ['bookshealth', 'Books Health'], ['exportall', 'Export All'],
@@ -149,9 +151,9 @@ export const SCREENS = [
   { tab: 'reports', label: 'Reports', parent: 'reports.view', pages: [
     ['salessummary', 'Sales'], ['saleschannel', 'Sales by Channel'], ['salescustomer', 'Sales by Customer'], ['payments', 'By Payment'],
     ['profitcat', 'By Category'], ['menueng', 'Menu Engineering'],
-    ['arreport', 'A/R Report'], ['collections', 'Collections'],
-    ['apreport', 'A/P Report'], ['supplierpay', 'Supplier Payments'], ['checkvouchers', 'Check Vouchers'], ['advances', 'Advances'],
-    ['pnlmonthly', 'Monthly P&L'], ['bsmonthly', 'Monthly Balance Sheet'], ['cashflow', 'Cash Flow'], ['budget', 'Budget vs Actual'], ['percentagetax', 'Percentage Tax'], ['vatreturn', 'VAT Return'],
+    ['arreport', 'Receivables: aging report'], ['collections', 'Receivables: collections'],
+    ['apreport', 'Payables: A/P report'], ['supplierpay', 'Supplier Payments'], ['checkvouchers', 'Check Vouchers'], ['advances', 'Advances'],
+    ['pnlmonthly', 'P&L'], ['bsmonthly', 'Balance Sheet'], ['cashflow', 'Cash Flow Statement'], ['budget', 'Budget vs Actual'], ['percentagetax', 'Percentage Tax'], ['vatreturn', 'VAT Return'],
     ['pricelog', 'Price Changes'], ['variance', 'Cashier Variance'], ['commissions', 'Commissions'], ['exceptions', 'Exceptions'],
     ['waste', 'Waste Log'], ['saleshours', 'Sales by Hour'], ['cashierperf', 'Cashier Performance'],
     ['cashforecast', 'Cash Forecast'], ['supplierprices', 'Supplier Prices'],

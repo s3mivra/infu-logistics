@@ -43,6 +43,25 @@ import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
 // ── LedgerTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
+// The P&L and the Balance Sheet each used to be two pages, one per period
+// and one month by month, in two different menus. Now one page each, with
+// this switch between the two views.
+const STATEMENT_PAGES = ['pnlmonthly', 'bsmonthly', 'arreport', 'apreport'];
+function StatementViewSwitch({ value, onChange, options }) {
+  return (
+    <div className="flex mb-3" role="tablist" aria-label="View">
+      <div className="inline-flex bg-white/5 border border-white/10 rounded-xl p-1">
+        {options.map(([id, label]) => (
+          <button key={id} role="tab" aria-selected={value === id} onClick={() => onChange(id)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${value === id ? 'bg-brand text-on-brand' : 'text-fg/75 hover:text-fg'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function LedgerTab({ ctx }) {
   // Destructure everything from ctx
   // What this tab reads from ctx - only the names it uses. Add one here when
@@ -123,6 +142,7 @@ export default function LedgerTab({ ctx }) {
     tenancyReport, tenancyBusy, tenancyError, tenancyProgress, fetchTenancyReport, runTenancyRebackfill,
     clientAccounts,
     systemSettings = {},
+    setActiveTab,
   } = ctx;
 
   // ── Stage 2 report views: self-contained fetches via ctx.apiFetch ──────────
@@ -1333,6 +1353,8 @@ It posts only what is not already accrued for that month.`)) return;
   // Merged "AR & AP" page.
   if (id === 'araap') { fetchArOutstanding(); fetchArAgeing(); fetchApData(); fetchSuppliers(); }
   if (id === 'bills') { fetchBills(); fetchSuppliers(); fetchCoa(); }
+  if (id === 'ar') { fetchArOutstanding(); fetchArAgeing(); }
+  if (id === 'ap') { fetchApData(); fetchSuppliers(); }
   if (id === 'pnl' && !pnlData) fetchPnl();
   if (id === 'trial') loadTrial();
   if (id === 'percentagetax') loadPtax();
@@ -1366,8 +1388,14 @@ It posts only what is not already accrued for that month.`)) return;
   // page left open by someone else on this till moves to the first allowed
   // one. The old merged ids (coa, periods, payroute, ar, ap) still resolve to
   // the page that now holds them.
-  const LEDGER_ALIAS = { coa: 'accperiods', periods: 'accperiods', payroute: 'accperiods', ar: 'araap', ap: 'araap' };
+  // pnl and balance are the single-period views of the Reports P&L and
+  // Balance Sheet pages (pnlmonthly, bsmonthly), behind the switch on each.
+  const LEDGER_ALIAS = { coa: 'accperiods', periods: 'accperiods', payroute: 'accperiods', pnl: 'pnlmonthly', balance: 'bsmonthly',
+    // The views of Reports > Receivables and Payables, and the old AR & AP page.
+    ar: 'arreport', araap: 'arreport', collections: 'arreport', ap: 'apreport', bills: 'apreport' };
   const pageTab = activeTab === 'reports' ? 'reports' : 'ledger';
+  const canRecordPayments = can('accounting.view') && can('screen.ledger.araap');
+  const canPayBills = can('accounting.view') && can('screen.ledger.bills');
   // Approvals has its own sidebar entry: this screen then shows that one page
   // and nothing of the Ledger around it - no page tabs, no export bar.
   const soloApprovals = activeTab === 'approvals';
@@ -1383,6 +1411,9 @@ It posts only what is not already accrued for that month.`)) return;
   useEffect(() => {
     if (activeTab !== 'ledger' && activeTab !== 'reports') return;
     const cur = LEDGER_ALIAS[ledgerSubTab] || ledgerSubTab;
+    if (activeTab === 'ledger' && STATEMENT_PAGES.includes(cur)) { setActiveTab?.('reports'); return; }
+    // The old combined AR & AP page: open the receivables view this person can use.
+    if (ledgerSubTab === 'araap') { openLedgerPage(canRecordPayments ? 'ar' : 'arreport'); return; }
     if (allowedPages.includes(cur) || allowedPages.length === 0) return;
     openLedgerPage(allowedPages[0]);
   }, [activeTab, ledgerSubTab, allowedPages.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1553,14 +1584,21 @@ It posts only what is not already accrued for that month.`)) return;
             // Derived from the current page rather than stored: deep links,
             // reloads and the merged pages all resolve to the right group
             // without a second piece of state that could disagree with it.
-            const activeGroup = groups.find(([, items]) => items.some(([id]) => id === ledgerSubTab)) || groups[0];
+            const activeGroup = groups.find(([, items]) => items.some(([id]) => id === (LEDGER_ALIAS[ledgerSubTab] || ledgerSubTab))) || groups[0];
             const [activeLabel, activeItems] = activeGroup;
 
             // Switching page is a real function, called by both rows.
             // The group buttons previously synthesised a DOM click on the
             // target page button - which only exists while its group is
             // already active, so every inactive group tab did nothing.
-            const openPage = openLedgerPage;
+            // A statement opens on its single-period view; "By month" is one
+            // click away on the page itself.
+            const openPage = (id) => openLedgerPage({
+              pnlmonthly: 'pnl', bsmonthly: 'balance',
+              // Where the work is, for those who can do it; the report otherwise.
+              arreport: canRecordPayments ? 'ar' : 'arreport',
+              apreport: canPayBills ? 'bills' : 'apreport',
+            }[id] || id);
 
             return (
               <div className="bg-surface border border-white/10 rounded-2xl p-1.5">
@@ -1592,11 +1630,11 @@ It posts only what is not already accrued for that month.`)) return;
                       key={id}
                       onClick={() => openPage(id)}
                       className={`shrink-0 flex items-center gap-2 px-3 py-2 rounded-lg font-bold text-[11px] tracking-wide transition min-h-[36px] ${
-                        ledgerSubTab === id
+                        (LEDGER_ALIAS[ledgerSubTab] || ledgerSubTab) === id
                           ? 'bg-brand text-on-brand shadow-elev-1'
                           : 'text-fg/75 hover:text-fg hover:bg-white/[0.06]'}`}
                     >
-                      <Icon size={13} className={ledgerSubTab === id ? '' : 'opacity-60'} /> {label}
+                      <Icon size={13} className={(LEDGER_ALIAS[ledgerSubTab] || ledgerSubTab) === id ? '' : 'opacity-60'} /> {label}
                     </button>
                   ))}
                 </div>
@@ -1610,6 +1648,24 @@ It posts only what is not already accrued for that month.`)) return;
           <div className={(ledgerSubTab === 'accperiods' || ledgerSubTab === 'araap')
             ? 'grid lg:grid-cols-2 gap-4 items-start'
             : 'space-y-4'}>
+
+          {/* One page each for receivables and payables: its views, as this
+              person may see them. Recording payments and paying bills need the
+              accounting permission; the reports need only Reports. */}
+          {['ar', 'arreport', 'collections'].includes(ledgerSubTab) && (
+            <StatementViewSwitch value={ledgerSubTab} onChange={openLedgerPage} options={[
+              ...(canRecordPayments ? [['ar', 'Open invoices']] : []),
+              ...(can('screen.reports.arreport') ? [['arreport', 'Aging report']] : []),
+              ...(can('screen.reports.collections') ? [['collections', 'Collections']] : []),
+            ]} />
+          )}
+          {['bills', 'ap', 'apreport'].includes(ledgerSubTab) && (
+            <StatementViewSwitch value={ledgerSubTab} onChange={openLedgerPage} options={[
+              ...(canPayBills ? [['bills', 'Bills']] : []),
+              ...(canRecordPayments ? [['ap', 'Open payables']] : []),
+              ...(can('screen.reports.apreport') ? [['apreport', 'A/P report']] : []),
+            ]} />
+          )}
 
           {/* ── TRIAL BALANCE ─────────────────────────────────────────────────── */}
           {ledgerSubTab === 'trial' && (
@@ -1953,7 +2009,11 @@ It posts only what is not already accrued for that month.`)) return;
         </div>
           )}
 
-          {/* ===== PROFIT & LOSS SUB-TAB ===== */}
+          {/* ===== PROFIT & LOSS: one page, two views ===== */}
+          {(ledgerSubTab === 'pnl' || ledgerSubTab === 'pnlmonthly') && (
+            <StatementViewSwitch value={ledgerSubTab} onChange={openLedgerPage}
+              options={[['pnl', 'This period'], ['pnlmonthly', 'By month']]} />
+          )}
           <ProfitAndLossTab
             ledgerSubTab={ledgerSubTab} pnlRange={pnlRange} setPnlRange={setPnlRange} fetchPnl={fetchPnl} exportPnlPDF={exportPnlPDF} pnlData={pnlData} />
 
@@ -2029,7 +2089,11 @@ It posts only what is not already accrued for that month.`)) return;
             );
           })()}
 
-          {/* ===== BALANCE SHEET SUB-TAB ===== */}
+          {/* ===== BALANCE SHEET: one page, two views ===== */}
+          {(ledgerSubTab === 'balance' || ledgerSubTab === 'bsmonthly') && (
+            <StatementViewSwitch value={ledgerSubTab} onChange={openLedgerPage}
+              options={[['balance', 'As of a date'], ['bsmonthly', 'By month']]} />
+          )}
           <BalanceSheetTab
             ledgerSubTab={ledgerSubTab} bsData={bsData} reconcileInventory={reconcileInventory} exportBalanceSheetPDF={exportBalanceSheetPDF} fetchBalanceSheet={fetchBalanceSheet} arOutstanding={arOutstanding} />
 

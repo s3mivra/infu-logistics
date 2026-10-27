@@ -55,7 +55,7 @@ export const NAV_GROUPS = [
     items: [
       // The owner's one page: sales, profit, cash, debts, stock, decisions waiting.
       { id: 'owner', label: 'Owner Overview', icon: LayoutDashboard, perm: 'owner.view', hint: 'The business at a glance' },
-      { id: 'analytics', label: 'Analytics', icon: LineChart, perm: 'analytics.view', hint: 'Sales dashboard' },
+      { id: 'analytics', label: 'Sales & Stock Analytics', icon: LineChart, perm: 'analytics.view', hint: 'Sales trends, stock movement' },
       { id: 'reports', label: 'Reports', icon: BarChart2, perm: 'reports.view', sub: 'salessummary', hint: 'Sales summaries' },
       { id: 'ledger', label: 'Ledger', icon: BookOpen, perm: 'accounting.view', sub: 'journal', hint: 'Journal entries' },
       // Pricing Control's server calls are requireStaff, not superadmin-only,
@@ -105,13 +105,12 @@ export const LEDGER_TAB_GROUPS = [
   ['Books', [
     ['journal', 'General Ledger', FileText],
     ['trial', 'Trial Balance', BarChart2],
-    ['pnl', 'P&L', TrendingUp],
-    ['balance', 'Balance Sheet', BarChart2],
+    // P&L and Balance Sheet are in Reports > Financials, one page each with a
+    // period / by-month switch. They were here and there as two pages apiece.
   ]],
-  ['AR & AP', [
-    ['araap', 'AR & AP', Truck],
-    ['bills', 'Bills (AP)', Receipt],
-  ]],
+  // Receivables and payables, with recording payments and paying bills, are
+  // one page each in Reports (Receivable, Payable) - no longer split between
+  // this tab and that one.
   ['Cash Out', [
     ['revolving', 'Revolving Funds', RefreshCw],
     ['expenses', 'Expenses', Receipt],
@@ -155,11 +154,12 @@ export const REPORT_TAB_GROUPS = [
     ['menueng', REPORT_NAMES.menueng, TrendingUp],
   ]],
   ['Receivable', [
-    ['arreport', 'A/R Report', Truck],
-    ['collections', 'Collections', Banknote],
+    // One page: open invoices (record payments), the aging report, collections.
+    ['arreport', 'Receivables', Truck],
   ]],
   ['Payable', [
-    ['apreport', 'A/P Report', Receipt],
+    // One page: bills (approve, pay), open payables, the A/P report.
+    ['apreport', 'Payables', Receipt],
     ['supplierpay', 'Supplier Payments', Banknote],
     ['supplierprices', 'Supplier Prices', DollarSign],
     ['supplierstatement', 'Supplier Statement', FileText],
@@ -167,9 +167,11 @@ export const REPORT_TAB_GROUPS = [
     ['advances', 'Advances', HandCoins],
   ]],
   ['Financials', [
-    ['pnlmonthly', 'Monthly P&L', BarChart3],
-    ['bsmonthly', 'Monthly Balance Sheet', BarChart3],
-    ['cashflow', 'Cash Flow', Banknote],
+    // One page each: a switch inside shows a single period or month by month.
+    ['pnlmonthly', 'P&L', TrendingUp],
+    ['bsmonthly', 'Balance Sheet', BarChart3],
+    // What came in and went out over a period - Cash Forecast is the weeks ahead.
+    ['cashflow', 'Cash Flow Statement', Banknote],
     // The weeks ahead, from what is already owed either way.
     ['cashforecast', 'Cash Forecast', TrendingUp],
     ['budget', 'Budget vs Actual', Target],

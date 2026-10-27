@@ -15,7 +15,7 @@ const THEMES = ['default', 'yellow', 'ocean', 'light'];
 
 // Screens worth auditing: each puts a different mix of labels, table headers,
 // status chips and buttons on screen. An empty dashboard proves nothing.
-const SCREENS = ['Orders & POS', 'Inventory & Stock', 'Clients', 'Ledger', 'Quotations', 'Analytics', 'Reports', 'Pricing Control', 'Production',
+const SCREENS = ['Orders & POS', 'Inventory & Stock', 'Clients', 'Ledger', 'Quotations', 'Sales & Stock Analytics', 'Reports', 'Pricing Control', 'Production',
   // Were never measured at all until the 2026-09 audit.
   'Hub', 'Procurement', 'Shifts & Cash', 'Audit Report', 'Fixed Assets', 'Bank Reconciliation', 'Withholding Tax', 'Payroll', 'Settings'];
 

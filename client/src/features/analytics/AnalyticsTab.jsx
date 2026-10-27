@@ -425,12 +425,18 @@ export default function AnalyticsTab({ ctx }) {
                 </div>
           </div>
 
-          <ReorderForecast rows={ad?.reorderForecast || []} settings={ad?.forecastSettings || {}} analyticsDisplay={analyticsDisplay}
-                onMakeOrders={ctx.can?.('procurement.manage') ? () => {
-                  // Procurement drafts the orders itself (one per supplier) when it opens.
-                  try { sessionStorage.setItem('proc.suggest', '1'); } catch { /* it opens anyway */ }
-                  setActiveTab('procurement');
-                } : undefined} />
+          {/* The reorder forecast moved to Procurement > Purchase Orders, beside
+              the orders it leads to. Kept here only for someone who cannot open
+              Procurement, so nobody loses it. */}
+          {ctx.can?.('procurement.view') ? (
+            <div className="bg-surface border border-white/10 rounded-2xl p-4 flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-sm text-fg/80"><span className="font-bold text-fg">Reorder forecast</span> is now in Procurement, above your purchase orders.</p>
+              <button type="button" onClick={() => setActiveTab('procurement')}
+                className="px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider bg-brand text-on-brand">Open Procurement</button>
+            </div>
+          ) : (
+            <ReorderForecast rows={ad?.reorderForecast || []} settings={ad?.forecastSettings || {}} analyticsDisplay={analyticsDisplay} />
+          )}
           </>)}
         </div>
   );

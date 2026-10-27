@@ -35,6 +35,7 @@ const StatusBadge = ({ status }) => (
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
 import { BUSINESS_TYPE } from '../../shared/businessType.js';
+import ReorderForecast from '../analytics/ReorderForecast';
 
 // The stand-in when ctx.can is missing: one function, not a new one per
 // render, or every effect that lists `can` would run on every render.
@@ -99,6 +100,7 @@ export default function ProcurementTab({ ctx }) {
   };
   // Permission gating (server also enforces). Fall back to role-ish defaults if ctx.can missing.
   const can = ctx.can || ALLOW_ALL;
+  const [forecastOpen, setForecastOpen] = useState(false);
   const canManage = can('procurement.manage');
   const canDelete = can('procurement.delete');
 
@@ -1013,6 +1015,28 @@ export default function ProcurementTab({ ctx }) {
       ) : subTab === 'orders' ? (
         /* ── PURCHASE ORDERS LIST ── */
         <div className="space-y-6">
+          {/* What to buy, next to where it is bought. The forecast lived in
+              Analytics with a button that brought you here; Suggested PO here
+              already drafts from the same figures. Folded until opened. */}
+          {can('analytics.view') && (
+            <div className="bg-surface border border-white/10 rounded-2xl">
+              <button type="button" onClick={() => { const next = !forecastOpen; setForecastOpen(next); if (next && !ctx.analyticsData) ctx.fetchAnalytics?.(); }}
+                aria-expanded={forecastOpen}
+                className="w-full flex items-center gap-2 px-4 py-3 text-sm font-bold text-fg hover:bg-white/[0.03] rounded-2xl transition">
+                {forecastOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                Reorder forecast
+                <span className="text-fg/60 font-normal text-xs">how long each item lasts, and how much to order</span>
+              </button>
+              {forecastOpen && (
+                <div className="px-4 pb-4">
+                  {!ctx.analyticsData ? <p className="text-fg/65 text-sm py-4">Loading…</p> : (
+                    <ReorderForecast rows={ctx.analyticsData.reorderForecast || []} settings={ctx.analyticsData.forecastSettings || {}}
+                      analyticsDisplay={ctx.analyticsDisplay} onMakeOrders={canManage ? buildSuggestedPo : undefined} />
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <PoSection title="Active" empty="No active purchase orders. Create one with “New PO”." pos={activePOs} money={money} showReceived
             renderActions={(po) => {
               // Incomplete already has a partial delivery reconciled against it -
@@ -1268,7 +1292,7 @@ export default function ProcurementTab({ ctx }) {
                     {po.supplier || 'No supplier'} · {po.lines?.length || 0} item(s) · Expected {fmtDate(po.expectedDate)}
                   </p>
                   {(po.payables || []).length > 0 && (
-                    <p className="text-fg/70 text-[11px] font-bold mt-0.5" title="This order's bill in Bills (AP)">
+                    <p className="text-fg/70 text-[11px] font-bold mt-0.5" title="This order's bill in Reports → Payables">
                       Payable: {po.payables.map(b => `${b.billNumber} · ${b.status}`).join(', ')}
                     </p>
                   )}
@@ -2030,7 +2054,7 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
                       <p className="text-fg/70 text-[11px] font-bold mt-0.5">Closed without a delivery - already in the books as {po.closedByBill}</p>
                     )}
                     {(po.payables || []).length > 0 && (
-                      <p className="text-fg/70 text-[11px] font-bold mt-0.5" title="This order's bill in Bills (AP)">
+                      <p className="text-fg/70 text-[11px] font-bold mt-0.5" title="This order's bill in Reports → Payables">
                         Payable: {po.payables.map(b => `${b.billNumber} · ${b.status}`).join(', ')}
                       </p>
                     )}

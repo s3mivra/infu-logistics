@@ -71,7 +71,7 @@ export default function makeFinanceFetchers(deps) {
     } catch (err) { console.error('fetchBsMonthly', err); }
   };
   const exportBsMonthlyPDF = async () => {
-    if (!bsMonthly) return ui.alert('Load the Monthly Balance Sheet first.');
+    if (!bsMonthly) return ui.alert('Load the Balance Sheet by month first.');
     const { jsPDF, autoTable } = await loadPdfLibs();
     const b = bsMonthly;
     const doc = new jsPDF(bsmView === 'matrix' ? 'landscape' : 'portrait');

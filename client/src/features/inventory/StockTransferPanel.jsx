@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback } from 'react';
+﻿import { useState, useEffect } from 'react';
 import * as ui from '../../shared/ui';
 
 import { PACK_UNIT } from '../../shared/packUnit.js';
@@ -7,22 +7,16 @@ import SearchSelect from '../../shared/ui/SearchSelect';
 // (each tagged to a location), route it through approve → release, and see on-hand
 // value grouped by location. Quantity is entered in the source item's base unit.
 //
-// The SAME "To (destination)" picker also offers any Hub-connected business as
-// a target. Picking a partner instead of one of your own items ships stock OUT
-// of your inventory to them (POST /api/hub/transfers/send) - a different money
-// path (it crosses a company boundary, so it posts a real journal entry via
-// Hub Transfer Clearing on both sides once they accept) from a same-tenant
-// location move, which is a plain internal asset move with no JE. Receiving an
-// INBOUND hub shipment still happens on the Hub tab - accepting one requires
-// picking which of your items to receive into (or creating a new one), which
-// doesn't fit this panel's one-line request form.
+// Moves between your OWN places only. Sending stock to another business is
+// Hub's job (Hub > Transfers), and receiving from one too: it used to be
+// possible from both screens, which meant two places to look for a shipment.
 export default function StockTransferPanel({
   inventory = [], stockTransfers = [], locationAnalytics = [],
   requestStockTransfer, actOnStockTransfer, isSuperAdmin, canApprove, peso, apiFetch,
   exportStockTransfersPDF, itemDisplay,
 }) {
   const [fromItemId, setFromItemId] = useState('');
-  const [toValue, setToValue] = useState(''); // an inventory _id, or `hub:<partnerSlug>`
+  const [toValue, setToValue] = useState(''); // the destination inventory _id
   const [qty, setQty] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -51,56 +45,26 @@ export default function StockTransferPanel({
   // What is actually on hand, in the same unit the user is typing in.
   const availablePieces = fromItem ? +(((fromItem.stockQty || 0) / perPiece).toFixed(4)) : 0;
   const overAvailable = !!fromItem && qtyInBase > (fromItem.stockQty || 0) + 1e-6;
-  const isHubTarget = toValue.startsWith('hub:');
-  const toItemId = isHubTarget ? '' : toValue;
+  const toItemId = toValue;
 
   // Switching the source item invalidates any batch pinned on the old one.
   useEffect(() => { setExpiryChoice(''); }, [fromItemId]);
 
   const fmtExpiry = (d) => new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
-  // Connected Hub partners + this business's own outbound shipment history.
-  // Kept local to this panel (not the giant AdminDashboard ctx) since only
-  // this one form needs them.
-  const [hubLinks, setHubLinks] = useState([]);
-  const [hubTransfers, setHubTransfers] = useState([]);
-  const loadHub = useCallback(async () => {
+  // Whether any business is linked through Hub - only to point there.
+  const [hubLinked, setHubLinked] = useState(false);
+  useEffect(() => {
     if (!apiFetch) return;
-    try {
-      const [infoRes, transfersRes] = await Promise.all([
-        apiFetch('/api/hub/info'),
-        apiFetch('/api/hub/transfers'),
-      ]);
-      const [info, transfers] = await Promise.all([infoRes.json(), transfersRes.json()]);
-      if (infoRes.ok) setHubLinks((info.links || []).filter(l => l.status === 'active'));
-      if (transfersRes.ok) setHubTransfers((transfers.transfers || []).filter(t => t.direction === 'outbound'));
-    } catch { /* non-fatal - Hub destinations just won't be offered */ }
+    apiFetch('/api/hub/info').then(r => r.json())
+      .then(info => setHubLinked((info.links || []).some(l => l.status === 'active')))
+      .catch(() => { /* no pointer then */ });
   }, [apiFetch]);
-  useEffect(() => { loadHub(); }, [loadHub]);
 
   const submit = async () => {
     if (!fromItemId || !toValue || !(qtyInBase > 0) || busy) return;
     if (overAvailable) { ui.alert(`Only ${availablePieces} ${pieceLabel} on hand.`); return; }
     setBusy(true);
-    if (isHubTarget) {
-      const partnerSlug = toValue.slice('hub:'.length);
-      try {
-        const res = await apiFetch('/api/hub/transfers/send', {
-          method: 'POST',
-          body: JSON.stringify({ partnerSlug, items: [{ itemId: fromItemId, qty: qtyInBase, note: note.trim() }] }),
-        });
-        const data = await res.json();
-        if (!res.ok || data.errors?.length) {
-          ui.alert(data.error || (data.errors || []).join('; ') || 'Failed to send transfer.');
-        } else {
-          setQty(''); setNote('');
-          if (data.warning) ui.alert(data.warning);
-          loadHub();
-        }
-      } catch { ui.alert('Failed to send transfer. Check your connection.'); }
-      setBusy(false);
-      return;
-    }
     const ok = await requestStockTransfer({ fromItemId, toItemId, qtyBase: qtyInBase, note: note.trim(), expiryDate: expiryChoice || null });
     setBusy(false);
     if (ok) { setQty(''); setNote(''); setExpiryChoice(''); }
@@ -114,15 +78,6 @@ export default function StockTransferPanel({
     Released: 'bg-green-500/15 text-success',
     Rejected: 'bg-red-500/15 text-danger',
     Cancelled: 'bg-white/10 text-fg/70',
-  };
-  // CrossTransfer (Hub) statuses are a different vocabulary from StockTransfer's -
-  // same color language, different words.
-  const hubStatusColor = {
-    Pending: 'bg-yellow-500/15 text-warning',
-    Accepted: 'bg-blue-500/15 text-info',
-    Released: 'bg-blue-500/15 text-info',
-    Received: 'bg-green-500/15 text-success',
-    Rejected: 'bg-red-500/15 text-danger',
   };
   const label = (i) => `${i.itemName}${i.stockLocation ? ` · ${i.stockLocation}` : ''}`;
   // Transfers are stored in base units (the ledger and stock cards need them
@@ -198,13 +153,7 @@ export default function StockTransferPanel({
               placeholder="Type to find the destination"
               options={[
                 ...inventory.filter(i => i._id !== fromItemId).map(i => ({ value: i._id, label: label(i), group: 'My Locations' })),
-                ...hubLinks.map(l => ({ value: `hub:${l.partnerSlug}`, label: `${l.partnerName || l.partnerSlug}`, hint: 'connected business', group: 'Hub Partners' })),
               ]} />
-            {isHubTarget && (
-              <p className="text-[10px] text-brand-text mt-1">
-                Ships {fromItem ? fromItem.itemName : 'this item'} OUT of your inventory to {hubLinks.find(l => `hub:${l.partnerSlug}` === toValue)?.partnerName || 'this partner'} - they must accept it on their end before it's released from yours.
-              </p>
-            )}
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
@@ -235,7 +184,7 @@ export default function StockTransferPanel({
           </div>
         </div>
         <button onClick={submit} disabled={busy || !fromItemId || !toValue || !(qtyInBase > 0) || overAvailable} className="bg-accent text-on-brand px-5 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-40 min-h-[44px]">
-          {isHubTarget ? 'Send to Partner' : 'Request Transfer'}
+          Request Transfer
         </button>
       </div>
 
@@ -296,47 +245,10 @@ export default function StockTransferPanel({
         )}
       </div>
 
-      {/* Hub shipments - outbound cross-business transfers sent from here. Only
-          shown when at least one Hub partner is connected, so a shop that never
-          uses the Hub doesn't see an empty section. Accepting an INBOUND
-          shipment (someone else sending to you) still happens on the Hub tab -
-          it needs to pick which of your items receives the stock (or create a
-          new one), which this one-line request form has no room for. */}
-      {hubLinks.length > 0 && (
-        <div className={card}>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-white font-black uppercase tracking-wider text-sm">Hub Shipments (to connected businesses)</h3>
-            <span className="text-[10px] text-white">Incoming shipments · use the Hub tab to accept</span>
-          </div>
-          {hubTransfers.length === 0 ? (
-            <p className="text-white text-xs py-6 text-center uppercase tracking-widest">No hub shipments yet</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-white text-[10px] uppercase tracking-widest border-b border-white/10">
-                    <th className="text-left py-2">Ref</th>
-                    <th className="text-left py-2">Item</th>
-                    <th className="text-left py-2">To Partner</th>
-                    <th className="text-right py-2">Qty</th>
-                    <th className="text-left py-2 pl-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {hubTransfers.map(t => (
-                    <tr key={t._id} className="border-b border-white/5">
-                      <td className="py-2 text-white text-xs font-mono">{t.reference}</td>
-                      <td className="py-2 text-white font-bold">{t.itemName}</td>
-                      <td className="py-2 text-white text-xs">{t.partnerName || t.partnerSlug}</td>
-                      <td className="py-2 text-right text-white tabular-nums font-bold">{showQty(t, t.itemId)}</td>
-                      <td className="py-2 pl-3"><span className={`text-[10px] font-black px-2 py-1 rounded ${hubStatusColor[t.status] || 'bg-white/10 text-white/50'}`}>{t.status}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+      {hubLinked && (
+        <p className="text-xs text-fg/70 px-1">
+          Sending stock to another business, or accepting what one sent you? That is in <span className="font-bold text-fg">Hub</span>, in the sidebar.
+        </p>
       )}
     </div>
   );

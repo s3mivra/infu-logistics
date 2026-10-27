@@ -13,7 +13,7 @@ test('stock movement thresholds can be edited and saved', async ({ page, request
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   await login(page);
-  await page.getByRole('button', { name: 'Analytics', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Sales & Stock Analytics', exact: true }).first().click();
   const section = page;
   await expect(section.getByRole('heading', { name: 'Stock movement' })).toBeVisible({ timeout: 20000 });
   await section.getByRole('button', { name: 'Thresholds' }).click();

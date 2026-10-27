@@ -52,11 +52,13 @@ test('split payment at the till, then the receivables tables and the revenue cha
   expect(done.success, JSON.stringify(done)).toBe(true);
 
   // ── 2. receivables: every column reachable, none run together ──
-  await page.getByRole('button', { name: 'Ledger', exact: true }).first().click();
-  await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
   // A narrow window, like a small laptop: the tables must still fit.
   await page.setViewportSize({ width: 1040, height: 900 });
-  await page.getByRole('button', { name: /AR & AP/ }).first().click();
+  // Receivables are one page in Reports; open invoices is its first view.
+  await page.getByRole('button', { name: 'Reports', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Receivable', exact: true }).first().click();
+  await page.getByRole('button', { name: /^Receivables/ }).first().click();
+  await expect(page.getByRole('tab', { name: 'Open invoices' })).toHaveAttribute('aria-selected', 'true');
   const row = page.locator('tr').filter({ hasText: placed.order.orderNumber }).first();
   await expect(row).toBeVisible({ timeout: 20000 });
   // Order | Customer | Owed | Action - four columns, all on screen with no sideways scroll.
@@ -81,7 +83,7 @@ test('split payment at the till, then the receivables tables and the revenue cha
   if (process.env.E2E_SHOT) await page.screenshot({ path: process.env.E2E_SHOT, fullPage: false });
   await page.setViewportSize({ width: 1280, height: 720 });
   // ── 3. the revenue chart ──
-  await page.getByRole('button', { name: 'Analytics', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Sales & Stock Analytics', exact: true }).first().click();
   await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
   await expect(page.getByRole('heading', { name: 'Daily Revenue Trend' })).toBeVisible({ timeout: 20000 });
   await expect(page.getByText('Click a day to see its total.')).toBeVisible();

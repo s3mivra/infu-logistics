@@ -11,7 +11,7 @@ const TABS = [
   'Clients',
   'Menu Setup',
   'Owner Overview',
-  'Analytics',
+  'Sales & Stock Analytics',
   'Reports',
   'Ledger',
   'Pricing Control',
@@ -161,7 +161,7 @@ test('the Sales report shows each of its four views', async ({ page }) => {
   expect(errors, errors.join('\n')).toHaveLength(0);
 });
 
-test('a check voucher can be started by hand, and Analytics shows the reorder forecast', async ({ page }) => {
+test('a check voucher can be started by hand, and the reorder forecast is in Procurement', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   await login(page);
@@ -174,8 +174,12 @@ test('a check voucher can be started by hand, and Analytics shows the reorder fo
   await expect(page.getByRole('heading', { name: 'New check voucher' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Issue voucher' })).toBeDisabled();
 
-  await page.getByRole('button', { name: 'Analytics', exact: true }).first().click();
+  // The reorder forecast lives in Procurement now; Analytics points there.
+  await page.getByRole('button', { name: 'Sales & Stock Analytics', exact: true }).first().click();
   await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 20000 });
+  await expect(page.getByText(/Reorder forecast.*is now in Procurement/i)).toBeVisible({ timeout: 20000 });
+  await page.getByRole('button', { name: 'Procurement', exact: true }).first().click();
+  await page.getByRole('button', { name: /^Reorder forecast/ }).click();
   await expect(page.getByRole('heading', { name: /Reorder Forecast/i })).toBeVisible({ timeout: 20000 });
   expect(errors, errors.join('\n')).toHaveLength(0);
 });

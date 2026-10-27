@@ -10,16 +10,15 @@ import { login } from './helpers.js';
 // went wrong" screen, and any request the server answered with a 5xx.
 const PAGES = {
   Ledger: {
-    Books: ['General Ledger', 'Trial Balance', 'P&L', 'Balance Sheet'],
-    'AR & AP': ['AR & AP', 'Bills (AP)'],
+    Books: ['General Ledger', 'Trial Balance'],
     'Cash Out': ['Revolving Funds', 'Expenses'],
     Setup: ['Accounts & Periods', 'Month-End Close', 'Backdate Sale', 'Tenancy Health', 'Books Health', 'Export All'],
   },
   Reports: {
     Sales: ['Sales', 'Sales by Channel', 'Sales by Customer', 'Sales Targets', 'By Payment', 'By Category', (process.env.VITE_BUSINESS_TYPE || 'fb') === 'log' ? 'Product Mix' : 'Menu Engineering'],
-    Receivable: ['A/R Report', 'Collections'],
-    Payable: ['A/P Report', 'Supplier Payments', 'Supplier Prices', 'Supplier Statement', 'Check Vouchers', 'Advances'],
-    Financials: ['Monthly P&L', 'Monthly Balance Sheet', 'Cash Flow', 'Cash Forecast', 'Budget vs Actual', 'Percentage Tax', 'VAT Return'],
+    Receivable: ['Receivables'],
+    Payable: ['Payables', 'Supplier Payments', 'Supplier Prices', 'Supplier Statement', 'Check Vouchers', 'Advances'],
+    Financials: ['P&L', 'Balance Sheet', 'Cash Flow Statement', 'Cash Forecast', 'Budget vs Actual', 'Percentage Tax', 'VAT Return'],
     Operations: ['Price Changes', 'Cashier Variance', 'Commissions', 'Exceptions', 'Waste Log', 'Sales by Hour', 'Cashier Performance', ...((process.env.VITE_BUSINESS_TYPE || 'fb') === 'log' ? ['Delivery Sheet'] : ['Prep List', 'Customer Feedback'])],
   },
 };
