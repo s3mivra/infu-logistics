@@ -956,7 +956,9 @@ export default function ProcurementTab({ ctx }) {
           </div>
         )}
         {subTab === 'suppliers' && canManage && (
-          <>
+          // One group, as on Purchase Orders: loose in the header's
+          // justify-between row, each button was spread across the width.
+          <div className="flex flex-wrap items-center gap-2">
             {/* The template and the export were already here; there was no way
                 to put a filled-in sheet BACK, which makes a template a dead
                 end - it invites an evening of typing that nothing can read. */}
@@ -977,7 +979,7 @@ export default function ProcurementTab({ ctx }) {
             <button onClick={() => openSupplierForm()} className="flex items-center gap-2 bg-brand hover:bg-brand/90 text-on-brand font-bold text-sm px-4 py-2.5 rounded-xl transition shadow-sm">
               <Plus size={16} /> New Supplier
             </button>
-          </>
+          </div>
         )}
       </div>
 
