@@ -1965,7 +1965,8 @@ export default function ProductsTab({ ctx }) {
         </div>
 
         {/* Creating a sale is superadmin-only on the server. */}
-        {canManage && <SalesSection apiFetch={apiFetch} products={products} isSuperAdmin={canManage} />}
+        {/* Outside the gap-6 column above, so it takes the same space itself. */}
+        {canManage && <div className="mt-6"><SalesSection apiFetch={apiFetch} products={products} isSuperAdmin={canManage} /></div>}
     </>
   );
 }
