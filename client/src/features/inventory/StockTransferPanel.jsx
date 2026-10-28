@@ -197,7 +197,7 @@ export default function StockTransferPanel({
           )}
         </div>
         {stockTransfers.length === 0 ? (
-          <p className="text-white text-xs py-6 text-center uppercase tracking-widest">No transfers yet</p>
+          <p className="text-white text-xs py-6 text-center uppercase tracking-widest">No transfers yet - use New Transfer Request above to move stock between your places</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

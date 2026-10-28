@@ -130,7 +130,7 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
         {/* List */}
         <div className="flex-1 space-y-2">
           {loading && <p className="text-sm text-fg/65 italic py-4">Loading…</p>}
-          {!loading && sales.length === 0 && <p className="text-sm text-fg/65 italic py-4">No sales yet.</p>}
+          {!loading && sales.length === 0 && <p className="text-sm text-fg/65 italic py-4">No promotions yet. Add one to put products on sale for a set time.</p>}
           {sales.map(sale => (
             <div key={sale._id} className="bg-page-bg border border-white/10 rounded-xl overflow-hidden">
               <div className="flex items-center gap-3 px-4 py-3">
@@ -158,7 +158,7 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
               </div>
               {expanded === sale._id && (
                 <div className="border-t border-white/8 px-4 py-3 space-y-1.5">
-                  {(sale.rules || []).length === 0 && <p className="text-xs text-fg/65 italic">No rules yet.</p>}
+                  {(sale.rules || []).length === 0 && <p className="text-xs text-fg/65 italic">No rules yet - add which products this promotion covers.</p>}
                   {(sale.rules || []).map((r, i) => <RuleRow key={i} rule={r} products={products} />)}
                 </div>
               )}
@@ -1834,7 +1834,7 @@ export default function ProductsTab({ ctx }) {
               {/* Existing groups */}
               <div className="flex-1 space-y-2">
                 {modifierGroups.length === 0 ? (
-                  <p className="text-sm text-fg/65 italic py-4">No modifier groups yet.</p>
+                  <p className="text-sm text-fg/65 italic py-4">No modifier groups yet. A group is a choice at the till, like size or sugar level.</p>
                 ) : modifierGroups.map(g => (
                   <div key={g._id} className="bg-page-bg border border-white/10 rounded-xl p-3 flex justify-between items-start">
                     <div className="min-w-0">
@@ -1902,7 +1902,7 @@ export default function ProductsTab({ ctx }) {
               {/* Existing combos */}
               <div className="flex-1 space-y-2">
                 {combos.length === 0 ? (
-                  <p className="text-sm text-fg/65 italic py-4">No combos yet.</p>
+                  <p className="text-sm text-fg/65 italic py-4">No combos yet. A combo sells several products together at one price.</p>
                 ) : combos.map(c => (
                   <div key={c._id} className="bg-page-bg border border-white/10 rounded-xl p-3 flex justify-between items-start">
                     <div className="min-w-0">

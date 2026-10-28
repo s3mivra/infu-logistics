@@ -52,7 +52,7 @@ export function TipsPanel({ apiFetch, can }) {
     } catch { ui.alert('Network error.'); } finally { setBusy(false); }
   };
   const remove = async (t) => {
-    if (!(await ui.confirm(`Remove the ${peso(t.amount)} tip?`))) return;
+    if (!(await ui.holdForUndo(`Removing the ${peso(t.amount)} tip…`))) return;
     const d = await send(apiFetch, `/api/tips/${t._id}`, 'DELETE').catch(() => ({}));
     if (!d.success) return ui.alert(d.error || 'Could not remove it.');
     load();

@@ -403,3 +403,15 @@ input:-webkit-autofill:active {
   outline: 2px solid rgb(var(--brand-text));
   outline-offset: 2px;
 }
+
+/* Touch screen (Settings > This Device): every control at least 44px - the
+   size a fingertip hits reliably - without changing the layout otherwise. */
+html.touch-mode button,
+html.touch-mode [role="button"],
+html.touch-mode [role="tab"],
+html.touch-mode [role="radio"],
+html.touch-mode select,
+html.touch-mode input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]) {
+  min-height: 44px;
+}
+html.touch-mode [role="switch"] { min-height: 0; }

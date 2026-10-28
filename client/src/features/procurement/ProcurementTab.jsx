@@ -605,7 +605,7 @@ export default function ProcurementTab({ ctx }) {
   };
 
   const deleteCatalogEntry = async (supplierId, entry) => {
-    if (!(await ui.confirm(`Remove "${entry.itemName}" from this supplier's catalog?`))) return;
+    if (!(await ui.holdForUndo(`Removing "${entry.itemName}" from this supplier's catalog…`))) return;
     try {
       const res = await apiFetch(`/api/suppliers/${supplierId}/products/${entry._id}`, { method: 'DELETE' });
       const d = await res.json();

@@ -1112,7 +1112,7 @@ Cost of goods sold booked for ${costed} order(s) - ${php(costSum)}.` : '')
     finally { setBdQueueSaving(false); }
   };
   const discardBdQueueItem = async (row) => {
-    if (!(await ui.confirm(`Discard the queued sale for "${row.client || 'this row'}"? It will not be posted.`))) return;
+    if (!(await ui.holdForUndo(`Discarding the queued sale for "${row.client || 'this row'}"…`))) return;
     try {
       await apiFetch(`/api/admin/backdate-sale/queue/${row._id}`, { method: 'DELETE' });
       fetchBdQueue(1);

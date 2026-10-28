@@ -239,6 +239,12 @@ export default function SettingsTab({ ctx }) {
   const [theme, setTheme] = useState(readTheme);
   const [lang, setLang] = useState(readLang);
   const [fontScale, setFontScale] = useState(readFontScale);
+  const [touch, setTouch] = useState(() => { try { return localStorage.getItem('dash.touch') === '1'; } catch { return false; } });
+  const applyTouch = (on) => {
+    setTouch(on);
+    document.documentElement.classList.toggle('touch-mode', on);
+    try { localStorage.setItem('dash.touch', on ? '1' : '0'); } catch { /* this session only */ }
+  };
   const applyFontScale = (v) => {
     setFontScale(v);
     document.documentElement.style.fontSize = (16 * v / 100) + 'px';
@@ -1218,6 +1224,21 @@ export default function SettingsTab({ ctx }) {
                   ))}
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div className="px-4 py-4">
+            <div className="flex items-start gap-4">
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-fg text-sm">Touch screen</p>
+                <p className="text-fg/70 text-xs mt-0.5 leading-snug">
+                  Bigger buttons and fields, easier to tap on a tablet or phone. Saved on this device only.
+                </p>
+              </div>
+              <button type="button" role="switch" aria-checked={touch} aria-label="Touch screen" onClick={() => applyTouch(!touch)}
+                className={`w-11 h-6 rounded-full shrink-0 relative transition ${touch ? 'bg-brand' : 'bg-white/15'}`}>
+                <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${touch ? 'left-[22px]' : 'left-0.5'}`} />
+              </button>
             </div>
           </div>
 

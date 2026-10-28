@@ -559,7 +559,7 @@ export default function ClientsTab() {
               <th className="text-right py-3">Orders</th>
               <th className="text-right py-3">Last Order</th>
               {data.showMoney && <>
-                <th className="text-right py-3">Owing (A/R)</th>
+                <th className="text-right py-3">Owes you</th>
                 <th className="text-right py-3">Committed</th>
                 <th className="text-right py-3" title="Paid ahead of any order, not yet applied">Deposits</th>
                 <th className="text-right py-3 px-4">Limit / Left</th>
@@ -737,7 +737,7 @@ export default function ClientsTab() {
                       {!orders[c._id] ? (
                         <p className="text-fg/65 text-xs font-bold py-2">Loading orders…</p>
                       ) : orders[c._id].length === 0 ? (
-                        <p className="text-fg/65 text-xs font-bold py-2">No orders yet.</p>
+                        <p className="text-fg/65 text-xs font-bold py-2">No orders yet. Orders for this client show here once placed.</p>
                       ) : (
                         <table className="w-full text-xs">
                           <thead>

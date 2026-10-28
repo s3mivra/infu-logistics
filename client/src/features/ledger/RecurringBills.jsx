@@ -41,7 +41,7 @@ export default function RecurringBills({ apiFetch, suppliers = [], accounts = []
     load();
   };
   const remove = async (row) => {
-    if (!(await ui.confirm(`Stop and remove "${row.description}" for ${row.supplierName}? Bills already raised stay as they are.`))) return;
+    if (!(await ui.holdForUndo(`Stopping "${row.description}" for ${row.supplierName} (bills already raised stay)…`))) return;
     await apiFetch(`/api/recurring-bills/${row._id}`, { method: 'DELETE' });
     load();
   };

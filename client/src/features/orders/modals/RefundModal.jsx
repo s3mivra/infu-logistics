@@ -90,7 +90,7 @@ export default function RefundModal() {
 
   const InventoryActionPicker = ({ disabled, hint }) => (
     <div>
-      <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Inventory & COGS</label>
+      <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Stock and cost of items sold</label>
       <div className="grid grid-cols-3 gap-2">
         {[
           { v: 'Restock', label: 'Restock', hint: 'Goods returned' },

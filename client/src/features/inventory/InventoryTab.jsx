@@ -216,7 +216,7 @@ export default function InventoryTab({ ctx }) {
                   className={`shrink-0 whitespace-nowrap px-4 py-1.5 text-xs font-bold uppercase tracking-wider rounded transition flex items-center gap-2 ${invSubTab === 'eod' ? 'bg-red-600 text-on-brand shadow-md shadow-red-500/20' : 'text-fg/70 hover:text-danger'}`}
                 >
                   <span className={`w-2 h-2 rounded-full ${invSubTab === 'eod' ? 'bg-white animate-pulse' : 'bg-red-500'}`}></span>
-                  EOD Audit
+                  End-of-Day Count
                 </button>
                 )}
                 {can('screen.inventory.control') && (
@@ -832,9 +832,9 @@ export default function InventoryTab({ ctx }) {
                     <div>
                       <h4 className="text-fg font-black uppercase tracking-wider text-sm flex items-center gap-2">
                         {isLocked ? (
-                          <>EOD Locked</>
+                          <>Day count locked</>
                         ) : (
-                          <><span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span> EOD Audit (Open)</>
+                          <><span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span> End-of-Day Count (open)</>
                         )}
                       </h4>
                       <p className={`text-xs mt-1 ${isLocked ? 'text-fg font-bold' : 'text-fg'}`}>

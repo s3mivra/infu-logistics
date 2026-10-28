@@ -340,7 +340,7 @@ function ControlSettings({ apiFetch }) {
         countCycle: Object.fromEntries(CYCLE_FIELDS.map(([k]) => [k, Number(form[k])])),
       }) })).json();
       if (!d.success) return ui.alert(d.error || 'Could not save.');
-      ui.alert('Saved.');
+      ui.toast(`Stock control saved: selling below zero is ${form.negativeStockMode === 'block' ? 'blocked' : form.negativeStockMode === 'warn' ? 'allowed with a warning' : form.negativeStockMode}.`, { tone: 'success' });
       load();
     } catch { ui.alert('Network error.'); }
   };

@@ -107,7 +107,7 @@ export default function QuotationsTab() {
             <tbody>
               {rows.length === 0 && (
                 <tr><td colSpan={7} className="px-3 py-10 text-center text-fg/70">
-                  {loading ? 'Loading…' : 'No quotations yet.'}
+                  {loading ? 'Loading…' : 'No quotations yet. Make one to send a client a price offer; it becomes an order when they say yes.'}
                 </td></tr>
               )}
               {rows.map(q => {

@@ -27,6 +27,7 @@ import RevolvingFundDisburseModal from '../ledger/modals/RevolvingFundDisburseMo
 import RevolvingFundReplenishModal from '../ledger/modals/RevolvingFundReplenishModal';
 import RefundModal from '../orders/modals/RefundModal';
 import NotificationBell from '../notifications/NotificationBell';
+import HelpTip from '../../shared/HelpTip';
 import CommandPalette from './CommandPalette';
 import StaffGuide from './StaffGuide';
 import { GUIDE_SEEN_KEY, showsGuide } from '../../shared/staffGuide.js';
@@ -55,6 +56,7 @@ import { setUpdateGuard } from '../../shared/autoUpdate.js';
 // paint; the rest load on demand when the operator opens them.
 const AnalyticsTab  = lazy(() => import('../analytics/AnalyticsTab'));
 const OwnerOverview = lazy(() => import('../owner/OwnerOverview'));
+const HomeTab = lazy(() => import('../home/HomeTab'));
 const OrdersTab     = lazy(() => import('../orders/OrdersTab'));
 const HistoryTab    = lazy(() => import('../orders/HistoryTab'));
 const InventoryTab  = lazy(() => import('../inventory/InventoryTab'));
@@ -224,7 +226,7 @@ export default function AdminDashboard() {
   // Restore the last-viewed tab across page refreshes (was resetting to Orders&POS).
   // Falls back to 'orders' for a fresh session or bad/stale storage.
   const [activeTab, setActiveTab] = useState(() => {
-    try { return localStorage.getItem('dash.activeTab') || 'orders'; } catch { return 'orders'; }
+    try { return localStorage.getItem('dash.activeTab') || 'home'; } catch { return 'home'; }
   });
   const [navMode, setNavMode] = useState(() => {
     try { return localStorage.getItem('dash.navMode') || 'libellus'; } catch { return 'libellus'; }
@@ -2738,7 +2740,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
   };
 
   const removeAddOnFromOrder = async (order, itemIndex, addOnIndex) => {
-    if (!(await ui.confirm("Remove this add-on from the customer's order?"))) return;
+    if (!(await ui.holdForUndo('Removing the add-on from the order…'))) return;
     
     const newItems = [...order.items];
     newItems[itemIndex].selectedAddOns = newItems[itemIndex].selectedAddOns.filter((_, idx) => idx !== addOnIndex);
@@ -6772,8 +6774,9 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             }
           </div>
           {!rail && <p title={BIZ_NAME} className="text-base font-black text-brand-text tracking-tight leading-tight line-clamp-2 break-words min-w-0 flex-1">{BIZ_NAME}</p>}
-          <div className="hidden md:block shrink-0">
+          <div className={`hidden md:flex shrink-0 gap-2 ${rail ? 'flex-col items-center' : 'items-center'}`}>
             <NotificationBell align="left" />
+            <HelpTip screen={activeTab} />
           </div>
         </div>
         {!rail && <div className="flex items-center justify-between gap-2 mt-1.5">
@@ -7456,6 +7459,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
               className="shrink-0 flex items-center gap-1.5 bg-white/5 text-fg/75 border border-white/10 px-3 py-2 rounded-xl font-bold text-xs hover:bg-white/10 hover:text-fg transition">
               <Search size={13} /><span className="hidden sm:inline">Jump</span>
             </button>
+            <HelpTip screen={activeTab} />
             <div className="shrink-0"><NotificationBell /></div>
             <button onClick={e => { e.preventDefault(); BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR(); }} className="shrink-0 flex items-center gap-1.5 bg-brand/20 text-brand-text border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
               <QrCode size={13} /> {BUSINESS_TYPE === 'log' ? 'Portal' : 'QR'}
@@ -7591,6 +7595,9 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       )}
 
       {/* --- ANALYTICS DASHBOARD TAB --- */}
+      {activeTab === 'home' && <Suspense fallback={<TabFallback />}><HomeTab apiFetch={apiFetch} can={can} navigate={navigate}
+        user={activeAdmin} isSuperAdmin={activeAdmin?.role === 'superadmin'} alerts={notifData}
+        go={(tab, sub) => { if (sub && tab === 'inventory') setInvSubTab(sub); else if (sub) setLedgerSubTab(sub); setActiveTab(tab); }} /></Suspense>}
       {activeTab === 'owner' && <Suspense fallback={<TabFallback />}><OwnerOverview apiFetch={apiFetch} can={can} go={setActiveTab} /></Suspense>}
       {activeTab === 'analytics' && <Suspense fallback={<TabFallback />}><AnalyticsTab ctx={ctx} /></Suspense>}
 

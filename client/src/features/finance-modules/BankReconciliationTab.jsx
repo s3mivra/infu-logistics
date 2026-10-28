@@ -245,7 +245,7 @@ function Worksheet({ id, onBack, apiFetch }) {
         method: 'POST', body: JSON.stringify({ lines }),
       })).json();
       if (!d.success) { ui.alert(d.error || 'Could not save.'); return; }
-      ui.toast('Saved.', { tone: 'success' });
+      ui.toast(`${lines.length} line(s) marked as cleared by the bank.`, { tone: 'success' });
       load();
     } catch { ui.alert('Network error.'); }
     finally { setBusy(false); }

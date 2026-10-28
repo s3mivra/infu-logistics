@@ -45,7 +45,7 @@ test('a view-only staff member sees the menu and stock, not the controls to chan
   await page.getByRole('button', { name: /^Inventory & Stock/ }).first().click();
   await expect(page.getByText('Receive Inventory')).toHaveCount(0);
   await expect(page.getByText(/^Import$/)).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /EOD Audit/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /EOD Audit|End-of-Day Count/ })).toHaveCount(0);
 
   expect(errors, errors.join('\n')).toEqual([]);
 });

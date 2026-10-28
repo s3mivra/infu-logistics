@@ -18,7 +18,7 @@ import {
   BarChart3, BarChart2, DollarSign, Clock, ShieldCheck, Building2, Landmark,
   Receipt, Settings, TrendingUp, RefreshCw, Banknote, HandCoins, Download,
   CalendarCheck, AlertTriangle, Target, CalendarDays, Calculator,
-  LayoutDashboard, LineChart, Wallet, ClipboardCheck, UserCog, BookOpen,
+  LayoutDashboard, LineChart, Wallet, ClipboardCheck, UserCog, BookOpen, Home,
 } from 'lucide-react';
 import { REPORT_NAMES, IS_LOG } from '../../shared/businessType.js';
 
@@ -32,6 +32,8 @@ export const NAV_GROUPS = [
     label: 'Operations',
     mode: 'libellus',
     items: [
+      // Where everyone starts: what waits on them, then their usual screens.
+      { id: 'home', label: 'Home', icon: Home, hint: 'What needs you today' },
       { id: 'orders', label: 'Orders & POS', icon: ShoppingCart, perm: 'orders.view', hint: 'Take and manage orders' },
       { id: 'inventory', label: 'Inventory & Stock', icon: Package, perm: 'inventory.view', hint: 'Stock levels, expiry' },
       { id: 'hub', label: 'Hub', icon: Network, perm: 'inventory.view', hint: 'Linked businesses, transfers' },

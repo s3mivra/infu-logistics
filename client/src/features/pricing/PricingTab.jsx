@@ -786,7 +786,7 @@ export default function PricingTab({ ctx }) {
                     {t.name}
                     <button type="button" aria-label={`Remove tier ${t.name}`} title="Remove this tier"
                       onClick={async () => {
-                        if (!(await ui.confirm(`Remove price tier "${t.name}"?`))) return;
+                        if (!(await ui.holdForUndo(`Removing price tier "${t.name}"…`))) return;
                         const d = await (await apiFetch(`/api/price-tiers/${t._id}`, { method: 'DELETE' })).json();
                         if (!d.success) return ui.alert(d.error || 'Could not remove the tier.');
                         fetchPriceTiers?.(); fetchPricingTable?.();

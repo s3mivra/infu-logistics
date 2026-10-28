@@ -172,7 +172,7 @@ export default function NotificationBell({ align = 'right', full = false }) {
         onClick={() => { if (!open) { measure(); load(); } setOpen(o => !o); }}
         aria-label={count ? `Notifications: ${count} item(s) need attention` : 'Notifications: nothing needs attention'}
         aria-expanded={open}
-        className={`relative flex items-center gap-1.5 px-2 py-2 rounded-xl font-bold text-xs border transition ${full ? 'w-full' : ''} ${
+        className={`relative flex items-center justify-center gap-1.5 p-2 rounded-xl font-bold text-xs border transition ${full ? 'w-full' : ''} ${
           data.criticalCount > 0
             ? 'bg-red-700 text-white border-red-700 hover:bg-red-500/60'
             : count > 0
@@ -183,8 +183,11 @@ export default function NotificationBell({ align = 'right', full = false }) {
         <Bell size={20} />
         {/* Sits on the button, so it takes the button's own foreground -
             a fixed white here was unreadable on the amber state. */}
+        {/* A corner badge on the bell, not text beside it: beside it, "99+"
+            pushed the button past the edge of the collapsed sidebar. */}
         {count > 0 && (
-          <span className="min-w-[18px] h-[18px] px-1 rounded-full text-[16px] font-black flex items-center justify-center">
+          <span className={`absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full text-[10px] leading-none font-black flex items-center justify-center ring-2 ring-sidebar-bg ${
+            data.criticalCount > 0 ? 'bg-white text-red-700' : 'bg-black text-amber-300'}`}>
             {badge}
           </span>
         )}

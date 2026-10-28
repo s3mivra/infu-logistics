@@ -79,6 +79,8 @@ function App() {
     let scale = null;
     try { scale = localStorage.getItem('dash.fontScale'); } catch { /* private mode */ }
     document.documentElement.style.fontSize = (16 * (Number(scale) || 100) / 100) + 'px';
+    // Touch screen: bigger tap targets everywhere (index.css, .touch-mode).
+    try { document.documentElement.classList.toggle('touch-mode', localStorage.getItem('dash.touch') === '1'); } catch { /* private mode */ }
   }, []);
 
   return (

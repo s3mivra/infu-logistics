@@ -71,7 +71,7 @@ export default function EditInventoryModal() {
               <label className="text-[10px] text-fg/65 font-bold uppercase block mb-1">Unit Cost (₱/{costUnit})</label>
               <input type="number" min="0" step="0.01" value={editInvForm.unitCost} onChange={e => set({ unitCost: e.target.value })}
                 className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg font-bold tabular-nums outline-none focus:border-brand/60" />
-              <p className="text-[9px] text-warning mt-1">⚠ Will not retro-update existing COGS.</p>
+              <p className="text-[9px] text-warning mt-1">⚠ Past sales keep the cost they had - only new sales use this one.</p>
             </div>
           </div>
           <div>

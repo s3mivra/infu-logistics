@@ -50,6 +50,12 @@ export function toast(message, { tone = 'info', duration } = {}) {
 const DEFAULT_WINDOW = 6;
 
 /**
+ * In place of "Are you sure?" for a safe removal: shows "<message> Undo" for a
+ * few seconds and resolves true if it was not undone, so the caller goes on.
+ */
+export const holdForUndo = (message) => deferred(() => {}, { message, undoMessage: 'Cancelled - nothing was changed.' });
+
+/**
  * Run `action` after a grace period unless the user cancels.
  * Returns a promise resolving true if it ran, false if it was undone.
  */

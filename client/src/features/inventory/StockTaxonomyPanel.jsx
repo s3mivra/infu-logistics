@@ -64,7 +64,7 @@ export default function StockTaxonomyPanel({
           <button onClick={addLoc} disabled={busy || !locName.trim()} className="bg-accent text-on-brand px-4 py-2 rounded font-bold text-xs uppercase tracking-wider disabled:opacity-40 shrink-0 min-h-[40px]">Add</button>
         </div>
         {stockLocations.length === 0 ? (
-          <p className="text-white/70 text-xs py-4 text-center uppercase tracking-widest">No locations yet</p>
+          <p className="text-white/70 text-xs py-4 text-center uppercase tracking-widest">No locations yet - add the places you keep stock (store, warehouse, kitchen)</p>
         ) : (
           <ul className="divide-y divide-white/5">
             {stockLocations.map(l => (
@@ -119,7 +119,7 @@ export default function StockTaxonomyPanel({
           <button onClick={addCat} disabled={busy || !catName.trim()} className="bg-accent text-on-brand px-4 py-2 rounded font-bold text-xs uppercase tracking-wider disabled:opacity-40 shrink-0 min-h-[40px]">Add</button>
         </div>
         {stockCategories.length === 0 ? (
-          <p className="text-white/70 text-xs py-4 text-center uppercase tracking-widest">No categories yet</p>
+          <p className="text-white/70 text-xs py-4 text-center uppercase tracking-widest">No categories yet - add groups to sort your stock by</p>
         ) : (
           <ul className="divide-y divide-white/5">
             {stockCategories.map(c => (

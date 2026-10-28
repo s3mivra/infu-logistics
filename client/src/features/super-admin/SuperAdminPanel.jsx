@@ -530,7 +530,7 @@ export default function SuperAdminPanel() {
             ...(form.commissionRate !== '' ? { commissionRate: form.commissionRate } : {}) }),
         });
         const data = await res.json();
-        if (data.success) { showToast('User created.'); closeModal(); fetchUsers(); }
+        if (data.success) { showToast(`Account for ${form.name.trim()} created (${form.role}). They can sign in now.`); closeModal(); fetchUsers(); }
         else setFormErrors({ general: data.error || 'Failed to create user.' });
       } else {
         const body = { name: form.name.trim(), role: form.role, permissions: permsPayload };
@@ -551,7 +551,7 @@ export default function SuperAdminPanel() {
           body: JSON.stringify(body),
         });
         const data = await res.json();
-        if (data.success) { showToast('User updated.'); closeModal(); fetchUsers(); }
+        if (data.success) { showToast(`${form.name.trim()}'s account saved.`); closeModal(); fetchUsers(); }
         else setFormErrors({ general: data.error || 'Failed to update user.' });
       }
     } catch { setFormErrors({ general: 'Network error. Please try again.' }); }
