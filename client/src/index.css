@@ -431,3 +431,14 @@ html.touch-mode input:not([type="checkbox"]):not([type="radio"]):not([type="rang
   min-height: 44px;
 }
 html.touch-mode [role="switch"] { min-height: 0; }
+
+/* Mistakes shown on the field as you type: any input you have touched that
+   is required and empty, or outside its min/max, gets a red border (and the
+   browser's own message on hover). :user-invalid waits until you have
+   interacted, so a fresh form is not red all over. */
+:root input:user-invalid,
+:root select:user-invalid,
+:root textarea:user-invalid {
+  border-color: rgb(239 68 68 / 0.85) !important;
+  box-shadow: 0 0 0 1px rgb(239 68 68 / 0.35);
+}

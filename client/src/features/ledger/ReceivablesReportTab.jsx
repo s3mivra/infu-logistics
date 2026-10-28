@@ -1,5 +1,6 @@
 
 import PagedRows from '../../shared/PagedRows';
+import RecordLink from '../../shared/RecordLink';
 
 
 // The receivables ageing report.
@@ -73,7 +74,7 @@ export default function ReceivablesReportTab({
                 <tbody>
                   <PagedRows items={arReport.byClient} label="clients" render={c => (
                     <tr key={c.client} className="border-b border-white/5">
-                      <td className="py-2.5 px-4 font-bold text-fg">{c.client}{c.clientCode && <span className="ml-2 text-[9px] text-fg/65">{c.clientCode}</span>}</td>
+                      <td className="py-2.5 px-4 font-bold text-fg"><RecordLink kind="client" value={c.client} />{c.clientCode && <span className="ml-2 text-[9px] text-fg/65">{c.clientCode}</span>}</td>
                       <td className="py-2.5 text-right tabular-nums text-fg/70">{c.current ? `₱${c.current.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
                       <td className="py-2.5 text-right tabular-nums text-warning">{c.d31_60 ? `₱${c.d31_60.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
                       <td className="py-2.5 text-right tabular-nums text-caution">{c.d61_90 ? `₱${c.d61_90.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
@@ -103,8 +104,8 @@ export default function ReceivablesReportTab({
                 <tbody>
                   <PagedRows items={arReport.invoices} label="invoices" render={i => (
                     <tr key={i._id} className={`border-b border-white/5 ${i.overdue ? 'bg-red-500/5' : ''}`}>
-                      <td className="py-2.5 font-bold text-fg">{i.orderNumber}</td>
-                      <td className="py-2.5 text-fg/70">{i.client}</td>
+                      <td className="py-2.5 font-bold text-fg"><RecordLink kind="order" value={i.orderNumber} /></td>
+                      <td className="py-2.5 text-fg/70"><RecordLink kind="client" value={i.client} /></td>
                       <td className="py-2.5 text-fg/75 text-xs">{new Date(i.invoiceDate).toLocaleDateString()}</td>
                       <td className="py-2.5 text-xs">{i.dueDate ? <span className={i.overdue ? 'text-danger font-bold' : 'text-fg/65'}>{new Date(i.dueDate).toLocaleDateString()}</span> : <span className="text-fg/65">-</span>}</td>
                       <td className="py-2.5"><span className={`text-[10px] font-black px-2 py-1 rounded ${i.bucket === 'current' ? 'bg-green-400/15 text-success' : i.bucket === 'd31_60' ? 'bg-yellow-500/15 text-warning' : i.bucket === 'd61_90' ? 'bg-orange-500/15 text-warning' : 'bg-red-500/15 text-danger'}`}>{i.ageDays}d</span></td>

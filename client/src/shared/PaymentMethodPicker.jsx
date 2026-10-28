@@ -89,6 +89,10 @@ export default function PaymentMethodPicker({
               aria-label="Check date" title="Check date" className={field} />
             {postDated && <span className="text-[10px] font-bold text-warning">Post-dated check</span>}
           </label>
+          {/* Once the check has other details, say the number is still missing. */}
+          {!String(details.checkNumber || '').trim() && (details.checkBank || details.checkDate) && (
+            <p className="sm:col-span-3 text-[11px] font-bold text-danger">Check number is required.</p>
+          )}
         </div>
       )}
       {showDetails && NEEDS_REFERENCE.includes(value) && (

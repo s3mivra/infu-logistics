@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { statusTone } from '../../shared/statusTone';
 import { Factory, Plus, Trash2, Check, X, Package, Clock, ClipboardCheck } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { reconcileUnitOptions as reconcileUnitsFor, plannedUnitChoice as plannedUnitFor, toBaseQty, inUnit, restateQty } from '../../shared/productionUnits';
@@ -9,11 +10,8 @@ import { useRefreshTick } from '../../shared/refreshBus';
 
 import { BUSINESS_TYPE } from '../../shared/businessType.js';
 // Approval decision - Pending -> Approved/Rejected.
-const STATUS_CLS = {
-  Pending:  'bg-yellow-500/15 text-warning',
-  Approved: 'bg-green-500/15 text-success',
-  Rejected: 'bg-red-500/15 text-danger',
-};
+// Shared colours (shared/statusTone.js): same meaning, same colour, on every screen.
+const STATUS_CLS = new Proxy({}, { get: (_, k) => statusTone(k) });
 // Fulfillment - only meaningful once Approved. Processing (materials spent,
 // actual yield not yet confirmed) -> Complete/Partial once reconciled,
 // mirroring how a Purchase Order's Ordered/Processing/Complete/Incomplete

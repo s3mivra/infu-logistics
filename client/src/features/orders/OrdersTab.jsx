@@ -1,4 +1,5 @@
 ﻿import { LoyaltyDialog } from '../cafe/CafeExtras';
+import { statusTone } from '../../shared/statusTone';
 import SplitPayEditor, { newSplit, splitReady, splitPayload } from '../ledger/SplitPayEditor';
 import React from 'react';
 import QtyInput from '../../shared/ui/QtyInput';
@@ -50,16 +51,8 @@ const SEND_TARGET = DEFAULT_DEPARTMENT;
 // All state and handlers come in via the `ctx` prop.
 // Soft, tinted status pills - the colour still says the state at a glance
 // without every card shouting in solid red or yellow.
-const ORDER_STATUS_TONE = {
-  Reserved:              'bg-purple-500/15 text-special',
-  Pending:               'bg-red-500/15 text-danger',
-  Preparing:             'bg-yellow-500/15 text-warning',
-  Ready:                 'bg-blue-500/15 text-info',
-  'Partially Delivered': 'bg-orange-500/15 text-warning',
-  'Partially Fulfilled': 'bg-orange-500/15 text-warning',
-  Completed:             'bg-green-500/15 text-success',
-  Refunded:              'bg-purple-500/15 text-special',
-};
+// Shared colours (shared/statusTone.js): same meaning, same colour, on every screen.
+const ORDER_STATUS_TONE = new Proxy({}, { get: (_, k) => statusTone(k) });
 
 export default function OrdersTab({ ctx }) {
   const [loyaltyOpen, setLoyaltyOpen] = React.useState(false);

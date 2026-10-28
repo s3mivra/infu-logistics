@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useCallback, Fragment } from 'react';
+import { statusTone } from '../../shared/statusTone';
 import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus, LayoutGrid, BarChart3, ExternalLink, Boxes, Share2, Landmark, AlertTriangle } from 'lucide-react';
 
 import { todayStr } from '../../shared/businessDay.js';
@@ -7,16 +8,8 @@ import RangePresets from '../../shared/RangePresets';
 import { useRefreshTick } from '../../shared/refreshBus';
 import BranchNetworkPanel from './BranchNetworkPanel';
 import PagedRows from '../../shared/PagedRows';
-const statusColor = {
-  // Awaiting our own approval before the partner is even told about it.
-  Requested: 'bg-orange-500/15 text-warning',
-  Pending:  'bg-yellow-500/15 text-warning',
-  Cancelled: 'bg-white/10 text-fg/70',
-  Accepted: 'bg-blue-500/15 text-info',
-  Released: 'bg-blue-500/15 text-info',
-  Received: 'bg-green-500/15 text-success',
-  Rejected: 'bg-red-500/15 text-danger',
-};
+// Shared colours (shared/statusTone.js): same meaning, same colour, on every screen.
+const statusColor = new Proxy({}, { get: (_, k) => statusTone(k) });
 
 // Transfer Request (negotiation) statuses are a different vocabulary from
 // CrossTransfer's shipment statuses above - same color language, own words.

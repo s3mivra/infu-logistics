@@ -1,4 +1,5 @@
-import { Plus, Edit, Trash2, Download, Zap, Wallet } from 'lucide-react';
+import { useState } from 'react';
+import { Plus, Edit, Trash2, Download, Zap, Wallet, Search, ChevronRight } from 'lucide-react';
 
 // The chart of accounts.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
@@ -8,6 +9,13 @@ export default function ChartOfAccountsTab({
   setCoaParent, coaParents, coaNewName, setCoaNewName, addCoaChild, coaBusy, coaChildrenOf, coaEditId,
   coaEditName, setCoaEditName, renameCoaChild, setCoaEditId, deleteCoaChild,
 }) {
+  // The sub-account list runs to 80+ rows once the books are set up: groups
+  // fold, and a search opens just the matches.
+  const [coaFind, setCoaFind] = useState('');
+  const [openGroups, setOpenGroups] = useState(() => new Set());
+  const q = coaFind.trim().toLowerCase();
+  const matches = (c) => !q || `${c.code} ${c.name} ${c.externalCode || ''}`.toLowerCase().includes(q);
+  const toggleGroup = (code) => setOpenGroups((s) => { const n = new Set(s); if (n.has(code)) n.delete(code); else n.add(code); return n; });
   return (
     <>
     {(ledgerSubTab === 'coa' || ledgerSubTab === 'accperiods') && (
@@ -165,14 +173,31 @@ export default function ChartOfAccountsTab({
 
         {/* Existing custom accounts grouped by parent */}
         <div className="bg-surface border border-white/10 rounded-2xl p-5">
-          <h3 className="text-lg font-black text-fg mb-4">Custom Sub-Accounts</h3>
+          <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+            <h3 className="text-lg font-black text-fg">Custom Sub-Accounts</h3>
+            <label className="relative flex-1 min-w-[12rem] max-w-xs">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/60" />
+              <input value={coaFind} onChange={e => setCoaFind(e.target.value)} placeholder="Find an account…" aria-label="Find an account"
+                className="w-full bg-page-bg border border-white/10 rounded-xl pl-8 pr-3 py-2 text-fg text-sm outline-none focus:border-brand/60 placeholder-fg/60" />
+            </label>
+          </div>
           {coaParents.filter(p => coaChildrenOf(p.code).length > 0).length === 0 ? (
             <p className="text-sm text-fg/65 italic">No custom accounts yet. Add one above.</p>
-          ) : coaParents.filter(p => coaChildrenOf(p.code).length > 0).map(p => (
-            <div key={p.code} className="mb-4 last:mb-0">
-              <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-1.5">{p.code} · {p.name}</p>
-              <div className="space-y-1.5">
-                {coaChildrenOf(p.code).map(c => (
+          ) : coaParents.filter(p => coaChildrenOf(p.code).some(matches)).length === 0 ? (
+            <p className="text-sm text-fg/65 italic">No account matches "{coaFind}".</p>
+          ) : coaParents.filter(p => coaChildrenOf(p.code).some(matches)).map(p => {
+            const kids = coaChildrenOf(p.code).filter(matches);
+            const open = !!q || openGroups.has(p.code);
+            return (
+            <div key={p.code} className="border-t border-white/5 first:border-t-0">
+              <button type="button" onClick={() => toggleGroup(p.code)} aria-expanded={open}
+                className="w-full flex items-center gap-2 py-2.5 text-left hover:text-fg">
+                <ChevronRight size={14} className={`text-fg/60 transition-transform ${open ? 'rotate-90' : ''}`} />
+                <span className="flex-1 text-[11px] font-black uppercase tracking-widest text-fg/80">{p.code} · {p.name}</span>
+                <span className="text-[10px] font-bold text-fg/60 tabular-nums">{kids.length}</span>
+              </button>
+              {open && <div className="space-y-1.5 pb-3">
+                {kids.map(c => (
                   <div key={c._id} className="flex items-center gap-2 bg-page-bg border border-white/10 rounded-xl px-3 py-2">
                     <span className="font-mono text-xs text-brand-text w-16 shrink-0">{c.code}</span>
                     {coaEditId === c._id ? (
@@ -198,9 +223,10 @@ export default function ChartOfAccountsTab({
                     )}
                   </div>
                 ))}
-              </div>
+              </div>}
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     )}

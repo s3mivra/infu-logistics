@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { statusTone } from '../../shared/statusTone';
 import {
   Building2, Plus, Download, FileText, Upload, RefreshCw, TrendingDown,
   Archive, X, AlertCircle, ChevronRight, ChevronDown,
@@ -22,11 +23,8 @@ const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFracti
 const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-');
 const today = () => todayStr();
 
-const STATUS_TONE = {
-  Active: 'text-success bg-green-400/10',
-  'Fully Depreciated': 'text-warning bg-amber-400/10',
-  Disposed: 'text-fg/70 bg-white/5',
-};
+// Shared colours (shared/statusTone.js): same meaning, same colour, on every screen.
+const STATUS_TONE = new Proxy({}, { get: (_, k) => statusTone(k) });
 
 // One labelled input. The label is not decoration: an unlabelled row of boxes
 // is the complaint that started this, and "useful life" in particular is

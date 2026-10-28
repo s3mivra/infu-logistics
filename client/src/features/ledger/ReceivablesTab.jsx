@@ -1,4 +1,5 @@
 import { Download } from 'lucide-react';
+import RecordLink from '../../shared/RecordLink';
 import Pager from '../../shared/Pager';
 import { dateStr } from '../../shared/businessDay.js';
 import CollectFromClient from './CollectFromClient';
@@ -81,7 +82,7 @@ export default function ReceivablesTab({
                   return (
                   <tr key={row.client} className={`flex flex-wrap items-start gap-x-4 gap-y-1 px-4 py-2.5 border-b border-white/5 ${row.overLimit ? 'bg-red-500/5' : ''}`}>
                     <td className="block flex-1 basis-[9rem] min-w-0 font-bold text-fg break-words">
-                      {row.client}
+                      <RecordLink kind="client" value={row.client} />
                       {row.overLimit && <span className="ml-2 text-[8px] font-black bg-red-700 text-white px-1.5 py-0.5 rounded uppercase">Over</span>}
                     </td>
                     <td className="block ml-auto text-right tabular-nums text-xs">
@@ -131,14 +132,14 @@ export default function ReceivablesTab({
                     <tr key={o._id} className="flex flex-wrap items-start gap-x-4 gap-y-2 py-3 border-b border-white/5 hover:bg-white/5 transition">
                       {/* A set width, so the client name below starts in the same place on every row. */}
                       <td className="block flex-none w-[10.5rem] min-w-0">
-                        <span className="block text-fg font-bold whitespace-nowrap">{o.orderNumber}</span>
+                        <RecordLink kind="order" value={o.orderNumber} className="block text-fg font-bold whitespace-nowrap" />
                         <span className="flex items-center gap-1.5 mt-1 text-xs text-fg/75 whitespace-nowrap">
                           {new Date(o.createdAt).toLocaleDateString()}
                           <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${ageBadge}`}>{days}d</span>
                         </span>
                       </td>
                       <td className="block flex-1 basis-[9rem] min-w-0">
-                        <span className="block text-fg/80 break-words">{o.customerName}{o.affiliate && <span className="ml-1.5 text-[9px] font-black uppercase tracking-wider text-fg/70 bg-white/5 border border-white/10 rounded px-1 py-0.5 align-middle">Affiliate</span>}</span>
+                        <span className="block text-fg/80 break-words"><RecordLink kind="client" value={o.customerName} />{o.affiliate && <span className="ml-1.5 text-[9px] font-black uppercase tracking-wider text-fg/70 bg-white/5 border border-white/10 rounded px-1 py-0.5 align-middle">Affiliate</span>}</span>
                         <span className="inline-block mt-1 text-[10px] font-black uppercase tracking-wider bg-brand/20 text-brand-text px-2 py-0.5 rounded whitespace-nowrap">{o.paymentMethod}</span>
                         {o.arDueDate && (
                           o.overdue

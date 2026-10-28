@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { statusTone } from '../../shared/statusTone';
 import {
   FileText, RefreshCw, ChevronLeft, Send, Clock, CheckCircle, XCircle, AlertCircle,
 } from 'lucide-react';
@@ -18,11 +19,11 @@ const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'n
 const inputCls = 'w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg focus:border-brand/50 focus:outline-none';
 
 const STATUS = {
-  Requested: { tone: 'text-warning bg-amber-400/10', icon: Clock, blurb: 'Waiting for you to price it' },
-  Quoted:    { tone: 'text-brand-text bg-brand/10', icon: Send, blurb: 'Sent, waiting on the client' },
-  Accepted:  { tone: 'text-success bg-green-400/10', icon: CheckCircle, blurb: 'Accepted' },
-  Declined:  { tone: 'text-fg/70 bg-white/5', icon: XCircle, blurb: 'Declined' },
-  Expired:   { tone: 'text-fg/70 bg-white/5', icon: AlertCircle, blurb: 'Ran past its validity date' },
+  Requested: { tone: statusTone('Requested'), icon: Clock, blurb: 'Waiting for you to price it' },
+  Quoted:    { tone: statusTone('Quoted'), icon: Send, blurb: 'Sent, waiting on the client' },
+  Accepted:  { tone: statusTone('Accepted'), icon: CheckCircle, blurb: 'Accepted' },
+  Declined:  { tone: statusTone('Declined'), icon: XCircle, blurb: 'Declined' },
+  Expired:   { tone: statusTone('Expired'), icon: AlertCircle, blurb: 'Ran past its validity date' },
 };
 
 export default function QuotationsTab() {

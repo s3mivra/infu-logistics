@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { statusTone } from '../../shared/statusTone';
 import ScanBox, { findByCode } from '../../shared/ScanBox';
 import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, ChevronDown, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin, Download, Sparkles, Box, Upload } from 'lucide-react';
 import Attachments from '../../shared/Attachments';
@@ -16,19 +17,11 @@ import { useRefreshTick } from '../../shared/refreshBus';
 //
 // Self-contained: only pulls apiFetch / peso / inventory / isSuperAdmin from ctx.
 
-const STATUS_STYLES = {
-  Ordered:    'bg-blue-500 text-white border-blue-500',
-  Processing: 'bg-amber-500 text-white border-amber-500',
-  Complete:   'bg-green-500 text-white border-green-500',
-  Incomplete: 'bg-red-700 text-white border-red-700',
-  // text-black, not text-fg: the pill is hardcoded white in every theme,
-  // and --fg is near-white on the three dark ones - the badge read as a
-  // blank chip at 1.05:1.
-  Cancelled:  'bg-white text-black border-white',
-};
+// Shared colours (shared/statusTone.js): same meaning, same colour, on every screen.
+const STATUS_STYLES = new Proxy({}, { get: (_, k) => statusTone(k) });
 
 const StatusBadge = ({ status }) => (
-  <span className={`inline-flex items-center text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${STATUS_STYLES[status] || STATUS_STYLES.Cancelled}`}>
+  <span className={`inline-flex items-center text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${STATUS_STYLES[status] || STATUS_STYLES.Cancelled}`}>
     {status}
   </span>
 );

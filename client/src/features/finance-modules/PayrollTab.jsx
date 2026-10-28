@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { statusTone } from '../../shared/statusTone';
 import {
   Users, Plus, RefreshCw, X, Trash2, Check, Banknote, FileText, ChevronLeft, Printer,
 } from 'lucide-react';
@@ -21,11 +22,8 @@ const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'n
 const inputCls = 'w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg focus:border-brand/50 focus:outline-none';
 const numCls = 'w-full bg-page-bg border border-white/10 rounded px-2 py-1.5 text-xs text-right tabular-nums text-fg focus:border-brand/50 focus:outline-none';
 
-const STATUS_TONE = {
-  Draft: 'text-fg/75 bg-white/5',
-  Approved: 'text-warning bg-amber-400/10',
-  Paid: 'text-success bg-green-400/10',
-};
+// Shared colours (shared/statusTone.js): same meaning, same colour, on every screen.
+const STATUS_TONE = new Proxy({}, { get: (_, k) => statusTone(k) });
 
 // `grossPay` here is the BASIC pay typed on the line; `allowances` is extra
 // pay on top. The server stores both and makes gross = basic + extra. `sel`

@@ -1,4 +1,5 @@
 import { } from 'lucide-react';
+import RecordLink from '../../shared/RecordLink';
 import RangePresets from '../../shared/RangePresets';
 
 import PagedRows from '../../shared/PagedRows';
@@ -91,7 +92,7 @@ export default function CollectionsTab({
                           {c.checkBank || <span className="text-fg/65">-</span>}
                           {c.checkDrawer && <span className="block text-[9px] text-fg/70">{c.checkDrawer}</span>}
                         </td>
-                        <td className="py-2.5 text-fg/70 text-xs">{c.client}</td>
+                        <td className="py-2.5 text-fg/70 text-xs"><RecordLink kind="client" value={c.client} /></td>
                         <td className="py-2.5 text-fg/75 text-xs">{c.orderNumber}{c.groupSize > 1 && <span className="block text-[10px] text-fg/65" title="This check paid several sales. Depositing, clearing or bouncing it does so for all of them.">one check, {c.groupSize} sales</span>}</td>
                         <td className="py-2.5 text-xs">
                           {c.checkDate ? (
@@ -267,8 +268,8 @@ export default function CollectionsTab({
                           : <span className="text-[10px] font-black px-2 py-1 rounded bg-yellow-500/15 text-warning">IN TRANSIT</span>}
                         {r.floatDays > 0 && <span className="block text-[9px] text-warning">+{r.floatDays}d float</span>}
                       </td>
-                      <td className="py-2.5 text-fg font-bold">{r.orderNumber}</td>
-                      <td className="py-2.5 text-fg/70">{r.client}</td>
+                      <td className="py-2.5 text-fg font-bold"><RecordLink kind="order" value={r.orderNumber} /></td>
+                      <td className="py-2.5 text-fg/70"><RecordLink kind="client" value={r.client} /></td>
                       <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand-text px-2 py-1 rounded">{r.depositedTo || '-'}</span></td>
                       <td className="py-2.5 text-fg/75 text-xs">
                         {r.referenceNumber || <span className="text-fg/65">-</span>}

@@ -183,7 +183,10 @@ export default function ClientsTab() {
   };
   const [data, setData] = useState({ clients: [], showMoney: false, mode: 'off' });
   const [loading, setLoading] = useState(false);
-  const [q, setQ] = useState('');
+  // Opened from a client name elsewhere (shared/RecordLink): start searched to it.
+  const [q, setQ] = useState(() => {
+    try { const v = sessionStorage.getItem('clients.find') || ''; sessionStorage.removeItem('clients.find'); return v; } catch { return ''; }
+  });
   const [expanded, setExpanded] = useState(null);
   const [orders, setOrders] = useState({});   // clientId -> orders[]
   // The statement of account being looked at: which client, over what period.

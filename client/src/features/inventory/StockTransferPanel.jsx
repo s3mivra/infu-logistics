@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect } from 'react';
+import { statusTone } from '../../shared/statusTone';
 import * as ui from '../../shared/ui';
 
 import { PACK_UNIT } from '../../shared/packUnit.js';
@@ -73,13 +74,8 @@ export default function StockTransferPanel({
 
   const card = 'bg-surface border border-white/10 rounded-xl p-4';
   const input = 'w-full bg-page-bg border border-white/10 rounded p-2 text-fg text-sm outline-none focus:border-accent';
-  const statusColor = {
-    Requested: 'bg-yellow-500/15 text-warning',
-    Approved: 'bg-blue-500/15 text-info',
-    Released: 'bg-green-500/15 text-success',
-    Rejected: 'bg-red-500/15 text-danger',
-    Cancelled: 'bg-white/10 text-fg/70',
-  };
+  // Shared colours (shared/statusTone.js).
+  const statusColor = new Proxy({}, { get: (_, k) => statusTone(k) });
   const label = (i) => `${i.itemName}${i.stockLocation ? ` · ${i.stockLocation}` : ''}`;
   // Transfers are stored in base units (the ledger and stock cards need them
   // that way), but read back in pieces so a row matches what was typed. Falls

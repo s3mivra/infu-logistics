@@ -1652,8 +1652,12 @@ It posts only what is not already accrued for that month.`)) return;
           {/* Section area. On the merged pages (Accounts & Periods, AR & AP) the
               stacked sections flow into two columns so they fill the width instead
               of leaving a big empty right side; every other page stays single-column. */}
-          <div className={(ledgerSubTab === 'accperiods' || ledgerSubTab === 'araap')
-            ? 'grid lg:grid-cols-2 gap-4 items-start'
+          {/* Accounts & Periods: two independent columns (CSS columns), so a long
+              section on the left no longer pushes the next one on the right down to
+              where it ends - the gap that left Payment Method Routing mid-page. */}
+          <div className={ledgerSubTab === 'accperiods'
+            ? 'lg:columns-2 gap-4 [&>*]:break-inside-avoid [&>*]:mb-4 [&>*]:inline-block [&>*]:w-full'
+            : ledgerSubTab === 'araap' ? 'grid lg:grid-cols-2 gap-4 items-start'
             : 'space-y-4'}>
 
           {/* One page each for receivables and payables: its views, as this
@@ -1903,10 +1907,22 @@ It posts only what is not already accrued for that month.`)) return;
                 ))}
                 <button onClick={() => setJeForm({...jeForm, lines: [...jeForm.lines, {accountCode:'', accountName:'', debit:'', credit:''}]})} className="text-xs text-brand-text hover:text-fg">+ Add Line</button>
                 <div className="border-t border-white/10 pt-4 mt-4 flex justify-between items-center">
-                  <div className="text-xs text-fg/70">
-                    Debits: {jeForm.lines.reduce((s, l) => s + Number(l.debit||0), 0)} <br/>
-                    Credits: {jeForm.lines.reduce((s, l) => s + Number(l.credit||0), 0)}
-                  </div>
+                  {/* Said as you type, under the lines, not after Post: what is
+                      wrong and by how much. */}
+                  {(() => {
+                    const dr = jeForm.lines.reduce((s, l) => s + Number(l.debit || 0), 0);
+                    const cr = jeForm.lines.reduce((s, l) => s + Number(l.credit || 0), 0);
+                    const diff = Math.round((dr - cr) * 100) / 100;
+                    const noAcct = jeForm.lines.some(l => (Number(l.debit) || Number(l.credit)) && !l.accountCode);
+                    return (
+                      <div className="text-xs text-fg/70" aria-live="polite">
+                        Debits: {peso(dr)} <br/>
+                        Credits: {peso(cr)}
+                        {diff !== 0 && <span className="block mt-1 font-bold text-danger">Debits and credits differ by {peso(Math.abs(diff))}</span>}
+                        {noAcct && <span className="block mt-1 font-bold text-danger">A line with an amount needs an account</span>}
+                      </div>
+                    );
+                  })()}
                   <button onClick={async () => {
                     // The reply was being thrown away: an entry the server
                     // refused - unbalanced, or dated into a closed month -
