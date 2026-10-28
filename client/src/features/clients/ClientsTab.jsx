@@ -727,9 +727,9 @@ export default function ClientsTab() {
                               <input type="checkbox" checked={!!edit.now.isAffiliate} onChange={set('isAffiliate')} /> Affiliate or satellite - a related business; what it owes is totalled apart from customers on Receivables
                             </label>
                             <p className="text-[11px] text-fg/65">A credit limit is changed with its own approval{HAS_CLIENT_LOGIN ? "; passwords and sign-in links are in the owner's Admin Panel" : ''}.</p>
-                            <div className="flex gap-2">
-                              <button type="submit" className="bg-brand text-on-brand px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider">Save</button>
+                            <div className="flex gap-2 justify-end">
                               <button type="button" onClick={() => setEdit(null)} className="bg-white/5 text-fg/80 px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider">Cancel</button>
+                              <button type="submit" className="bg-brand text-on-brand px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider">Save</button>
                             </div>
                           </form>
                         );

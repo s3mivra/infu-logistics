@@ -88,9 +88,9 @@ export default function ManualVoucherForm({ apiFetch, cashAccounts = [], account
           ? 'Nothing will be posted to the ledger.'
           : 'Saving posts the payment: the "Charge to" account is debited and the "Paid from" account is credited.'}
       </p>
-      <div className="flex gap-2">
-        <button type="submit" disabled={!ready || busy} className="bg-brand text-on-brand px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-40">{busy ? 'Saving…' : 'Issue voucher'}</button>
+      <div className="flex gap-2 justify-end">
         <button type="button" onClick={onCancel} className="bg-white/5 text-fg/80 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider">Cancel</button>
+        <button type="submit" disabled={!ready || busy} className="bg-brand text-on-brand px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider disabled:opacity-40">{busy ? 'Saving…' : 'Issue voucher'}</button>
       </div>
     </form>
   );

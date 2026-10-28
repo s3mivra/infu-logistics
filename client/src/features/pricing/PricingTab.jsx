@@ -727,16 +727,16 @@ export default function PricingTab({ ctx }) {
                   <p className="text-[10px] text-fg/70 mt-1">Must match a tag on the client account exactly, including capitals.</p>
                 </div>
                 <div className="flex gap-2 pt-1">
-                  <button type="submit" disabled={autoRuleBusy}
-                    className="flex-1 bg-accent text-on-brand font-black py-2.5 rounded hover:bg-brand-dark transition uppercase tracking-wider text-xs disabled:opacity-50">
-                    {autoRuleBusy ? 'Saving…' : autoRuleEditId ? 'Save Changes' : 'Add Rule'}
-                  </button>
                   {autoRuleEditId && (
                     <button type="button" onClick={resetAutoRuleForm} disabled={autoRuleBusy}
                       className="px-4 border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 rounded font-bold uppercase tracking-wider text-xs transition disabled:opacity-50">
                       Cancel
                     </button>
                   )}
+                  <button type="submit" disabled={autoRuleBusy}
+                    className="flex-1 bg-accent text-on-brand font-black py-2.5 rounded hover:bg-brand-dark transition uppercase tracking-wider text-xs disabled:opacity-50">
+                    {autoRuleBusy ? 'Saving…' : autoRuleEditId ? 'Save Changes' : 'Add Rule'}
+                  </button>
                 </div>
               </form>
             </div>

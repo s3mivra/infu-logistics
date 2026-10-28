@@ -1240,11 +1240,11 @@ export default function ProcurementTab({ ctx }) {
                         <input value={catalogForm.notes} onChange={e => setCatalogForm(f => ({ ...f, notes: e.target.value }))}
                           placeholder="Notes (optional)" className={inputCls} />
                         <div className="flex gap-2">
+                          <button onClick={closeCatalogForm} className="px-4 bg-white/5 text-black/80 font-bold text-xs py-2 rounded-lg hover:bg-white/10 transition">Cancel</button>
                           <button onClick={() => saveCatalogEntry(s._id)} disabled={savingCatalog}
                             className="flex-1 flex items-center justify-center gap-1.5 bg-brand text-on-brand font-bold text-xs py-2 rounded-lg hover:bg-brand-dark transition disabled:opacity-50">
                             {savingCatalog ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {catalogEditId ? 'Save' : 'Add'}
                           </button>
-                          <button onClick={closeCatalogForm} className="px-4 bg-white/5 text-black/80 font-bold text-xs py-2 rounded-lg hover:bg-white/10 transition">Cancel</button>
                         </div>
                       </div>
                     )}

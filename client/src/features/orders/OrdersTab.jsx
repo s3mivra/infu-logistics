@@ -819,8 +819,8 @@ export default function OrdersTab({ ctx }) {
                           )}
                         </div>
                         <div className="flex gap-2">
-                          <button type="submit" className="flex-1 bg-brand text-on-brand rounded-lg py-1.5 text-[11px] font-black uppercase tracking-wider">Add to order</button>
                           <button type="button" onClick={() => setOpenItem(null)} className="flex-1 bg-white/5 text-fg/80 rounded-lg py-1.5 text-[11px] font-bold uppercase tracking-wider">Cancel</button>
+                          <button type="submit" className="flex-1 bg-brand text-on-brand rounded-lg py-1.5 text-[11px] font-black uppercase tracking-wider">Add to order</button>
                         </div>
                         <p className="text-[10px] text-fg/65">Not on the menu, so nothing is taken from stock. Add it in Menu Setup if it is sold often.</p>
                       </form>

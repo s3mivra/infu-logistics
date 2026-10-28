@@ -91,9 +91,9 @@ export function StoreChecklist({ apiFetch, can }) {
                 <textarea rows={8} value={editing[k]} onChange={e => setEditing(x => ({ ...x, [k]: e.target.value }))} className={`${input} w-full mt-1 normal-case tracking-normal font-normal`} /></label>
             ))}
           </div>
-          <div className="flex gap-2">
-            <button type="button" onClick={saveLists} className={btnBrand}>Save</button>
+          <div className="flex gap-2 justify-end">
             <button type="button" onClick={() => setEditing(null)} className={btnGhost}>Cancel</button>
+            <button type="button" onClick={saveLists} className={btnBrand}>Save</button>
           </div>
         </Card>
       ) : (
