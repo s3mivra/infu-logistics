@@ -300,6 +300,22 @@ input:-webkit-autofill:active {
 .custom-scrollbar::-webkit-scrollbar-thumb  { background: rgb(var(--brand) / 0.35); border-radius: 9999px; }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgb(var(--brand) / 0.65); }
 
+/* The same thin brand-coloured bar on EVERY scrolling area, not only those
+   marked .custom-scrollbar - a plain browser bar (grey, with arrows) stood out
+   on tab strips and tables. Firefox takes the standard properties; Chrome,
+   Edge and Safari the ::-webkit ones. .scrollbar-hide still hides it. */
+@supports (-moz-appearance: none) {
+  * { scrollbar-width: thin; scrollbar-color: rgb(var(--brand) / 0.35) transparent; }
+}
+*::-webkit-scrollbar        { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track  { background: transparent; }
+*::-webkit-scrollbar-thumb  { background: rgb(var(--brand) / 0.35); border-radius: 9999px; }
+*::-webkit-scrollbar-thumb:hover { background: rgb(var(--brand) / 0.65); }
+*::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+*::-webkit-scrollbar-corner { background: transparent; }
+.scrollbar-hide { scrollbar-width: none; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+
 /* ============================================================
  * UTILITY ANIMATIONS
  * ============================================================ */
