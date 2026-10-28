@@ -1,4 +1,6 @@
-﻿import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react';
+﻿import { formatDateTime } from '../../shared/dates.js';
+import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import QtyInput from '../../shared/ui/QtyInput';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
@@ -72,8 +74,7 @@ const METHOD_LABELS = { QR: 'QR / Scan to Pay', Maribank: 'Maribank / Seabank' }
 // a QR confirmation number, or a check number. Both are mandatory.
 const REFERENCE_REQUIRED = ['QR', 'Check'];
 
-const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
+const peso = formatPeso;
 // Map an order's status to a client-facing queue state for the portal sidebar.
 // The first step after ordering asks the client to send payment proof on FB.
 const STATUS_VIEW = (status) => {
@@ -656,7 +657,7 @@ export default function ClientOrderPage() {
       printBillingDoc(buildBillingDocHTML({
         docTitle: 'ORDER SLIP',
         dateLabel: 'Placed',
-        dateStr: new Date(order.createdAt).toLocaleString(),
+        dateStr: formatDateTime(order.createdAt),
         settings: portal,
         metaFields: [
           { label: 'Billed To', value: clientInfo?.name || clientInfo?.username || 'Client' },
@@ -1077,7 +1078,7 @@ export default function ClientOrderPage() {
                 </div>
                 <div className="sm:text-right space-y-0.5">
                   <p className="text-[9px] font-black uppercase tracking-[0.15em] text-brand-text mb-1">Details</p>
-                  <p className="text-[11.5px]"><span className="text-brand-text">Placed </span>{new Date(slipOrder.createdAt).toLocaleString()}</p>
+                  <p className="text-[11.5px]"><span className="text-brand-text">Placed </span>{formatDateTime(slipOrder.createdAt)}</p>
                   {slipOrder.billingNumber && (
                     <p className="text-[11.5px]"><span className="text-brand-text">Billing </span><span className="font-mono">{slipOrder.billingNumber}</span></p>
                   )}

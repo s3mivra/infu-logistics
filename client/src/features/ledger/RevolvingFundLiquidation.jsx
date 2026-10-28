@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { CheckCircle, XCircle, Download, RefreshCw } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import * as auth from '../auth/auth';
@@ -8,7 +9,7 @@ import { dateStr, todayStr } from '../../shared/businessDay.js';
 // fills in by hand, with the validation step in front of replenishment:
 // each spend is checked against its receipt (Validate / Reject) and the fund
 // cannot be topped up until none is left unchecked.
-const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const weekAgo = () => { const d = new Date(); d.setDate(d.getDate() - 6); return dateStr(d); };
 const TONE = {
   Unvalidated: 'bg-amber-400 text-black',

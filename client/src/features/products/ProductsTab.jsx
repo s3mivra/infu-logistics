@@ -1,4 +1,6 @@
-﻿import React, { useState, useEffect, useCallback } from 'react';
+﻿import { formatDate } from '../../shared/dates.js';
+import React, { useState, useEffect, useCallback } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { Copy, X, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Download, Check, Coffee, ChevronRight, ChevronLeft, Search, Flame, Calendar, ToggleLeft, ToggleRight, Upload } from 'lucide-react';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import * as ui from '../../shared/ui';
@@ -10,7 +12,7 @@ import { BUSINESS_TYPE, DEFAULT_DEPARTMENT } from '../../shared/businessType.js'
 // Category routing default per business type - log routes to Logistics, fb to Kitchen.
 
 const RULE_TYPE_LABELS = { fixed_price: 'Fixed Sale Price', percent_off: 'Percent Off', threshold: 'Order Threshold' };
-const fmt = (n) => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = formatPeso;
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
 const toInputDate = (d) => d ? new Date(d).toISOString().slice(0, 16) : '';
 
@@ -885,7 +887,7 @@ export default function ProductsTab({ ctx }) {
                   <h2 className="font-black text-fg text-lg mb-1">Restore menu backup</h2>
                   <p className="text-xs text-fg/75 mb-4 break-all">
                     {menuRestoreModal.fileName} · {menuRestoreModal.backup.products.length} product(s)
-                    {menuRestoreModal.backup.exportedAt && ` · exported ${new Date(menuRestoreModal.backup.exportedAt).toLocaleDateString()}`}
+                    {menuRestoreModal.backup.exportedAt && ` · exported ${formatDate(menuRestoreModal.backup.exportedAt)}`}
                   </p>
 
                   <label className="text-[10px] text-fg/70 uppercase tracking-widest font-bold block mb-1.5">If a product is already on the menu</label>

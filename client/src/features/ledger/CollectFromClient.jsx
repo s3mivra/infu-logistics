@@ -1,4 +1,6 @@
+import { formatDate } from '../../shared/dates.js';
 import { useMemo, useRef, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { HandCoins } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import SearchSelect from '../../shared/ui/SearchSelect';
@@ -12,7 +14,7 @@ import { todayStr } from '../../shared/businessDay.js';
 // A check works the same way: each sale gets its part of the check, all under
 // one group, and the check register deposits, clears or bounces every part
 // together - it is one piece of paper.
-const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const METHODS = ['Cash on Hand', 'Bank Transfer', 'GCash', 'Maya', 'Maribank', 'Check'];
 const newGroup = () => `CG-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -132,7 +134,7 @@ export default function CollectFromClient({ apiFetch, orders = [], onDone }) {
               <p className="font-bold text-fg">It will settle:</p>
               {plan.slice(0, 8).map(p => (
                 <p key={p.order._id} className="flex justify-between gap-3 tabular-nums">
-                  <span>{p.order.orderNumber} · {new Date(p.order.createdAt).toLocaleDateString()}</span>
+                  <span>{p.order.orderNumber} · {formatDate(p.order.createdAt)}</span>
                   <span>{peso(p.take)}{p.take < r2(p.order.balance ?? p.order.total) - 0.004 ? ` of ${peso(p.order.balance ?? p.order.total)}` : ''}</span>
                 </p>
               ))}

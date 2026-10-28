@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { statusTone } from '../../shared/statusTone';
 import {
   Users, Plus, RefreshCw, X, Trash2, Check, Banknote, FileText, ChevronLeft, Printer,
@@ -17,7 +18,7 @@ import PagedRows from '../../shared/PagedRows';
 // only the net is handed over. Draft, approve, pay - three steps, because
 // approving the payroll and handing over the money happen on different days.
 
-const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-');
 const inputCls = 'w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg focus:border-brand/50 focus:outline-none';
 const numCls = 'w-full bg-page-bg border border-white/10 rounded px-2 py-1.5 text-xs text-right tabular-nums text-fg focus:border-brand/50 focus:outline-none';

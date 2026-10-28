@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { Repeat, Trash2 } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import SearchSelect from '../../shared/ui/SearchSelect';
@@ -6,7 +7,7 @@ import SearchSelect from '../../shared/ui/SearchSelect';
 // Bills that come round every month - rent, internet, a retainer. Entered
 // once; each month's is raised as an ordinary Pending bill, so it is approved
 // and paid exactly like a typed-in one. Nothing is posted or paid on its own.
-const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const field = 'bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-fg text-sm outline-none focus:border-brand/60';
 
 export default function RecurringBills({ apiFetch, suppliers = [], accounts = [], canManage, onRaised }) {

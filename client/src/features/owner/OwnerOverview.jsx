@@ -1,4 +1,6 @@
+import { formatDateTime } from '../../shared/dates.js';
 import { useCallback, useEffect, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { RefreshCw, ChevronRight } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import RangePresets from '../../shared/RangePresets';
@@ -9,8 +11,7 @@ import OwnerInsights from './OwnerInsights';
 // going, whether the month is making money, where the cash is, who owes the
 // business and who it owes, what the stock is worth, and what is waiting for a
 // decision. Read-only - every figure links to the screen that explains it.
-const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
+const peso = formatPeso;
 function Card({ title, onOpen, children }) {
   return (
     <div className="bg-surface border border-white/10 rounded-2xl p-5 flex flex-col">
@@ -91,7 +92,7 @@ export default function OwnerOverview({ apiFetch, go, can }) {
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-xl font-black text-fg">Owner Overview</h2>
-          <p className="text-fg/70 text-xs mt-1">Sales and profit for {periodName}. Cash, what is owed and stock as of {new Date(d.asOf).toLocaleString()}.</p>
+          <p className="text-fg/70 text-xs mt-1">Sales and profit for {periodName}. Cash, what is owed and stock as of {formatDateTime(d.asOf)}.</p>
         </div>
         <button onClick={load} disabled={loading} aria-label="Refresh"
           className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/80 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition disabled:opacity-40">

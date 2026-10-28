@@ -1,5 +1,6 @@
 import { useContext } from 'react';
 import DashboardContext from '../features/dashboard/DashboardContext';
+import { noteRecent } from './recent';
 
 // A client name or order number in a report or list that opens it: the
 // Clients screen searched to that client, or Orders & POS searched to that
@@ -12,6 +13,7 @@ export default function RecordLink({ kind, value, children, className = '' }) {
   if (!ctx || !value || (ctx.can && !ctx.can(perm))) return <span className={className}>{text}</span>;
   const open = (e) => {
     e.stopPropagation();
+    noteRecent({ type: kind, value: String(value) });
     if (kind === 'client') {
       try { sessionStorage.setItem('clients.find', String(value)); } catch { /* opens unsearched */ }
       ctx.setActiveTab('clients');

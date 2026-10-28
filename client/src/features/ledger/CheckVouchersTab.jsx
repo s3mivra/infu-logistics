@@ -1,3 +1,4 @@
+import { formatDate } from '../../shared/dates.js';
 import { Download, Receipt } from 'lucide-react';
 import Attachments from '../../shared/Attachments';
 import RangePresets from '../../shared/RangePresets';
@@ -116,7 +117,7 @@ export default function CheckVouchersTab({
                           one inventory. */}
                       {v.branchCode && <span className="block text-[9px] text-fg/65 font-normal font-mono">{v.branchCode}</span>}
                     </td>
-                    <td className="py-2.5 text-fg/75 text-xs">{new Date(v.date).toLocaleDateString()}</td>
+                    <td className="py-2.5 text-fg/75 text-xs">{formatDate(v.date)}</td>
                     <td className="py-2.5 text-xs">
                       <span className="text-fg/70">{v.payeeName}</span>
                       <span className="ml-1.5 text-[9px] font-black uppercase text-fg/65">{v.payeeType}</span>

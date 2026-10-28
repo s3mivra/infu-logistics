@@ -1,4 +1,6 @@
+import { useSessionState } from '../../shared/useSessionState';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { statusTone } from '../../shared/statusTone';
 import {
   Building2, Plus, Download, FileText, Upload, RefreshCw, TrendingDown,
@@ -19,7 +21,7 @@ import PagedRows from '../../shared/PagedRows';
 // P60,000 machine that is half worn out is not the same fact as a P30,000
 // machine, and netting them loses that.
 
-const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-');
 const today = () => todayStr();
 
@@ -49,8 +51,8 @@ export default function FixedAssetsTab() {
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');          // '' = every status
-  const [classFilter, setClassFilter] = useState('');
-  const [q, setQ] = useState('');
+  const [classFilter, setClassFilter] = useSessionState('assets.class', '');
+  const [q, setQ] = useSessionState('assets.q', '');
   const [expanded, setExpanded] = useState(null);    // assetId whose schedule is open
   const [schedules, setSchedules] = useState({});    // assetId -> rows[]
 

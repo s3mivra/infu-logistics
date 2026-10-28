@@ -1,3 +1,4 @@
+import { useSessionState } from '../../shared/useSessionState';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Download, SlidersHorizontal, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import * as ui from '../../shared/ui';
@@ -45,8 +46,8 @@ export default function StockMovement({ apiFetch, can }) {
   const [custom, setCustom] = useState(null);           // { start, end } when a range is typed
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState('all');           // a class, 'soon', or 'all'
-  const [q, setQ] = useState('');
+  const [filter, setFilter] = useSessionState('movement.filter', 'all');           // a class, 'soon', or 'all'
+  const [q, setQ] = useSessionState('movement.q', '');
   const [editing, setEditing] = useState(null);          // settings being changed
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(() => { try { return Number(localStorage.getItem('stockMovement.pageSize')) || 25; } catch { return 25; } });

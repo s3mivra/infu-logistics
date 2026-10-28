@@ -1,14 +1,14 @@
 // Sizes, prices and recipes on one grid - see shared/recipeMatrix.js for how
 // the grid maps onto the product's baseRecipe and per-size recipes.
 import { useMemo, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { Plus, X } from 'lucide-react';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import { matrixRows, setCell, removeRow, addSizeColumn, removeSizeColumn, columnsOf, marginOf, rowKeyOf, setRowTakeoutOnly } from '../../shared/recipeMatrix';
 
 const TARGET_MARGIN = 0.3;          // the same 30% the old "Set 30% margin" button used
 const NON_STOCK_UNITS = ['ml', 'L', 'g', 'kg', 'lb', 'pcs'];
-const money = (n) => `₱${(Number(n) || 0).toFixed(2)}`;
-
+const money = formatPeso;
 export default function RecipeMatrix({ form, setForm, inventory = [], calcRecipeCost, packInfo, businessType }) {
   const isLog = businessType === 'log';
   const [pending, setPending] = useState([]);

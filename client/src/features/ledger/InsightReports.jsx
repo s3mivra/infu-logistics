@@ -1,4 +1,7 @@
+import { useSessionState } from '../../shared/useSessionState';
+import { formatDateTime } from '../../shared/dates.js';
 import { useCallback, useEffect, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { RefreshCw, Download } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { monthStartStr, todayStr } from '../../shared/businessDay.js';
@@ -7,7 +10,7 @@ import PagedRows from '../../shared/PagedRows';
 // Two reports that only read what is already recorded:
 //   Waste Log      - every spoilage, what it cost and the reason given
 //   Sales by Hour  - when the business is busy: by hour, weekday and place
-const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const qtyText = (n) => (Number(n) || 0).toLocaleString('en-PH', { maximumFractionDigits: 3 });
 const btn = 'flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm transition';
 const btnBrand = `${btn} bg-brand text-on-brand hover:bg-brand/90 disabled:opacity-50`;
@@ -78,7 +81,7 @@ export function WasteReport({ apiFetch }) {
     ['By item', [['Item', 'Code', 'Times', 'Quantity', 'Unit', 'Cost'], ...data.byItem.map(r => [r.key, r.itemCode, r.count, r.qty, r.unit, r.value])]],
     ['By reason', [['Reason', 'Times', 'Cost'], ...data.byReason.map(r => [r.key, r.count, r.value])]],
     ['Every entry', [['Date', 'Reference', 'Item', 'Code', 'Quantity', 'Unit', 'Unit cost', 'Cost', 'Reason', 'Note'],
-      ...data.rows.map(r => [new Date(r.date).toLocaleString(), r.reference, r.itemName, r.itemCode, r.qty, r.unit, r.unitCost, r.value, r.reason, r.note])]],
+      ...data.rows.map(r => [formatDateTime(r.date), r.reference, r.itemName, r.itemCode, r.qty, r.unit, r.unitCost, r.value, r.reason, r.note])]],
   ]);
   const maxItem = data?.byItem?.[0]?.value || 0;
   return (
@@ -379,7 +382,7 @@ export function CashierPerformanceReport({ apiFetch }) {
 export function SupplierPricesReport({ apiFetch }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [q, setQ] = useState('');
+  const [q, setQ] = useSessionState('insight.q', '');
   const [onlyCompared, setOnlyCompared] = useState(true);
   const load = useCallback(async () => {
     setLoading(true);

@@ -1,4 +1,6 @@
+import { formatDate } from '../../../shared/dates.js';
 import { X } from 'lucide-react';
+import { formatPeso } from '../../../shared/money.js';
 import { useDashboard } from '../../dashboard/DashboardContext';
 
 // Every collection posted against ONE receivable, oldest first, with the
@@ -11,8 +13,8 @@ export default function ArHistoryModal() {
   if (!arHistory) return null;
 
   const { order, payments, totalPaid, balance } = arHistory;
-  const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const day = (d) => (d ? new Date(d).toLocaleDateString() : '-');
+  const peso = formatPeso;
+  const day = (d) => (d ? formatDate(d) : '-');
 
   return (
     <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in"

@@ -1,4 +1,5 @@
-﻿import { useState, useEffect } from 'react';
+﻿import { formatDate, formatDateTime } from '../../shared/dates.js';
+import { useState, useEffect } from 'react';
 import { FileText, RefreshCw, ChevronDown, ChevronUp, Printer, Search } from 'lucide-react';
 import { } from '../../shared/usePagination';
 import RangePresets from '../../shared/RangePresets';
@@ -60,7 +61,7 @@ export default function HistoryTab({ ctx }) {
     autoTable(doc, {
       startY: 34,
       head: [['Date', 'Reference', 'Deposited By', 'Amount']],
-      body: deposits.map(d => [d.createdAt ? new Date(d.createdAt).toLocaleDateString() : '-', d.reference, d.depositedBy, pdfMoney(d.amount)]),
+      body: deposits.map(d => [d.createdAt ? formatDate(d.createdAt) : '-', d.reference, d.depositedBy, pdfMoney(d.amount)]),
       foot: [[{ content: 'Total', colSpan: 3 }, pdfMoney(total)]],
       styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], fontStyle: 'bold', textColor: 255 }, columnStyles: { 3: { halign: 'right' } },
     });
@@ -119,7 +120,7 @@ export default function HistoryTab({ ctx }) {
                     <tbody className="text-fg/75">
                       <PagedRows items={deposits} label="deposits" render={(d) => (
                         <tr key={d._id} className="border-b border-white/5">
-                          <td className="py-1.5 text-fg/75 text-xs">{d.createdAt ? new Date(d.createdAt).toLocaleDateString() : ''}</td>
+                          <td className="py-1.5 text-fg/75 text-xs">{d.createdAt ? formatDate(d.createdAt) : ''}</td>
                           <td className="py-1.5 font-mono text-xs">{d.reference}</td>
                           <td className="py-1.5">{d.depositedBy}</td>
                           <td className="py-1.5 text-right font-mono font-bold text-fg/90">₱{Number(d.amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
@@ -220,8 +221,8 @@ export default function HistoryTab({ ctx }) {
                     ) : shiftHistory.map(sh => (
                       <tr key={sh._id} className={`border-b border-white/10 hover:bg-white/2 transition ${sh.isLive || sh.status === 'Open' ? 'bg-yellow-500/5 border-l-2 border-l-yellow-500' : ''}`}>
                         <td className="p-3 font-bold text-fg">{sh.cashierName}</td>
-                        <td className="p-3 text-fg/70 text-xs">{new Date(sh.shiftStart).toLocaleString()}</td>
-                        <td className="p-3 text-fg/70 text-xs">{sh.shiftEnd ? new Date(sh.shiftEnd).toLocaleString() : '- (ongoing)'}</td>
+                        <td className="p-3 text-fg/70 text-xs">{formatDateTime(sh.shiftStart)}</td>
+                        <td className="p-3 text-fg/70 text-xs">{sh.shiftEnd ? formatDateTime(sh.shiftEnd) : '- (ongoing)'}</td>
                         <td className="p-3 text-right font-mono text-sm text-fg">₱{(sh.startingCash||0).toFixed(2)}</td>
                         <td className="p-3 text-right font-mono text-sm text-brand-text">₱{(sh.salesTotal||0).toFixed(2)}{(sh.isLive || sh.status === 'Open') && <span className="text-[8px] text-warning font-black ml-1 align-top">LIVE</span>}</td>
                         <td className="p-3 text-right font-mono text-sm text-fg">₱{(sh.expectedCash||0).toFixed(2)}</td>

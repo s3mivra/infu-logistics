@@ -1,4 +1,6 @@
+import { formatDateTime } from '../../../shared/dates.js';
 import { useDashboard } from '../../dashboard/DashboardContext';
+import { formatPeso } from '../../../shared/money.js';
 import * as ui from '../../../shared/ui';
 
 // The shop's one cash drawer, for a bar where several people ring on the same
@@ -19,8 +21,7 @@ export default function CashDrawerModal() {
   if (!cashDrawerModal) return null;
 
   const s = drawerSession;
-  const money = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
-
+  const money = formatPeso;
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
       <div className="bg-surface border border-white/10 rounded-2xl shadow-2xl max-w-md w-full p-6 flex flex-col gap-4 max-h-[90vh] overflow-y-auto custom-scrollbar">
@@ -57,7 +58,7 @@ export default function CashDrawerModal() {
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-fg/70 font-bold">Since</span>
-                <span className="text-fg font-black">{new Date(s.shiftStart).toLocaleString()}</span>
+                <span className="text-fg font-black">{formatDateTime(s.shiftStart)}</span>
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-fg/70 font-bold">Starting float</span>

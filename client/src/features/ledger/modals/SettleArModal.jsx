@@ -1,4 +1,5 @@
 import { Check, X, History } from 'lucide-react';
+import { formatPeso } from '../../../shared/money.js';
 import { useDashboard } from '../../dashboard/DashboardContext';
 
 // Record ONE collection against a receivable. Collections are partial by
@@ -39,8 +40,7 @@ export default function SettleArModal() {
   // Check, so only every other method needs the generic reference field.
   const missingReference = !isCheck && !String(settleForm.referenceNumber || '').trim();
 
-  const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
+  const peso = formatPeso;
   return (
       <div className="fixed inset-0 z-[9998] bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm animate-fade-in" onClick={e => { if (e.target === e.currentTarget) setSettleModal(null); }} role="dialog" aria-modal="true" aria-label="Record A/R collection">
         <div className="bg-surface border border-white/10 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-elev-3 flex flex-col max-h-[92vh] animate-scale-in">

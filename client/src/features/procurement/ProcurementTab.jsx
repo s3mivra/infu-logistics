@@ -1,4 +1,6 @@
-﻿import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+﻿import { useSessionState } from '../../shared/useSessionState';
+import { formatDate } from '../../shared/dates.js';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { statusTone } from '../../shared/statusTone';
 import ScanBox, { findByCode } from '../../shared/ScanBox';
 import { Truck, Plus, Trash2, X, Check, ClipboardList, PackageCheck, ChevronRight, ChevronDown, AlertTriangle, FileText, Loader2, Building2, Pencil, Phone, Mail, MapPin, Download, Sparkles, Box, Upload } from 'lucide-react';
@@ -125,13 +127,13 @@ export default function ProcurementTab({ ctx }) {
     } finally { setSupplierImporting(false); }
   };
 
-  const [subTab, setSubTab] = useState('orders');   // 'orders' | 'receiving' | 'suppliers'
+  const [subTab, setSubTab] = useSessionState('procurement.tab', 'orders');   // 'orders' | 'receiving' | 'suppliers'
   // A page this person may not open is never the one showing.
   useEffect(() => {
     if (can(`screen.procurement.${subTab}`)) return;
     const first = ['orders', 'receiving', 'suppliers'].find(v => can(`screen.procurement.${v}`));
     if (first) setSubTab(first);
-  }, [subTab, can]);
+  }, [subTab, can, setSubTab]);
   const [pos, setPos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -411,7 +413,7 @@ export default function ProcurementTab({ ctx }) {
         if (!groups.has(key)) groups.set(key, { supplierId: l.supplierId || '', supplier: l.supplierName || '', lines: [] });
         groups.get(key).lines.push(suggestionToLine(l));
       }
-      const noteBase = `Suggested restock (${d.coverDays || 7}-day cover) generated ${new Date().toLocaleDateString()}`;
+      const noteBase = `Suggested restock (${d.coverDays || 7}-day cover) generated ${formatDate(new Date())}`;
       const drafts = [...groups.values()].map(g => ({
         supplier: g.supplier, supplierId: g.supplierId, expectedDate: '',
         notes: g.supplierId ? noteBase : `${noteBase} - no matching supplier found, assign one below`,
@@ -466,12 +468,12 @@ export default function ProcurementTab({ ctx }) {
     const { jsPDF, autoTable } = await loadPdfLibs();
     const doc = new jsPDF();
     doc.setFontSize(14); doc.text('Procurement History', 14, 16);
-    doc.setFontSize(9); doc.text(`${pos.length} PO(s) · ${new Date().toLocaleDateString()}`, 14, 22);
+    doc.setFontSize(9); doc.text(`${pos.length} PO(s) · ${formatDate(new Date())}`, 14, 22);
     autoTable(doc, {
       startY: 28,
       head: [['PO #', 'Date', 'Supplier', 'Status', 'Lines', 'Est. Total', 'Actual Total']],
       body: pos.map(p => [
-        p.poNumber, new Date(p.createdAt).toLocaleDateString(), p.supplier || '-', p.status,
+        p.poNumber, formatDate(p.createdAt), p.supplier || '-', p.status,
         (p.lines || []).length, money(p.estTotal), money(p.actualTotal),
       ]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 5: { halign: 'right' }, 6: { halign: 'right' } },

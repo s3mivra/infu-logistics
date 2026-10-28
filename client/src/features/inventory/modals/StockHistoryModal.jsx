@@ -1,4 +1,5 @@
-﻿import { ChevronLeft, ChevronRight } from 'lucide-react';
+﻿import { formatDateTime } from '../../../shared/dates.js';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useDashboard } from '../../dashboard/DashboardContext';
 import { PACK_UNIT } from '../../../shared/packUnit.js';
 
@@ -70,7 +71,7 @@ const totalHistPages = Math.ceil(stockHistory.length / HIST_PAGE_SIZE);
                     const dispCost = fmtCost(log.unitCost);
                     return (
                     <tr key={idx} className="border-b border-gray-800/50 hover:bg-page-bg/30">
-                      <td className="py-2 text-fg/80 text-xs">{new Date(log.date).toLocaleString()}</td>
+                      <td className="py-2 text-fg/80 text-xs">{formatDateTime(log.date)}</td>
                       <td className="py-2 font-bold text-fg/80">{log.type}</td>
                       <td className={`py-2 text-right font-mono font-bold ${dispChange < 0 ? 'text-danger' : 'text-success'}`}>
                         {dispChange > 0 ? `+${dispChange}` : dispChange}

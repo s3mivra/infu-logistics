@@ -1,3 +1,4 @@
+import { formatDate } from '../../shared/dates.js';
 import { } from 'lucide-react';
 import RecordLink from '../../shared/RecordLink';
 import RangePresets from '../../shared/RangePresets';
@@ -97,7 +98,7 @@ export default function CollectionsTab({
                         <td className="py-2.5 text-xs">
                           {c.checkDate ? (
                             <span className={c.postDated ? 'text-warning font-bold' : 'text-fg/65'}>
-                              {new Date(c.checkDate).toLocaleDateString()}
+                              {formatDate(c.checkDate)}
                             </span>
                           ) : <span className="text-fg/65">-</span>}
                           {c.postDated && <span className="block text-[9px] text-warning">post-dated</span>}
@@ -122,7 +123,7 @@ export default function CollectionsTab({
                               <button
                                 onClick={() => actOnCheck(c, 'deposit')}
                                 disabled={c.postDated}
-                                title={c.postDated ? `Cannot be deposited before ${new Date(c.checkDate).toLocaleDateString()}` : 'Mark as handed to the bank'}
+                                title={c.postDated ? `Cannot be deposited before ${formatDate(c.checkDate)}` : 'Mark as handed to the bank'}
                                 className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/8 text-fg/65 hover:bg-white/15 disabled:opacity-30 disabled:cursor-not-allowed min-h-[28px]">
                                 Deposit
                               </button>
@@ -259,12 +260,12 @@ export default function CollectionsTab({
                   <PagedRows items={collectionReport.collections} label="collections" render={(r, idx) => (
                     <tr key={`${r.orderId}-${idx}`} className="border-b border-white/5 hover:bg-white/5 transition">
                       <td className="py-2.5 text-fg/70 text-xs">
-                        {new Date(r.collectionDate).toLocaleDateString()}
+                        {formatDate(r.collectionDate)}
                         {r.collectedBy && <span className="block text-[9px] text-fg/70">by {r.collectedBy}</span>}
                       </td>
                       <td className="py-2.5 text-xs">
                         {r.depositDate
-                          ? <span className="text-fg/70">{new Date(r.depositDate).toLocaleDateString()}</span>
+                          ? <span className="text-fg/70">{formatDate(r.depositDate)}</span>
                           : <span className="text-[10px] font-black px-2 py-1 rounded bg-yellow-500/15 text-warning">IN TRANSIT</span>}
                         {r.floatDays > 0 && <span className="block text-[9px] text-warning">+{r.floatDays}d float</span>}
                       </td>

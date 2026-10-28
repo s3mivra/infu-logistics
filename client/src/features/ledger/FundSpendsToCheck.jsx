@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { CheckCircle, XCircle, Wallet } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import * as auth from '../auth/auth';
@@ -10,8 +11,7 @@ import PagedRows from '../../shared/PagedRows';
 // That check lives on each fund's liquidation sheet; this lists every spend
 // still waiting, across all funds, on the Approvals page - where people look
 // for things to approve. Draws nothing when there is none.
-const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
+const peso = formatPeso;
 export default function FundSpendsToCheck({ apiFetch, onChanged }) {
   const [rows, setRows] = useState([]);
   const [busyId, setBusyId] = useState(null);

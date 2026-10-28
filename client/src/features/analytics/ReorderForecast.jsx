@@ -1,3 +1,4 @@
+import { useSessionState } from '../../shared/useSessionState';
 import { useMemo, useState } from 'react';
 import { Download, TrendingUp } from 'lucide-react';
 import { usePagination } from '../../shared/usePagination';
@@ -20,7 +21,7 @@ const STATUS = {
 
 export default function ReorderForecast({ rows = [], settings = {}, analyticsDisplay, onMakeOrders }) {
   const [onlyNeeded, setOnlyNeeded] = useState(true);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useSessionState('reorder.search', '');
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter(r => (!onlyNeeded || r.status !== 'ok') && (!q || String(r.itemName || '').toLowerCase().includes(q) || String(r.itemCode || '').toLowerCase().includes(q)));

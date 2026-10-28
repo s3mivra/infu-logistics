@@ -1,3 +1,4 @@
+import { formatDate, formatDateTime } from '../../shared/dates.js';
 import { } from 'lucide-react';
 import { } from '../../shared/receiptTemplate';
 import * as ui from '../../shared/ui';
@@ -71,8 +72,8 @@ export default function makePdfExports(deps) {
       const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
       await addLogoToPDF(doc);
       doc.setFontSize(18); doc.text(`${BIZ_NAME} - Daily Inventory & Movement Report`, 14, 15);
-      const printedDate = new Date().toLocaleDateString();
-      doc.setFontSize(10); doc.text(`Date: ${printedDate} | Generated: ${new Date().toLocaleString()}`, 14, 22);
+      const printedDate = formatDate(new Date());
+      doc.setFontSize(10); doc.text(`Date: ${printedDate} | Generated: ${formatDateTime(new Date())}`, 14, 22);
       
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
@@ -113,12 +114,12 @@ export default function makePdfExports(deps) {
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
     await addLogoToPDF(doc);
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - General Ledger Report`, 14, 15);
-    doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 22);
+    doc.setFontSize(10); doc.text(`Generated: ${formatDateTime(new Date())}`, 14, 22);
     let currentY = 30;
     journalEntries.forEach(entry => {
       if (currentY > doc.internal.pageSize.getHeight() - 40) { doc.addPage(); currentY = 20; }
       doc.setFontSize(11); doc.setFont(undefined, 'bold');
-      doc.text(`Ref: ${entry.reference}  |  Date: ${new Date(entry.date).toLocaleDateString()}`, 14, currentY);
+      doc.text(`Ref: ${entry.reference}  |  Date: ${formatDate(entry.date)}`, 14, currentY);
       doc.setFontSize(10); doc.setFont(undefined, 'normal');
       doc.text(`Memo: ${entry.description}`, 14, currentY + 6);
       const rows = entry.lines.map(line => [`${line.accountCode} - ${line.accountName}`, line.debit ? line.debit.toFixed(2) : '', line.credit ? line.credit.toFixed(2) : '']);
@@ -160,11 +161,11 @@ export default function makePdfExports(deps) {
     await addLogoToPDF(doc);
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - Complete Sales History`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
+    doc.setFontSize(10); doc.text(`Generated: ${formatDate(new Date())} at ${timeGenerated}`, 14, 22);
 
     const grouped = {};
     allOrders.forEach(o => {
-      const date = new Date(o.createdAt).toLocaleDateString();
+      const date = formatDate(o.createdAt);
       if (!grouped[date]) grouped[date] = { orders: [], ordersCount: 0, gross: 0, vatable: 0, vatExempt: 0, vat: 0, discount: 0, netSales: 0 };
       grouped[date].orders.push(o);
       
@@ -268,7 +269,7 @@ export default function makePdfExports(deps) {
     await addLogoToPDF(doc);
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - Sales Report: ${dateString}`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
+    doc.setFontSize(10); doc.text(`Generated: ${formatDate(new Date())} at ${timeGenerated}`, 14, 22);
     
     const dayRows = [];
     let dayTotals = { cash: 0, bank: 0, ewallet: 0, grand: 0 };
@@ -339,11 +340,11 @@ export default function makePdfExports(deps) {
     await addLogoToPDF(doc);
     doc.setFontSize(18); doc.text(`${BIZ_NAME} - Analytics Report`, 14, 15);
     const timeGenerated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    doc.setFontSize(10); doc.text(`Generated: ${new Date().toLocaleDateString()} at ${timeGenerated}`, 14, 22);
+    doc.setFontSize(10); doc.text(`Generated: ${formatDate(new Date())} at ${timeGenerated}`, 14, 22);
 
     const grouped = {};
     allCompletedOrders.forEach(o => {
-      const date = new Date(o.createdAt).toLocaleDateString();
+      const date = formatDate(o.createdAt);
       if (!grouped[date]) grouped[date] = { ordersCount: 0, gross: 0, vatable: 0, vatExempt: 0, vat: 0, discount: 0, netSales: 0 };
       grouped[date].ordersCount++;
       grouped[date].gross += o.subtotal;

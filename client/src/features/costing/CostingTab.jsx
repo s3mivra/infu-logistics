@@ -1,4 +1,6 @@
+import { useSessionState } from '../../shared/useSessionState';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { Calculator, Plus, Trash2, Save, Package, Coins, Percent, Search, Tag, FilePlus2 } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import SearchSelect from '../../shared/ui/SearchSelect';
@@ -12,7 +14,7 @@ import { unitChoices, sheetTotals, priceFrom, marginAt, linesFromProduct, curren
 // sent to the product, through the same price-change route (and approval) as
 // any other price edit. Arithmetic: shared/costing.js.
 
-const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const ROUNDING = [[0, 'To the centavo'], [0.25, 'Up to ₱0.25'], [1, 'Up to ₱1'], [5, 'Up to ₱5'], [10, 'Up to ₱10']];
 const input = 'bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:border-brand/60';
 const label = 'text-[10px] font-black uppercase tracking-wider text-fg/70 mb-1 block';
@@ -26,7 +28,7 @@ export default function CostingTab({ ctx }) {
 
   const [sheets, setSheets] = useState([]);
   const [sheet, setSheet] = useState(() => blankSheet(defaultVat));
-  const [q, setQ] = useState('');
+  const [q, setQ] = useSessionState('costing.q', '');
   const [saving, setSaving] = useState(false);
 
   const invById = useMemo(() => new Map(inventory.map(i => [String(i._id), i])), [inventory]);

@@ -1,4 +1,5 @@
 ﻿import { Fragment, useCallback, useEffect, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { HAS_CLIENT_LOGIN, BUSINESS_NAME } from '../../shared/businessType.js';
 import { downloadClientRecord } from '../ops/OpsExtras';
 import { Users, Search, ChevronDown, ChevronRight, RefreshCw, AlertCircle, Upload, FileText, Download, Link2, UserPlus, Trash2, Mail } from 'lucide-react';
@@ -19,8 +20,7 @@ import { useRefreshTick } from '../../shared/refreshBus';
 // so answering "how much does this client owe me?" meant visiting three tabs.
 // SuperAdmin keeps account creation; this is the operational view.
 
-const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
-
+const peso = formatPeso;
 export default function ClientsTab() {
   const { apiFetch, downloadDataset, systemSettings = {}, can = () => false, isSuperAdmin = false } = useDashboard();
   // Accounting staff cannot set a credit line, but can ask for one: it goes to
@@ -430,7 +430,9 @@ export default function ClientsTab() {
         <div className="w-10 h-10 rounded-xl bg-brand/15 border border-brand/30 flex items-center justify-center shrink-0">
           <Users size={19} className="text-brand-text" />
         </div>
-        <div className="flex-1 min-w-0">
+        {/* A minimum width, so on a tablet the search box wraps to the next line
+            instead of sliding over the title. */}
+        <div className="flex-1 min-w-[9rem]">
           <h1 className="text-xl font-black text-fg leading-none">Clients</h1>
           <p className="text-fg/70 text-xs font-bold mt-1">
             {data.clients.length} account{data.clients.length === 1 ? '' : 's'}

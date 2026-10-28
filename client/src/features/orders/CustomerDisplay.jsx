@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { io } from 'socket.io-client';
 import { API_URL } from '../../shared/apiBase.js';
 import { subscribeCart } from '../../shared/customerDisplay';
 
-const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
+const peso = formatPeso;
 // /display - the screen the customer looks at. Same device: open it in a
 // second window. Another device: /display?code=XXXXXX with the till's code.
 export default function CustomerDisplay() {

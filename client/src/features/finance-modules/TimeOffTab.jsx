@@ -1,3 +1,4 @@
+import { useSessionState } from '../../shared/useSessionState';
 import { useCallback, useEffect, useState } from 'react';
 import { CalendarDays, Clock, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 import { useDashboard } from '../dashboard/DashboardContext';
@@ -23,7 +24,7 @@ const TONE = { Pending: 'text-warning bg-amber-400/10', Approved: 'text-success 
 export default function TimeOffTab() {
   const { apiFetch } = useDashboard();
   const [kind, setKind] = useState('leave');
-  const [filter, setFilter] = useState('Pending');
+  const [filter, setFilter] = useSessionState('timeoff.filter', 'Pending');
   const [data, setData] = useState({ leave: null, overtime: null, canDecide: false });
   const [busy, setBusy] = useState('');
   const [leave, setLeave] = useState({ type: 'Vacation', from: today(), to: today(), reason: '' });

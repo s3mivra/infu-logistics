@@ -1,4 +1,5 @@
 
+import { formatDate } from '../../shared/dates.js';
 import PagedRows from '../../shared/PagedRows';
 
 
@@ -133,7 +134,7 @@ export default function PayablesReportTab({
                         {b.dueDate ? (
                           b.overdue
                             ? <span className="text-[10px] font-black px-2 py-1 rounded bg-red-500/15 text-danger">{b.daysPastDue}d LATE</span>
-                            : <span className="text-fg/65">{new Date(b.dueDate).toLocaleDateString()}</span>
+                            : <span className="text-fg/65">{formatDate(b.dueDate)}</span>
                         ) : <span className="text-[10px] font-black px-2 py-1 rounded bg-white/10 text-fg/70">NO DATE</span>}
                       </td>
                       <td className="py-2.5">

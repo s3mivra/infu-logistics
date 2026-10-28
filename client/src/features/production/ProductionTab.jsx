@@ -1,3 +1,5 @@
+import { useSessionState } from '../../shared/useSessionState';
+import { formatDateTime } from '../../shared/dates.js';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { statusTone } from '../../shared/statusTone';
 import { Factory, Plus, Trash2, Check, X, Package, Clock, ClipboardCheck } from 'lucide-react';
@@ -73,7 +75,7 @@ export default function ProductionTab({ ctx }) {
 
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState('Pending');
+  const [statusFilter, setStatusFilter] = useSessionState('production.status', 'Pending');
   const [rejecting, setRejecting] = useState(null);   // order being rejected
   const [rejectReason, setRejectReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -767,7 +769,7 @@ export default function ProductionTab({ ctx }) {
               })()}
 
               <p className="text-[10px] text-fg/65 flex items-center gap-1.5">
-                <Clock size={11} /> {new Date(o.createdAt).toLocaleString()}
+                <Clock size={11} /> {formatDateTime(o.createdAt)}
               </p>
               {o.notes && <p className="text-fg/75 text-xs mt-1 italic">"{o.notes}"</p>}
               {o.status === 'Rejected' && o.rejectionReason && (

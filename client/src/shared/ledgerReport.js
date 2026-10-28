@@ -4,6 +4,7 @@
 // money formatter and draws the table, so the rows, the totals and the
 // "nothing recorded" case are defined once and can be checked outside the
 // browser.
+import { formatDateTime } from './dates.js';
 
 // The server streams both reports as CSV. Quoted fields, doubled quotes and
 // embedded newlines are all handled, since descriptions contain commas.
@@ -50,7 +51,7 @@ export const LEDGER_REPORT_SPEC = {
   auditlog: {
     label: 'Audit Log (PDF)', title: 'AUDIT LOG', path: '/api/audit-logs/export', filePrefix: 'audit_log',
     head: ['When', 'User', 'Action', 'Target', 'Notes'],
-    formatRow: (r) => [r[0] ? new Date(r[0]).toLocaleString() : '', r[1], r[2], r[3], r[4]],
+    formatRow: (r) => [r[0] ? formatDateTime(r[0]) : '', r[1], r[2], r[3], r[4]],
     columnStyles: { 4: { cellWidth: 100 } },
   },
 };

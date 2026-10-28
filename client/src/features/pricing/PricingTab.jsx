@@ -1,4 +1,7 @@
-﻿import React, { useState, useMemo } from 'react';
+﻿import { useSessionState } from '../../shared/useSessionState';
+import { formatDate } from '../../shared/dates.js';
+import React, { useState, useMemo } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { dateStr } from '../../shared/businessDay.js';
 import { Plus, Check, ChevronRight, ChevronLeft, Zap, Search, Tag, History } from 'lucide-react';
 import * as ui from '../../shared/ui';
@@ -32,11 +35,11 @@ export default function PricingTab({ ctx }) {
 
   // Café only: which products the table QR menu shows.
   const showQrCol = BUSINESS_TYPE !== 'log' && (isSuperAdmin || can?.('products.manage'));
-  const [pricingSort, setPricingSort] = useState('az');
+  const [pricingSort, setPricingSort] = useSessionState('pricing.sort', 'az');
   const [pricingCatFilter, setPricingCatFilter] = useState('');
-  const [pricingSearch, setPricingSearch] = useState('');
+  const [pricingSearch, setPricingSearch] = useSessionState('pricing.search', '');
   const [localPage, setLocalPage] = useState(1);
-  const [tierSearch, setTierSearch] = useState('');
+  const [tierSearch, setTierSearch] = useSessionState('pricing.tier', '');
   const [tierPage, setTierPage] = useState(1);
   const tierItemsPerPage = 8;
   // Filters: category, and "has / has no price in this tier" - the second finds
@@ -162,7 +165,7 @@ export default function PricingTab({ ctx }) {
     if (r.daysOfWeek?.length) bits.push(`on ${r.daysOfWeek.slice().sort().map(d => DOW[d]?.[0]).join(', ')}`);
     if (r.segment) bits.push(`for ${r.segment} clients`);
     if (r.startDate || r.endDate) {
-      const f = (d) => new Date(d).toLocaleDateString();
+      const f = (d) => formatDate(d);
       bits.push(r.startDate && r.endDate ? `between ${f(r.startDate)} and ${f(r.endDate)}`
         : r.startDate ? `from ${f(r.startDate)}` : `until ${f(r.endDate)}`);
     }
@@ -220,7 +223,7 @@ export default function PricingTab({ ctx }) {
     const t = (pricingTable.tiers || []).find(x => String(x._id) === String(tierId));
     if (!t) return;
     const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-    const money = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const money = formatPeso;
     const lines = tierFilteredProducts.filter(pr => t.prices?.[pr._id] != null)
       .sort((a, b) => String(a.category || '').localeCompare(String(b.category || '')) || String(a.name).localeCompare(String(b.name)));
     if (!lines.length) return ui.alert(`${t.name} has no prices among the products showing.`);

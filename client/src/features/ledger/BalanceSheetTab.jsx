@@ -1,3 +1,4 @@
+import { formatDate } from '../../shared/dates.js';
 import { Package, Download, RefreshCw } from 'lucide-react';
 
 // The balance sheet.
@@ -12,7 +13,7 @@ export default function BalanceSheetTab({
         <div className="flex justify-between items-end border-b border-white/10 pb-4">
           <div>
             <h3 className="text-2xl font-black text-fg">Balance Sheet</h3>
-            <p className="text-fg/65 text-xs font-bold uppercase tracking-widest mt-1">Snapshot as of {bsData ? new Date(bsData.asOf).toLocaleDateString() : 'today'}</p>
+            <p className="text-fg/65 text-xs font-bold uppercase tracking-widest mt-1">Snapshot as of {bsData ? formatDate(bsData.asOf) : 'today'}</p>
             {/* Accounts Receivable is one account in the ledger; what related
                 businesses owe is told apart by the client record, so it is
                 shown here as a note on that line rather than a line of its own. */}

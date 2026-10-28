@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { RefreshCw, Download, CheckCircle, Circle, AlertTriangle, Lock, Save } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
@@ -7,7 +8,7 @@ import PagedRows from '../../shared/PagedRows';
 // statement, sales by channel, budgets against actual, the exception report
 // and the month-end closing checklist. Each one loads its own data.
 
-const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const ymd = (d) => {
   const x = new Date(d);
   return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;

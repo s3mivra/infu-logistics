@@ -1,5 +1,7 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
-import { roundMoney } from '../../shared/money.js';
+﻿import { useSessionState } from '../../shared/useSessionState';
+import { formatDate, formatDateTime } from '../../shared/dates.js';
+import React, { useState, useEffect, useRef } from 'react';
+import { roundMoney, formatPeso } from '../../shared/money.js';
 import SplitPayEditor, { newSplit, splitReady, splitPayload } from './SplitPayEditor';
 import { X, Lock, Unlock, FileText, AlertTriangle, Plus, Trash2, Download, Upload, RefreshCw, Clock, ChevronRight, ChevronLeft, ShieldCheck, Search, History } from 'lucide-react';
 import { isCancelledRow, isCancelledSheet, partitionCancelledGroups } from '../../shared/backdateCancelled';
@@ -278,7 +280,7 @@ export default function LedgerTab({ ctx }) {
       </div>
     );
   };
-  const [bdSearch, setBdSearch] = useState('');
+  const [bdSearch, setBdSearch] = useSessionState('backdate.search', '');
   const [bdBusy, setBdBusy] = useState(false);
   // Bumped when an entry is sent for approval, so the waiting list reloads.
   const [jeDraftsKey, setJeDraftsKey] = useState(0);
@@ -340,7 +342,7 @@ export default function LedgerTab({ ctx }) {
     try {
       const d = await (await apiFetch('/api/admin/backdate-sale/book-costs', { method: 'POST' })).json();
       if (!d.success) return ui.alert(d.error || 'Could not book the cost.');
-      const p2 = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const p2 = formatPeso;
       ui.alert(`${d.booked} of ${d.checked} sale(s) costed - ${p2(d.total)} booked as cost of goods sold.`
         + ((d.noCost || []).length ? `\n\nNo cost found for (no stock item, or its cost is 0):\n- ${d.noCost.slice(0, 15).join('\n- ')}${d.noCost.length > 15 ? `\n...and ${d.noCost.length - 15} more` : ''}` : '')
         + ((d.problems || []).length ? `\n\nSkipped:\n- ${d.problems.slice(0, 5).join('\n- ')}` : ''));
@@ -856,7 +858,7 @@ export default function LedgerTab({ ctx }) {
       return need.every(h => head.includes(h));
     });
     if (!sheet) return false;
-    const php = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const php = formatPeso;
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheet], { defval: '' }).filter(r => String(r['Order No'] || '').trim());
     if (!rows.length) { ui.alert('That Orders export has no orders in it.'); return true; }
     const lines = wb.Sheets['Order Lines'] ? XLSX.utils.sheet_to_json(wb.Sheets['Order Lines'], { defval: '' }) : [];
@@ -1054,7 +1056,7 @@ Cost of goods sold booked for ${costed} order(s) - ${php(costSum)}.` : '')
       const doc = new jsPDF();
       await addLogoToPDF(doc);
       doc.setFontSize(14); doc.text('Backdate Sale History', 14, 16);
-      doc.setFontSize(9); doc.text(`${d.orders.length} sale(s) · ${new Date().toLocaleDateString()}`, 14, 22);
+      doc.setFontSize(9); doc.text(`${d.orders.length} sale(s) · ${formatDate(new Date())}`, 14, 22);
       autoTable(doc, {
         startY: 28,
         head: [['Date', 'Order No.', 'Customer', 'Payment', 'Notes', 'Total']],
@@ -1211,7 +1213,7 @@ It posts only what is not already accrued for that month.`)) return;
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('TRIAL BALANCE', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(formatDate(new Date()), 105, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
       head: [['Code', 'Account', 'Debit', 'Credit']],
@@ -1337,7 +1339,7 @@ It posts only what is not already accrued for that month.`)) return;
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('REQUISITION SLIPS / APPROVALS', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${reqSlips.length} slip(s) · ${reqSlipView === 'pending' ? 'Pending only' : 'All statuses'} · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${reqSlips.length} slip(s) · ${reqSlipView === 'pending' ? 'Pending only' : 'All statuses'} · ${formatDate(new Date())}`, 105, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
       head: [['Slip #', 'Type', 'Summary', 'Amount', 'Prepared By', 'Status', 'Approved/Rejected By']],
@@ -1997,7 +1999,7 @@ It posts only what is not already accrued for that month.`)) return;
                         <button type="button" onClick={() => setEditingEntryId(entry._id)}
                           className="text-[10px] font-bold uppercase tracking-wider text-brand-text hover:text-fg">Edit</button>
                       )}
-                      <span className="text-fg text-sm">{new Date(entry.date).toLocaleDateString()}</span>
+                      <span className="text-fg text-sm">{formatDate(entry.date)}</span>
                     </span>
                   </div>
                   {entry.changeReason && <p className="text-[11px] text-fg/70 mb-2">Reason: {entry.changeReason}</p>}
@@ -2063,7 +2065,7 @@ It posts only what is not already accrued for that month.`)) return;
             const nr = m?.grandTotals?.netRevenue || 0;
             const parentTotals = {};
             (m?.accounts || []).forEach(a => { parentTotals[a.parentCode] = (parentTotals[a.parentCode] || 0) + a.total; });
-            const peso = (n) => `₱${(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            const peso = formatPeso;
             return (
             <div className="space-y-4 animate-fade-in">
               <div className="flex flex-wrap gap-3 items-center">
@@ -2140,7 +2142,7 @@ It posts only what is not already accrued for that month.`)) return;
           {ledgerSubTab === 'bsmonthly' && (() => {
             const SECTIONS = [['assets','Assets'],['liabilities','Liabilities'],['equity','Equity']];
             const b = bsMonthly;
-            const peso = (n) => `₱${(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            const peso = formatPeso;
             const totalAssets = b?.monthTotals?.assets?.[b?.asOf] || 0;
             const parentTotals = {};
             if (b) [...b.assets, ...b.liabilities, ...b.equity].forEach(a => { parentTotals[a.parentCode] = (parentTotals[a.parentCode] || 0) + a.total; });
@@ -2914,7 +2916,7 @@ It posts only what is not already accrued for that month.`)) return;
                             {isLocked ? <Lock size={14} className="text-danger"/> : <Unlock size={14} className="text-fg/70"/>}
                             <div className="min-w-0">
                               <p className="text-fg font-black text-sm">{label} <span className={`text-[10px] ml-1 font-black uppercase tracking-widest ${isLocked ? 'text-danger' : 'text-fg/70'}`}>{isLocked ? 'Locked' : 'Reopened'}</span></p>
-                              <p className="text-[10px] text-fg/70 truncate">{isLocked ? `Closed by ${p.closedBy} · ${new Date(p.closedAt).toLocaleString()}` : `Reopened by ${p.reopenedBy} · ${new Date(p.reopenedAt).toLocaleString()}`}{p.notes ? ` · ${p.notes}` : ''}</p>
+                              <p className="text-[10px] text-fg/70 truncate">{isLocked ? `Closed by ${p.closedBy} · ${formatDateTime(p.closedAt)}` : `Reopened by ${p.reopenedBy} · ${formatDateTime(p.reopenedAt)}`}{p.notes ? ` · ${p.notes}` : ''}</p>
                             </div>
                           </div>
                           {isLocked && (
@@ -3672,7 +3674,7 @@ It posts only what is not already accrued for that month.`)) return;
                       {reqSlipPreview.approvedBy ? (
                         <p className="text-fg font-black text-sm border-b border-white/20 pb-1.5">
                           {reqSlipPreview.approvedBy}
-                          <span className="text-fg/70 font-bold text-[10px] ml-2">{new Date(reqSlipPreview.approvedAt).toLocaleDateString()}</span>
+                          <span className="text-fg/70 font-bold text-[10px] ml-2">{formatDate(reqSlipPreview.approvedAt)}</span>
                         </p>
                       ) : reqSlipPreview.status === 'Rejected' ? (
                         <p className="text-danger font-bold text-sm border-b border-white/20 pb-1.5">Rejected by {reqSlipPreview.rejectedBy}</p>
@@ -3727,7 +3729,7 @@ It posts only what is not already accrued for that month.`)) return;
                         ? 'Everything ties out.'
                         : `${bookshealth.failing} check${bookshealth.failing === 1 ? '' : 's'} need attention.`}
                     </p>
-                    <p className="text-[11px] text-fg/70 mt-0.5">Checked {new Date(bookshealth.checkedAt).toLocaleString()}</p>
+                    <p className="text-[11px] text-fg/70 mt-0.5">Checked {formatDateTime(bookshealth.checkedAt)}</p>
                   </div>
 
                   <div className="overflow-x-auto">

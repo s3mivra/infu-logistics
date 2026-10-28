@@ -1,4 +1,5 @@
 
+import { formatDate } from '../../shared/dates.js';
 import PagedRows from '../../shared/PagedRows';
 import RecordLink from '../../shared/RecordLink';
 
@@ -106,8 +107,8 @@ export default function ReceivablesReportTab({
                     <tr key={i._id} className={`border-b border-white/5 ${i.overdue ? 'bg-red-500/5' : ''}`}>
                       <td className="py-2.5 font-bold text-fg"><RecordLink kind="order" value={i.orderNumber} /></td>
                       <td className="py-2.5 text-fg/70"><RecordLink kind="client" value={i.client} /></td>
-                      <td className="py-2.5 text-fg/75 text-xs">{new Date(i.invoiceDate).toLocaleDateString()}</td>
-                      <td className="py-2.5 text-xs">{i.dueDate ? <span className={i.overdue ? 'text-danger font-bold' : 'text-fg/65'}>{new Date(i.dueDate).toLocaleDateString()}</span> : <span className="text-fg/65">-</span>}</td>
+                      <td className="py-2.5 text-fg/75 text-xs">{formatDate(i.invoiceDate)}</td>
+                      <td className="py-2.5 text-xs">{i.dueDate ? <span className={i.overdue ? 'text-danger font-bold' : 'text-fg/65'}>{formatDate(i.dueDate)}</span> : <span className="text-fg/65">-</span>}</td>
                       <td className="py-2.5"><span className={`text-[10px] font-black px-2 py-1 rounded ${i.bucket === 'current' ? 'bg-green-400/15 text-success' : i.bucket === 'd31_60' ? 'bg-yellow-500/15 text-warning' : i.bucket === 'd61_90' ? 'bg-orange-500/15 text-warning' : 'bg-red-500/15 text-danger'}`}>{i.ageDays}d</span></td>
                       <td className="py-2.5 text-right tabular-nums text-fg/75">₱{i.faceTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                       <td className="py-2.5 text-right tabular-nums text-success">{i.paid ? `₱${i.paid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : <span className="text-fg/65">-</span>}</td>

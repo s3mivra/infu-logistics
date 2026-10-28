@@ -2,6 +2,7 @@
 // back in. Shared by the "Start from templates" card (a file from disk) and by
 // the Settings card that pulls the same workbook from a linked Google Sheet, so
 // both do exactly the same thing with it.
+import { formatPeso } from './money.js';
 
 // Dependency order: a bill names a supplier, so suppliers come first; every
 // accounting sheet can use the old books' own account codes, so the chart of
@@ -287,7 +288,7 @@ const OPEN_DEPOSIT_CHECKS = [
   ['employeeAdvance', 'Employee advances', 'Advances to Employees'],
 ];
 
-const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const near = (a, b) => Math.abs((Number(a) || 0) - (Number(b) || 0)) < 0.01;
 
 // Does what was carried in agree with itself? -> [{ ok: true | false | null, text }]

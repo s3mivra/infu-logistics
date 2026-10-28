@@ -1,3 +1,4 @@
+import { formatDate } from '../../shared/dates.js';
 import { } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
@@ -102,7 +103,7 @@ export default function makeReportFetchers(deps) {
     if (!bsData) return ui.alert('Load the Balance Sheet first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
     await addLogoToPDF(doc);
-    const asOf = bsData.asOf ? new Date(bsData.asOf).toLocaleDateString() : new Date().toLocaleDateString();
+    const asOf = bsData.asOf ? formatDate(bsData.asOf) : formatDate(new Date());
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text(`BALANCE SHEET ${vatStmtSuffix}`, 105, 22, { align: 'center' });
     doc.setFontSize(9);  doc.text(`As of ${asOf}`, 105, 28, { align: 'center' });

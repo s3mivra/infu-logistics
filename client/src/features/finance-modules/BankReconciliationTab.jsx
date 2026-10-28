@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import {
   Landmark, Plus, RefreshCw, Check, X, AlertCircle, ChevronLeft, Lock, Unlock,
 } from 'lucide-react';
@@ -14,7 +15,7 @@ import { useRefreshTick } from '../../shared/refreshBus';
 // while anything is left over, because that leftover IS the finding - a missed
 // entry, a duplicate, or money gone.
 
-const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-');
 const today = () => todayStr();
 const inputCls = 'w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg focus:border-brand/50 focus:outline-none';

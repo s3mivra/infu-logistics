@@ -1,3 +1,4 @@
+import { formatDate } from '../../shared/dates.js';
 import RangePresets from '../../shared/RangePresets';
 
 import PagedRows from '../../shared/PagedRows';
@@ -85,7 +86,7 @@ export default function SupplierPaymentsTab({
                 <tbody>
                   <PagedRows items={supplierPayments.payments} label="payments" render={(p, i) => (
                     <tr key={`${p.reference}-${i}`} className="border-b border-white/5 hover:bg-white/5 transition">
-                      <td className="py-2.5 text-fg/75 text-xs">{new Date(p.date).toLocaleDateString()}</td>
+                      <td className="py-2.5 text-fg/75 text-xs">{formatDate(p.date)}</td>
                       <td className="py-2.5 text-fg/70 text-xs">{p.supplier}</td>
                       <td className="py-2.5 text-fg/75 text-xs">
                         {p.reference || '-'}

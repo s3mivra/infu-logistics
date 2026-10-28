@@ -1,3 +1,4 @@
+import { formatDate } from '../../shared/dates.js';
 import { Download } from 'lucide-react';
 import RangePresets from '../../shared/RangePresets';
 
@@ -132,7 +133,7 @@ export default function ProfitAndLossTab({
                 </p>
                 <p className="text-fg/80 text-xs font-bold mt-2">Net Margin: <span className="tabular-nums">{pnlData.totals.netMargin.toFixed(2)}%</span></p>
                 <p className="text-fg/65 text-[10px] font-bold uppercase tracking-widest mt-3 border-t border-white/10 pt-2">
-                  Period: {new Date(pnlData.period.start).toLocaleDateString()} → {new Date(pnlData.period.end).toLocaleDateString()}
+                  Period: {formatDate(pnlData.period.start)} → {formatDate(pnlData.period.end)}
                 </p>
               </div>
             </div>

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { RefreshCw, AlertTriangle, CheckCircle } from 'lucide-react';
 import { todayStr } from '../../shared/businessDay.js';
 
 // The end-of-day check on one screen: what was sold and how it was paid, what
 // each drawer was counted at against what it should have held, and what went
 // to the bank - so a difference is caught the same day, not at month end.
-const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const Row = ({ label, value, tone = 'text-fg/80', strong = false }) => (
   <div className="flex items-baseline justify-between gap-3 py-1.5 border-t border-white/5 first:border-0 text-sm">
     <span className="text-fg/70">{label}</span>

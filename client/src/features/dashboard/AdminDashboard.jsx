@@ -1,4 +1,5 @@
-﻿import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
+﻿import { formatDate, formatDateTime } from '../../shared/dates.js';
+import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { socket, reconnectSocket } from '../../shared/staffSocket.js';
 import { broadcastRefresh } from '../../shared/refreshBus';
@@ -28,6 +29,7 @@ import RevolvingFundReplenishModal from '../ledger/modals/RevolvingFundReplenish
 import RefundModal from '../orders/modals/RefundModal';
 import NotificationBell from '../notifications/NotificationBell';
 import HelpTip from '../../shared/HelpTip';
+import { noteRecent } from '../../shared/recent';
 import CommandPalette from './CommandPalette';
 import StaffGuide from './StaffGuide';
 import { GUIDE_SEEN_KEY, showsGuide } from '../../shared/staffGuide.js';
@@ -682,6 +684,8 @@ export default function AdminDashboard() {
   const [historySubTab, setHistorySubTab] = useState('daily'); // 'daily' | 'shifts'
   // --- LEDGER SUB-TABS + FINANCE DATA ---
   const [ledgerSubTab, setLedgerSubTab] = useState('journal'); // 'journal' | 'pnl' | 'balance' | 'ar' | 'expenses'
+  // Every screen opened goes to quick jump's Recent list (shared/recent.js).
+  useEffect(() => { if (activeTab && activeTab !== 'home') noteRecent({ type: 'screen', tab: activeTab, sub: ['ledger', 'reports'].includes(activeTab) ? ledgerSubTab : undefined }); }, [activeTab, ledgerSubTab]);
   const [pnlData, setPnlData] = useState(null);
   const [pnlRange, setPnlRange] = useState(() => ({
     start: monthStartStr(),
@@ -833,7 +837,17 @@ export default function AdminDashboard() {
   });
   // The whole sidebar folds to a strip of icons (desktop only), so the screen
   // goes to the work. Remembered per device; the phone drawer is unaffected.
-  const [navRail, setNavRail] = useState(() => { try { return localStorage.getItem('semivra_nav_rail') === '1'; } catch { return false; } });
+  // With no choice saved, a screen narrower than 1200px (a tablet held
+  // upright or sideways) starts with the icon strip: the full sidebar took a third of it.
+  const narrowScreen = () => typeof window !== 'undefined' && window.innerWidth < 1200;
+  const [navRail, setNavRail] = useState(() => {
+    try { const v = localStorage.getItem('semivra_nav_rail'); return v === null ? narrowScreen() : v === '1'; } catch { return narrowScreen(); }
+  });
+  useEffect(() => {
+    const follow = () => { try { if (localStorage.getItem('semivra_nav_rail') === null) setNavRail(narrowScreen()); } catch { /* keep */ } };
+    window.addEventListener('resize', follow);
+    return () => window.removeEventListener('resize', follow);
+  }, []);
   const toggleNavRail = () => setNavRail(r => {
     try { localStorage.setItem('semivra_nav_rail', r ? '0' : '1'); } catch { /* ignore */ }
     return !r;
@@ -1160,7 +1174,7 @@ export default function AdminDashboard() {
         if (sd?.success && sd.joined && sd.shift) {
           const float = Number(sd.shift.startingCash || 0);
           const opener = sd.shift.openedBy || sd.shift.cashierName || 'someone';
-          const openedAt = sd.shift.shiftStart ? new Date(sd.shift.shiftStart).toLocaleString() : '';
+          const openedAt = sd.shift.shiftStart ? formatDateTime(sd.shift.shiftStart) : '';
           const NL = String.fromCharCode(10);
           ui.alert([
             'You have joined the open drawer.',
@@ -3064,13 +3078,13 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 148, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('SHIFT HISTORY', 148, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${shiftHistory.length} shift(s) · ${new Date().toLocaleDateString()}`, 148, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${shiftHistory.length} shift(s) · ${formatDate(new Date())}`, 148, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
       head: [['Cashier', 'Shift Start', 'Shift End', 'Opening', 'Cash Sales', 'Expected', 'Actual', 'Variance', 'Status']],
       body: shiftHistory.map(sh => [
-        sh.cashierName || '-', new Date(sh.shiftStart).toLocaleString(),
-        sh.shiftEnd ? new Date(sh.shiftEnd).toLocaleString() : '- (ongoing)',
+        sh.cashierName || '-', formatDateTime(sh.shiftStart),
+        sh.shiftEnd ? formatDateTime(sh.shiftEnd) : '- (ongoing)',
         pdfMoney(sh.startingCash), pdfMoney(sh.salesTotal), pdfMoney(sh.expectedCash), pdfMoney(sh.actualCash),
         pdfMoney(sh.variance), sh.isLive || sh.status === 'Open' ? 'Open' : (sh.status || 'Closed'),
       ]),
@@ -3085,7 +3099,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('TIMESHEETS', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${clockEntries.length} record(s) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${clockEntries.length} record(s) · ${formatDate(new Date())}`, 105, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
       head: [['Date', 'Staff', 'Role', 'Clock In', 'Clock Out', 'Duration']],
@@ -3671,7 +3685,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
 
   const printXReading = async () => {
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
-    const today = new Date().toLocaleDateString();
+    const today = formatDate(new Date());
     const now = new Date().toLocaleTimeString();
     doc.setFontSize(16); doc.text(`${BIZ_NAME}`, 105, 18, { align: 'center' });
     doc.setFontSize(10); doc.text(vatRegLabel, 105, 24, { align: 'center' });
@@ -5021,7 +5035,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       // when it was taken, and what it holds.
       const contents = [
         ['SEMIVRA FULL BACKUP'],
-        ['Taken', new Date(snap.takenAt).toLocaleString()],
+        ['Taken', formatDateTime(snap.takenAt)],
         ['Business type', snap.businessType],
         ['Format', snap.format],
         ['Documents', snap.documents],
@@ -5107,7 +5121,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       if (!total) { ui.alert('That backup has no records in it.'); return; }
 
       const ok = await ui.confirm(
-        `Restore ${total.toLocaleString()} record(s) from ${new Date(stamp('Taken') || Date.now()).toLocaleString()}?`
+        `Restore ${total.toLocaleString()} record(s) from ${formatDateTime(stamp('Taken') || Date.now())}?`
         + String.fromCharCode(10, 10)
         + 'Everything currently in this system is replaced by what is in the file. This cannot be undone.',
       );
@@ -5266,7 +5280,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           failed.push(['Workbook', 'every selected sheet failed, so there was nothing to save']);
         } else {
           if (failed.length) contents.push([], ['Not exported', 'Reason'], ...failed);
-          contents.push([], ['Generated', new Date().toLocaleString()]);
+          contents.push([], ['Generated', formatDateTime(new Date())]);
           // Prepended, so Contents is the sheet the workbook opens on.
           wb.SheetNames.unshift('Contents');
           wb.Sheets.Contents = XLSX.utils.aoa_to_sheet(contents);
@@ -5792,7 +5806,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     // Item-level detail lives in the separate Sales Line Items report.
     const head = ['Date', 'Customer ID', 'Customer Name', sssGroup === 'day' ? 'Orders' : 'Order ID', ...COLS.map(c => c[0]), 'Gross Sales', 'Sales After Discount'];
     const body = sssRows.map(r => [
-      new Date(r.date).toLocaleDateString(),
+      formatDate(r.date),
       sssGroup === 'day' ? '' : (r.customerId || ''),
       sssGroup === 'day' ? '' : (r.customerName || ''),
       sssGroup === 'day' ? String(r.count) : r.orderNumber,
@@ -5826,7 +5840,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       // Promo/combo component: indented, no price (it's included in the combo row).
       ? ['', '', '', '', r.itemCode || '', `   ↳ ${r.itemName || ''}`, String(r.quantity), '', '', '', 'included']
       : [
-        new Date(r.date).toLocaleDateString(), r.customerId || '', r.customerName || '', r.orderNumber,
+        formatDate(r.date), r.customerId || '', r.customerName || '', r.orderNumber,
         r.itemCode || '', (r.itemName || '') + (r.isCombo ? ' (promo)' : ''), String(r.quantity), r.paymentMethod || '',
         pdfMoney(r.grossSales ?? r.lineTotal), pdfMoney(r.discount || 0), pdfMoney(r.netSales ?? r.lineTotal),
       ]);
@@ -5941,7 +5955,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     autoTable(doc, {
       startY: 28,
       head: [['Timestamp', 'User', 'Action', 'Target', 'Notes']],
-      body: auditLogs.map(l => [new Date(l.timestamp).toLocaleString(), l.userId, l.action, l.targetReference, l.details?.notes || '']),
+      body: auditLogs.map(l => [formatDateTime(l.timestamp), l.userId, l.action, l.targetReference, l.details?.notes || '']),
       styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] },
     });
     doc.save(`audit_log_page${auditLogsPage}.pdf`);
@@ -7577,7 +7591,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
               const total = items.reduce((t, i) => t + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0);
               return (
                 <li key={r.id} className="flex flex-wrap items-center gap-3 bg-page-bg/60 rounded-lg px-3 py-2 text-xs">
-                  <span className="text-fg font-bold">{new Date(r.queuedAt).toLocaleString()}</span>
+                  <span className="text-fg font-bold">{formatDateTime(r.queuedAt)}</span>
                   <span className="text-fg/80 min-w-0 flex-1 truncate" title={items.map(i => `${i.quantity}× ${i.name}`).join(', ')}>
                     {items.map(i => `${i.quantity}× ${i.name}`).join(', ')}
                   </span>

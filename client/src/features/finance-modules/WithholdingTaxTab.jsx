@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { Receipt, RefreshCw, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react';
 import { useDashboard } from '../dashboard/DashboardContext';
 import RangePresets from '../../shared/RangePresets';
@@ -12,7 +13,7 @@ import { useRefreshTick } from '../../shared/refreshBus';
 // the first thing an auditor asks about. Each withholding is listed underneath
 // so a 2307 can be filled in per supplier.
 
-const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-');
 const monthName = (ym) => {
   const [y, m] = String(ym || '').split('-');

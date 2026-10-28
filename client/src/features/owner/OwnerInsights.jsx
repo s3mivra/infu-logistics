@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 
 // The owner insights under the overview: what changed against the period
 // before (in sentences), which products earn and which do not, and where cash
 // stands over the next 30/60/90 days. That last card is a summary of the one
 // cash forecast (Reports -> Cash Forecast), never a second calculation.
-const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const TONE = { good: 'text-success', bad: 'text-danger', neutral: 'text-fg/80' };
 const ICON = { good: TrendingUp, bad: TrendingDown, neutral: Minus };
 

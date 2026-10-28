@@ -460,7 +460,7 @@ export default function InventoryTab({ ctx }) {
               <div className="overflow-x-auto">
                 {/* A floor width, so a phone scrolls the table instead of
                     crushing its columns into each other. */}
-                <table className="w-full min-w-[720px] text-left text-sm">
+                <table className="w-full min-w-[860px] text-left text-sm [&_th]:px-2 [&_td]:px-2">
                   <thead>
                     <tr className="text-on-brand border-b border-white/20">
                       <th className="pb-3">Item Name</th>

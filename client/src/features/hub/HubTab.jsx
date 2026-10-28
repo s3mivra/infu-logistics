@@ -1,4 +1,5 @@
-﻿import { useState, useEffect, useCallback, Fragment } from 'react';
+﻿import { formatDate } from '../../shared/dates.js';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import { statusTone } from '../../shared/statusTone';
 import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus, LayoutGrid, BarChart3, ExternalLink, Boxes, Share2, Landmark, AlertTriangle } from 'lucide-react';
 
@@ -1283,7 +1284,7 @@ export default function HubTab({ ctx }) {
                     <span className={`ml-2 text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${negoStatusColor[r.status] || 'bg-white/10 text-fg/70'}`}>{r.status}</span>
                     {r.round > 1 && <span className="ml-1.5 text-[9px] text-fg/65 font-bold uppercase">round {r.round}</span>}
                   </p>
-                  <p className="text-fg/70 text-[10px]">{iAmFiler ? 'You asked' : 'They asked'} · {r.requestedBy || 'someone'} · {new Date(r.createdAt).toLocaleDateString()}</p>
+                  <p className="text-fg/70 text-[10px]">{iAmFiler ? 'You asked' : 'They asked'} · {r.requestedBy || 'someone'} · {formatDate(r.createdAt)}</p>
                 </div>
                 {actionable && (
                   <div className="flex gap-1.5 shrink-0">
@@ -1396,7 +1397,7 @@ export default function HubTab({ ctx }) {
                     <p className="text-fg/70 text-[11px]">
                       {slip.lines.length} line{slip.lines.length > 1 ? 's' : ''}
                       {slip.requestedBy ? ` · filed by ${slip.requestedBy}` : ''}
-                      {slip.createdAt ? ` · ${new Date(slip.createdAt).toLocaleDateString()}` : ''}
+                      {slip.createdAt ? ` · ${formatDate(slip.createdAt)}` : ''}
                     </p>
                   </div>
                   {isSuperAdmin && (

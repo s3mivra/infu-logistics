@@ -42,11 +42,11 @@ test('rolling count list and the variance report', async ({ page, request }) => 
   await expect(line).toContainText('5 pcs');      // expected
   await expect(line).toContainText('3 pcs');      // counted
   await expect(line).toContainText('-2');         // units
-  await expect(line).toContainText('₱-20.00');    // at P10 each
+  await expect(line).toContainText('−₱20.00');    // at P10 each
   await expect(line).toContainText(ADMIN);
   await expect(line).toContainText('Rolling');
   await expect(line).toContainText('Two broken');
-  await expect(page.getByTestId('variance-totals')).toContainText('₱-20.00');
+  await expect(page.getByTestId('variance-totals')).toContainText('−₱20.00');
 
   // Filtered to the other kind of count, it is not there.
   await page.getByLabel('Kind of count').selectOption('eod');

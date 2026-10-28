@@ -1,4 +1,5 @@
-﻿import { LoyaltyDialog } from '../cafe/CafeExtras';
+﻿import { formatDate, formatDateTime } from '../../shared/dates.js';
+import { LoyaltyDialog } from '../cafe/CafeExtras';
 import { statusTone } from '../../shared/statusTone';
 import SplitPayEditor, { newSplit, splitReady, splitPayload } from '../ledger/SplitPayEditor';
 import React from 'react';
@@ -278,7 +279,7 @@ export default function OrdersTab({ ctx }) {
       const res = await apiFetch('/api/reservations', { method: 'POST', body: JSON.stringify({ orderId: order._id }) });
       const d = await res.json();
       if (!d.success) return ui.alert(d.error || 'Could not hold that stock.');
-      ui.alert(`${d.reservation.reservationNumber} holds this order's stock until ${new Date(d.reservation.expiresAt).toLocaleDateString()}. Completing the order releases it.`);
+      ui.alert(`${d.reservation.reservationNumber} holds this order's stock until ${formatDate(d.reservation.expiresAt)}. Completing the order releases it.`);
       fetchOrders();
     } catch { ui.alert('Network error.'); }
   };
@@ -422,7 +423,7 @@ export default function OrdersTab({ ctx }) {
               /* ========================================== */
               /* 🛒 INLINE MANUAL CASHIER POS 🛒            */
               /* ========================================== */
-              <div className="flex flex-col lg:flex-row gap-4 h-auto lg:h-[calc(100vh-172px)] w-full animate-fade-in">
+              <div className="flex flex-col lg:flex-row gap-4 h-auto lg:h-[calc(100dvh-3.5rem)] w-full animate-fade-in">
 
                 {/* LEFT COLUMN: Product Browser */}
                 <div className="flex-1 flex flex-col min-h-[520px] lg:min-h-0 bg-surface border border-white/10 rounded-2xl overflow-hidden shadow-xl">
@@ -1025,7 +1026,7 @@ export default function OrdersTab({ ctx }) {
               <>
                 <div className="flex justify-between items-center mb-6 bg-surface-2 p-3 rounded-xl border border-white/10 shadow-sm relative flex-wrap gap-3">
                   {/* Search bar */}
-                  <div className="relative w-full sm:flex-1 sm:max-w-md order-last sm:order-none">
+                  <div className="relative w-full sm:flex-1 sm:min-w-[14rem] sm:max-w-md order-last sm:order-none">
                     <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/65 pointer-events-none" />
                     <input
                       type="text"
@@ -1455,7 +1456,7 @@ export default function OrdersTab({ ctx }) {
                                         <span className="text-fg/65">For:</span> {compEmpName} &nbsp;·&nbsp; <span className="text-fg/65">By:</span> {order.complimentaryApprovedBy || activeAdmin?.name || '-'}
                                       </div>
                                       {order.complimentaryApprovedAt && (
-                                        <div className="text-fg/65 text-[9px]">{new Date(order.complimentaryApprovedAt).toLocaleString()}</div>
+                                        <div className="text-fg/65 text-[9px]">{formatDateTime(order.complimentaryApprovedAt)}</div>
                                       )}
                                     </div>
                                     {can('orders.comp') && <button onClick={() => removeComplimentary(order._id)} className="flex-shrink-0 bg-red-700 hover:bg-red-800 text-white p-1 rounded font-black transition" title="Remove Complimentary">

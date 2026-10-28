@@ -1,11 +1,13 @@
+import { formatDateTime } from '../../shared/dates.js';
 import { useCallback, useEffect, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { RefreshCw, Download, Check, Pencil } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import { monthStartStr, todayStr } from '../../shared/businessDay.js';
 
 // The store checklist, the supplier statement, and one client's record.
-const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const btn = 'flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm transition';
 const btnBrand = `${btn} bg-brand text-on-brand hover:bg-brand/90 disabled:opacity-50`;
 const btnGhost = `${btn} bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg`;
@@ -207,7 +209,7 @@ export async function downloadClientRecord(apiFetch, client) {
   const wb = XLSX.utils.book_new();
   const c = r.client;
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
-    ['Record held for', c.name], ['Taken', new Date(r.takenAt).toLocaleString()], [],
+    ['Record held for', c.name], ['Taken', formatDateTime(r.takenAt)], [],
     ...[['Client code', c.clientCode], ['Name', c.name], ['Username', c.username], ['Phone', c.phone], ['Email', c.email],
       ['Registered name', c.registeredName], ['TIN', c.tin], ['Registered address', c.registeredAddress], ['Notes', c.contactNotes],
       ['Usual payment', c.paymentMethod], ['Credit limit', c.creditLimit ?? ''], ['Payment terms (days)', c.creditTermsDays ?? ''], ['Credit balance', c.creditBalance],

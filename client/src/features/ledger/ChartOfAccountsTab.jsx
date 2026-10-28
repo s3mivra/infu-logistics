@@ -1,3 +1,4 @@
+import { formatDate } from '../../shared/dates.js';
 import { useState } from 'react';
 import { Plus, Edit, Trash2, Download, Zap, Wallet, Search, ChevronRight } from 'lucide-react';
 
@@ -53,7 +54,7 @@ export default function ChartOfAccountsTab({
         {obEntry && (
           <div className="mt-3 text-[11px] text-warning bg-amber-500/10 border border-amber-500/25 rounded-lg p-2.5">
             Already posted as <span className="font-black">{obEntry.reference}</span> on{' '}
-            {new Date(obEntry.date).toLocaleDateString()} ({peso(obEntry.totalDebit)}).
+            {formatDate(obEntry.date)} ({peso(obEntry.totalDebit)}).
             Posting again adds a second full set and doubles every carried-in balance.
           </div>
         )}

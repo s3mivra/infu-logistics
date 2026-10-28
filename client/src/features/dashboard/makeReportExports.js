@@ -1,3 +1,4 @@
+import { formatDate, formatDateTime } from '../../shared/dates.js';
 import { } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { todayStr } from '../../shared/businessDay.js';
@@ -39,7 +40,7 @@ export default function makeReportExports(deps) {
     autoTable(doc, {
       startY: y,
       head: [['Order #', 'Customer', 'Channel', 'Date', 'Due', 'Amount']],
-      body: arOutstanding.orders.map(o => [o.orderNumber, o.customerName, o.paymentMethod, new Date(o.createdAt).toLocaleDateString(), o.arDueDate ? new Date(o.arDueDate).toLocaleDateString() : '-', pdfMoney(o.total)]),
+      body: arOutstanding.orders.map(o => [o.orderNumber, o.customerName, o.paymentMethod, formatDate(o.createdAt), o.arDueDate ? formatDate(o.arDueDate) : '-', pdfMoney(o.total)]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 5: { halign: 'right' } },
     });
     doc.save(`AR-Outstanding-${todayStr()}.pdf`);
@@ -66,7 +67,7 @@ export default function makeReportExports(deps) {
     autoTable(doc, {
       startY: y,
       head: [['Date', 'Reference', 'Supplier', 'Description', 'Incurred', 'Paid']],
-      body: (apData.recent || []).map(e => [new Date(e.date).toLocaleDateString(), e.reference, e.supplierName || '-', e.description, e.credit ? pdfMoney(e.credit) : '', e.debit ? pdfMoney(e.debit) : '']),
+      body: (apData.recent || []).map(e => [formatDate(e.date), e.reference, e.supplierName || '-', e.description, e.credit ? pdfMoney(e.credit) : '', e.debit ? pdfMoney(e.debit) : '']),
       styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' } },
     });
     doc.save(`AP-${todayStr()}.pdf`);
@@ -94,7 +95,7 @@ export default function makeReportExports(deps) {
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('PROFIT BY CATEGORY', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(formatDate(new Date()), 105, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
       head: [['Category', 'Revenue', 'Est. COGS', 'Gross Profit', 'Margin']],
@@ -110,7 +111,7 @@ export default function makeReportExports(deps) {
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('MENU ENGINEERING', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(formatDate(new Date()), 105, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
       head: [['Item', 'Qty', 'Revenue', 'Margin', 'Class']],
@@ -126,7 +127,7 @@ export default function makeReportExports(deps) {
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('CASHIER VARIANCE', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(formatDate(new Date()), 105, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
       head: [['Cashier', 'Shifts', 'Avg Variance', 'Times Short', 'Worst']],
@@ -142,7 +143,7 @@ export default function makeReportExports(deps) {
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('COMMISSIONS', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleDateString(), 105, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(formatDate(new Date()), 105, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
       head: [['Cashier', 'Orders', 'Sales', 'Effective rate', 'Commission']],
@@ -160,7 +161,7 @@ export default function makeReportExports(deps) {
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('BILLS (ACCOUNTS PAYABLE)', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`Filter: ${billsFilter}  ·  ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(`Filter: ${billsFilter}  ·  ${formatDate(new Date())}`, 105, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
       head: [['Bill #', 'Supplier', 'Source', 'Description', 'Amount', 'Status']],
@@ -176,11 +177,11 @@ export default function makeReportExports(deps) {
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 148, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('AUDIT LOG', 148, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleString(), 148, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(formatDateTime(new Date()), 148, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
       head: [['When', 'Actor', 'Action', 'Reference', 'Details']],
-      body: auditLogEntries.map(e => [new Date(e.timestamp).toLocaleString(), e.userId, e.action, e.targetReference, e.details ? JSON.stringify(e.details).slice(0, 120) : '-']),
+      body: auditLogEntries.map(e => [formatDateTime(e.timestamp), e.userId, e.action, e.targetReference, e.details ? JSON.stringify(e.details).slice(0, 120) : '-']),
       styles: { fontSize: 7 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { cellWidth: 120 } },
     });
     doc.save(`Audit-Log-${todayStr()}.pdf`);
@@ -196,7 +197,7 @@ export default function makeReportExports(deps) {
     autoTable(doc, {
       startY: 34,
       head: [['Date', 'Reference', 'Category', 'Description', 'Amount']],
-      body: expenseList.expenses.map(e => [new Date(e.date).toLocaleDateString(), e.reference, e.categoryName, e.description, pdfMoney(e.amount)]),
+      body: expenseList.expenses.map(e => [formatDate(e.date), e.reference, e.categoryName, e.description, pdfMoney(e.amount)]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 4: { halign: 'right' } },
     });
     doc.save(`Expenses-${todayStr()}.pdf`);
@@ -210,12 +211,12 @@ export default function makeReportExports(deps) {
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('STOCK TRANSFER HISTORY', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleString(), 105, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(formatDateTime(new Date()), 105, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
       head: [['Date', 'Reference', 'Item', 'From', 'To', 'Qty', 'Status', 'By']],
       body: stockTransfers.map(t => [
-        new Date(t.createdAt).toLocaleDateString(), t.reference || '-', t.itemName || '-',
+        formatDate(t.createdAt), t.reference || '-', t.itemName || '-',
         t.fromLocation || '-', t.toLocation || '-', `${t.qtyBase ?? 0} ${t.unit || ''}`.trim(),
         t.status, t.releasedBy || t.approvedBy || t.requestedBy || '-',
       ]),
@@ -241,11 +242,11 @@ export default function makeReportExports(deps) {
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('PRODUCTION HISTORY', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${rows.length} batch(es) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${rows.length} batch(es) · ${formatDate(new Date())}`, 105, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
       head: [['Production Date', 'Item', 'Qty', 'Received', 'Reference']],
-      body: rows.map(r => [new Date(r.date).toLocaleDateString(), r.item, `${r.qty} ${r.unit}`, r.received ? new Date(r.received).toLocaleDateString() : '-', r.ref]),
+      body: rows.map(r => [formatDate(r.date), r.item, `${r.qty} ${r.unit}`, r.received ? formatDate(r.received) : '-', r.ref]),
       styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
     });
     doc.save(`Production-History-${todayStr()}.pdf`);
@@ -268,7 +269,7 @@ export default function makeReportExports(deps) {
       await addLogoToPDF(doc);
       doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
       doc.setFontSize(10); doc.text('PRODUCTION REPORT', 105, 22, { align: 'center' });
-      doc.setFontSize(9); doc.text(`${rows.length} batch(es) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
+      doc.setFontSize(9); doc.text(`${rows.length} batch(es) · ${formatDate(new Date())}`, 105, 28, { align: 'center' });
       autoTable(doc, {
         startY: 34,
         head: [['Batch', 'Product', 'Expected', 'Actual', 'Moisture / Variance', 'Status', 'Reconciled']],
@@ -276,7 +277,7 @@ export default function makeReportExports(deps) {
           r.batchNumber, r.outputName,
           r.outputQty != null ? `${r.outputQty}${r.outputUnit}` : '-', `${r.actualOutputQty}${r.outputUnit}`,
           r.moistureLossPercent == null ? '-' : r.moistureLossPercent > 0 ? `-${r.moistureLossPercent}% loss${r.moistureBasis === 'input' ? ' (vs materials)' : ''}` : r.moistureLossPercent < 0 ? `+${Math.abs(r.moistureLossPercent)}% over` : '0%',
-          r.fulfillmentStatus, r.reconciledAt ? new Date(r.reconciledAt).toLocaleDateString() : '-',
+          r.fulfillmentStatus, r.reconciledAt ? formatDate(r.reconciledAt) : '-',
         ]),
         styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
       });
@@ -290,7 +291,7 @@ export default function makeReportExports(deps) {
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('MENU ITEMS', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${products.length} item(s) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${products.length} item(s) · ${formatDate(new Date())}`, 105, 28, { align: 'center' });
     // Sizes (small/medium/large) is an fb menu concept - a log item has no
     // sizes at all (always "-"), it has a unit/pack instead (e.g. "1kg",
     // "pcs"). Show whichever actually applies to this business type.
@@ -314,7 +315,7 @@ export default function makeReportExports(deps) {
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('REVOLVING FUNDS', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(new Date().toLocaleString(), 105, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(formatDateTime(new Date()), 105, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
       head: [['Fund', 'Initial Amount', 'Current Balance', 'Used', 'Status']],
@@ -328,7 +329,7 @@ export default function makeReportExports(deps) {
       autoTable(doc, {
         startY: 22,
         head: [['Date', 'Type', 'Description', 'Amount', 'Balance After', 'By']],
-        body: rfTxs.map(t => [new Date(t.date).toLocaleDateString(), t.type, t.description, pdfMoney(t.amount), pdfMoney(t.balanceAfter), t.performedBy || '-']),
+        body: rfTxs.map(t => [formatDate(t.date), t.type, t.description, pdfMoney(t.amount), pdfMoney(t.balanceAfter), t.performedBy || '-']),
         styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' } },
       });
     }
@@ -341,7 +342,7 @@ export default function makeReportExports(deps) {
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('PRODUCT PRICING MASTERLIST', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${products.length} item(s) · ${new Date().toLocaleDateString()}`, 105, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${products.length} item(s) · ${formatDate(new Date())}`, 105, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
       head: [['Name', 'Category', 'Price', 'Cost', 'Margin']],
@@ -361,7 +362,7 @@ export default function makeReportExports(deps) {
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 148, 15, { align: 'center' });
     doc.setFontSize(10); doc.text('MARKET SEGMENT PRICING', 148, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(`${pricingTable.tiers.length} tier(s) · ${new Date().toLocaleDateString()}`, 148, 28, { align: 'center' });
+    doc.setFontSize(9); doc.text(`${pricingTable.tiers.length} tier(s) · ${formatDate(new Date())}`, 148, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
       head: [['Product', 'List Price', ...pricingTable.tiers.map(t => t.name)]],

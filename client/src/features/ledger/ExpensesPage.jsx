@@ -1,4 +1,5 @@
 ﻿import { useEffect } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { useModules } from '../finance-modules/useModules';
 import { Check, Plus, Receipt, Download, Upload, X, AlertTriangle } from 'lucide-react';
 import { useDashboard } from '../dashboard/DashboardContext';
@@ -33,7 +34,7 @@ export default function ExpensesPage() {
     fetchExpenses?.();
   }, [fetchExpenseCategories, fetchExpenses]);
 
-  const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+  const peso = formatPeso;
   const set = (patch) => setExpenseForm({ ...expenseForm, ...patch });
 
   return (

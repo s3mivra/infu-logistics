@@ -1,4 +1,5 @@
 import { X, AlertTriangle } from 'lucide-react';
+import { formatPeso } from '../../../shared/money.js';
 import { useDashboard } from '../../dashboard/DashboardContext';
 
 // Marking a check bounced is the one destructive action in the register: it
@@ -21,8 +22,7 @@ export default function BounceCheckModal() {
   if (!bounceTarget) return null;
 
   const c = bounceTarget;
-  const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
+  const peso = formatPeso;
   return (
     <div className="fixed inset-0 z-[9998] bg-black/85 backdrop-blur-sm flex justify-center p-0 sm:p-4 animate-fade-in overflow-y-auto"
       onClick={e => { if (e.target === e.currentTarget) setBounceTarget(null); }} role="dialog" aria-modal="true" aria-label="Mark check bounced">

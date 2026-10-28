@@ -1,3 +1,4 @@
+import { formatDate } from '../../shared/dates.js';
 import React from 'react';
 import { Lock, Unlock, X, RefreshCw, Plus } from 'lucide-react';
 import * as ui from '../../shared/ui';
@@ -56,7 +57,7 @@ export default function ReservationsPanel({ apiFetch, inventory = [], clientAcco
       if (!d.success) return ui.alert(d.error || 'Could not hold that stock.');
       setForm({ open: false, clientId: '', invId: '', qty: '', expiresAt: '', note: '' });
       load();
-      ui.alert(`${d.reservation.reservationNumber} held until ${new Date(d.reservation.expiresAt).toLocaleDateString()}.`);
+      ui.alert(`${d.reservation.reservationNumber} held until ${formatDate(d.reservation.expiresAt)}.`);
     } catch { ui.alert('Network error.'); }
     finally { setBusy(false); }
   };
@@ -184,7 +185,7 @@ export default function ReservationsPanel({ apiFetch, inventory = [], clientAcco
                     {r.note && <span className="block text-[10px] text-fg/65 italic mt-0.5">{r.note}</span>}
                   </td>
                   <td className="py-2.5 pr-3 text-fg/70 text-[12px] whitespace-nowrap">
-                    {r.expiresAt ? new Date(r.expiresAt).toLocaleDateString() : '-'}
+                    {r.expiresAt ? formatDate(r.expiresAt) : '-'}
                   </td>
                   <td className="py-2.5 pr-3">
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${tone[r.status] || 'bg-white/10 text-fg/65'}`}>{r.status}</span>

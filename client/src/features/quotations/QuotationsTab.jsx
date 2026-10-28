@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { statusTone } from '../../shared/statusTone';
 import {
   FileText, RefreshCw, ChevronLeft, Send, Clock, CheckCircle, XCircle, AlertCircle,
@@ -14,7 +15,7 @@ import { useRefreshTick } from '../../shared/refreshBus';
 // ledger. The screen says so out loud, because a list of large numbers that
 // looks like a sales pipeline invites someone to read it as revenue.
 
-const peso = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const shortDate = (d) => (d ? new Date(d).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-');
 const inputCls = 'w-full bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-sm text-fg focus:border-brand/50 focus:outline-none';
 

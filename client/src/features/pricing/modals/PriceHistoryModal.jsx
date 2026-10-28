@@ -1,3 +1,4 @@
+import { formatDate } from '../../../shared/dates.js';
 import { History } from 'lucide-react';
 import { useDashboard } from '../../dashboard/DashboardContext';
 
@@ -48,7 +49,7 @@ export default function PriceHistoryModal() {
                       </div>
                     ))}
                     <p className="text-[10px] text-fg/70 mt-0.5">
-                      requested by {r.requestedBy || 'someone'} · {new Date(r.date).toLocaleDateString()}
+                      requested by {r.requestedBy || 'someone'} · {formatDate(r.date)}
                       {r.reason && <span className="italic"> · "{r.reason}"</span>}
                     </p>
                   </li>

@@ -1,3 +1,4 @@
+import { formatDateTime } from '../../../shared/dates.js';
 import { Fragment } from 'react';
 import { Check, X } from 'lucide-react';
 import { useDashboard } from '../../dashboard/DashboardContext';
@@ -210,7 +211,7 @@ export default function ImportModal() {
               const { jsPDF, autoTable } = await loadPdfLibs();
               const doc = new jsPDF('landscape');
               doc.setFontSize(16); doc.text(`${BIZ_NAME} - Bulk Import Preview`, 14, 14);
-              doc.setFontSize(9); doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 21);
+              doc.setFontSize(9); doc.text(`Generated: ${formatDateTime(new Date())}`, 14, 21);
               const body = [];
               importRows.forEach((r, i) => {
                 const isErr = !!r._error;

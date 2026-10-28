@@ -1,3 +1,4 @@
+import { formatDateTime } from '../../shared/dates.js';
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle, XCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import * as ui from '../../shared/ui';
@@ -50,7 +51,7 @@ export default function ManualJournalApprovals({ apiFetch, can, peso, onPosted, 
               <div className="min-w-0">
                 <p className="text-xs font-bold text-fg">{d.draftNumber} · {peso(d.totalDebit)}</p>
                 <p className="text-[11px] text-fg/75 truncate" title={d.description}>{d.description || '(no description)'}</p>
-                <p className="text-[10px] text-fg/65">Prepared by {d.preparedBy} · {new Date(d.createdAt).toLocaleString()}{d.date ? ` · dated ${String(d.date).slice(0, 10)}` : ''}</p>
+                <p className="text-[10px] text-fg/65">Prepared by {d.preparedBy} · {formatDateTime(d.createdAt)}{d.date ? ` · dated ${String(d.date).slice(0, 10)}` : ''}</p>
               </div>
               <div className="flex gap-1.5 shrink-0">
                 <button type="button" onClick={() => setOpen(o => ({ ...o, [d._id]: !o[d._id] }))} className="px-2 py-1 rounded-lg bg-white/5 text-fg/80 text-[11px] font-bold flex items-center gap-1">

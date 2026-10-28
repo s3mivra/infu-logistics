@@ -1,3 +1,4 @@
+import { formatPeso } from '../../shared/money.js';
 // Showing stock in its display unit (mirrors server/lib/units.js).
 // Moved out of AdminDashboard.jsx as it was. The dashboard calls this once per
 // render and hands in what these functions read, so each one still sees
@@ -143,8 +144,7 @@ export default function makeUnitHelpers(deps) {
     return effectiveDisplay(item);
   };
   // Pretty currency
-  const peso = (n) => `₱${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-
+  const peso = formatPeso;
   return {
     itemDisplay, resolveUnitFE, packInfo, effectiveDisplay, analyticsDisplay, peso,
   };

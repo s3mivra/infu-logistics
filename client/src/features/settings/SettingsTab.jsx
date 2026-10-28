@@ -1,4 +1,5 @@
-﻿import { useCallback, useEffect, useState } from 'react';
+﻿import { formatDateTime } from '../../shared/dates.js';
+import { useCallback, useEffect, useState } from 'react';
 import { SlidersHorizontal, AlertTriangle, QrCode, Clock, DollarSign, Image as ImageIcon, KeyRound, Building2, ShieldCheck, Lock, CreditCard, Palette, Languages, Package, MessageSquare, Tag, FileText, Printer, Receipt, Type, X } from 'lucide-react';
 import { readPrinterMode, writePrinterMode } from '../../shared/escpos';
 import * as ui from '../../shared/ui';
@@ -1401,7 +1402,7 @@ function QrDevicesCard({ apiFetch }) {
               {devices.map(d => (
                 <li key={d._id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                   <span className="text-fg">{d.label}{d._id === thisId ? <span className="text-fg/70"> (this device)</span> : null}</span>
-                  <span className="text-fg/70 text-xs ml-auto">{d.lastUsedAt ? `last used ${new Date(d.lastUsedAt).toLocaleString()}` : 'not used yet'}</span>
+                  <span className="text-fg/70 text-xs ml-auto">{d.lastUsedAt ? `last used ${formatDateTime(d.lastUsedAt)}` : 'not used yet'}</span>
                   <button onClick={() => revoke(d._id)} className="text-danger text-xs font-bold uppercase">Switch off</button>
                 </li>
               ))}

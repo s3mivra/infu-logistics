@@ -1,3 +1,4 @@
+import { formatDate } from '../../shared/dates.js';
 import { Plus, HandCoins } from 'lucide-react';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import RangePresets from '../../shared/RangePresets';
@@ -134,7 +135,7 @@ export default function AdvancesTab({
                       </td>
                       <td className="py-2.5 text-fg/70 text-xs">{a.payeeName}{a.clientId && <span className="block text-[9px] text-fg/65">client account</span>}</td>
                       <td className="py-2.5 text-fg/70 text-xs max-w-[180px] truncate" title={a.purpose || ''}>{a.purpose || '-'}</td>
-                      <td className="py-2.5 text-fg/75 text-xs">{new Date(a.date).toLocaleDateString()}</td>
+                      <td className="py-2.5 text-fg/75 text-xs">{formatDate(a.date)}</td>
                       <td className="py-2.5 text-right tabular-nums text-fg/70">{peso(a.amount)}</td>
                       <td className={`py-2.5 text-right tabular-nums font-black ${a.outstanding > 0 ? 'text-warning' : 'text-fg/65'}`}>
                         {a.outstanding > 0 ? peso(a.outstanding) : '-'}

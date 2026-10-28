@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { RefreshCw, Star, Trash2, X } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { monthStartStr, todayStr } from '../../shared/businessDay.js';
@@ -7,7 +8,7 @@ import PagedRows from '../../shared/PagedRows';
 // What a cafe keeps beside its books: tips, a stamp card for regulars, what
 // customers thought of their order, and what to prepare for tomorrow. None of
 // it posts to the ledger. A logistics business has none of these screens.
-const peso = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = formatPeso;
 const btn = 'flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm transition';
 const btnBrand = `${btn} bg-brand text-on-brand hover:bg-brand/90 disabled:opacity-50`;
 const btnGhost = `${btn} bg-white/5 hover:bg-white/10 text-fg/70 hover:text-fg`;

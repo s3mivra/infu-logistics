@@ -1,4 +1,6 @@
+import { formatDate } from '../../shared/dates.js';
 import { Download } from 'lucide-react';
+import { formatPeso } from '../../shared/money.js';
 import RecordLink from '../../shared/RecordLink';
 import Pager from '../../shared/Pager';
 import { dateStr } from '../../shared/businessDay.js';
@@ -76,7 +78,7 @@ export default function ReceivablesTab({
 
               <tbody className="block">
                 <PagedRows items={arAgeing.clients} label="clients" render={row => {
-                  const p2 = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+                  const p2 = formatPeso;
                   // Only the ages that hold something, newest first.
                   const ages = [['Current', row.current, 'text-fg/70'], ['31-60 days', row.d31_60, 'text-warning'], ['61-90 days', row.d61_90, 'text-caution'], ['91+ days', row.d90_plus, 'text-red-500/80']].filter(([, v]) => v);
                   return (
@@ -134,7 +136,7 @@ export default function ReceivablesTab({
                       <td className="block flex-none w-[10.5rem] min-w-0">
                         <RecordLink kind="order" value={o.orderNumber} className="block text-fg font-bold whitespace-nowrap" />
                         <span className="flex items-center gap-1.5 mt-1 text-xs text-fg/75 whitespace-nowrap">
-                          {new Date(o.createdAt).toLocaleDateString()}
+                          {formatDate(o.createdAt)}
                           <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${ageBadge}`}>{days}d</span>
                         </span>
                       </td>
@@ -143,8 +145,8 @@ export default function ReceivablesTab({
                         <span className="inline-block mt-1 text-[10px] font-black uppercase tracking-wider bg-brand/20 text-brand-text px-2 py-0.5 rounded whitespace-nowrap">{o.paymentMethod}</span>
                         {o.arDueDate && (
                           o.overdue
-                            ? <span className="block mt-1 text-[10px] font-black text-danger whitespace-nowrap">OVERDUE · due {new Date(o.arDueDate).toLocaleDateString()}</span>
-                            : <span className="block mt-1 text-[10px] text-fg/65 whitespace-nowrap">due {new Date(o.arDueDate).toLocaleDateString()}</span>
+                            ? <span className="block mt-1 text-[10px] font-black text-danger whitespace-nowrap">OVERDUE · due {formatDate(o.arDueDate)}</span>
+                            : <span className="block mt-1 text-[10px] text-fg/65 whitespace-nowrap">due {formatDate(o.arDueDate)}</span>
                         )}
                       </td>
                       {/* Balance is what is still owed; invoiced is the

@@ -1,4 +1,6 @@
+import { useSessionState } from '../../shared/useSessionState';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { formatPeso } from '../../shared/money.js';
 import { RefreshCw, Download, Search, AlertTriangle, ClipboardCheck } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { todayStr } from '../../shared/businessDay.js';
@@ -29,7 +31,7 @@ const th = 'px-3 py-2 text-[10px] font-black uppercase tracking-wider text-fg/65
 const td = 'px-3 py-2 text-xs whitespace-nowrap';
 const btn = 'flex items-center gap-2 px-3 py-2 rounded-lg font-bold text-xs disabled:opacity-50';
 const dayStr = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
-const money = (n) => `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const money = formatPeso;
 const signed = (n, f = (x) => x) => `${Number(n) > 0 ? '+' : ''}${f(n)}`;
 
 export default function StockControlPanel({ apiFetch, inventory = [], itemDisplay, can, onCounted }) {
@@ -151,7 +153,7 @@ function VarianceReport({ apiFetch, countUnit, qty }) {
   const [range, setRange] = useState(() => ({ start: dayStr(new Date(Date.now() - 29 * 86400000)), end: todayStr() }));
   const [countedBy, setCountedBy] = useState('');
   const [kind, setKind] = useState('');
-  const [q, setQ] = useState('');
+  const [q, setQ] = useSessionState('stockcontrol.q', '');
   const [varianceOnly, setVarianceOnly] = useState(false);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);

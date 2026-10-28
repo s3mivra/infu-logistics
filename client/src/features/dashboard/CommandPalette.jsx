@@ -2,6 +2,7 @@
 import { Search, CornerDownLeft, Command } from 'lucide-react';
 import { useDashboard } from './DashboardContext';
 import { paletteDestinations } from './navRegistry';
+import { readRecent, noteRecent } from '../../shared/recent';
 
 // Command palette - jump anywhere without hunting through the sidebar.
 //
@@ -13,7 +14,7 @@ import { paletteDestinations } from './navRegistry';
 import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
 export default function CommandPalette({ open, onClose }) {
-  const { setActiveTab, setNavMode, setLedgerSubTab, can, isSuperAdmin, moduleOn, navigate } = useDashboard();
+  const { setActiveTab, setNavMode, setLedgerSubTab, can, isSuperAdmin, moduleOn, navigate, setOrderSearch, setOrderFilter } = useDashboard();
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
   const inputRef = useRef(null);
@@ -30,12 +31,27 @@ export default function CommandPalette({ open, onClose }) {
     [can, isSuperAdmin, moduleOn],
   );
 
+  // Before anything is typed, the last screens and records opened lead the list.
+  const recent = useMemo(() => {
+    if (!open) return [];
+    return readRecent().map((r, i) => {
+      if (r.type === 'screen') {
+        const c = commands.find((x) => x.id === r.tab && (x.sub || '') === (r.sub || '')) || commands.find((x) => x.id === r.tab && !x.sub);
+        return c ? { ...c, key: `recent-${i}`, recent: true } : null;
+      }
+      if (r.type === 'client' || r.type === 'order') {
+        return { key: `recent-${i}`, recent: true, record: r, label: r.type === 'client' ? r.value : `Order ${r.value}`, hint: r.type === 'client' ? 'Client' : 'Order' };
+      }
+      return null;
+    }).filter(Boolean);
+  }, [open, commands]);
+
   const results = useMemo(() => {
     const t = q.trim().toLowerCase();
-    if (!t) return commands;
+    if (!t) return [...recent, ...commands];
     return commands.filter(c =>
       c.label.toLowerCase().includes(t) || (c.hint || '').toLowerCase().includes(t));
-  }, [q, commands]);
+  }, [q, commands, recent]);
 
   useEffect(() => { if (open) { setQ(''); setSel(0); setTimeout(() => inputRef.current?.focus(), 30); } }, [open]);
   useEffect(() => { setSel(0); }, [q]);
@@ -49,6 +65,13 @@ export default function CommandPalette({ open, onClose }) {
   const run = (cmd) => {
     if (!cmd) return;
     onClose();
+    if (cmd.record) {
+      const { type, value } = cmd.record;
+      noteRecent(cmd.record);
+      if (type === 'client') { try { sessionStorage.setItem('clients.find', value); } catch { /* unsearched */ } setActiveTab('clients'); }
+      else { setOrderFilter?.('All'); setOrderSearch?.(value); setActiveTab('orders'); }
+      return;
+    }
     // The Admin Panel lives outside the tabbed shell, so it is a route rather
     // than a tab - setting activeTab to it would land nowhere.
     if (cmd.route) { navigate?.(cmd.route); return; }
@@ -102,7 +125,9 @@ export default function CommandPalette({ open, onClose }) {
               }`}
             >
               <span className="min-w-0 flex-1">
-                <span className={`block text-sm font-bold ${i === sel ? 'text-brand-text' : 'text-fg'}`}>{c.label}</span>
+                <span className={`block text-sm font-bold ${i === sel ? 'text-brand-text' : 'text-fg'}`}>
+                  {c.recent && <span className="mr-2 text-[9px] font-black uppercase tracking-wider text-fg/55">Recent</span>}{c.label}
+                </span>
                 {c.hint && <span className="block text-fg/70 text-xs mt-0.5">{c.hint}</span>}
               </span>
               {i === sel && <CornerDownLeft size={13} className="text-brand-text shrink-0" />}

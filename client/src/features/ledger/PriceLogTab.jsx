@@ -1,3 +1,4 @@
+import { formatDate } from '../../shared/dates.js';
 import { ShieldCheck } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import RangePresets from '../../shared/RangePresets';
@@ -45,7 +46,7 @@ export default function PriceLogTab({
                         </div>
                       ))}
                       <p className="text-[10px] text-fg/70 mt-1">
-                        by {r.requestedBy || 'someone'} · {new Date(r.createdAt).toLocaleDateString()}
+                        by {r.requestedBy || 'someone'} · {formatDate(r.createdAt)}
                         {r.reason && <span className="italic"> · "{r.reason}"</span>}
                       </p>
                     </div>
@@ -162,7 +163,7 @@ export default function PriceLogTab({
                   <tbody>
                     <PagedRows items={priceChangeLog.changes} label="changes" render={(c, i) => (
                       <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition">
-                        <td className="py-2.5 text-fg/75 text-xs">{new Date(c.date).toLocaleDateString()}</td>
+                        <td className="py-2.5 text-fg/75 text-xs">{formatDate(c.date)}</td>
                         <td className="py-2.5 text-fg font-bold text-xs">
                           {c.productName}
                           {c.productCode && <span className="block text-[9px] text-fg/65">{c.productCode}</span>}

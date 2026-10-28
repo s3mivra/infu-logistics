@@ -1,3 +1,4 @@
+import { formatDate } from '../../shared/dates.js';
 import { Download, RefreshCw } from 'lucide-react';
 import RangePresets from '../../shared/RangePresets';
 
@@ -52,7 +53,7 @@ export default function SalesByOrderTab({
                   const isDayRow = row.orderNumber == null;
                   return (
                   <tr key={i} className="border-b border-white/5">
-                    <td className="py-1.5 text-fg/70 text-xs">{row.date ? new Date(row.date).toLocaleDateString() : ''}</td>
+                    <td className="py-1.5 text-fg/70 text-xs">{row.date ? formatDate(row.date) : ''}</td>
                     <td className="py-1.5 font-mono text-xs text-fg/70">{isDayRow ? '-' : (row.customerId || '-')}</td>
                     <td className="py-1.5 text-xs text-fg/70">{isDayRow ? '-' : (row.customerName || 'Guest')}</td>
                     <td className="py-1.5 font-mono text-xs text-fg/70">{isDayRow ? row.count : row.orderNumber}</td>
