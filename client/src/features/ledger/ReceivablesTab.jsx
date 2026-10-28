@@ -129,7 +129,8 @@ export default function ReceivablesTab({
                     : 'bg-red-500/15 text-danger';
                   return (
                     <tr key={o._id} className="flex flex-wrap items-start gap-x-4 gap-y-2 py-3 border-b border-white/5 hover:bg-white/5 transition">
-                      <td className="block flex-1 basis-[9rem] min-w-0">
+                      {/* A set width, so the client name below starts in the same place on every row. */}
+                      <td className="block flex-none w-[10.5rem] min-w-0">
                         <span className="block text-fg font-bold whitespace-nowrap">{o.orderNumber}</span>
                         <span className="flex items-center gap-1.5 mt-1 text-xs text-fg/75 whitespace-nowrap">
                           {new Date(o.createdAt).toLocaleDateString()}

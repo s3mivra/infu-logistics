@@ -458,7 +458,7 @@ function DraftModal({ apiFetch, onClose, onDone }) {
                       <input type="checkbox" aria-label={`Tick ${l.employeeName || 'this line'}`} checked={!!l.sel} onChange={e => setLine(i, 'sel', e.target.checked)} />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input className={`${numCls} text-left`} value={l.employeeName} list="payroll-employees"
+                      <input className={numCls.replace('text-right tabular-nums', 'text-left')} value={l.employeeName} list="payroll-employees"
                         onChange={e => pickName(i, e.target.value)} placeholder="Name" aria-label="Employee" />
                     </td>
                     {COLS.map(([k]) => (
