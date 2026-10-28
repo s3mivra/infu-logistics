@@ -3,6 +3,7 @@ import Pager from '../../shared/Pager';
 import { dateStr } from '../../shared/businessDay.js';
 import CollectFromClient from './CollectFromClient';
 
+import PagedRows from '../../shared/PagedRows';
 // Accounts receivable: what clients owe, and settling it.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
 export default function ReceivablesTab({
@@ -73,7 +74,7 @@ export default function ReceivablesTab({
             <table className="w-full text-sm block">
 
               <tbody className="block">
-                {arAgeing.clients.map(row => {
+                <PagedRows items={arAgeing.clients} label="clients" render={row => {
                   const p2 = (n) => `₱${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
                   // Only the ages that hold something, newest first.
                   const ages = [['Current', row.current, 'text-fg/70'], ['31-60 days', row.d31_60, 'text-warning'], ['61-90 days', row.d61_90, 'text-caution'], ['91+ days', row.d90_plus, 'text-red-500/80']].filter(([, v]) => v);
@@ -102,7 +103,7 @@ export default function ReceivablesTab({
                     </td>
                   </tr>
                   );
-                })}
+                }} />
               </tbody>
             </table>
           </div>

@@ -1,6 +1,7 @@
 import { Download, RefreshCw } from 'lucide-react';
 import RangePresets from '../../shared/RangePresets';
 
+import PagedRows from '../../shared/PagedRows';
 // Sales, by order and by day.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
 export default function SalesByOrderTab({
@@ -47,7 +48,7 @@ export default function SalesByOrderTab({
                 </tr>
               </thead>
               <tbody className="text-fg/75">
-                {sssRows.map((row, i) => {
+                <PagedRows items={sssRows} label="orders" render={(row, i) => {
                   const isDayRow = row.orderNumber == null;
                   return (
                   <tr key={i} className="border-b border-white/5">
@@ -63,7 +64,7 @@ export default function SalesByOrderTab({
                     <td className="py-1.5 text-right font-mono font-bold text-fg/90">{money2(row.total)}</td>
                   </tr>
                   );
-                })}
+                }} />
               </tbody>
               {salesSummary?.totals && (
                 <tfoot>

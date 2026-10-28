@@ -4,6 +4,7 @@ import * as ui from '../../shared/ui';
 import * as auth from '../auth/auth';
 import { dateStr } from '../../shared/businessDay.js';
 
+import PagedRows from '../../shared/PagedRows';
 // Money spent out of a revolving fund leaves at once (it can never overdraw
 // the fund), then waits for someone else to check it against its receipt.
 // That check lives on each fund's liquidation sheet; this lists every spend
@@ -57,7 +58,7 @@ export default function FundSpendsToCheck({ apiFetch, onChanged }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map(r => {
+            <PagedRows items={rows} label="spends" render={r => {
               const own = r.spentBy && r.spentBy === user.name && !isSuper;
               return (
                 <tr key={r._id} className="border-b border-white/5 align-top">
@@ -93,7 +94,7 @@ export default function FundSpendsToCheck({ apiFetch, onChanged }) {
                   </td>
                 </tr>
               );
-            })}
+            }} />
           </tbody>
         </table>
       </div>

@@ -1,6 +1,7 @@
 import { X, FileText, Plus, RefreshCw, Minus } from 'lucide-react';
 import RevolvingFundLiquidation from './RevolvingFundLiquidation';
 
+import PagedRows from '../../shared/PagedRows';
 // Revolving funds: release, spend and replenish.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
 export default function RevolvingFundTab({
@@ -164,7 +165,7 @@ export default function RevolvingFundTab({
                     </tr>
                   </thead>
                   <tbody>
-                    {rfTxs.map((tx, idx) => (
+                    <PagedRows items={rfTxs} label="transactions" render={(tx, idx) => (
                       <tr key={tx._id} className={`border-b border-white/5 transition hover:bg-white/3 ${idx % 2 === 0 ? '' : 'bg-white/1'}`}>
                         <td className="py-3 px-6 text-fg/75 text-xs tabular-nums whitespace-nowrap">
                           {new Date(tx.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
@@ -183,7 +184,7 @@ export default function RevolvingFundTab({
                           ₱{(tx.balanceAfter ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </td>
                       </tr>
-                    ))}
+                    )} />
                   </tbody>
                 </table>
               </div>

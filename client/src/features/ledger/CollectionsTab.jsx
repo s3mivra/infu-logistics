@@ -1,6 +1,7 @@
 import { } from 'lucide-react';
 import RangePresets from '../../shared/RangePresets';
 
+import PagedRows from '../../shared/PagedRows';
 // The collection report and the check register.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
 export default function CollectionsTab({
@@ -83,7 +84,7 @@ export default function CollectionsTab({
                     </tr>
                   </thead>
                   <tbody>
-                    {checkRegister.checks.map(c => (
+                    <PagedRows items={checkRegister.checks} label="checks" render={c => (
                       <tr key={c.paymentId} className={`border-b border-white/5 hover:bg-white/5 transition ${c.status === 'Bounced' ? 'bg-red-500/5' : ''}`}>
                         <td className="py-2.5 font-black text-fg tabular-nums">{c.checkNumber}</td>
                         <td className="py-2.5 text-fg/65 text-xs">
@@ -146,7 +147,7 @@ export default function CollectionsTab({
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    )} />
                   </tbody>
                 </table>
                 {!checkRegister.checks.length && (
@@ -254,7 +255,7 @@ export default function CollectionsTab({
                   </tr>
                 </thead>
                 <tbody>
-                  {collectionReport.collections.map((r, idx) => (
+                  <PagedRows items={collectionReport.collections} label="collections" render={(r, idx) => (
                     <tr key={`${r.orderId}-${idx}`} className="border-b border-white/5 hover:bg-white/5 transition">
                       <td className="py-2.5 text-fg/70 text-xs">
                         {new Date(r.collectionDate).toLocaleDateString()}
@@ -275,7 +276,7 @@ export default function CollectionsTab({
                       </td>
                       <td className="py-2.5 text-right tabular-nums font-black text-success">₱{r.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                     </tr>
-                  ))}
+                  )} />
                 </tbody>
               </table>
               {!collectionReport.collections.length && <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">No collections in this range</div>}

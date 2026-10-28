@@ -1,4 +1,6 @@
 
+import PagedRows from '../../shared/PagedRows';
+
 
 // The payables ageing report.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
@@ -91,7 +93,7 @@ export default function PayablesReportTab({
                   </tr>
                 </thead>
                 <tbody>
-                  {apReport.bySupplier.map(g => (
+                  <PagedRows items={apReport.bySupplier} label="suppliers" render={g => (
                     <tr key={g.supplier} className="border-b border-white/5">
                       <td className="py-2.5 px-4 font-bold text-fg">{g.supplier}</td>
                       <td className="py-2.5 text-right tabular-nums text-fg/70">{g.current ? `₱${g.current.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
@@ -100,7 +102,7 @@ export default function PayablesReportTab({
                       <td className="py-2.5 text-right tabular-nums text-red-500/80">{g.d90_plus ? `₱${g.d90_plus.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
                       <td className="py-2.5 px-4 text-right tabular-nums font-black text-fg">₱{g.total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                     </tr>
-                  ))}
+                  )} />
                 </tbody>
               </table>
             </div>
@@ -119,7 +121,7 @@ export default function PayablesReportTab({
                   </tr>
                 </thead>
                 <tbody>
-                  {apReport.bills.map(b => (
+                  <PagedRows items={apReport.bills} label="bills" render={b => (
                     <tr key={b._id} className={`border-b border-white/5 ${b.overdue ? 'bg-red-500/5' : ''}`}>
                       <td className="py-2.5 font-bold text-fg text-xs">
                         {b.billNumber}
@@ -141,7 +143,7 @@ export default function PayablesReportTab({
                       </td>
                       <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{b.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                     </tr>
-                  ))}
+                  )} />
                 </tbody>
               </table>
               {!apReport.bills.length && <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Nothing owed as of this date</div>}

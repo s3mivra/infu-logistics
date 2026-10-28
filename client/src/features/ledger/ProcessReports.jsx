@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Download, CheckCircle, Circle, AlertTriangle, Lock, Save } from 'lucide-react';
 import * as ui from '../../shared/ui';
 
+import PagedRows from '../../shared/PagedRows';
 // The month-end and management pages from the process flow: the cash flow
 // statement, sales by channel, budgets against actual, the exception report
 // and the month-end closing checklist. Each one loads its own data.
@@ -181,7 +182,7 @@ export function SalesByCustomerReport({ apiFetch }) {
               <tr><th className={th}>Customer</th><th className={`${th} text-right`}>Orders</th><th className={`${th} text-right`}>Units</th><th className={`${th} text-right`}>Gross</th><th className={`${th} text-right`}>Discount</th><th className={`${th} text-right`}>Net</th><th className={`${th} text-right`}>Share</th><th className={th}>Last sale</th></tr>
             </thead>
             <tbody>
-              {data.customers.map(c => (
+              <PagedRows items={data.customers} label="customers" render={c => (
                 <tr key={c.customerId || c.customer} className="border-b border-white/5">
                   <td className={td}>{c.customerNumber && <span className="font-mono text-fg/70 mr-1">{c.customerNumber}</span>}<span className="font-bold text-fg">{c.customer}</span></td>
                   <td className={`${td} text-right tabular-nums`}>{c.orders}</td>
@@ -192,7 +193,7 @@ export function SalesByCustomerReport({ apiFetch }) {
                   <td className={`${td} text-right tabular-nums`}>{c.share}%</td>
                   <td className={`${td} text-fg/70`}>{c.lastSale ? ymd(c.lastSale) : ''}</td>
                 </tr>
-              ))}
+              )} />
             </tbody>
             <tfoot><tr className="font-black"><td className={td}>Total</td><td className={`${td} text-right tabular-nums`}>{data.orders}</td><td className={td} colSpan={3} /><td className={`${td} text-right font-mono`}>{peso(data.totalNet)}</td><td className={td} colSpan={2} /></tr></tfoot>
           </table>
@@ -236,7 +237,7 @@ export function BudgetReport({ apiFetch, can }) {
               <tr><th className={th}>Account</th><th className={`${th} text-right`}>Budget</th><th className={`${th} text-right`}>Actual</th><th className={`${th} text-right`}>Variance</th><th className={`${th} text-right`}>Used</th></tr>
             </thead>
             <tbody>
-              {data.rows.map(r => (
+              <PagedRows items={data.rows} label="rows" render={r => (
                 <tr key={r.accountCode} className="border-b border-white/5">
                   <td className={td}><span className="font-mono text-fg/70">{r.accountCode}</span> <span className="font-bold text-fg">{r.accountName}</span> <span className="text-[10px] text-fg/60">{r.type}</span></td>
                   <td className={`${td} text-right font-mono`}>{peso(r.budget)}</td>
@@ -244,7 +245,7 @@ export function BudgetReport({ apiFetch, can }) {
                   <td className={`${td} text-right font-mono font-bold ${r.favourable ? 'text-success' : 'text-danger'}`}>{r.variance >= 0 ? '+' : ''}{peso(r.variance)}</td>
                   <td className={`${td} text-right tabular-nums ${r.over ? 'text-danger font-black' : 'text-fg/75'}`}>{r.usedPct == null ? '-' : `${r.usedPct}%`}</td>
                 </tr>
-              ))}
+              )} />
             </tbody>
             <tfoot className="border-t border-white/10 text-fg/80">
               <tr><td className={`${td} font-bold`}>Revenue</td><td className={`${td} text-right font-mono`}>{peso(data.totals.revenueBudget)}</td><td className={`${td} text-right font-mono`}>{peso(data.totals.revenueActual)}</td><td colSpan={2} /></tr>

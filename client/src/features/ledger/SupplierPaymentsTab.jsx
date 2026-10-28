@@ -1,5 +1,6 @@
 import RangePresets from '../../shared/RangePresets';
 
+import PagedRows from '../../shared/PagedRows';
 // Payments made to suppliers.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
 export default function SupplierPaymentsTab({
@@ -82,7 +83,7 @@ export default function SupplierPaymentsTab({
                   </tr>
                 </thead>
                 <tbody>
-                  {supplierPayments.payments.map((p, i) => (
+                  <PagedRows items={supplierPayments.payments} label="payments" render={(p, i) => (
                     <tr key={`${p.reference}-${i}`} className="border-b border-white/5 hover:bg-white/5 transition">
                       <td className="py-2.5 text-fg/75 text-xs">{new Date(p.date).toLocaleDateString()}</td>
                       <td className="py-2.5 text-fg/70 text-xs">{p.supplier}</td>
@@ -93,7 +94,7 @@ export default function SupplierPaymentsTab({
                       <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand-text px-2 py-1 rounded">{p.paidFrom || '-'}</span></td>
                       <td className="py-2.5 text-right tabular-nums font-black text-danger">₱{p.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                     </tr>
-                  ))}
+                  )} />
                 </tbody>
               </table>
               {!supplierPayments.payments.length && <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">No supplier payments in this range</div>}

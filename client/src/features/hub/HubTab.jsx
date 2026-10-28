@@ -6,6 +6,7 @@ import SearchSelect from '../../shared/ui/SearchSelect';
 import RangePresets from '../../shared/RangePresets';
 import { useRefreshTick } from '../../shared/refreshBus';
 import BranchNetworkPanel from './BranchNetworkPanel';
+import PagedRows from '../../shared/PagedRows';
 const statusColor = {
   // Awaiting our own approval before the partner is even told about it.
   Requested: 'bg-orange-500/15 text-warning',
@@ -1476,7 +1477,7 @@ export default function HubTab({ ctx }) {
                 </tr>
               </thead>
               <tbody>
-                {transfers.map(t => (
+                <PagedRows items={transfers} label="transfers" render={t => (
                   <tr key={t._id} className="border-b border-white/5 hover:bg-white/2">
                     <td className="py-2 text-fg/75 text-xs font-mono">{t.reference}</td>
                     <td className="py-2">
@@ -1504,7 +1505,7 @@ export default function HubTab({ ctx }) {
                       )}
                     </td>
                   </tr>
-                ))}
+                )} />
               </tbody>
             </table>
           </div>

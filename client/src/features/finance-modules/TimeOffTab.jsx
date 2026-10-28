@@ -3,6 +3,7 @@ import { CalendarDays, Clock, CheckCircle, XCircle, RefreshCw } from 'lucide-rea
 import { useDashboard } from '../dashboard/DashboardContext';
 import * as ui from '../../shared/ui';
 
+import PagedRows from '../../shared/PagedRows';
 // Leave and overtime. Everyone files their own here; whoever builds the rosters
 // (Build & publish staff rosters) sees everyone's and approves or rejects them
 // - never their own. Approved days and hours feed payroll's "Fill from
@@ -155,7 +156,7 @@ export default function TimeOffTab() {
               </tr>
             </thead>
             <tbody>
-              {rows.map(r => (
+              <PagedRows items={rows} label="requests" render={r => (
                 <tr key={r._id} className="border-b border-white/5">
                   <td className="px-4 py-2.5 font-bold text-fg">{r.userName}</td>
                   <td className="px-4 py-2.5 text-fg/80">{kind === 'leave' ? `${r.type} · ${r.from}${r.to !== r.from ? ` to ${r.to}` : ''}` : r.date}</td>
@@ -176,7 +177,7 @@ export default function TimeOffTab() {
                     </td>
                   )}
                 </tr>
-              ))}
+              )} />
             </tbody>
           </table>
         </div>

@@ -2,6 +2,7 @@ import { Download, RefreshCw } from 'lucide-react';
 import Pager from '../../shared/Pager';
 import RangePresets from '../../shared/RangePresets';
 
+import PagedRows from '../../shared/PagedRows';
 // Sales, by document and in detail.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
 export default function SalesDocsTab({
@@ -47,7 +48,7 @@ export default function SalesDocsTab({
                   </tr>
                 </thead>
                 <tbody className="text-fg/75">
-                  {sliSummary.rows.map((r, i) => (
+                  <PagedRows items={sliSummary.rows} label="rows" render={(r, i) => (
                     <tr key={i} className="border-b border-white/5 text-xs">
                       <td className="py-1.5">{fmtD(r.postingDate)}</td><td className="py-1.5">{fmtD(r.documentDate)}</td>
                       <td className="py-1.5 font-mono">{r.customerNumber}</td><td className="py-1.5">{r.customerName}</td>
@@ -55,7 +56,7 @@ export default function SalesDocsTab({
                       <td className="py-1.5 text-right font-mono">{money2(r.gross)}</td><td className="py-1.5 text-right font-mono">{money2(r.discount)}</td>
                       <td className="py-1.5 text-right font-mono font-bold text-fg/90">{money2(r.amount)}</td>
                     </tr>
-                  ))}
+                  )} />
                 </tbody>
                 <tfoot>
                   <tr className="font-black text-fg border-t-2 border-white/20">

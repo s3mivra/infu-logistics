@@ -3,6 +3,7 @@ import { RefreshCw, Star, Trash2, X } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { monthStartStr, todayStr } from '../../shared/businessDay.js';
 
+import PagedRows from '../../shared/PagedRows';
 // What a cafe keeps beside its books: tips, a stamp card for regulars, what
 // customers thought of their order, and what to prepare for tomorrow. None of
 // it posts to the ledger. A logistics business has none of these screens.
@@ -122,7 +123,7 @@ export function TipsPanel({ apiFetch, can }) {
           <thead><tr><th className={th}>When</th><th className={`${th} text-right`}>Amount</th><th className={th}>How</th><th className={th}>Note</th><th className={th}>Recorded by</th><th className={th}></th></tr></thead>
           <tbody>
             {data.tips.length === 0 && <tr><td colSpan={6}><Empty>No tips recorded this month.</Empty></td></tr>}
-            {data.tips.map(t => (
+            <PagedRows items={data.tips} label="tips" render={t => (
               <tr key={t._id} className="border-t border-white/5">
                 <td className={`${td} text-fg/80 whitespace-nowrap`}>{when(t.date)}</td>
                 <td className={`${td} text-right font-mono text-fg`}>{peso(t.amount)}</td>
@@ -132,7 +133,7 @@ export function TipsPanel({ apiFetch, can }) {
                 <td className={`${td} text-right`}>{t.payoutId ? <span className="text-[10px] text-fg/65">shared out</span>
                   : <button type="button" onClick={() => remove(t)} aria-label="Remove this tip" className="text-fg/65 hover:text-danger"><Trash2 size={13} /></button>}</td>
               </tr>
-            ))}
+            )} />
           </tbody>
         </table>
       </Card>
@@ -261,14 +262,14 @@ export function FeedbackReport({ apiFetch }) {
             <table className="w-full text-left min-w-[520px]">
               <thead><tr><th className={th}>When</th><th className={th}>Rating</th><th className={th}>Comment</th><th className={th}>Order</th></tr></thead>
               <tbody>
-                {data.entries.filter(e => !lowOnly || e.rating <= 2).map((e, i) => (
+                <PagedRows items={data.entries.filter(e => !lowOnly || e.rating <= 2)} label="entries" render={(e, i) => (
                   <tr key={`${e.orderNumber}-${i}`} className="border-t border-white/5">
                     <td className={`${td} text-fg/80 whitespace-nowrap`}>{when(e.at)}</td>
                     <td className={td}><Stars n={e.rating} /></td>
                     <td className={`${td} text-fg`}>{e.comment || <span className="text-fg/65">(no comment)</span>}</td>
                     <td className={`${td} text-fg/80 whitespace-nowrap`}>{e.orderNumber}{e.table && <span className="text-fg/65"> · {e.table}</span>}</td>
                   </tr>
-                ))}
+                )} />
               </tbody>
             </table>
           </Card>

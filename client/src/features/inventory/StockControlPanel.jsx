@@ -4,6 +4,7 @@ import * as ui from '../../shared/ui';
 import { todayStr } from '../../shared/businessDay.js';
 import { PACK_UNIT } from '../../shared/packUnit.js';
 
+import PagedRows from '../../shared/PagedRows';
 // Stock control: keeping the stock figures true, so Analytics, the Suggested
 // PO and Costing read real numbers. (Server: features/stock-control.js)
 //
@@ -239,7 +240,7 @@ function VarianceReport({ apiFetch, countUnit, qty }) {
               <th className={th}>Date</th><th className={th}>Item</th><th className={`${th} text-right`}>Expected</th><th className={`${th} text-right`}>Counted</th><th className={`${th} text-right`}>Variance</th><th className={`${th} text-right`}>Value</th><th className={th}>Counted by</th><th className={th}>Count</th><th className={th}>Reason</th>
             </tr></thead>
             <tbody>
-              {data.rows.map(r => {
+              <PagedRows items={data.rows} label="counts" render={r => {
                 const u = countUnit(r.inventoryId, r.unit);
                 const tone = r.variance < 0 ? 'text-danger' : r.variance > 0 ? 'text-warning' : 'text-fg/70';
                 return (
@@ -255,7 +256,7 @@ function VarianceReport({ apiFetch, countUnit, qty }) {
                     <td className={`${td} text-fg/70`}>{r.reason}</td>
                   </tr>
                 );
-              })}
+              }} />
             </tbody>
           </table>
         </div>

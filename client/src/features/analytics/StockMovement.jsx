@@ -4,6 +4,7 @@ import * as ui from '../../shared/ui';
 import { todayStr } from '../../shared/businessDay.js';
 import { IS_LOG } from '../../shared/businessType.js';
 
+import PagedRows from '../../shared/PagedRows';
 // Which items are fast-moving, slow-moving or dead stock, from what actually
 // sold - and how much of each to buy. A logistics business counts and buys
 // whole units (one bottle, one box); a cafe counts what its recipes used and
@@ -196,7 +197,7 @@ export default function StockMovement({ apiFetch, can }) {
                 <th className={th}>Class</th><th className={`${th} text-right`}>Buy</th>
               </tr></thead>
               <tbody>
-                {shown.map(r => (
+                <PagedRows items={shown} label="items" render={r => (
                   <tr key={r._id} className="border-t border-white/5">
                     <td className={`${td} text-fg font-bold whitespace-normal`}>{r.itemName}{r.itemCode && <span className="block text-[10px] text-fg/65 font-normal font-mono">{r.itemCode}</span>}</td>
                     <td className={`${td} text-right tabular-nums text-fg/80`}>{withUnit(r.stock, r.unit)}
@@ -217,7 +218,7 @@ export default function StockMovement({ apiFetch, can }) {
                         {r.leadTimeDays}-day lead{r.leadFromSupplier ? '' : ' (default)'}</span>}
                       {r.spikeCapped && r.recommend > 0 && <span className="block text-[10px] font-normal text-fg/65" title="One or more unusually large days were held down to a typical day when working this out.">spike-adjusted</span>}</td>
                   </tr>
-                ))}
+                )} />
                 {rows.length === 0 && <tr><td colSpan={10} className="p-6 text-center text-fg/65 text-sm font-bold">No items here.</td></tr>}
               </tbody>
             </table>

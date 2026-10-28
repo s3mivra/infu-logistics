@@ -44,6 +44,7 @@ import SalesDocsTab from './SalesDocsTab';
 import SalesByOrderTab from './SalesByOrderTab';
 import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
+import PagedRows from '../../shared/PagedRows';
 // ── LedgerTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 // The P&L and the Balance Sheet each used to be two pages, one per period
@@ -2802,7 +2803,7 @@ It posts only what is not already accrued for that month.`)) return;
                         </tr>
                       </thead>
                       <tbody>
-                        {reqSlips.map((s, i) => (
+                        <PagedRows items={reqSlips} label="slips" render={(s, i) => (
                           <tr key={s._id} className={`border-b border-white/5 hover:bg-white/3 ${i % 2 === 0 ? '' : 'bg-white/[0.015]'}`}>
                             <td className="px-5 py-2.5 font-mono text-fg/70 whitespace-nowrap">
                               <button onClick={() => setReqSlipPreview(s)} className="hover:text-brand-text hover:underline">{s.slipNumber}</button>
@@ -2827,7 +2828,7 @@ It posts only what is not already accrued for that month.`)) return;
                               )}
                             </td>
                           </tr>
-                        ))}
+                        )} />
                       </tbody>
                     </table>
                   </div>
@@ -3145,7 +3146,7 @@ It posts only what is not already accrued for that month.`)) return;
                         </tr>
                       </thead>
                       <tbody>
-                        {bdQueue.rows.map((row, i) => {
+                        <PagedRows items={bdQueue.rows} label="queued sales" render={(row, i) => {
                           const total = (row.items || []).reduce((s, it) => s + (it.price || 0) * (it.quantity || 0), 0);
                           return (
                             <tr key={row._id} className={`border-b border-white/5 hover:bg-white/3 ${i % 2 === 0 ? '' : 'bg-white/[0.015]'}`}>
@@ -3162,7 +3163,7 @@ It posts only what is not already accrued for that month.`)) return;
                               </td>
                             </tr>
                           );
-                        })}
+                        }} />
                       </tbody>
                     </table>
                   </div>

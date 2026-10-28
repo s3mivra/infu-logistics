@@ -3,6 +3,7 @@ import Attachments from '../../shared/Attachments';
 import RangePresets from '../../shared/RangePresets';
 import ManualVoucherForm from './ManualVoucherForm';
 
+import PagedRows from '../../shared/PagedRows';
 // Check vouchers.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
 export default function CheckVouchersTab({
@@ -106,7 +107,7 @@ export default function CheckVouchersTab({
                 </tr>
               </thead>
               <tbody>
-                {checkVouchers.map(v => (
+                <PagedRows items={checkVouchers} label="vouchers" render={v => (
                   <tr key={v._id} className={`border-b border-white/5 hover:bg-white/5 transition ${v.status === 'Voided' ? 'opacity-50' : ''}`}>
                     <td className="py-2.5 text-fg font-bold text-xs">
                       {v.voucherNumber || '-'}
@@ -149,7 +150,7 @@ export default function CheckVouchersTab({
                       </div>
                     </td>
                   </tr>
-                ))}
+                )} />
               </tbody>
             </table>
           </div>

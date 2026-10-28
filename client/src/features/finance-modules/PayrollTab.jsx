@@ -8,6 +8,7 @@ import * as ui from '../../shared/ui';
 
 import { monthStartStr, todayStr } from '../../shared/businessDay.js';
 import { useRefreshTick } from '../../shared/refreshBus';
+import PagedRows from '../../shared/PagedRows';
 // Payroll - what the work cost, and what each person took home.
 //
 // Those are different numbers, and the screen keeps them visibly apart: gross
@@ -649,14 +650,14 @@ function RemittanceModal({ apiFetch, onClose }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.rows.map(r => (
+                  <PagedRows items={data.rows} label="rows" render={r => (
                     <tr key={`${r.employeeName}-${r.idNumber}`} className="border-b border-white/5">
                       <td className="py-2 font-bold text-fg">{r.employeeName}</td>
                       <td className={`py-2 font-mono ${r.idNumber ? 'text-fg/70' : 'text-warning'}`}>{r.idNumber || 'not on file'}</td>
                       <td className="py-2 text-right tabular-nums text-fg/75">{peso(r.grossPay)}</td>
                       <td className="py-2 text-right tabular-nums font-black text-fg">{peso(r.amount)}</td>
                     </tr>
-                  ))}
+                  )} />
                 </tbody>
                 <tfoot>
                   <tr className="border-t border-white/10 text-fg font-black">

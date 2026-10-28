@@ -2,6 +2,7 @@ import { ShieldCheck } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import RangePresets from '../../shared/RangePresets';
 
+import PagedRows from '../../shared/PagedRows';
 // The price change log.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
 export default function PriceLogTab({
@@ -159,7 +160,7 @@ export default function PriceLogTab({
                     </tr>
                   </thead>
                   <tbody>
-                    {priceChangeLog.changes.map((c, i) => (
+                    <PagedRows items={priceChangeLog.changes} label="changes" render={(c, i) => (
                       <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="py-2.5 text-fg/75 text-xs">{new Date(c.date).toLocaleDateString()}</td>
                         <td className="py-2.5 text-fg font-bold text-xs">
@@ -188,7 +189,7 @@ export default function PriceLogTab({
                         </td>
                         <td className="py-2.5 text-fg/70 text-xs italic max-w-[200px] truncate" title={c.reason}>{c.reason || '-'}</td>
                       </tr>
-                    ))}
+                    )} />
                   </tbody>
                 </table>
                 {!priceChangeLog.changes.length && (

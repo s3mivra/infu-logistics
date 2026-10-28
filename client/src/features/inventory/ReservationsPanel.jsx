@@ -4,6 +4,7 @@ import * as ui from '../../shared/ui';
 
 import { PACK_UNIT } from '../../shared/packUnit.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
+import PagedRows from '../../shared/PagedRows';
 // Stock held for a named client - usually because they have paid a deposit on
 // it. Held stock stays on the shelf and in the stock figure, but no other
 // client's order can take it; the holder's own order releases the hold as it
@@ -169,7 +170,7 @@ export default function ReservationsPanel({ apiFetch, inventory = [], clientAcco
               </tr>
             </thead>
             <tbody>
-              {rows.map(r => (
+              <PagedRows items={rows} label="reservations" render={r => (
                 <tr key={r._id} className="border-b border-white/5">
                   <td className="py-2.5 pr-3">
                     <span className="text-fg font-bold tabular-nums">{r.reservationNumber}</span>
@@ -205,7 +206,7 @@ export default function ReservationsPanel({ apiFetch, inventory = [], clientAcco
                     )}
                   </td>
                 </tr>
-              ))}
+              )} />
             </tbody>
           </table>
         )}

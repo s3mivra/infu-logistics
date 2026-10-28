@@ -3,6 +3,7 @@ import { RefreshCw, Download } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { monthStartStr, todayStr } from '../../shared/businessDay.js';
 
+import PagedRows from '../../shared/PagedRows';
 // Two reports that only read what is already recorded:
 //   Waste Log      - every spoilage, what it cost and the reason given
 //   Sales by Hour  - when the business is busy: by hour, weekday and place
@@ -159,7 +160,7 @@ function Breakdown({ title, rows, firstCol }) {
       <table className="w-full text-left">
         <thead><tr><th className={th}>{firstCol}</th><th className={`${th} text-right`}>Sales</th><th className={`${th} text-right`}>Orders</th><th className={`${th} text-right`}>Average</th><th className={`${th} text-right`}>Share</th><th className={th}></th></tr></thead>
         <tbody>
-          {rows.map(r => (
+          <PagedRows items={rows} label="entries" render={r => (
             <tr key={r.label} className="border-t border-white/5">
               <td className={`${td} text-fg font-bold whitespace-nowrap`}>{r.label}</td>
               <td className={`${td} text-right font-mono text-fg`}>{peso(r.total)}</td>
@@ -168,7 +169,7 @@ function Breakdown({ title, rows, firstCol }) {
               <td className={`${td} text-right tabular-nums text-fg/80`}>{r.share}%</td>
               <td className={`${td} w-28`}><Bar value={r.total} max={max} /></td>
             </tr>
-          ))}
+          )} />
         </tbody>
       </table>
     </Card>

@@ -8,6 +8,7 @@ import * as ui from '../../shared/ui';
 
 import { todayStr } from '../../shared/businessDay.js';
 import { useRefreshTick } from '../../shared/refreshBus';
+import PagedRows from '../../shared/PagedRows';
 // Fixed assets - what the business owns, what it has worn off, what it is
 // still worth.
 //
@@ -365,14 +366,14 @@ function FragmentRow({ a, expanded, rows, busy, onToggle, onDepreciate, onDispos
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map(r => (
+                    <PagedRows items={rows} label="assets" render={r => (
                       <tr key={r.period} className="border-t border-white/5">
                         <td className="px-3 py-1.5 text-fg/75">+{r.period}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-fg/80">{peso(r.charge)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-warning">{peso(r.accumulated)}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-fg">{peso(r.netBookValue)}</td>
                       </tr>
-                    ))}
+                    )} />
                   </tbody>
                 </table>
               </div>

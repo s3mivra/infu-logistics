@@ -3,6 +3,7 @@ import * as ui from '../../shared/ui';
 
 import { PACK_UNIT } from '../../shared/packUnit.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
+import PagedRows from '../../shared/PagedRows';
 // #8 - multi-location stock transfers. Request a move between two inventory items
 // (each tagged to a location), route it through approve → release, and see on-hand
 // value grouped by location. Quantity is entered in the source item's base unit.
@@ -212,7 +213,7 @@ export default function StockTransferPanel({
                 </tr>
               </thead>
               <tbody>
-                {stockTransfers.map(t => (
+                <PagedRows items={stockTransfers} label="transfers" render={t => (
                   <tr key={t._id} className="border-b border-white/5">
                     <td className="py-2 text-white text-xs font-mono">{t.reference}</td>
                     <td className="py-2 text-white font-bold">{t.itemName}</td>
@@ -238,7 +239,7 @@ export default function StockTransferPanel({
                       </div>
                     </td>
                   </tr>
-                ))}
+                )} />
               </tbody>
             </table>
           </div>

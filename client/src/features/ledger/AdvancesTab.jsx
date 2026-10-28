@@ -2,6 +2,7 @@ import { Plus, HandCoins } from 'lucide-react';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import RangePresets from '../../shared/RangePresets';
 
+import PagedRows from '../../shared/PagedRows';
 // Advances to suppliers and from customers.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
 export default function AdvancesTab({
@@ -108,7 +109,7 @@ export default function AdvancesTab({
                 </tr>
               </thead>
               <tbody>
-                {advances.map(a => {
+                <PagedRows items={advances} label="advances" render={a => {
                   const typeCls = {
                     employee: 'bg-blue-500/15 text-info',
                     supplier: 'bg-purple-500/15 text-special',
@@ -165,7 +166,7 @@ export default function AdvancesTab({
                       </td>
                     </tr>
                   );
-                })}
+                }} />
               </tbody>
             </table>
           </div>

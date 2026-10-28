@@ -2,6 +2,7 @@ import { X, FileText, AlertTriangle, Download, CreditCard, Truck } from 'lucide-
 import Pager from '../../shared/Pager';
 import SearchSelect from '../../shared/ui/SearchSelect';
 
+import PagedRows from '../../shared/PagedRows';
 // Accounts payable: what is owed to suppliers.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
 export default function PayablesTab({
@@ -158,7 +159,7 @@ export default function PayablesTab({
                     </tr>
                   </thead>
                   <tbody>
-                    {apCreditEntries.map((e, i) => {
+                    <PagedRows items={apCreditEntries} label="entries" render={(e, i) => {
                       const days = Math.floor((Date.now() - new Date(e.date).getTime()) / 86400000);
                       const ageBadge = days <= 30
                         ? 'bg-green-500/15 text-success'
@@ -174,7 +175,7 @@ export default function PayablesTab({
                           <td className="px-5 py-2.5 text-right text-danger font-mono tabular-nums font-bold">₱{e.outstandingAmt.toFixed(2)}</td>
                         </tr>
                       );
-                    })}
+                    }} />
                   </tbody>
                 </table>
               </div>
@@ -202,7 +203,7 @@ export default function PayablesTab({
                 </tr>
               </thead>
               <tbody>
-                {apData.bySupplier.map(s => (
+                <PagedRows items={apData.bySupplier} label="suppliers" render={s => (
                   <tr key={s.supplierId || 'unattributed'} className="border-b border-white/5">
                     <td className="py-2.5 px-4 font-bold text-fg">
                       {s.supplier}
@@ -225,7 +226,7 @@ export default function PayablesTab({
                       )}
                     </td>
                   </tr>
-                ))}
+                )} />
               </tbody>
             </table>
           </div>

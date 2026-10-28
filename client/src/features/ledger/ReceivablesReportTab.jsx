@@ -1,4 +1,6 @@
 
+import PagedRows from '../../shared/PagedRows';
+
 
 // The receivables ageing report.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
@@ -69,7 +71,7 @@ export default function ReceivablesReportTab({
                   </tr>
                 </thead>
                 <tbody>
-                  {arReport.byClient.map(c => (
+                  <PagedRows items={arReport.byClient} label="clients" render={c => (
                     <tr key={c.client} className="border-b border-white/5">
                       <td className="py-2.5 px-4 font-bold text-fg">{c.client}{c.clientCode && <span className="ml-2 text-[9px] text-fg/65">{c.clientCode}</span>}</td>
                       <td className="py-2.5 text-right tabular-nums text-fg/70">{c.current ? `₱${c.current.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
@@ -78,7 +80,7 @@ export default function ReceivablesReportTab({
                       <td className="py-2.5 text-right tabular-nums text-red-500/80">{c.d90_plus ? `₱${c.d90_plus.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '-'}</td>
                       <td className="py-2.5 px-4 text-right tabular-nums font-black text-fg">₱{c.total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                     </tr>
-                  ))}
+                  )} />
                 </tbody>
               </table>
             </div>
@@ -99,7 +101,7 @@ export default function ReceivablesReportTab({
                   </tr>
                 </thead>
                 <tbody>
-                  {arReport.invoices.map(i => (
+                  <PagedRows items={arReport.invoices} label="invoices" render={i => (
                     <tr key={i._id} className={`border-b border-white/5 ${i.overdue ? 'bg-red-500/5' : ''}`}>
                       <td className="py-2.5 font-bold text-fg">{i.orderNumber}</td>
                       <td className="py-2.5 text-fg/70">{i.client}</td>
@@ -110,7 +112,7 @@ export default function ReceivablesReportTab({
                       <td className="py-2.5 text-right tabular-nums text-success">{i.paid ? `₱${i.paid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : <span className="text-fg/65">-</span>}</td>
                       <td className="py-2.5 text-right tabular-nums font-black text-fg">₱{i.balance.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                     </tr>
-                  ))}
+                  )} />
                 </tbody>
               </table>
               {!arReport.invoices.length && <div className="py-16 text-center text-fg/75 font-bold uppercase tracking-widest text-sm">Nothing outstanding as of this date</div>}

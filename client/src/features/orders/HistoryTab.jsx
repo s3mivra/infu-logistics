@@ -10,6 +10,7 @@ import * as ui from '../../shared/ui';
 import { todayStr } from '../../shared/businessDay.js';
 import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
+import PagedRows from '../../shared/PagedRows';
 // ── HistoryTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 export default function HistoryTab({ ctx }) {
@@ -116,14 +117,14 @@ export default function HistoryTab({ ctx }) {
                       </tr>
                     </thead>
                     <tbody className="text-fg/75">
-                      {deposits.map((d) => (
+                      <PagedRows items={deposits} label="deposits" render={(d) => (
                         <tr key={d._id} className="border-b border-white/5">
                           <td className="py-1.5 text-fg/75 text-xs">{d.createdAt ? new Date(d.createdAt).toLocaleDateString() : ''}</td>
                           <td className="py-1.5 font-mono text-xs">{d.reference}</td>
                           <td className="py-1.5">{d.depositedBy}</td>
                           <td className="py-1.5 text-right font-mono font-bold text-fg/90">₱{Number(d.amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
                         </tr>
-                      ))}
+                      )} />
                     </tbody>
                     <tfoot>
                       <tr className="font-black text-fg border-t-2 border-white/20">
@@ -168,7 +169,7 @@ export default function HistoryTab({ ctx }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {clockEntries.map((e, i) => (
+                      <PagedRows items={clockEntries} label="entries" render={(e, i) => (
                         <tr key={e._id||i} className={`border-b border-white/5 hover:bg-white/3 ${i%2===0?'':'bg-white/[0.015]'}`}>
                           <td className="px-5 py-2.5 text-fg/75">{e.date}</td>
                           <td className="px-5 py-2.5 text-fg font-bold">{e.staffName}</td>
@@ -181,7 +182,7 @@ export default function HistoryTab({ ctx }) {
                             {e.durationMinutes != null ? `${Math.floor(e.durationMinutes/60)}h ${e.durationMinutes%60}m` : '-'}
                           </td>
                         </tr>
-                      ))}
+                      )} />
                     </tbody>
                   </table>
                 </div>
