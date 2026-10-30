@@ -11,7 +11,8 @@ import { login } from './helpers.js';
 // It reports the worst offenders by name, so a failure says which text, at
 // what size, on which theme - not just that something somewhere is too faint.
 
-const THEMES = ['default', 'yellow', 'ocean', 'light'];
+// The app has one look, the original black and green (Settings no longer offers others).
+const THEMES = ['default'];
 
 // Screens worth auditing: each puts a different mix of labels, table headers,
 // status chips and buttons on screen. An empty dashboard proves nothing.

@@ -1,4 +1,5 @@
 import { useSessionState } from '../../shared/useSessionState';
+import { printedByLine } from '../../shared/printedBy';
 import { formatDateTime } from '../../shared/dates.js';
 import { useCallback, useEffect, useState } from 'react';
 import { formatPeso } from '../../shared/money.js';
@@ -562,7 +563,8 @@ export function DeliverySheetReport({ apiFetch }) {
     </style></head><body><h1>Delivery sheet - ${esc(data.date)}</h1>
       <p>${open.length} stop(s) · ${data.totals.pieces} piece(s) · to collect ${esc(peso(data.totals.toCollect))}</p>
       <table><thead><tr><th>#</th><th>Deliver to</th><th>Order</th><th>Items</th><th>Collect</th><th>Received by</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="sign"><div>Driver</div><div>Released by</div><div>Cash turned over</div></div></body></html>`);
+      <div class="sign"><div>Driver</div><div>Released by</div><div>Cash turned over</div></div>
+      <p style="margin-top:18px;font-size:9px;color:#666;text-align:center">${esc(printedByLine())}</p></body></html>`);
     w.document.close(); w.focus(); w.print();
   };
   return (

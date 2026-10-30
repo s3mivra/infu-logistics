@@ -29,6 +29,7 @@ import RevolvingFundReplenishModal from '../ledger/modals/RevolvingFundReplenish
 import RefundModal from '../orders/modals/RefundModal';
 import NotificationBell from '../notifications/NotificationBell';
 import HelpTip from '../../shared/HelpTip';
+import { withPrintedBy, setPrintedBy } from '../../shared/printedBy';
 import { noteRecent } from '../../shared/recent';
 import CommandPalette from './CommandPalette';
 import StaffGuide from './StaffGuide';
@@ -111,7 +112,8 @@ let _pdfLibsPromise = null;
 const loadPdfLibs = () => {
   if (!_pdfLibsPromise) {
     _pdfLibsPromise = Promise.all([import('jspdf'), import('jspdf-autotable')])
-      .then(([m1, m2]) => ({ jsPDF: m1.default, autoTable: m2.default }));
+      // withPrintedBy: every PDF report carries who printed it, and when.
+      .then(([m1, m2]) => ({ jsPDF: withPrintedBy(m1.default), autoTable: m2.default }));
   }
   return _pdfLibsPromise;
 };
@@ -514,6 +516,7 @@ export default function AdminDashboard() {
   // On mount we silently call /api/auth/refresh; the httpOnly refresh cookie mints
   // a fresh access token if the session is still valid (see bootstrap effect below).
   const [activeAdmin, setActiveAdmin] = useState(null);
+  useEffect(() => { setPrintedBy(activeAdmin?.name); }, [activeAdmin]);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authBootstrapping, setAuthBootstrapping] = useState(true);
 

@@ -8,16 +8,14 @@
 // load, before the profile fetch returns.
 
 export const CLIENT_THEMES = [
-  { value: 'default', label: 'Forest', hint: 'Dark charcoal + olive' },
-  { value: 'light',   label: 'Light',  hint: 'Off-white, for bright rooms' },
-  { value: 'yellow',  label: 'Amber',  hint: 'Dark + high-vis yellow' },
-  { value: 'ocean',   label: 'Ocean',  hint: 'Dark + electric blue' },
+  { value: 'default', label: 'Forest', hint: 'Dark charcoal + green' },
 ];
 
 const VALID = new Set(CLIENT_THEMES.map((t) => t.value));
 const KEY = 'client.theme';
 
-export const DEFAULT_CLIENT_THEME = import.meta.env.VITE_THEME || 'default';
+// One look only, the original black and green - whatever an account saved before.
+export const DEFAULT_CLIENT_THEME = 'default';
 
 /** Applies a theme to the document, falling back to the shipped default. */
 export function applyClientTheme(theme) {

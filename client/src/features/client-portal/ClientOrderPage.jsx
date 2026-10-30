@@ -1779,8 +1779,9 @@ export default function ClientOrderPage() {
                 </div>
               </section>
 
-              {/* Appearance - this client's own, not the shop's */}
-              <section>
+              {/* Appearance - this client's own, not the shop's. Hidden while
+                  there is only the one look. */}
+              {CLIENT_THEMES.length > 1 && <section>
                 <p className="text-[10px] font-black uppercase tracking-widest text-fg/70 mb-2 flex items-center gap-1.5">
                   <Palette size={12} /> Appearance
                 </p>
@@ -1801,7 +1802,7 @@ export default function ClientOrderPage() {
                     Changing it here never affects anyone else.
                   </p>
                 </div>
-              </section>
+              </section>}
             </div>
           </div>
         </div>

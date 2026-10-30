@@ -64,17 +64,13 @@ const CREDIT_MODES = [
 
 // Appearance is a per-device preference (localStorage), not a business setting -
 // one shop can run a dark register and a light warehouse tablet.
+// One look only (the original black and green); the picker hides itself
+// while there is a single choice.
 const THEMES = [
-  { value: 'default', label: 'Forest',  hint: 'Dark charcoal + olive' },
-  { value: 'light',   label: 'Light',   hint: 'Off-white, for bright rooms' },
-  { value: 'yellow',  label: 'Amber',   hint: 'Dark + high-vis yellow' },
-  { value: 'ocean',   label: 'Ocean',   hint: 'Dark + electric blue' },
+  { value: 'default', label: 'Forest',  hint: 'Dark charcoal + green' },
 ];
 
-const readTheme = () => {
-  try { return localStorage.getItem('dash.theme') || import.meta.env.VITE_THEME || 'default'; }
-  catch { return 'default'; }
-};
+const readTheme = () => 'default';
 
 const LANGUAGES = [
   { value: 'en', label: 'English' },
@@ -1176,6 +1172,7 @@ export default function SettingsTab({ ctx }) {
 
         {/* Appearance & language - per device, so every role can set their own. */}
         <Card title="This Device">
+          {THEMES.length > 1 && (
           <div className="px-4 py-4">
             <div className="flex items-start gap-4">
               <div className="w-9 h-9 rounded-lg border flex items-center justify-center shrink-0 text-brand-text bg-brand/15 border-brand/30">
@@ -1201,6 +1198,7 @@ export default function SettingsTab({ ctx }) {
               </div>
             </div>
           </div>
+          )}
 
           <div className="px-4 py-4">
             <div className="flex items-start gap-4">

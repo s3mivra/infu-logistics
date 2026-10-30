@@ -72,7 +72,10 @@ function App() {
     if (window.location.pathname.startsWith('/client')) return;
     let saved = null;
     try { saved = localStorage.getItem('dash.theme'); } catch { /* private mode */ }
-    document.documentElement.setAttribute('data-theme', saved || import.meta.env.VITE_THEME || 'default');
+    // One look only: the original black and green. A theme saved by an older
+    // version (Light, Amber, Ocean) is cleared rather than applied.
+    if (saved && saved !== 'default') { try { localStorage.removeItem('dash.theme'); } catch { /* ignore */ } }
+    document.documentElement.setAttribute('data-theme', 'default');
     // App-wide font size. Everything is rem-based, so scaling the root font-size
     // scales all text AND spacing proportionally - one knob for the whole app.
     // Per-device (localStorage) so each tablet/station picks what's comfortable.
