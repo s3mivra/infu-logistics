@@ -1,4 +1,6 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿import { DraftNote } from '../../shared/useFormDraft';
+import LoadingRows from '../../shared/LoadingRows';
+import React, { useState, useEffect } from 'react';
 import ScanBox, { findByCode } from '../../shared/ScanBox';
 import { dateStr } from '../../shared/businessDay.js';
 import { X, Package, AlertTriangle, Download, CheckCircle, Clock, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Search, MoreVertical } from 'lucide-react';
@@ -45,7 +47,7 @@ export default function InventoryTab({ ctx }) {
     fetchEODData, fetchERPData, 
     fetchRfFunds, 
     fetchStockHistory, 
-    invForm, invPage, invSubTab,
+    invForm, invDraft, invPage, invSubTab,
     invSearch, setInvSearch, invSort, setInvSort, invCategoryFilter, setInvCategoryFilter, invNoCostOnly, setInvNoCostOnly,
     inventory, isSuperAdmin, itemDisplay, packInfo,
     procurementCreditAccounts,
@@ -814,7 +816,7 @@ export default function InventoryTab({ ctx }) {
                     {eodHistoryOpen && (
                       <div className="absolute z-20 mt-1 bg-surface border border-white/10 rounded-lg shadow-2xl w-72 max-h-64 overflow-y-auto">
                         {eodHistory === null ? (
-                          <p className="text-fg/70 text-xs p-4 text-center">Loading…</p>
+                          <LoadingRows />
                         ) : eodHistory.length === 0 ? (
                           <p className="text-fg/70 text-xs p-4 text-center">No locked days yet.</p>
                         ) : eodHistory.map(r => (
@@ -1175,6 +1177,7 @@ export default function InventoryTab({ ctx }) {
             <div className="border-b border-white/8 px-4 py-3 flex items-center gap-2">
               <Package size={14} className="text-brand-text flex-shrink-0" />
               <h3 className="font-black text-fg tracking-widest text-xs uppercase">Receive Inventory</h3>
+              {invDraft && <span className="ml-auto"><DraftNote draft={invDraft} /></span>}
             </div>
 
             <div className="p-3">

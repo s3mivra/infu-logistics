@@ -1,3 +1,4 @@
+import LoadingRows from '../../../shared/LoadingRows';
 import { formatDate } from '../../../shared/dates.js';
 import { History } from 'lucide-react';
 import { useDashboard } from '../../dashboard/DashboardContext';
@@ -58,7 +59,7 @@ export default function PriceHistoryModal() {
             </div>
           )}
           {priceHistoryLoading ? (
-            <p className="text-fg/70 text-sm text-center py-8">Loading…</p>
+            <LoadingRows />
           ) : priceHistory.length === 0 ? (
             pricePending?.length > 0
               ? <p className="text-fg/70 text-sm text-center py-8">No changes applied yet - the request above is still waiting.</p>

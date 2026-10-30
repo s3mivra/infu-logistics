@@ -1,3 +1,4 @@
+import LoadingRows from './LoadingRows';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Paperclip, Trash2, Download } from 'lucide-react';
 import * as ui from './ui';
@@ -72,7 +73,7 @@ export default function Attachments({ entity, entityId, apiFetch, canAttach = fa
           </>
         )}
       </div>
-      {rows === null ? <p className="text-[11px] text-fg/65">Loading…</p>
+      {rows === null ? <LoadingRows />
         : rows.length === 0 ? <p className="text-[11px] text-fg/65">None attached.</p>
         : (
           <ul className="space-y-1">

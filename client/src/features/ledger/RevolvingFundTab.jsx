@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { X, FileText, Plus, RefreshCw, Minus } from 'lucide-react';
 import RevolvingFundLiquidation from './RevolvingFundLiquidation';
 
@@ -33,7 +34,7 @@ export default function RevolvingFundTab({
           </div>
         </div>
 
-        {rfLoading && <div className="py-12 text-center text-fg/65 font-bold uppercase text-sm tracking-widest">Loading…</div>}
+        {rfLoading && <LoadingRows />}
 
         {!rfLoading && rfFunds.length === 0 && (
           <div className="py-16 text-center space-y-3">

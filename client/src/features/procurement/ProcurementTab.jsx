@@ -1,4 +1,6 @@
-﻿import { useSessionState } from '../../shared/useSessionState';
+﻿import { useFormDraft, DraftNote } from '../../shared/useFormDraft';
+import LoadingRows from '../../shared/LoadingRows';
+import { useSessionState } from '../../shared/useSessionState';
 import { formatDate } from '../../shared/dates.js';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { statusTone } from '../../shared/statusTone';
@@ -440,6 +442,7 @@ export default function ProcurementTab({ ctx }) {
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [supplierEditId, setSupplierEditId] = useState(null);
   const [supplierForm, setSupplierForm] = useState(blankSupplier);
+  const supplierDraft = useFormDraft('supplier.new', supplierForm, setSupplierForm);
   const [savingSupplier, setSavingSupplier] = useState(false);
   // Which supplier's "what they supply / how much we buy" rollup is expanded.
   const [expandedSupplierId, setExpandedSupplierId] = useState(null);
@@ -1024,7 +1027,7 @@ export default function ProcurementTab({ ctx }) {
               </button>
               {forecastOpen && (
                 <div className="px-4 pb-4">
-                  {!ctx.analyticsData ? <p className="text-fg/65 text-sm py-4">Loading…</p> : (
+                  {!ctx.analyticsData ? <LoadingRows /> : (
                     <ReorderForecast rows={ctx.analyticsData.reorderForecast || []} settings={ctx.analyticsData.forecastSettings || {}}
                       analyticsDisplay={ctx.analyticsDisplay} onMakeOrders={canManage ? buildSuggestedPo : undefined} />
                   )}
@@ -1886,6 +1889,7 @@ export default function ProcurementTab({ ctx }) {
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/10">
+              {!supplierEditId && <span className="mr-auto"><DraftNote draft={supplierDraft} /></span>}
               <button onClick={() => !savingSupplier && setShowSupplierForm(false)} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/75 hover:text-fg transition">Cancel</button>
               <button onClick={saveSupplier} disabled={savingSupplier} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-on-brand font-bold text-sm px-5 py-2 rounded-xl transition">
                 {savingSupplier ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} {supplierEditId ? 'Save Changes' : 'Create Supplier'}

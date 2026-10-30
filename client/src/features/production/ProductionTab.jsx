@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { useSessionState } from '../../shared/useSessionState';
 import { formatDateTime } from '../../shared/dates.js';
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -694,7 +695,7 @@ export default function ProductionTab({ ctx }) {
       </div>
 
       {loading ? (
-        <p className="text-fg/70 text-sm text-center py-10">Loading…</p>
+        <LoadingRows />
       ) : orders.length === 0 ? (
         <div className="flex flex-col items-center py-16 text-center">
           <Package size={36} className="text-fg/10 mb-3" />

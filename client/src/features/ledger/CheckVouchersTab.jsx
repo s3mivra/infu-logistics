@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { formatDate } from '../../shared/dates.js';
 import { Download, Receipt } from 'lucide-react';
 import Attachments from '../../shared/Attachments';
@@ -85,7 +86,7 @@ export default function CheckVouchersTab({
         )}
 
         {!checkVouchers ? (
-          <div className="py-16 text-center text-fg/70 font-bold uppercase tracking-widest text-sm">Loading…</div>
+          <LoadingRows />
         ) : checkVouchers.length === 0 ? (
           <div className="py-16 text-center">
             <Receipt size={28} className="mx-auto text-fg/65 mb-3" />

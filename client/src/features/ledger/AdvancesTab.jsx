@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { formatDate } from '../../shared/dates.js';
 import { Plus, HandCoins } from 'lucide-react';
 import SearchSelect from '../../shared/ui/SearchSelect';
@@ -86,7 +87,7 @@ export default function AdvancesTab({
         </div>
 
         {!advances ? (
-          <div className="py-16 text-center text-fg/70 font-bold uppercase tracking-widest text-sm">Loading…</div>
+          <LoadingRows />
         ) : advances.length === 0 ? (
           <div className="py-16 text-center">
             <HandCoins size={28} className="mx-auto text-fg/65 mb-3" />

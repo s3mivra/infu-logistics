@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { useCallback, useEffect, useState } from 'react';
 import { formatPeso } from '../../shared/money.js';
 import { statusTone } from '../../shared/statusTone';
@@ -184,7 +185,7 @@ function QuoteSheet({ id, apiFetch, onBack }) {
     finally { setBusy(false); }
   };
 
-  if (!q) return <p className="text-fg/70 text-sm">Loading…</p>;
+  if (!q) return <LoadingRows />;
 
   const total = (q.lines || []).reduce((s, l, i) => s + ((Number(prices[i]) || 0) * (l.quantity || 1)), 0);
   const locked = ['Accepted', 'Declined'].includes(q.status);

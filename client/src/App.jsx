@@ -1,4 +1,6 @@
 ﻿import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { startRedNegatives } from './shared/redNegatives';
+import { startPhoneCards } from './shared/phoneCards';
 import { HAS_CLIENT_LOGIN } from './shared/businessType.js';
 import { lazy, Suspense, Component, useEffect, useState } from 'react';
 
@@ -63,9 +65,7 @@ class ErrorBoundary extends Component {
 
 function App() {
   useEffect(() => {
-    // Theme is a per-DEVICE preference, not a business setting: the same shop can
-    // have a dark tablet at the register and a light one in a sunlit warehouse.
-    // A saved choice wins; VITE_THEME remains the shipped default.
+    // The app has one look (black and green); see below.
     // The client portal owns its own appearance (see clientTheme.js) - a shop
     // restyling its POS must not restyle its customers' portals, so skip the
     // staff theme entirely on portal routes.
@@ -76,6 +76,10 @@ function App() {
     // version (Light, Amber, Ocean) is cleared rather than applied.
     if (saved && saved !== 'default') { try { localStorage.removeItem('dash.theme'); } catch { /* ignore */ } }
     document.documentElement.setAttribute('data-theme', 'default');
+    // Negative amounts in red, app-wide.
+    const stopRed = startRedNegatives();
+    // Tables read as cards on phones, app-wide.
+    const stopCards = startPhoneCards();
     // App-wide font size. Everything is rem-based, so scaling the root font-size
     // scales all text AND spacing proportionally - one knob for the whole app.
     // Per-device (localStorage) so each tablet/station picks what's comfortable.
@@ -84,6 +88,7 @@ function App() {
     document.documentElement.style.fontSize = (16 * (Number(scale) || 100) / 100) + 'px';
     // Touch screen: bigger tap targets everywhere (index.css, .touch-mode).
     try { document.documentElement.classList.toggle('touch-mode', localStorage.getItem('dash.touch') === '1'); } catch { /* private mode */ }
+    return () => { stopRed(); stopCards(); };
   }, []);
 
   return (

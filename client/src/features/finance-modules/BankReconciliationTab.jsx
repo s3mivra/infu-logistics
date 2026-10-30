@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatPeso } from '../../shared/money.js';
 import {
@@ -274,7 +275,7 @@ function Worksheet({ id, onBack, apiFetch }) {
     load();
   };
 
-  if (!data) return <p className="text-fg/70 text-sm">Loading…</p>;
+  if (!data) return <LoadingRows />;
   const rec = data.reconciliation;
   const closed = rec.status === 'Reconciled';
 

@@ -111,6 +111,22 @@ export default function OrdersTab({ ctx }) {
     systemSettings = {},
     can,
   } = ctx;
+  // Type to search on the till: a letter typed with nothing selected goes to
+  // the menu search. Letters only - a barcode scanner types digits and must
+  // keep reaching its own box.
+  const posSearchRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!isPosOpen) return undefined;
+    const onKey = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1 || !/[a-z]/i.test(e.key)) return;
+      const t = document.activeElement;
+      if (t && t !== document.body && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      posSearchRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isPosOpen]);
 
   // Mirror the cart to the customer-facing display (/display).
   React.useEffect(() => {
@@ -456,6 +472,7 @@ export default function OrdersTab({ ctx }) {
                       <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/65" />
                       <input
                         type="text"
+                        ref={posSearchRef}
                         placeholder="Search menu items…"
                         value={posSearch}
                         onChange={e => { setPosSearch(e.target.value); setPosPage(1); }}

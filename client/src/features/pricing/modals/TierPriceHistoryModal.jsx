@@ -1,3 +1,4 @@
+import LoadingRows from '../../../shared/LoadingRows';
 import { History } from 'lucide-react';
 import { useDashboard } from '../../dashboard/DashboardContext';
 
@@ -35,7 +36,7 @@ export default function TierPriceHistoryModal() {
 
         <div className="overflow-y-auto custom-scrollbar flex-1">
           {tierPriceHistoryLoading ? (
-            <p className="text-fg/70 text-sm text-center py-8">Loading…</p>
+            <LoadingRows />
           ) : tierPriceHistory.length === 0 ? (
             <p className="text-fg/70 text-sm text-center py-8">No changes recorded yet - still at its original {isPercent ? 'rate' : 'price'}.</p>
           ) : (

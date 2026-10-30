@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { useEffect, useState } from 'react';
 import { formatPeso } from '../../shared/money.js';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
@@ -32,7 +33,7 @@ function useInsight(apiFetch, path) {
   return d;
 }
 
-const Status = ({ d }) => (!d ? <p className="text-fg/70 text-xs">Loading…</p> : <p className="text-danger text-xs font-bold">{d.error}</p>);
+const Status = ({ d }) => (!d ? <LoadingRows /> : <p className="text-danger text-xs font-bold">{d.error}</p>);
 
 function ProductList({ title, rows }) {
   return (

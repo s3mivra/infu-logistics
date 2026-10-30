@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { useSessionState } from '../../shared/useSessionState';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatPeso } from '../../shared/money.js';
@@ -106,7 +107,7 @@ function CountList({ apiFetch, countUnit, qty, onCounted }) {
         </div>
         <button type="button" onClick={load} className={`${btn} bg-white/5 text-fg/80`}><RefreshCw size={13} /> Refresh</button>
       </div>
-      {!data ? <p className="text-xs text-fg/65">Loading…</p> : data.list.length === 0 ? (
+      {!data ? <LoadingRows /> : data.list.length === 0 ? (
         <p className="text-xs text-fg/70" data-testid="count-list-empty">Nothing is due for counting today.</p>
       ) : (
         <>
@@ -285,7 +286,7 @@ function BelowZero({ apiFetch, countUnit, qty, onCount }) {
         </div>
         <button type="button" onClick={load} className={`${btn} bg-white/5 text-fg/80`}><RefreshCw size={13} /> Refresh</button>
       </div>
-      {!data ? <p className="text-xs text-fg/65">Loading…</p> : data.items.length === 0 ? <p className="text-xs text-fg/70" data-testid="below-zero-empty">Nothing is below zero.</p> : (
+      {!data ? <LoadingRows /> : data.items.length === 0 ? <p className="text-xs text-fg/70" data-testid="below-zero-empty">Nothing is below zero.</p> : (
         <div className="space-y-3" data-testid="below-zero-list">
           {data.items.map(i => {
             const u = countUnit(i._id, i.unit);
@@ -332,7 +333,7 @@ function ControlSettings({ apiFetch }) {
     } catch { ui.alert('Network error.'); }
   }, [apiFetch]);
   useEffect(() => { load(); }, [load]);
-  if (!form) return <p className="text-xs text-fg/65">Loading…</p>;
+  if (!form) return <LoadingRows />;
   const save = async (e) => {
     e.preventDefault();
     const wrong = CYCLE_FIELDS.filter(([k]) => { const [lo, hi] = data.limits[k], n = Number(form[k]); return !(form[k] !== '' && n >= lo && n <= hi); });

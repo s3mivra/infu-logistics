@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { X, FileText, AlertTriangle, Download, CreditCard, Truck } from 'lucide-react';
 import Pager from '../../shared/Pager';
 import SearchSelect from '../../shared/ui/SearchSelect';
@@ -240,7 +241,7 @@ export default function PayablesTab({
             <span className="ml-auto text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">{(apData?.recent || []).length} entries</span>
           </div>
           {!apData ? (
-            <p className="text-fg/65 text-sm p-6 text-center font-bold">Loading…</p>
+            <LoadingRows />
           ) : (apData.recent || []).length === 0 ? (
             <p className="text-fg/65 text-sm p-6 text-center font-bold">No A/P transactions yet. Procure inventory on credit to see entries here.</p>
           ) : (

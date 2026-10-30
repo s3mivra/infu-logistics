@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -206,7 +207,7 @@ export default function LegalPage({ doc }) {
         <p className="text-fg/65 text-sm mt-1 mb-6">{name}{effective ? ` · Effective ${effective}` : ''}</p>
 
         {contact === null
-          ? <p className="text-fg/65 text-sm">Loading…</p>
+          ? <LoadingRows />
           : isPrivacy ? <PrivacyBody name={name} /> : <TermsBody name={name} />}
 
         <Section title="7. Contact us">

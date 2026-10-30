@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { formatDateTime } from '../../shared/dates.js';
 import { useCallback, useEffect, useState } from 'react';
 import { formatPeso } from '../../shared/money.js';
@@ -81,7 +82,7 @@ export default function OwnerOverview({ apiFetch, go, can }) {
   // A link only where the person can open the screen it goes to.
   const open = (tab, perm) => (!perm || can(perm) ? () => go(tab) : undefined);
 
-  if (!d) return <p className="text-fg/70 text-sm font-bold p-8 text-center">Loading…</p>;
+  if (!d) return <LoadingRows />;
   if (d.error) return <p className="text-danger text-sm font-bold p-8 text-center">{d.error}</p>;
   const { sales, month, cash, receivables, payables, stock, waiting } = d;
   const change = sales.lastMonthToDate > 0 ? ((sales.monthToDate - sales.lastMonthToDate) / sales.lastMonthToDate) * 100 : null;

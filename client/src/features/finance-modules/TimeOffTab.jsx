@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { useSessionState } from '../../shared/useSessionState';
 import { useCallback, useEffect, useState } from 'react';
 import { CalendarDays, Clock, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
@@ -141,7 +142,7 @@ export default function TimeOffTab() {
         <button type="button" onClick={load} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white/5 text-fg/75 hover:text-fg"><RefreshCw size={12} /> Refresh</button>
       </div>
 
-      {!rows ? <p className="text-fg/65 text-sm text-center p-6 font-bold">Loading…</p> : rows.length === 0 ? (
+      {!rows ? <LoadingRows /> : rows.length === 0 ? (
         <p className="text-fg/65 text-sm text-center p-6 font-bold">No {filter === 'All' ? '' : filter.toLowerCase() + ' '}{kind} requests.</p>
       ) : (
         <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">

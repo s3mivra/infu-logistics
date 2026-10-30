@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { useEffect, useState } from 'react';
 import { X, ChevronDown, ChevronRight } from 'lucide-react';
 import * as ui from '../../shared/ui';
@@ -77,7 +78,7 @@ export default function CommissionRules({ apiFetch, canEdit, onSaved }) {
         {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />} Commission rates
         <span className="text-fg/60 font-normal text-xs">per product, per category, sales tiers</span>
       </button>
-      {open && (!rules ? <p className="px-4 pb-4 text-sm text-fg/65">Loading…</p> : (
+      {open && (!rules ? <LoadingRows /> : (
         <div className="px-4 pb-4 space-y-5">
           <p className="text-[11px] text-fg/70">Each item sold earns its product's rate if set, else its category's rate, else the seller's own % (on their account). Someone with no % of their own earns by the tiers, if set. Tiers are like tax brackets over the period shown: e.g. 2% from ₱0, 4% from ₱50,000 means 2% on the first ₱50,000 and 4% on the rest.</p>
 

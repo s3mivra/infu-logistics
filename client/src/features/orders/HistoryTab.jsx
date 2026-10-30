@@ -1,4 +1,5 @@
-﻿import { formatDate, formatDateTime } from '../../shared/dates.js';
+﻿import LoadingRows from '../../shared/LoadingRows';
+import { formatDate, formatDateTime } from '../../shared/dates.js';
 import { useState, useEffect } from 'react';
 import { FileText, RefreshCw, ChevronDown, ChevronUp, Printer, Search } from 'lucide-react';
 import { } from '../../shared/usePagination';
@@ -106,7 +107,7 @@ export default function HistoryTab({ ctx }) {
                 </div>
               </div>
               {deposits === null ? (
-                <p className="text-fg/70 text-sm">Loading…</p>
+                <LoadingRows />
               ) : deposits.length === 0 ? (
                 <p className="text-fg/70 text-sm">No bank deposits recorded yet.</p>
               ) : (

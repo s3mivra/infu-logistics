@@ -1,3 +1,4 @@
+import LoadingRows from '../../../shared/LoadingRows';
 import { formatDate } from '../../../shared/dates.js';
 import { X } from 'lucide-react';
 import { formatPeso } from '../../../shared/money.js';
@@ -45,7 +46,7 @@ export default function ArHistoryModal() {
           </div>
 
           {arHistoryLoading ? (
-            <div className="py-12 text-center text-fg/70 font-bold uppercase tracking-widest text-xs">Loading…</div>
+            <LoadingRows />
           ) : !payments?.length ? (
             <div className="py-12 text-center text-fg/70 font-bold uppercase tracking-widest text-xs">No collections recorded yet</div>
           ) : (

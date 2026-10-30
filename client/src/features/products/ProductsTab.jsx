@@ -1,4 +1,5 @@
-﻿import { formatDate } from '../../shared/dates.js';
+﻿import LoadingRows from '../../shared/LoadingRows';
+import { formatDate } from '../../shared/dates.js';
 import React, { useState, useEffect, useCallback } from 'react';
 import { formatPeso } from '../../shared/money.js';
 import { Copy, X, AlertCircle, AlertTriangle, Plus, Edit, Trash2, Download, Check, Coffee, ChevronRight, ChevronLeft, Search, Flame, Calendar, ToggleLeft, ToggleRight, Upload } from 'lucide-react';
@@ -131,7 +132,7 @@ function SalesSection({ apiFetch, products, isSuperAdmin }) {
       <div className="flex flex-col lg:flex-row gap-6">
         {/* List */}
         <div className="flex-1 space-y-2">
-          {loading && <p className="text-sm text-fg/65 italic py-4">Loading…</p>}
+          {loading && <LoadingRows />}
           {!loading && sales.length === 0 && <p className="text-sm text-fg/65 italic py-4">No promotions yet. Add one to put products on sale for a set time.</p>}
           {sales.map(sale => (
             <div key={sale._id} className="bg-page-bg border border-white/10 rounded-xl overflow-hidden">

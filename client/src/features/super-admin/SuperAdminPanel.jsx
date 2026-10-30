@@ -1,4 +1,5 @@
-﻿import { useState, useEffect, useCallback, useMemo, memo } from 'react';
+﻿import LoadingRows from '../../shared/LoadingRows';
+import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as auth from '../auth/auth';
 import { effectivePermissions, togglePermission, pageLocked } from '../../shared/permissions.js';
@@ -2232,7 +2233,7 @@ export default function SuperAdminPanel() {
                 <div className="bg-white/5 border border-white/10 rounded-xl p-3">
                   <p className="text-[10px] font-bold text-fg/70 uppercase tracking-widest mb-2">Special Pricing</p>
                   {clientPricingLoading ? (
-                    <p className="text-[11px] text-fg/65 italic">Loading…</p>
+                    <LoadingRows />
                   ) : !clientPricing || clientPricing.length === 0 ? (
                     <p className="text-[11px] text-fg/65 italic">No product-specific rates or volume breaks yet - set one on a product in the Products tab.</p>
                   ) : (

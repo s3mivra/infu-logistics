@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { useCallback, useEffect, useState } from 'react';
 import { formatPeso } from '../../shared/money.js';
 import { RefreshCw, AlertTriangle, CheckCircle } from 'lucide-react';
@@ -42,7 +43,7 @@ export default function DailyClosingCheck({ apiFetch }) {
         </button>
       </div>
 
-      {!d ? <p className="text-fg/70 text-sm font-bold p-6 text-center">Loading…</p>
+      {!d ? <LoadingRows />
         : d.error ? <p className="text-danger text-sm font-bold p-6 text-center">{d.error}</p>
         : (<>
           <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${d.issues.length ? 'bg-amber-500/10 border-amber-500/30' : 'bg-green-900/20 border-green-500/30'}`}>

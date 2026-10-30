@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { useSessionState } from '../../shared/useSessionState';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatPeso } from '../../shared/money.js';
@@ -352,7 +353,7 @@ function FragmentRow({ a, expanded, rows, busy, onToggle, onDepreciate, onDispos
               Schedule from here · {peso(a.monthlyDepreciation)} a month
               {a.salvageValue > 0 && <span className="text-fg/65 font-normal"> · stops at the {peso(a.salvageValue)} salvage floor</span>}
             </p>
-            {!rows && <p className="text-[11px] text-fg/70">Loading…</p>}
+            {!rows && <LoadingRows />}
             {rows?.length === 0 && <p className="text-[11px] text-fg/70">Nothing further to charge - this asset is fully depreciated.</p>}
             {rows?.length > 0 && (
               <div className="max-h-52 overflow-y-auto border border-white/10 rounded-lg">

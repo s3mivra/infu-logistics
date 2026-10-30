@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { useEffect, useState, useCallback } from 'react';
 import {
   ShoppingCart, Package, Truck, LayoutDashboard, BarChart2, BookOpen, Clock, CalendarDays,
@@ -61,7 +62,7 @@ export default function HomeTab({ apiFetch, can, go, navigate, user, isSuperAdmi
         <h2 id="home-actions" className="text-sm font-black uppercase tracking-wider text-fg mb-3 flex items-center gap-2">
           <ClipboardCheck size={16} /> Needs your action
         </h2>
-        {actions === null ? <p className="text-sm text-fg/65">Loading…</p>
+        {actions === null ? <LoadingRows />
           : actions.length === 0 && !(alerts?.criticalCount > 0) ? (
             <p className="text-sm text-fg/75 flex items-center gap-2"><CheckCircle2 size={16} className="text-success" /> Nothing is waiting on you. All clear.</p>
           ) : (

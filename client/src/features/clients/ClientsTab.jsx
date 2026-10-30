@@ -1,4 +1,5 @@
-﻿import { Fragment, useCallback, useEffect, useState } from 'react';
+﻿import { useFormDraft, DraftNote } from '../../shared/useFormDraft';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { formatPeso } from '../../shared/money.js';
 import { HAS_CLIENT_LOGIN, BUSINESS_NAME } from '../../shared/businessType.js';
 import { downloadClientRecord } from '../ops/OpsExtras';
@@ -127,6 +128,7 @@ export default function ClientsTab() {
   };
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState(blankClient);
+  const clientDraft = useFormDraft('client.new', addForm, setAddForm);
   const [adding, setAdding] = useState(false);
   const [addedLink, setAddedLink] = useState('');
   const addClient = async (e) => {
@@ -506,6 +508,7 @@ export default function ClientsTab() {
             </label>
           )}
           <input value={addForm.contactNotes} onChange={e => setAddForm({ ...addForm, contactNotes: e.target.value })} placeholder="Notes (address, contact person...)" aria-label="Notes" className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm placeholder-fg/70 outline-none focus:border-brand/60" />
+          <DraftNote draft={clientDraft} />
           <div className="flex flex-wrap gap-2 items-center">
             <button type="submit" disabled={adding || !addForm.name.trim()}
               className="bg-brand text-on-brand font-bold px-4 py-2.5 rounded-xl text-xs uppercase tracking-wider disabled:opacity-50">

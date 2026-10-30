@@ -1,4 +1,6 @@
-﻿import { useSessionState } from '../../shared/useSessionState';
+﻿import { DraftNote } from '../../shared/useFormDraft';
+import LoadingRows from '../../shared/LoadingRows';
+import { useSessionState } from '../../shared/useSessionState';
 import { formatDate, formatDateTime } from '../../shared/dates.js';
 import React, { useState, useEffect, useRef } from 'react';
 import { roundMoney, formatPeso } from '../../shared/money.js';
@@ -95,7 +97,7 @@ export default function LedgerTab({ ctx }) {
     exportRevolvingFundsPDF,
     fetchPnl, fetchRfFunds, fetchRfTxs, 
     isSuperAdmin, 
-    jeForm, ledgerSubTab, 
+    jeForm, jeDraft, ledgerSubTab, 
     parseImportFile, peso,
     pnlData, pnlRange, pnlMonthly, pnlmRange, setPnlmRange, pnlmView, setPnlmView, fetchPnlMonthly, exportPnlMonthlyPDF, bsMonthly, bsmRange, setBsmRange, bsmView, setBsmView, fetchBsMonthly, exportBsMonthlyPDF, 
     products,
@@ -1698,7 +1700,7 @@ It posts only what is not already accrued for that month.`)) return;
               {tb?.error ? (
                 <p className="text-danger text-sm font-bold">{tb.error}</p>
               ) : !tb ? (
-                <p className="text-fg/70 text-sm">Loading…</p>
+                <LoadingRows />
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -1868,6 +1870,7 @@ It posts only what is not already accrued for that month.`)) return;
               refreshKey={jeDraftsKey} activeAdmin={activeAdmin} isSuperAdmin={isSuperAdmin} />
             <div className="bg-surface border border-white/10 rounded-xl p-6 h-fit">
               <h3 className="text-xl font-bold mb-4 text-brand-text border-b border-white/10 pb-2">New Journal Entry</h3>
+              {jeDraft && <div className="-mt-2 mb-3"><DraftNote draft={jeDraft} /></div>}
               {!can('journal.approve') && <p className="text-[11px] text-fg/70 -mt-2 mb-3">Your entries are held for an approver before they reach the ledger.</p>}
               <div className="space-y-4">
                 <div>
@@ -2801,7 +2804,7 @@ It posts only what is not already accrued for that month.`)) return;
 
               <div className="bg-surface border border-white/10 rounded-xl overflow-hidden">
                 {reqSlipsLoading && reqSlips.length === 0 ? (
-                  <p className="text-fg/70 text-sm p-8 text-center font-bold">Loading…</p>
+                  <LoadingRows />
                 ) : reqSlips.length === 0 ? (
                   <p className="text-fg/65 text-sm p-10 text-center font-bold">
                     {reqSlipView === 'pending' ? 'Nothing waiting on approval.' : 'No requisition slips yet.'}
@@ -3214,7 +3217,7 @@ It posts only what is not already accrued for that month.`)) return;
                     </button>
                   </div>
                   {bdHistoryLoading && !bdHistory ? (
-                    <p className="text-fg/70 text-sm p-6 text-center font-bold">Loading…</p>
+                    <LoadingRows />
                   ) : !bdHistory || bdHistory.orders.length === 0 ? (
                     <p className="text-fg/65 text-sm p-8 text-center font-bold">No backdated sales recorded yet.</p>
                   ) : (

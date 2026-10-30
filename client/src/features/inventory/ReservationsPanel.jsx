@@ -1,3 +1,4 @@
+import LoadingRows from '../../shared/LoadingRows';
 import { formatDate } from '../../shared/dates.js';
 import React from 'react';
 import { Lock, Unlock, X, RefreshCw, Plus } from 'lucide-react';
@@ -155,7 +156,7 @@ export default function ReservationsPanel({ apiFetch, inventory = [], clientAcco
 
       <div className="mt-4 overflow-x-auto">
         {rows === null ? (
-          <p className="text-fg/65 text-sm">Loading…</p>
+          <LoadingRows />
         ) : rows.length === 0 ? (
           <p className="text-fg/65 text-sm">No stock is being held. Hold stock when a client commits to goods before collecting them.</p>
         ) : (

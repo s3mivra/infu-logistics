@@ -1,4 +1,6 @@
-﻿import { formatDate, formatDateTime } from '../../shared/dates.js';
+﻿import { useFormDraft } from '../../shared/useFormDraft';
+import LoadingRows from '../../shared/LoadingRows';
+import { formatDate, formatDateTime } from '../../shared/dates.js';
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { socket, reconnectSocket } from '../../shared/staffSocket.js';
@@ -29,6 +31,7 @@ import RevolvingFundReplenishModal from '../ledger/modals/RevolvingFundReplenish
 import RefundModal from '../orders/modals/RefundModal';
 import NotificationBell from '../notifications/NotificationBell';
 import HelpTip from '../../shared/HelpTip';
+import PhoneTabBar from './PhoneTabBar';
 import { withPrintedBy, setPrintedBy } from '../../shared/printedBy';
 import { noteRecent } from '../../shared/recent';
 import CommandPalette from './CommandPalette';
@@ -82,9 +85,7 @@ const QuotationsTab = lazy(() => import('../quotations/QuotationsTab'));
 
 // Small fallback shown while a tab chunk loads.
 const TabFallback = () => (
-  <div className="p-12 flex items-center justify-center text-fg/70 text-sm gap-2">
-    <RefreshCw size={16} className="animate-spin" /> Loading…
-  </div>
+  <div className="p-6"><LoadingRows rows={6} /></div>
 );
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
@@ -1707,6 +1708,9 @@ export default function AdminDashboard() {
       { accountCode: '', accountName: '', debit: '', credit: '' }
     ]
   }));
+  // Unsaved forms survive a refresh or a mis-tap (shared/useFormDraft).
+  const jeDraft = useFormDraft('journal.new', jeForm, setJeForm);
+  const invDraft = useFormDraft('inventory.receive', invForm, setInvForm);
 
   const standardAccounts = [
     { accountCode: '111000', accountName: 'Cash on Hand', type: 'Asset' },
@@ -7045,7 +7049,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     // ── Stock history / import / partial fulfil modals ──────────────────────
     submitImport, loadPdfLibs, addLogoToPDF, pdfMoney,
     // ── Ledger sub-tabs ─────────────────────────────────────────────────────
-    ledgerSubTab, setLedgerSubTab, jeForm, setJeForm, cashOnHand, standardAccounts,
+    ledgerSubTab, setLedgerSubTab, jeForm, setJeForm, jeDraft, cashOnHand, standardAccounts,
     // ── Chart of Accounts CRUD ──
     coaAccounts, fetchCoa, coaParent, setCoaParent, coaNewName, setCoaNewName,
     coaEditId, setCoaEditId, coaEditName, setCoaEditName, coaBusy,
@@ -7124,7 +7128,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     submitManualOrder, openProductModal, confirmPosItem,
     ordersPage, setOrdersPage, ordersItemsPerPage,
     // ── Inventory ───────────────────────────────────────────────────────────
-    invSubTab, setInvSubTab, invForm, setInvForm, invPage, setInvPage, invItemsPerPage,
+    invSubTab, setInvSubTab, invForm, setInvForm, invDraft, invPage, setInvPage, invItemsPerPage,
     invSearch, setInvSearch, invSort, setInvSort, invCategoryFilter, setInvCategoryFilter, invNoCostOnly, setInvNoCostOnly,
     importProgress,
     activeInventoryItem, setActiveInventoryItem, restockData, setRestockData,
@@ -7411,7 +7415,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
       {/* ── MANAGER ACCOUNTING ALERTS (persist until dismissed) ── */}
       {mgrAlerts.length > 0 && (
-        <div className="fixed bottom-4 right-4 z-[99999] flex flex-col gap-2 max-w-sm">
+        <div className="fixed bottom-20 md:bottom-4 right-4 z-[99999] flex flex-col gap-2 max-w-sm">
           {mgrAlerts.map(a => (
             <div key={a.id} className="flex items-start gap-2 bg-amber-500/15 border border-amber-500/40 text-warning px-4 py-3 rounded-2xl shadow-lg animate-fade-in">
               <AlertTriangle size={16} className="shrink-0 mt-0.5" />
@@ -7492,8 +7496,8 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           </div>
         </header>
 
-        {/* Content */}
-        <div className="flex-1 p-4 md:p-5 lg:p-6">
+        {/* Content. Extra room at the bottom on phones for the tab bar. */}
+        <div className="flex-1 p-4 pb-24 md:p-5 lg:p-6">
 
       {/* ── OFFLINE / SYNC BANNER ─────────────────────────────────────────── */}
       {(!isOnline || queuedCount > 0) && (
@@ -7725,6 +7729,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
       {/* ── CLOCK OUT / BREAK CHOICE MODAL ───────────────────────────────── */}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <PhoneTabBar activeTab={activeTab} go={setActiveTab} can={can} alertCount={notifData.count || 0} openMenu={() => setDashDrawerOpen(true)} />
       <StaffGuide open={guideOpen && showsGuide(activeAdmin)} onClose={() => setGuideOpen(false)}
         user={activeAdmin} businessType={BUSINESS_TYPE} can={can} />
       <ClockModal />

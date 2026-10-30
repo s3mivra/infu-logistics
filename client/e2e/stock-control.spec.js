@@ -43,6 +43,8 @@ test('rolling count list and the variance report', async ({ page, request }) => 
   await expect(line).toContainText('3 pcs');      // counted
   await expect(line).toContainText('-2');         // units
   await expect(line).toContainText('−₱20.00');    // at P10 each
+  // A negative amount reads in red (shared/redNegatives.js).
+  await expect(line.getByText('−₱20.00', { exact: true })).toHaveClass(/neg-amount/);
   await expect(line).toContainText(ADMIN);
   await expect(line).toContainText('Rolling');
   await expect(line).toContainText('Two broken');

@@ -442,3 +442,30 @@ html.touch-mode [role="switch"] { min-height: 0; }
   border-color: rgb(239 68 68 / 0.85) !important;
   box-shadow: 0 0 0 1px rgb(239 68 68 / 0.35);
 }
+
+/* A negative peso amount (shared/redNegatives.js). */
+.neg-amount { color: rgb(248 113 113) !important; }
+
+/* Tables as cards on phones (shared/phoneCards.js labels the cells). */
+@media (max-width: 639px) {
+  table.phone-cards { min-width: 0 !important; width: 100% !important; }
+  table.phone-cards thead { display: none; }
+  table.phone-cards, table.phone-cards tbody { display: block; }
+  table.phone-cards tbody tr {
+    display: block; margin: 0 0 10px; padding: 8px 10px;
+    border: 1px solid rgb(255 255 255 / 0.1); border-radius: 12px; background: rgb(255 255 255 / 0.02);
+  }
+  table.phone-cards tbody td {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    padding: 4px 0 !important; text-align: right !important; border: 0 !important; white-space: normal !important;
+  }
+  table.phone-cards tbody td::before {
+    content: attr(data-label); text-align: left; flex: 0 0 auto; max-width: 45%;
+    font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: rgb(var(--fg) / 0.6);
+  }
+  table.phone-cards tbody td[data-label=""]::before { content: none; }
+  table.phone-cards tbody td[data-label=""] { justify-content: flex-end; }
+  table.phone-cards tfoot { display: block; }
+  table.phone-cards tfoot tr { display: flex; justify-content: space-between; flex-wrap: wrap; padding: 6px 10px; }
+  table.phone-cards tfoot td { border: 0 !important; padding: 2px 0 !important; }
+}
