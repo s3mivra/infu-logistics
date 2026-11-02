@@ -74,7 +74,7 @@ describe('every screen can be reached', () => {
   });
 
   it('keeps the sidebar and the palette to what a person may open', () => {
-    const cashier = { can: (p) => p === 'orders.view', isSuperAdmin: false, moduleOn: () => true, businessType: 'fb' };
+    const cashier = { can: (p) => p === 'orders.view' || p.startsWith('screen.'), isSuperAdmin: false, moduleOn: () => true, businessType: 'fb' };
     const groups = visibleNavGroups(cashier);
     const ids = groups.flatMap((g) => g.items.map((i) => i.id));
     expect(ids).toContain('orders');

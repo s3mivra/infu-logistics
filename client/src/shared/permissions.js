@@ -14,7 +14,8 @@
 export function screenFamilies(catalog = []) {
   const fam = {};
   for (const p of catalog) {
-    if (!p || !p.parent || !String(p.key).startsWith('screen.')) continue;
+    // parent null: a family open to everyone (the sidebar's staff tabs).
+    if (!p || p.parent === undefined || !String(p.key).startsWith('screen.')) continue;
     const prefix = p.key.slice(0, p.key.lastIndexOf('.') + 1);
     (fam[prefix] = fam[prefix] || { parent: p.parent, keys: [] }).keys.push(p.key);
   }
@@ -25,7 +26,7 @@ export function screenFamilies(catalog = []) {
 export function effectivePermissions(list = [], catalog = []) {
   const set = new Set(list);
   for (const { parent, keys } of Object.values(screenFamilies(catalog))) {
-    if (!set.has(parent)) { keys.forEach((k) => set.delete(k)); continue; }
+    if (parent && !set.has(parent)) { keys.forEach((k) => set.delete(k)); continue; }
     if (!keys.some((k) => set.has(k))) keys.forEach((k) => set.add(k));
   }
   return set;
@@ -37,7 +38,7 @@ export function effectivePermissions(list = [], catalog = []) {
 export function pageLocked(list = [], key, catalog = []) {
   const fam = Object.values(screenFamilies(catalog)).find((f) => f.keys.includes(key));
   if (!fam) return false;
-  if (!list.includes(fam.parent)) return true;
+  if (fam.parent && !list.includes(fam.parent)) return true;
   const eff = effectivePermissions(list, catalog);
   const open = fam.keys.filter((k) => eff.has(k));
   return open.length === 1 && open[0] === key;

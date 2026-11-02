@@ -59,3 +59,14 @@ describe('offline clock queue', () => {
     expect(getQueuedClock().map(e => e.type)).toEqual(['out']);
   });
 });
+
+describe('clock queue owners', () => {
+  it("replays only the signed-in person's events and keeps the others'", async () => {
+    mem.clear();
+    queueClock('in', 'ana'); queueClock('in', 'ben');
+    const sent = [];
+    await flushClockQueue(async (e) => { sent.push(e.userId); return true; }, 'ben');
+    expect(sent).toEqual(['ben']);
+    expect(getQueuedClock().map((e) => e.userId)).toEqual(['ana']);
+  });
+});

@@ -2074,6 +2074,8 @@ const ClockEntrySchema = new mongoose.Schema({
   staffName:       { type: String, required: true },
   clockIn:         { type: Date, default: Date.now },
   clockOut:        { type: Date },
+  lastSeenAt:      { type: Date },          // last heartbeat from an open screen
+  autoClockedOut:  { type: Boolean },
   durationMinutes: { type: Number },        // gross minutes (clockIn → clockOut)
   breakMinutes:    { type: Number, default: 0 },  // total break minutes used this shift
   workedMinutes:   { type: Number },        // gross minus breaks (for payroll)

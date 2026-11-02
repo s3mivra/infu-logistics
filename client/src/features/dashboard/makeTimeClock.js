@@ -17,7 +17,8 @@ export default function makeTimeClock(deps) {
   // button reflect the staff member's optimistic state until the queue syncs.
   const applyQueuedClock = (base) => {
     let s = { ...base };
-    for (const e of getQueuedClock()) {
+    const me = auth.getUser()?._id;
+    for (const e of getQueuedClock().filter((x) => x.userId === me)) {
       if (e.type === 'in')  s = { ...s, isClockedIn: true,  onBreak: false };
       if (e.type === 'out') s = { ...s, isClockedIn: false, onBreak: false };
     }
@@ -65,7 +66,7 @@ export default function makeTimeClock(deps) {
   };
   const handleClockIn = async () => {
     if (!navigator.onLine) {
-      queueClock('in');
+      queueClock('in', auth.getUser()?._id);
       setClockStatus((s) => ({ ...s, isClockedIn: true, onBreak: false }));
       ui.alert('Clocked in (offline - will sync when back online).');
       return;
@@ -115,7 +116,7 @@ export default function makeTimeClock(deps) {
   };
   const handleClockOut = async () => {
     if (!navigator.onLine) {
-      queueClock('out');
+      queueClock('out', auth.getUser()?._id);
       setClockStatus((s) => ({ ...s, isClockedIn: false, onBreak: false }));
       setClockModalOpen(false);
       ui.alert('Clocked out (offline - will sync when back online).');

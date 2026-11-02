@@ -56,9 +56,12 @@ const CLOCK_QUEUE_KEY = 'semivra_offline_clock';
 export function getQueuedClock() {
   try { return JSON.parse(localStorage.getItem(CLOCK_QUEUE_KEY) || '[]'); } catch { return []; }
 }
-export function queueClock(type) { // type: 'in' | 'out' | 'break-start' | 'break-end'
+// Each event carries whose it is. A shared tablet changes hands without
+// anyone signing out, and an untagged queue was replayed with whoever was
+// signed in when the connection came back - clocking the wrong person.
+export function queueClock(type, userId) { // type: 'in' | 'out' | 'break-start' | 'break-end'
   const q = getQueuedClock();
-  q.push({ id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, type, at: new Date().toISOString() });
+  q.push({ id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, type, userId: userId || null, at: new Date().toISOString() });
   localStorage.setItem(CLOCK_QUEUE_KEY, JSON.stringify(q));
   return q.length;
 }
@@ -67,13 +70,17 @@ export function queueClock(type) { // type: 'in' | 'out' | 'break-start' | 'brea
 // shift backwards. Only events actually sent are removed, from a fresh read,
 // so one clocked while this was running is not erased.
 let _clockFlushing = false;
-export async function flushClockQueue(sender) {
+// With `userId`, only that person's events are sent; anyone else's wait for
+// them to sign in. An event with no owner (queued before owners were kept)
+// cannot be sent safely, so it is dropped.
+export async function flushClockQueue(sender, userId) {
   if (_clockFlushing) return { sent: 0, remaining: getQueuedClock().length };
   _clockFlushing = true;
   try {
-    const q = getQueuedClock();
-    if (!q.length) return { sent: 0, remaining: 0 };
-    const sentIds = new Set();
+    const all = getQueuedClock();
+    const sentIds = new Set(all.filter((e) => userId !== undefined && !e.userId).map((e) => e.id));
+    const q = userId === undefined ? all : all.filter((e) => e.userId && e.userId === userId);
+    if (!q.length && !sentIds.size) return { sent: 0, remaining: all.length };
     for (const e of q) {
       let ok = false;
       try { ok = !!(await sender(e)); } catch { ok = false; }
@@ -82,7 +89,7 @@ export async function flushClockQueue(sender) {
     }
     const now = getQueuedClock().filter(e => !sentIds.has(e.id));
     localStorage.setItem(CLOCK_QUEUE_KEY, JSON.stringify(now));
-    return { sent: sentIds.size, remaining: now.length };
+    return { sent: q.filter((e) => sentIds.has(e.id)).length, remaining: now.length };
   } finally {
     _clockFlushing = false;
   }

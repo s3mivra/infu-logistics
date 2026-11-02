@@ -1601,11 +1601,22 @@ export default function AdminDashboard() {
     } catch { return false; }
   };
 
+  // While clocked in, tell the server this screen is still here. If the pings
+  // stop for 15 minutes (power cut, signed out) it clocks the person out at the
+  // last one (server features/shifts.js).
+  useEffect(() => {
+    if (!isAuthenticated || !clockStatus.isClockedIn) return undefined;
+    const ping = () => { if (navigator.onLine) apiFetch('/api/clock/heartbeat', { method: 'POST', body: '{}' }).catch(() => {}); };
+    ping();
+    const t = setInterval(ping, 2 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [isAuthenticated, clockStatus.isClockedIn]);
+
   const flushOfflineQueue = () => {
     if (!navigator.onLine || !isAuthenticated) return;
     syncQueue(sendQueuedOrder).then(({ sent }) => { if (sent > 0) fetchOrders(); });
     if (getQueuedClock().length > 0) {
-      flushClockQueue(sendQueuedClock).then(({ sent }) => { if (sent > 0) fetchClockStatus(); });
+      flushClockQueue(sendQueuedClock, auth.getUser()?._id).then(({ sent }) => { if (sent > 0) fetchClockStatus(); });
     }
   };
 

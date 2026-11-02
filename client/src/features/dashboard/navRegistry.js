@@ -34,20 +34,20 @@ export const NAV_GROUPS = [
     items: [
       // Where everyone starts: what waits on them, then their usual screens.
       { id: 'home', label: 'Home', icon: Home, hint: 'What needs you today' },
-      { id: 'orders', label: 'Orders & POS', icon: ShoppingCart, perm: 'orders.view', hint: 'Take and manage orders' },
-      { id: 'inventory', label: 'Inventory & Stock', icon: Package, perm: 'inventory.view', hint: 'Stock levels, expiry' },
-      { id: 'hub', label: 'Hub', icon: Network, perm: 'inventory.view', hint: 'Linked businesses, transfers' },
+      { id: 'orders', label: 'Orders & POS', icon: ShoppingCart, perm: 'orders.view', screen: 'screen.sales.orders', hint: 'Take and manage orders' },
+      { id: 'inventory', label: 'Inventory & Stock', icon: Package, perm: 'inventory.view', screen: 'screen.stock.inventory', hint: 'Stock levels, expiry' },
+      { id: 'hub', label: 'Hub', icon: Network, perm: 'inventory.view', screen: 'screen.stock.hub', hint: 'Linked businesses, transfers' },
       // Raw materials -> finished item, approval-gated. Was logistics-only,
       // which hid it from exactly the business that needs it most: a cafe
       // makes its own Spanish Milk, Breve Milk, Biscoff Based and cold brew
       // from bought-in stock, and those in turn are recipe materials.
-      { id: 'production', label: 'Production', icon: Factory, perm: 'inventory.view', hint: 'Batches, raw materials' },
+      { id: 'production', label: 'Production', icon: Factory, perm: 'inventory.view', screen: 'screen.stock.production', hint: 'Batches, raw materials' },
       { id: 'procurement', label: 'Procurement', icon: Truck, perm: 'procurement.view', hint: 'Suppliers, POs' },
-      { id: 'clients', label: 'Clients', icon: Users, perm: 'orders.view', hint: 'Balances, credit limits' },
+      { id: 'clients', label: 'Clients', icon: Users, perm: 'orders.view', screen: 'screen.sales.clients', hint: 'Balances, credit limits' },
       // Prices asked for, not sales made. Lives beside Clients because
       // that is who asks, and nothing on it touches the books.
-      { id: 'quotations', label: 'Quotations', icon: FileText, perm: 'orders.view', hint: 'Prices asked for' },
-      { id: 'products', labelFor: (bt) => (bt === 'log' ? 'Catalog Setup' : 'Menu Setup'), icon: ChefHat, perm: 'products.view', hint: 'Products, prices' },
+      { id: 'quotations', label: 'Quotations', icon: FileText, perm: 'orders.view', screen: 'screen.sales.quotations', hint: 'Prices asked for' },
+      { id: 'products', labelFor: (bt) => (bt === 'log' ? 'Catalog Setup' : 'Menu Setup'), icon: ChefHat, perm: 'products.view', screen: 'screen.menu.products', hint: 'Products, prices' },
     ],
   },
   {
@@ -67,14 +67,14 @@ export const NAV_GROUPS = [
       // What a unit costs to make or buy, and the SRP that gives the margin
       // wanted - for any product, either business. Applying a price goes
       // through the normal price-change route and its approval.
-      { id: 'costing', label: 'Costing', icon: Calculator, perm: 'products.view', hint: 'Cost a product, set its SRP' },
+      { id: 'costing', label: 'Costing', icon: Calculator, perm: 'products.view', screen: 'screen.menu.costing', hint: 'Cost a product, set its SRP' },
       { id: 'history', label: 'Shifts & Cash', icon: Clock, perm: 'shifts.view', hint: 'Shift history, X-reading' },
       // Requisition slips waiting for a decision. Its own entry, not a Ledger
       // page: visible to any staff - the server scopes what comes back (without
       // requisitions.view you only see the slips you filed yourself), and
       // Approve / Reject still need requisitions.approve. It is drawn by the
       // Ledger screen in its "approvals only" mode, hence `sub`.
-      { id: 'approvals', label: 'Approvals', icon: ClipboardCheck, sub: 'approvals', hint: 'Requisition slips to approve' },
+      { id: 'approvals', label: 'Approvals', icon: ClipboardCheck, screen: 'screen.staff.approvals', sub: 'approvals', hint: 'Requisition slips to approve' },
       { id: 'audit', label: 'Audit Report', icon: ShieldCheck, perm: 'audit.view', hint: 'Who changed what' },
       { id: 'fixedassets', label: 'Fixed Assets', icon: Building2, perm: 'assets.view', hint: 'Register, depreciation' },
       // Optional modules: each appears only where the business has switched it
@@ -84,7 +84,7 @@ export const NAV_GROUPS = [
       { id: 'wht', label: 'Withholding Tax', icon: Receipt, perm: 'accounting.view', module: 'withholdingTax', hint: 'Held for the BIR' },
       { id: 'payroll', label: 'Payroll', icon: Wallet, perm: 'payroll.view', module: 'payroll', hint: 'Runs and payslips' },
       // Every staff member files their own; roster managers decide.
-      { id: 'timeoff', label: 'Leave & Overtime', icon: CalendarDays, hint: 'File and approve time off' },
+      { id: 'timeoff', label: 'Leave & Overtime', icon: CalendarDays, screen: 'screen.staff.timeoff', hint: 'File and approve time off' },
     ],
   },
   {
@@ -206,6 +206,8 @@ export const REPORT_TAB_GROUPS = [
 export const navItemVisible = (item, { can, isSuperAdmin, moduleOn }) => {
   if (item.superOnly) return !!isSuperAdmin;
   if (item.perm && !(isSuperAdmin || can?.(item.perm))) return false;
+  // A sidebar tab narrowed off in the person's role (authz.js SCREENS).
+  if (item.screen && !isSuperAdmin && can && !can(item.screen)) return false;
   if (item.module && moduleOn && !moduleOn(item.module)) return false;
   return true;
 };

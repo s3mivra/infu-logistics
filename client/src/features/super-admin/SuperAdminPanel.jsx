@@ -496,7 +496,7 @@ export default function SuperAdminPanel() {
   // while its tab is closed, or when it is the only page left open.
   const renderPermBox = (p, list, onToggle) => {
     const eff = effectivePermissions(list, permCatalog);
-    const locked = p.parent ? pageLocked(list, p.key, permCatalog) : false;
+    const locked = String(p.key).startsWith('screen.') ? pageLocked(list, p.key, permCatalog) : false;
     const why = p.parent && !list.includes(p.parent)
       ? `Needs "${permLabel[p.parent] || p.parent}" first`
       : locked ? 'The last open page of this tab - remove the tab permission to close it' : undefined;

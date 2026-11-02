@@ -160,6 +160,24 @@ export const SCREENS = [
     ['salestargets', 'Sales Targets'], ['deliverysheet', 'Delivery Sheet'],
     ['preplist', 'Prep List'], ['feedback', 'Customer Feedback'], ['supplierstatement', 'Supplier Statement'],
   ] },
+  // Sidebar tabs that share one permission, so a role can hold the permission
+  // and still see only some of them (Hub without Production, say). Same rules
+  // as pages: none named opens them all. The ids are the sidebar ids
+  // (navRegistry.js `screen:`).
+  { tab: 'stock', label: 'Sidebar: stock tabs', parent: 'inventory.view', pages: [
+    ['inventory', 'Inventory & Stock'], ['hub', 'Hub'], ['production', 'Production'],
+  ] },
+  { tab: 'sales', label: 'Sidebar: sales tabs', parent: 'orders.view', pages: [
+    ['orders', 'Orders & POS'], ['clients', 'Clients'], ['quotations', 'Quotations'],
+  ] },
+  { tab: 'menu', label: 'Sidebar: catalog tabs', parent: 'products.view', pages: [
+    ['products', 'Catalog / Menu Setup'], ['costing', 'Costing'],
+  ] },
+  // Open to every staff member until narrowed: parent null means no
+  // permission is needed for the tab itself.
+  { tab: 'staff', label: "Sidebar: everyone's tabs", parent: null, pages: [
+    ['approvals', 'Approvals'], ['timeoff', 'Leave & Overtime'],
+  ] },
 ];
 export const screenKey = (tab, page) => `screen.${tab}.${page}`;
 const SCREEN_FAMILIES = SCREENS.map((f) => ({
@@ -180,8 +198,12 @@ export const PERMISSION_KEYS = new Set(PERMISSIONS.map((p) => p.key));
 // them name a page, so each of their tabs opens in full.
 export function withScreens(list) {
   const set = new Set(list);
+  // Nothing held is nothing granted: the open-to-everyone tabs ride on
+  // having some access at all.
+  const anyAccess = set.size > 0;
   for (const fam of SCREEN_FAMILIES) {
-    if (!set.has(fam.parent)) { for (const k of fam.keys) set.delete(k); continue; }
+    if (!fam.parent && !anyAccess) continue;
+    if (fam.parent && !set.has(fam.parent)) { for (const k of fam.keys) set.delete(k); continue; }
     if (!fam.keys.some((k) => set.has(k))) for (const k of fam.keys) set.add(k);
   }
   return [...set];

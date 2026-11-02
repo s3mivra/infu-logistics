@@ -620,7 +620,7 @@ app.post('/api/clock/in', verifyToken, requireStaff, async (req, res) => {
     if (existing) return res.status(400).json({ success: false, error: 'Already clocked in.' });
     const at = parseClockAt(req.body?.at);
     const manilaDate = businessDateStr(at || new Date());
-    const doc = { staffId: req.user._id.toString(), staffName: req.user.name, date: manilaDate };
+    const doc = { staffId: req.user._id.toString(), staffName: req.user.name, date: manilaDate, lastSeenAt: at || new Date() };
     if (at) doc.clockIn = at;
     const entry = await ClockEntry.create(doc);
     res.json({ success: true, entry });
@@ -635,17 +635,54 @@ app.post('/api/clock/out', verifyToken, requireStaff, async (req, res) => {
     // Honor an offline timestamp, but never let clock-out precede clock-in.
     const at = parseClockAt(req.body?.at);
     const now = (at && at.getTime() >= new Date(entry.clockIn).getTime()) ? at : new Date();
-    // If still on break, close it out first.
-    const ob = openBreak(entry);
-    if (ob) { ob.end = now; ob.minutes = Math.round((now - ob.start) / 60000); entry.markModified('breaks'); }
-    entry.clockOut = now;
-    entry.durationMinutes = Math.round((now - entry.clockIn) / 60000);
-    entry.breakMinutes = completedBreakMinutes(entry);
-    entry.workedMinutes = Math.max(0, entry.durationMinutes - entry.breakMinutes);
+    closeEntry(entry, now);
     if (notes) entry.notes = notes;
     await entry.save();
     res.json({ success: true, entry });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
+// Close an entry at `now`, ending a break still running.
+function closeEntry(entry, now) {
+  const ob = openBreak(entry);
+  if (ob) { ob.end = now; ob.minutes = Math.round((now - ob.start) / 60000); entry.markModified('breaks'); }
+  entry.clockOut = now;
+  entry.durationMinutes = Math.max(0, Math.round((now - entry.clockIn) / 60000));
+  entry.breakMinutes = completedBreakMinutes(entry);
+  entry.workedMinutes = Math.max(0, entry.durationMinutes - entry.breakMinutes);
+}
+
+// The open screen pings this every couple of minutes while its person is
+// clocked in. When the pings stop for CLOCK_AWAY_MIN - the power went, the
+// tablet died, they signed out - the sweep below clocks them out at the last
+// ping, so the hours end when they were last seen rather than running on.
+const CLOCK_AWAY_MIN = 15;
+app.post('/api/clock/heartbeat', verifyToken, requireStaff, async (req, res) => {
+  try {
+    const r = await ClockEntry.updateOne({ staffId: req.user._id.toString(), clockOut: { $exists: false } }, { $set: { lastSeenAt: new Date() } });
+    res.json({ success: true, isClockedIn: r.matchedCount > 0 });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+// Only entries that have been pinged: one opened before this existed has no
+// lastSeenAt and is left for a person to close.
+async function sweepAwayClocks() {
+  const cutoff = new Date(Date.now() - CLOCK_AWAY_MIN * 60000);
+  const stale = await ClockEntry.find({ clockOut: { $exists: false }, lastSeenAt: { $lt: cutoff } });
+  for (const entry of stale) {
+    closeEntry(entry, new Date(Math.max(new Date(entry.lastSeenAt).getTime(), new Date(entry.clockIn).getTime())));
+    entry.autoClockedOut = true;
+    entry.notes = [entry.notes, `Clocked out automatically: away over ${CLOCK_AWAY_MIN} minutes.`].filter(Boolean).join(' ');
+    await entry.save();
+  }
+  return stale.length;
+}
+if (process.env.NODE_ENV !== 'test') {
+  const t = setInterval(() => { sweepAwayClocks().catch(() => {}); }, 60000);
+  t.unref?.();
+}
+app.post('/api/clock/sweep', verifyToken, requireStaff, requirePermission('shifts.view'), async (req, res) => {
+  try { res.json({ success: true, closed: await sweepAwayClocks() }); }
+  catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
 // Start a break. Blocked if not clocked in, already on break, or the 1-hour cap is used up.
