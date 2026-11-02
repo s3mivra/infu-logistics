@@ -1,3 +1,5 @@
+import PayrollRules from './PayrollRules';
+import PayrollReport from './PayrollReport';
 import { useCallback, useEffect, useState } from 'react';
 import { formatPeso } from '../../shared/money.js';
 import { statusTone } from '../../shared/statusTone';
@@ -32,11 +34,17 @@ const STATUS_TONE = new Proxy({}, { get: (_, k) => statusTone(k) });
 const blankLine = () => ({
   employeeName: '', employeeId: '', grossPay: '', allowances: '', sss: '', philhealth: '',
   pagibig: '', withholdingTax: '', otherDeductions: '', notes: '', sel: false,
+  // For "Compute" (server lib/payrollCalc.js): non-taxable pay, overtime hours,
+  // days absent at the daily rate - and the result, cleared when these change.
+  nonTaxable: '', otHours: '', absentDays: '', dailyRate: '', computed: null,
 });
+// Changing any of these makes the computed figures out of date.
+const COMPUTE_INPUTS = new Set(['grossPay', 'allowances', 'nonTaxable', 'otHours', 'absentDays']);
 
 const num = (v) => Number(v) || 0;
 const round2 = (n) => Math.round(n * 100) / 100;
-const grossOf = (l) => num(l.grossPay) + num(l.allowances);
+const grossOf = (l) => (l.computed ? num(l.computed.grossPay) - num(l.computed.absenceDeduction)
+  : num(l.grossPay) + num(l.allowances) + num(l.nonTaxable));
 const netOf = (l) => grossOf(l) - num(l.sss) - num(l.philhealth) - num(l.pagibig)
   - num(l.withholdingTax) - num(l.otherDeductions);
 
@@ -79,6 +87,8 @@ export default function PayrollTab() {
   // The filing view: what to hand each agency, employee by employee, under
   // their own account number.
   const [remitOpen, setRemitOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -125,6 +135,14 @@ export default function PayrollTab() {
         <button onClick={load} disabled={loading}
           className="flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-40">
           <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Refresh
+        </button>
+        <button onClick={() => setRulesOpen(true)}
+          className="flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition">
+          Tax &amp; contribution rules
+        </button>
+        <button onClick={() => setReportOpen(true)}
+          className="flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition">
+          Payroll report
         </button>
         <button onClick={() => setRemitOpen(true)}
           className="flex items-center gap-1.5 text-[10px] border border-white/15 text-fg/70 hover:text-fg hover:bg-white/5 px-3 py-2 rounded-lg font-bold uppercase tracking-wider transition">
@@ -238,6 +256,8 @@ export default function PayrollTab() {
       )}
 
       {remitOpen && <RemittanceModal apiFetch={apiFetch} onClose={() => setRemitOpen(false)} />}
+      {rulesOpen && <PayrollRules apiFetch={apiFetch} onClose={() => setRulesOpen(false)} />}
+      {reportOpen && <PayrollReport apiFetch={apiFetch} onClose={() => setReportOpen(false)} />}
     </div>
   );
 }
@@ -248,8 +268,39 @@ function DraftModal({ apiFetch, onClose, onDone }) {
   const [payDate, setPayDate] = useState('');
   const [lines, setLines] = useState([blankLine()]);
   const [saving, setSaving] = useState(false);
+  const [frequency, setFrequency] = useState('semiMonthly');
 
-  const setLine = (i, k, v) => setLines(prev => prev.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
+  const setLine = (i, k, v) => setLines(prev => prev.map((l, j) => (j === i ? { ...l, [k]: v, ...(COMPUTE_INPUTS.has(k) ? { computed: null } : {}) } : l)));
+
+  // SSS, PhilHealth, Pag-IBIG and tax worked out by the server's rules
+  // (Payroll > Rules). Typed amounts in those columns are replaced; change one
+  // afterwards and it stays as typed.
+  const [computing, setComputing] = useState(false);
+  const computeLines = async (src = lines) => {
+    const filled = src.filter(l => String(l.employeeName).trim());
+    if (!filled.length) { ui.alert('Add the employees first.'); return null; }
+    setComputing(true);
+    try {
+      const d = await (await apiFetch('/api/payroll/compute', { method: 'POST', body: JSON.stringify({
+        frequency,
+        lines: filled.map(l => ({
+          employeeName: l.employeeName, dailyRate: num(l.dailyRate), absentDays: num(l.absentDays), overtimeHours: num(l.otHours),
+          earnings: { basic: num(l.grossPay), allowance: num(l.allowances), nonTaxableAllowance: num(l.nonTaxable) },
+          otherDeductions: num(l.otherDeductions),
+        })),
+      }) })).json();
+      if (!d.success) { ui.alert(d.error || 'Could not compute.'); return null; }
+      let k = 0;
+      const next = src.map(l => {
+        if (!String(l.employeeName).trim()) return l;
+        const c = d.lines[k++];
+        return { ...l, computed: c, sss: String(c.sss), philhealth: String(c.philhealth), pagibig: String(c.pagibig), withholdingTax: String(c.withholdingTax) };
+      });
+      setLines(next);
+      return next;
+    } catch { ui.alert('Network error.'); return null; }
+    finally { setComputing(false); }
+  };
 
   // The accounts ticked "Employee" in User Control. Picking one by name ties the
   // line to that account, so the payslip carries its numbers; a name typed by
@@ -292,7 +343,11 @@ function DraftModal({ apiFetch, onClose, onDone }) {
       if (!d.rows.length) return ui.alert('Nobody clocked in, took leave or worked overtime in that period.');
       const kept = lines.filter(l => String(l.employeeName).trim() && !d.rows.some(r => r.name === l.employeeName));
       setLines([...kept, ...d.rows.map(r => ({
-        ...blankLine(), employeeName: r.name, employeeId: r.userId, grossPay: r.suggestedGross ? String(r.suggestedGross) : '',
+        ...blankLine(), employeeName: r.name, employeeId: r.userId,
+        // Basic for the days worked and paid leave; overtime goes in its own
+        // column so Compute prices it at the overtime rate.
+        grossPay: r.dailyRate ? String(Math.round(r.dailyRate * (r.daysWorked + r.paidLeaveDays) * 100) / 100) : '',
+        dailyRate: r.dailyRate ? String(r.dailyRate) : '', otHours: r.overtimeHours ? String(r.overtimeHours) : '',
         notes: [
           `${r.daysWorked} day(s) worked`,
           r.paidLeaveDays ? `${r.paidLeaveDays} paid leave` : '',
@@ -338,8 +393,14 @@ function DraftModal({ apiFetch, onClose, onDone }) {
 
   const submit = async () => {
     if (!periodStart || !periodEnd) return ui.alert('Set the pay period.');
-    const filled = lines.filter(l => String(l.employeeName).trim());
+    let filled = lines.filter(l => String(l.employeeName).trim());
     if (filled.length === 0) return ui.alert('Add at least one employee.');
+    // Nothing typed for the government deductions and not computed yet: compute.
+    if (filled.some(l => !l.computed && !['sss', 'philhealth', 'pagibig', 'withholdingTax'].some(k => String(l[k]).trim()))) {
+      const next = await computeLines();
+      if (!next) return;
+      filled = next.filter(l => String(l.employeeName).trim());
+    }
     const bad = filled.find(l => netOf(l) < 0);
     if (bad) return ui.alert(`${bad.employeeName}: the deductions come to more than the gross pay.`);
 
@@ -348,13 +409,19 @@ function DraftModal({ apiFetch, onClose, onDone }) {
       const d = await (await apiFetch('/api/payroll-runs', {
         method: 'POST',
         body: JSON.stringify({
-          periodStart, periodEnd, payDate: payDate || periodEnd,
+          periodStart, periodEnd, payDate: payDate || periodEnd, frequency,
           lines: filled.map(l => ({
             employeeName: l.employeeName, employeeId: l.employeeId,
-            basicPay: num(l.grossPay), allowances: num(l.allowances), grossPay: num(l.grossPay),
+            basicPay: num(l.grossPay), allowances: num(l.allowances) + num(l.nonTaxable), grossPay: num(l.grossPay),
             sss: num(l.sss), philhealth: num(l.philhealth),
             pagibig: num(l.pagibig), withholdingTax: num(l.withholdingTax),
             otherDeductions: num(l.otherDeductions), notes: l.notes,
+            // The computed breakdown, for the payslip and the payroll report.
+            ...(l.computed ? {
+              earnings: l.computed.earnings, absenceDeduction: l.computed.absenceDeduction,
+              taxableIncome: l.computed.taxableIncome, nonTaxablePay: l.computed.nonTaxablePay,
+              sssER: l.computed.sssER, philhealthER: l.computed.philhealthER, pagibigER: l.computed.pagibigER,
+            } : {}),
           })),
         }),
       })).json();
@@ -366,8 +433,8 @@ function DraftModal({ apiFetch, onClose, onDone }) {
   };
 
   const COLS = [
-    ['grossPay', 'Basic'], ['allowances', 'Extra'], ['sss', 'SSS'], ['philhealth', 'PhilHealth'],
-    ['pagibig', 'Pag-IBIG'], ['withholdingTax', 'Tax'], ['otherDeductions', 'Other'],
+    ['grossPay', 'Basic'], ['allowances', 'Taxable extra'], ['nonTaxable', 'Non-taxable'], ['otHours', 'OT hrs'], ['absentDays', 'Absent days'],
+    ['sss', 'SSS'], ['philhealth', 'PhilHealth'], ['pagibig', 'Pag-IBIG'], ['withholdingTax', 'Tax'], ['otherDeductions', 'Other'],
   ];
 
   return (
@@ -381,7 +448,16 @@ function DraftModal({ apiFetch, onClose, onDone }) {
           <button onClick={onClose} className="text-fg/70 hover:text-fg transition"><X size={18} /></button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-4">
+          <label className="block">
+            <span className="block text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1">Paid</span>
+            <select className={inputCls} value={frequency} onChange={e => { setFrequency(e.target.value); setLines(prev => prev.map(l => ({ ...l, computed: null }))); }}>
+              <option value="semiMonthly">Twice a month</option>
+              <option value="monthly">Monthly</option>
+              <option value="weekly">Weekly</option>
+            </select>
+            <span className="block text-[10px] text-fg/70 mt-1">Picks the tax table and splits the monthly contributions.</span>
+          </label>
           <label className="block">
             <span className="block text-[9px] font-black uppercase tracking-widest text-fg/70 mb-1">Period start</span>
             <input type="date" className={inputCls} value={periodStart} onChange={e => setPeriodStart(e.target.value)} />
@@ -434,7 +510,7 @@ function DraftModal({ apiFetch, onClose, onDone }) {
         </div>
 
         <div className="overflow-x-auto border border-white/10 rounded-lg">
-          <table className="w-full text-xs min-w-[960px]">
+          <table className="w-full text-xs min-w-[1240px]">
             <thead>
               <tr className="text-[9px] font-black uppercase tracking-widest text-fg/70 border-b border-white/10">
                 <th className="w-8 px-2 py-2">
@@ -466,8 +542,10 @@ function DraftModal({ apiFetch, onClose, onDone }) {
                           onChange={e => setLine(i, k, e.target.value)} placeholder="0" />
                       </td>
                     ))}
-                    <td className={`px-2 py-1.5 text-right tabular-nums font-bold ${net < 0 ? 'text-danger' : 'text-fg'}`}>
+                    <td className={`px-2 py-1.5 text-right tabular-nums font-bold ${net < 0 ? 'text-danger' : 'text-fg'}`}
+                      title={l.computed ? `Taxable income ${peso(l.computed.taxableIncome)} · non-taxable ${peso(l.computed.nonTaxablePay)} · absences ${peso(l.computed.absenceDeduction)}` : 'Not computed yet'}>
                       {peso(net)}
+                      {l.computed && <span className="block text-[9px] font-normal text-fg/60">taxable {peso(l.computed.taxableIncome)}</span>}
                     </td>
                     <td className="px-2 py-1.5">
                       {lines.length > 1 && (
@@ -502,6 +580,10 @@ function DraftModal({ apiFetch, onClose, onDone }) {
           <button onClick={addCommissions} disabled={filling}
             className="flex items-center gap-1.5 text-[10px] border border-brand/40 text-brand hover:bg-brand/10 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-50">
             Add commissions
+          </button>
+          <button onClick={() => computeLines()} disabled={computing}
+            className="flex items-center gap-1.5 text-[10px] bg-brand text-on-brand hover:bg-brand/90 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition disabled:opacity-50">
+            {computing ? 'Computing…' : 'Compute SSS, PhilHealth, Pag-IBIG & tax'}
           </button>
           </div>
           <p className="text-xs text-fg/65">
@@ -556,7 +638,11 @@ function printPayslip(run, line, settings) {
       { label: 'Reference', key: 'ref' },
       { label: 'Amount', key: 'amount', align: 'right', money: true },
     ],
-    items: [
+    items: line.earnings?.length ? [
+      ...line.earnings.map(e => ({ desc: e.label, ref: e.taxable ? 'Taxable' : 'Non-taxable', amount: e.amount })),
+      ...(Number(line.absenceDeduction) > 0 ? [{ desc: 'Less: Absences / late', ref: '', amount: -Number(line.absenceDeduction) }] : []),
+      ...deductions.map(([label, amt, ref]) => ({ desc: `Less: ${label}`, ref: ref || '', amount: amt })),
+    ] : [
       ...(Number(line.allowances) > 0
         ? [{ desc: 'Basic pay', ref: '', amount: line.basicPay ?? (Number(line.grossPay) - Number(line.allowances)) },
            { desc: 'Extra pay (allowances, bonus)', ref: '', amount: line.allowances }]
@@ -565,12 +651,15 @@ function printPayslip(run, line, settings) {
     ],
     totals: [
       { label: 'Gross pay', value: line.grossPay },
+      ...(line.earnings?.length ? [{ label: 'Taxable income', value: line.taxableIncome }] : []),
       { label: 'Total deductions', value: Number(line.grossPay || 0) - Number(line.netPay || 0) },
       { label: 'NET PAY', value: line.netPay, grand: true },
     ],
     termsTitle: 'Please note',
     terms: [
       'The deductions above are withheld from your pay and remitted to the agency shown against each one.',
+      ...(Number(line.sssER) + Number(line.philhealthER) + Number(line.pagibigER) > 0
+        ? [`Your employer also paid, on top of your pay: SSS ${peso(line.sssER)}, PhilHealth ${peso(line.philhealthER)}, Pag-IBIG ${peso(line.pagibigER)}.`] : []),
       'Keep this payslip - it is your record of what was withheld under your own account numbers.',
       'If anything here does not agree with your records, raise it with the office before the next pay date.',
     ],

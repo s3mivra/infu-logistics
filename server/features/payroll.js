@@ -24,6 +24,7 @@ import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { requireModule } from '../lib/optionalModules.js';
 import { commissionsFromDb } from '../lib/commissions.js';
+import { computeLine, mergeRules, readRules, PAY_FREQUENCIES } from '../lib/payrollCalc.js';
 
 import { atomic } from '../lib/atomicRoute.js';
 export default function registerPayroll(ctx) {
@@ -56,9 +57,15 @@ export default function registerPayroll(ctx) {
     // screen does), else `grossPay` as it always was. Extra pay is added on
     // top; a stored line sent back carries basicPay, so it is never added twice.
     const hasSplit = raw?.basicPay !== undefined && raw?.basicPay !== null && raw?.basicPay !== '';
-    const basic = money(hasSplit ? raw.basicPay : raw?.grossPay);
-    const allowances = Math.max(0, money(raw?.allowances));
-    const gross = money(basic + allowances);
+    // A computed line (lib/payrollCalc.js) carries its earnings: gross is
+    // what was earned less absences. A hand-typed line is basic + extra.
+    const earnings = Array.isArray(raw?.earnings) ? raw.earnings
+      .map(e => ({ key: String(e.key || ''), label: String(e.label || e.key || '').slice(0, 80), amount: money(e.amount), taxable: !!e.taxable }))
+      .filter(e => e.amount > 0) : [];
+    const absenceDeduction = Math.max(0, money(raw?.absenceDeduction));
+    const basic = earnings.length ? money(earnings.filter(e => e.key === 'basic').reduce((s, e) => s + e.amount, 0)) : money(hasSplit ? raw.basicPay : raw?.grossPay);
+    const allowances = earnings.length ? money(earnings.filter(e => e.key !== 'basic').reduce((s, e) => s + e.amount, 0)) : Math.max(0, money(raw?.allowances));
+    const gross = money(basic + allowances - absenceDeduction);
     if (!(gross > 0)) throw new Error(`${raw?.employeeName || 'A line'} needs a gross pay above zero.`);
     if (!String(raw?.employeeName || '').trim()) throw new Error('Every line needs an employee name.');
 
@@ -86,6 +93,10 @@ export default function registerPayroll(ctx) {
       basicPay: basic, allowances, grossPay: gross, sss, philhealth, pagibig, withholdingTax, otherDeductions,
       netPay: money(gross - deductions),
       notes: String(raw.notes || '').slice(0, 200),
+      earnings, absenceDeduction,
+      taxableIncome: Math.max(0, money(raw.taxableIncome)),
+      nonTaxablePay: Math.max(0, money(raw.nonTaxablePay)),
+      sssER: Math.max(0, money(raw.sssER)), philhealthER: Math.max(0, money(raw.philhealthER)), pagibigER: Math.max(0, money(raw.pagibigER)),
     };
   }
 
@@ -124,6 +135,7 @@ export default function registerPayroll(ctx) {
     withholdingTax: sum(lines, 'withholdingTax'),
     otherDeductions: sum(lines, 'otherDeductions'),
     net: sum(lines, 'netPay'),
+    sssER: sum(lines, 'sssER'), philhealthER: sum(lines, 'philhealthER'), pagibigER: sum(lines, 'pagibigER'),
   });
 
   // ── LIST ──────────────────────────────────────────────────────────────────
@@ -141,6 +153,59 @@ export default function registerPayroll(ctx) {
         createdAt: { $gte: dayStart(start), $lte: dayEnd(end) },
       });
       res.json({ success: true, sellers: sellers.filter((x) => x.commissionEarned > 0) });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  // ── RULES AND COMPUTATION ─────────────────────────────────────────────────
+  // Tax brackets, contribution rates and which pay is taxable: defaults from
+  // lib/payrollCalc.js, changed here when the government changes them.
+  const loadRules = async () => mergeRules((await Settings.findOne({ key: 'payrollRules' }).lean())?.value);
+  app.get('/api/payroll/rules', verifyToken, ...canView, async (req, res) => {
+    try { res.json({ success: true, rules: await loadRules() }); }
+    catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+  app.put('/api/payroll/rules', verifyToken, ...canPost, async (req, res) => {
+    try {
+      const read = req.body?.reset ? { rules: mergeRules({}) } : readRules(req.body);
+      if (read.error) return res.status(400).json({ success: false, error: read.error });
+      const before = await loadRules();
+      await Settings.findOneAndUpdate({ key: 'payrollRules' }, { $set: { value: req.body?.reset ? null : read.rules } }, { upsert: true });
+      await logAudit(req, { action: 'update', entity: 'PayrollRules', before, after: read.rules });
+      res.json({ success: true, rules: read.rules });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+  // Works the lines out without saving: the screen shows the result to check.
+  app.post('/api/payroll/compute', verifyToken, ...canView, async (req, res) => {
+    try {
+      const frequency = PAY_FREQUENCIES[req.body?.frequency] ? req.body.frequency : 'semiMonthly';
+      const rules = await loadRules();
+      const lines = (Array.isArray(req.body?.lines) ? req.body.lines : []).slice(0, 500)
+        .map(l => ({ employeeName: l.employeeName, ...computeLine(l, rules, frequency) }));
+      res.json({ success: true, frequency, lines });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
+  // ── PAYROLL REPORT ────────────────────────────────────────────────────────
+  // Approved and paid runs over a range, per employee: what was earned
+  // (taxable and not), taken off, withheld, and what the employer paid on top.
+  app.get('/api/payroll/report', verifyToken, ...canView, async (req, res) => {
+    try {
+      const { start, end } = req.query;
+      if (!start || !end) return res.status(400).json({ success: false, error: 'Give a start and an end date.' });
+      const runs = await PayrollRun.find({ businessType: BUSINESS_TYPE, ...tenantScope(req), status: { $in: ['Approved', 'Paid'] },
+        periodEnd: { $gte: dayStart(start), $lte: dayEnd(end) } }).sort({ periodEnd: 1 }).lean();
+      const FIELDS = ['grossPay', 'taxableIncome', 'nonTaxablePay', 'absenceDeduction', 'sss', 'philhealth', 'pagibig', 'withholdingTax', 'otherDeductions', 'netPay', 'sssER', 'philhealthER', 'pagibigER'];
+      const by = new Map();
+      for (const r of runs) for (const l of r.lines || []) {
+        const k = l.employeeName;
+        const row = by.get(k) || { employeeName: k, employeeId: l.employeeId || '', tin: l.tin || '', runs: 0, ...Object.fromEntries(FIELDS.map(f => [f, 0])) };
+        row.runs += 1;
+        for (const f of FIELDS) row[f] = money(row[f] + (Number(l[f]) || 0));
+        by.set(k, row);
+      }
+      const rows = [...by.values()].sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+      const totals = Object.fromEntries(FIELDS.map(f => [f, money(rows.reduce((s, r) => s + r[f], 0))]));
+      res.json({ success: true, start, end, runs: runs.map(r => ({ reference: r.reference, periodStart: r.periodStart, periodEnd: r.periodEnd, status: r.status })), rows, totals });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
 
@@ -265,6 +330,7 @@ export default function registerPayroll(ctx) {
   app.post('/api/payroll-runs', verifyToken, ...canPost, async (req, res) => {
     try {
       const { periodStart, periodEnd, payDate, lines, notes } = req.body || {};
+      const frequency = PAY_FREQUENCIES[req.body?.frequency] ? req.body.frequency : 'semiMonthly';
       if (!periodStart || !periodEnd) return res.status(400).json({ success: false, error: 'The pay period start and end are required.' });
       const start = dayStart(periodStart);
       const end = dayEnd(periodEnd);
@@ -285,7 +351,7 @@ export default function registerPayroll(ctx) {
         reference: await mkSeqRef('PAY'),
         periodStart: start, periodEnd: end,
         payDate: payDate ? dayStart(payDate) : end,
-        lines: built, totals: totalsFor(built),
+        lines: built, totals: totalsFor(built), frequency,
         notes: notes || '', createdBy: req.user?.name || '',
       });
 
@@ -342,6 +408,14 @@ export default function registerPayroll(ctx) {
       // Anything else held back (a cash advance being repaid, a uniform) is
       // still the employee's money not yet handed over, so it sits with the
       // rest of the net pay obligation rather than reducing the wage expense.
+      // The employer's own SSS, PhilHealth and Pag-IBIG: a benefits expense,
+      // owed to the same agencies as the employee shares.
+      const ER = { sssER: '240100', philhealthER: '240200', pagibigER: '240300' };
+      const erTotal = money(Object.keys(ER).reduce((s, k) => s + (t[k] || 0), 0));
+      if (erTotal > 0) {
+        lines.push({ accountCode: '620000', accountName: nameOf('620000', 'Employee Benefits'), debit: erTotal, credit: 0 });
+        for (const [field, code] of Object.entries(ER)) if (t[field] > 0) lines.push({ accountCode: code, accountName: nameOf(code), debit: 0, credit: t[field] });
+      }
       const owedToStaff = money(t.net + t.otherDeductions);
       if (owedToStaff > 0) {
         lines.push({ accountCode: '240400', accountName: nameOf('240400', 'Net Pay Payable'), debit: 0, credit: owedToStaff });
