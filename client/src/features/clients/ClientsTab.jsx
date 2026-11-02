@@ -671,7 +671,7 @@ export default function ClientsTab() {
                                 <button onClick={() => copyText(signInUrl)} className={`${chip} border border-white/15 text-fg/80 hover:bg-white/5`}>
                                   <Link2 size={13} /> Copy sign-in link
                                 </button>
-                              ) : isSuperAdmin ? (
+                              ) : (isSuperAdmin || can('clients.invite')) ? (
                                 <button onClick={() => newSetupLink(c)} className={`${chip} border border-white/15 text-fg/80 hover:bg-white/5`}>
                                   <Link2 size={13} /> New setup link
                                 </button>

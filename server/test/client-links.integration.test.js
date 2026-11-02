@@ -60,6 +60,14 @@ describe('client links', () => {
     expect((await M('ClientAccount').findById(onboarded._id).lean()).onboardingToken).toBeFalsy();
   });
 
+  it('staff with Create client links renew an expired link, but never for a client with a login', async () => {
+    const r = await as(tok.inviter, 'post', `/api/client-accounts/${_lapsed._id}/onboard-link`);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect((await M('ClientAccount').findById(_lapsed._id).lean()).onboardingToken).toBe(r.body.token);
+    expect((await as(tok.inviter, 'post', `/api/client-accounts/${onboarded._id}/onboard-link`)).status).toBe(403);
+    expect((await M('ClientAccount').findById(onboarded._id).lean()).onboardingToken).toBeFalsy();
+  });
+
   it('without the permission, no links at all', async () => {
     expect((await as(tok.cashier, 'get', '/api/client-accounts/links')).status).toBe(403);
   });

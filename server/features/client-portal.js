@@ -827,10 +827,17 @@ app.post('/api/client-accounts/invite', clientLoginOnly, verifyToken, requireSta
 // Generate: superadmin-only, from the Command Center. The client then opens
 // the link with NO auth at all (that's the point - they don't have a login
 // yet), fills in their own details, and sets their own username/password.
-app.post('/api/client-accounts/:id/onboard-link', clientLoginOnly, verifyToken, requireSuperAdmin, async (req, res) => {
+// Staff who may create client links (clients.invite) may also renew one that
+// ran out - but only for a client who never set a login. A client with a
+// login keeps it: a fresh setup link would let whoever holds it take over.
+app.post('/api/client-accounts/:id/onboard-link', clientLoginOnly, verifyToken, requireStaff, async (req, res) => {
   try {
+    const isOwner = req.user.role === 'superadmin';
+    if (!isOwner && !hasPermission(req.user, 'clients.invite')) return res.status(403).json({ success: false, error: 'You need the "Create client links" permission.' });
     const client = await ClientAccount.findById(req.params.id);
     if (!client) return res.status(404).json({ success: false, error: 'Client account not found.' });
+    const hasLogin = !!client.username && !String(client.username).startsWith('_');
+    if (!isOwner && hasLogin) return res.status(403).json({ success: false, error: 'This client already has a login - only the owner can issue a new setup link.' });
     const token = crypto.randomBytes(24).toString('hex');
     client.onboardingToken = token;
     client.onboardingTokenExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
