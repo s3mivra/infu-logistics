@@ -101,6 +101,14 @@ export default function defineClientModels({ BUSINESS_TYPE, log }) {
       at:          { type: Date, default: Date.now },
     }],
   }, { timestamps: true });
+  // A new client with no price tier starts on the SRP tier, when there is one.
+  ClientAccountSchema.pre('save', async function () {
+    if (!this.isNew || (this.segments || []).length) return;
+    try {
+      const srp = await mongoose.model('PriceTier').findOne({ pricingMode: 'srp', isActive: true, businessType: this.businessType || BUSINESS_TYPE }, { name: 1 }).lean();
+      if (srp) this.segments = [srp.name];
+    } catch { /* no tier: list price */ }
+  });
   const ClientAccount = mongoose.model('ClientAccount', ClientAccountSchema);
 
   // --- AR COLLECTION REMINDERS ---

@@ -1206,6 +1206,22 @@ const runStartupTasks = async () => {
         await refreshCustomRolePerms();
         log.info('✅ Job roles created');
       }
+      // Once: an SRP tier (each item's SRP from stock), and every client not
+      // in any tier yet put on it. Clients already in a tier keep theirs.
+      if (!(await Settings.findOne({ key: 'srpTierSeedV1' }).lean())) {
+        const PriceTier = mongoose.model('PriceTier');
+        const ClientAccount = mongoose.model('ClientAccount');
+        let srp = await PriceTier.findOne({ businessType: BUSINESS_TYPE, pricingMode: 'srp' }).lean();
+        if (!srp && !(await PriceTier.exists({ businessType: BUSINESS_TYPE, name: { $regex: '^SRP Price$', $options: 'i' } }))) {
+          srp = (await PriceTier.create({ businessType: BUSINESS_TYPE, name: 'SRP Price', pricingMode: 'srp', percent: 0 })).toObject();
+        }
+        if (srp) {
+          const names = (await PriceTier.find({ businessType: BUSINESS_TYPE }, { name: 1 }).lean()).map((t) => t.name);
+          const r = await ClientAccount.updateMany({ segments: { $nin: names } }, { $addToSet: { segments: srp.name } });
+          log.info(`✅ SRP tier ready; ${r.modifiedCount} client(s) put on it`);
+        }
+        await Settings.findOneAndUpdate({ key: 'srpTierSeedV1' }, { key: 'srpTierSeedV1', value: true }, { upsert: true });
+      }
     } catch (err) {
       log.error({ err }, 'Owner role seed failed');
     }
