@@ -297,7 +297,7 @@ export default function defineClientModels({ BUSINESS_TYPE, log }) {
     // behaviour). 'per_product' = this tier instead prices EVERY product
     // individually via `productPrices` below - for a dealer sheet that isn't a
     // clean percent off list price. `percent` is ignored in that mode.
-    pricingMode: { type: String, enum: ['percent', 'per_product'], default: 'percent' },
+    pricingMode: { type: String, enum: ['percent', 'per_product', 'srp'], default: 'percent' },
     // Only meaningful when pricingMode === 'per_product'. One row per product
     // this tier has an explicit price for; a product with no row here has no
     // per-product rate from this tier (falls through to whatever else applies).

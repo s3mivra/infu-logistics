@@ -10,6 +10,7 @@
 import { captureError } from '../lib/errorLog.js';
 import { requirePermission } from '../lib/authz.js';
 import { resolveTierPrice } from '../lib/priceTiers.js';
+import { expandSrpTiers } from '../lib/srpTier.js';
 import { readTierRows, applyTierEntries, holdTierEntries } from '../lib/tierPriceImport.js';
 
 export default function registerPriceTiers(ctx) {
@@ -54,7 +55,7 @@ export default function registerPriceTiers(ctx) {
       }).lean();
       if (clash) return res.status(400).json({ success: false, error: `A tier named "${clash.name}" already exists.` });
 
-      const pricingMode = req.body?.pricingMode === 'per_product' ? 'per_product' : 'percent';
+      const pricingMode = ['per_product', 'srp'].includes(req.body?.pricingMode) ? req.body.pricingMode : 'percent';
       const tier = await PriceTier.create({
         businessType: BUSINESS_TYPE, ...tenantScope(req),
         name,
@@ -104,7 +105,7 @@ export default function registerPriceTiers(ctx) {
         tier.name = name;
       }
       if (req.body?.percent !== undefined) tier.percent = cleanPct(req.body.percent);
-      if (req.body?.pricingMode !== undefined) tier.pricingMode = req.body.pricingMode === 'per_product' ? 'per_product' : 'percent';
+      if (req.body?.pricingMode !== undefined) tier.pricingMode = ['per_product', 'srp'].includes(req.body.pricingMode) ? req.body.pricingMode : 'percent';
       if (req.body?.note !== undefined) tier.note = String(req.body.note || '').trim().slice(0, 200);
       if (req.body?.isActive !== undefined) tier.isActive = !!req.body.isActive;
       await tier.save();
@@ -269,8 +270,8 @@ export default function registerPriceTiers(ctx) {
         // product's NAME can be edited in the sheet without breaking the match.
         Product.find({}, { name: 1, category: 1, basePrice: 1, isAvailable: 1, productCode: 1 }).sort({ category: 1, name: 1 }).lean(),
       ]);
-      const rows = tiers.map(t => ({
-        _id: t._id, name: t.name, percent: t.percent, pricingMode: t.pricingMode, isActive: t.isActive,
+      const rows = (await expandSrpTiers(tiers)).map(t => ({
+        _id: t._id, name: t.name, percent: t.percent, pricingMode: t.srpMode ? 'srp' : t.pricingMode, isActive: t.isActive,
         // qty defaults to 0 here (see resolveTierPrice), so this NEVER reflects
         // a quantity break - there is no cart quantity yet at this static
         // display. `bulkBreaks` is exposed separately so the UI can still show

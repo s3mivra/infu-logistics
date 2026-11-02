@@ -811,6 +811,16 @@ export default function PricingTab({ ctx }) {
                     className="bg-page-bg border border-white/10 rounded-lg px-2 py-1 text-xs text-fg outline-none focus:border-accent w-40" />
                   <button type="submit" className="text-[10px] bg-accent text-on-brand px-2.5 py-1 rounded-lg font-bold uppercase tracking-wider">Add</button>
                 </form>
+                {/* A tier that charges each item's SRP from its stock record. */}
+                {!(pricingTable.tiers || []).some(t => t.pricingMode === 'srp') && (
+                  <button type="button" title="Clients in this tier pay each item's SRP (from Inventory). Items with no SRP stay at list price."
+                    onClick={async () => {
+                      const d = await (await apiFetch('/api/price-tiers', { method: 'POST', body: JSON.stringify({ name: 'SRP Price', pricingMode: 'srp', percent: 0 }) })).json();
+                      if (!d.success) return ui.alert(d.error || 'Could not add the SRP tier.');
+                      fetchPriceTiers?.(); fetchPricingTable?.();
+                    }}
+                    className="text-[10px] border border-white/15 text-fg/80 hover:bg-white/5 px-2.5 py-1 rounded-lg font-bold uppercase tracking-wider">+ SRP tier</button>
+                )}
               </div>
             )}
             <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -861,7 +871,7 @@ export default function PricingTab({ ctx }) {
                         <span className="block truncate max-w-[160px] ml-auto" title={t.name}>{t.name}</span>
                         {t.isActive === false && <span className="text-fg/65 normal-case text-[9px]">(inactive)</span>}
                         <span className="block text-[9px] text-fg/65 normal-case font-normal mt-0.5">
-                          {t.pricingMode === 'per_product' ? 'price list' : `${t.percent}% off`}
+                          {t.pricingMode === 'per_product' ? 'price list' : t.pricingMode === 'srp' ? 'SRP from stock' : `${t.percent}% off`}
                         </span>
                       </th>
                     ))}

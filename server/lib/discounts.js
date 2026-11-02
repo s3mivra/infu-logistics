@@ -6,6 +6,7 @@
 // not a second, subtly different calculation reached by a parallel copy of
 // this logic.
 import { resolveTierPercent } from './priceTiers.js';
+import { expandSrpTiers } from './srpTier.js';
 
 // Loads the buyer's PRICE TIER context: the best flat percent among any
 // 'percent'-mode tier they belong to, and every 'per_product'-mode tier they
@@ -23,7 +24,7 @@ export async function loadTierContext({ PriceTier, businessType, tenantScope, re
       { businessType, ...tenantScope(req), isActive: true },
       { name: 1, percent: 1, pricingMode: 1, productPrices: 1, productBulkBreaks: 1 },
     ).lean();
-    const hits = tiers.filter(t => wanted.includes(String(t.name).trim().toLowerCase()));
+    const hits = await expandSrpTiers(tiers.filter(t => wanted.includes(String(t.name).trim().toLowerCase())));
     const flatHits = hits.filter(t => t.pricingMode !== 'per_product');
     if (flatHits.length) tierDefaultPct = Math.max(0, Math.min(100, Math.max(...flatHits.map(t => Number(t.percent) || 0))));
     perProductTiers = hits.filter(t => t.pricingMode === 'per_product');
