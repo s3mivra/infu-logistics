@@ -561,15 +561,15 @@ export default function ClientsTab() {
           <thead>
             {/* Every other table in the app heads its columns on the panel's own
                 ground; a solid green bar here made Clients look like a different app. */}
-            <tr className="bg-surface-2 text-fg/80 text-[10px] uppercase tracking-widest border-b border-white/10">
-              <th className="text-left py-3 px-4">Client</th>
-              <th className="text-left py-3">Code</th>
-              <th className="text-right py-3">Orders</th>
-              <th className="text-right py-3">Last Order</th>
+            <tr className="bg-surface-2 text-fg/80 text-[10px] uppercase tracking-widest border-b border-white/10 whitespace-nowrap">
+              <th className="text-left py-3 px-4 w-full">Client</th>
+              <th className="text-left py-3 px-4">Code</th>
+              <th className="text-right py-3 px-4">Orders</th>
+              <th className="text-right py-3 px-4">Last Order</th>
               {data.showMoney && <>
-                <th className="text-right py-3">Owes you</th>
-                <th className="text-right py-3">Committed</th>
-                <th className="text-right py-3" title="Paid ahead of any order, not yet applied">Deposits</th>
+                <th className="text-right py-3 px-4">Owes you</th>
+                <th className="text-right py-3 px-4">Committed</th>
+                <th className="text-right py-3 px-4" title="Paid ahead of any order, not yet applied">Deposits</th>
                 <th className="text-right py-3 px-4">Limit / Left</th>
               </>}
             </tr>
@@ -595,15 +595,15 @@ export default function ClientsTab() {
                       {c.source === 'pos' && <span className="text-[8px] font-black bg-white/10 text-fg/70 px-1.5 py-0.5 rounded uppercase" title="Auto-promoted repeat walk-in">Walk-in</span>}
                     </span>
                   </td>
-                  <td className="py-3 font-mono text-fg/100 text-xs">{c.clientCode}</td>
-                  <td className="py-3 text-right tabular-nums text-fg/100">{c.orderCount}</td>
-                  <td className="py-3 text-right text-fg/100 text-xs whitespace-nowrap">
-                    {c.lastOrderAt ? new Date(c.lastOrderAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: '2-digit' }) : '-'}
+                  <td className="py-3 px-4 font-mono text-fg/70 text-[11px] tracking-wide whitespace-nowrap">{c.clientCode}</td>
+                  <td className="py-3 px-4 text-right tabular-nums text-fg/100">{c.orderCount}</td>
+                  <td className="py-3 px-4 text-right text-fg/100 text-xs whitespace-nowrap">
+                    {c.lastOrderAt ? new Date(c.lastOrderAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}
                   </td>
                   {data.showMoney && <>
-                    <td className="py-3 text-right tabular-nums font-black text-fg/100">{c.aged?.total ? peso(c.aged.total) : '-'}</td>
-                    <td className="py-3 text-right tabular-nums text-brand-text">{c.exposure ? peso(c.exposure) : '-'}</td>
-                    <td className="py-3 text-right tabular-nums text-success">{c.deposits ? peso(c.deposits) : '-'}</td>
+                    <td className="py-3 px-4 text-right tabular-nums font-black text-fg/100">{c.aged?.total ? peso(c.aged.total) : '-'}</td>
+                    <td className="py-3 px-4 text-right tabular-nums text-brand-text">{c.exposure ? peso(c.exposure) : '-'}</td>
+                    <td className="py-3 px-4 text-right tabular-nums text-success">{c.deposits ? peso(c.deposits) : '-'}</td>
                     <td className="py-3 px-4 text-right tabular-nums text-xs">
                       {c.creditLimit === null || c.creditLimit === undefined
                         ? <span className="text-fg/100">No limit</span>
