@@ -27,7 +27,7 @@ describe('the catalogue', () => {
         const entry = PERMISSIONS.find((p) => p.key === screenKey(f.tab, page));
         expect(entry, screenKey(f.tab, page)).toBeTruthy();
         expect(entry.parent).toBe(f.parent);
-        if (f.parent !== null) expect(PERMISSION_KEYS.has(f.parent)).toBe(true);
+        expect(PERMISSION_KEYS.has(f.parent)).toBe(true);
       }
     }
   });
@@ -137,12 +137,6 @@ describe('the client agrees', () => {
     }
   }
 
-  // Sidebar families: the nav entries' `screen:` keys.
-  const navSrc = client('features/dashboard/navRegistry.js');
-  for (const fam of ['stock', 'sales', 'menu', 'staff']) {
-    clientPages[fam] = [...navSrc.matchAll(new RegExp(`screen: 'screen\\.${fam}\\.([a-z]+)'`, 'g'))].map((m) => m[1]);
-  }
-
   for (const f of SCREENS) {
     it(`${f.tab}: the same pages on both sides`, () => {
       expect(clientPages[f.tab].slice().sort()).toEqual(f.pages.map(([p]) => p).sort());
@@ -152,19 +146,22 @@ describe('the client agrees', () => {
   it('the client\'s can() narrows each tab by the same parent', () => {
     const src = client('features/auth/auth.js');
     for (const f of SCREENS) {
-      expect(src).toMatch(new RegExp(f.parent === null ? `${f.tab}: null` : `${f.tab}: '${f.parent.replace('.', '\\.')}'`));
+      expect(src).toMatch(new RegExp(`${f.tab}: '${f.parent.replace('.', '\\.')}'`));
     }
   });
 });
 
 describe('sidebar tabs', () => {
-  it('a role can hold inventory.view and see Hub but not Production', () => {
-    const out = withScreens(['inventory.view', screenKey('stock', 'hub')]);
-    expect(out).toContain(screenKey('stock', 'hub'));
-    expect(out).not.toContain(screenKey('stock', 'production'));
+  it('one box per sidebar tab, each matching a nav id', async () => {
+    const { SIDEBAR_TABS } = await import('../lib/authz.js');
+    const here = dirname(fileURLToPath(import.meta.url));
+    const nav = readFileSync(join(here, '..', '..', 'client', 'src', 'features', 'dashboard', 'navRegistry.js'), 'utf8');
+    for (const [id] of SIDEBAR_TABS) {
+      expect(nav, id).toContain(`{ id: '${id}',`);
+      expect(PERMISSION_KEYS.has(`hide.${id}`)).toBe(true);
+    }
   });
-  it("everyone's tabs open with no permission until narrowed", () => {
-    expect(withScreens(['pos.use'])).toEqual(expect.arrayContaining([screenKey('staff', 'approvals'), screenKey('staff', 'timeoff')]));
-    expect(withScreens([screenKey('staff', 'timeoff')])).not.toContain(screenKey('staff', 'approvals'));
+  it('a role made before keeps every tab (nothing hidden)', () => {
+    expect(resolvePermissions({ role: 'staff' }).some((k) => k.startsWith('hide.'))).toBe(false);
   });
 });

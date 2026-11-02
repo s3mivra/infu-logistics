@@ -1858,7 +1858,7 @@ It posts only what is not already accrued for that month.`)) return;
                 healthy drawer. */}
             <div className={`${cashOnHand < 0 ? 'bg-red-700 border-red-800' : 'bg-accent border-accent/30'} border rounded-xl p-6 shadow-lg shadow-accent/5`}>
               <p className={`${cashOnHand < 0 ? 'text-white' : 'text-on-brand'} text-xs font-bold uppercase tracking-wider mb-1`}>Live Cash on Hand</p>
-              <p className={`text-4xl font-black ${cashOnHand < 0 ? 'text-white' : 'text-on-brand'}`}>
+              <p data-keep-colour className={`text-4xl font-black ${cashOnHand < 0 ? 'text-white' : 'text-on-brand'}`}>
                 {cashOnHand < 0 ? '−' : ''}₱{Math.abs(cashOnHand).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
               {cashOnHand < 0 && (

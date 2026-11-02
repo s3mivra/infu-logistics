@@ -56,7 +56,6 @@ export const getPermissions = (t = accessToken) => {
 export const SCREEN_PARENT = {
   inventory: 'inventory.view', hub: 'inventory.view', procurement: 'procurement.view',
   ledger: 'accounting.view', reports: 'reports.view',
-  stock: 'inventory.view', sales: 'orders.view', menu: 'products.view', staff: null,
 };
 
 // can('accounting.view') → boolean. '*' (superadmin) satisfies everything.
@@ -70,7 +69,7 @@ export const can = (perm, t = accessToken) => {
   const m = /^screen\.([a-z]+)\.[a-z]+$/.exec(perm);
   if (m) {
     const parent = SCREEN_PARENT[m[1]];
-    if (parent === undefined || (parent && !perms.includes(parent))) return false;
+    if (!parent || !perms.includes(parent)) return false;
     return perms.includes(perm) || !perms.some((k) => k.startsWith(`screen.${m[1]}.`));
   }
   return perms.includes(perm);

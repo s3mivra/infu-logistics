@@ -495,6 +495,15 @@ export default function SuperAdminPanel() {
   // every page of an open tab with none named is ticked - and is greyed out
   // while its tab is closed, or when it is the only page left open.
   const renderPermBox = (p, list, onToggle) => {
+    // A sidebar tab: ticked means shown, and what is stored is its hiding.
+    if (p.invert) {
+      return (
+        <label key={p.key} className="flex items-center gap-2 text-[13px] transition text-fg/80 cursor-pointer hover:text-fg">
+          <input type="checkbox" checked={!list.includes(p.key)} onChange={() => onToggle(p.key)} className="accent-brand shrink-0" />
+          <span className="leading-tight">{p.label}</span>
+        </label>
+      );
+    }
     const eff = effectivePermissions(list, permCatalog);
     const locked = String(p.key).startsWith('screen.') ? pageLocked(list, p.key, permCatalog) : false;
     const why = p.parent && !list.includes(p.parent)
