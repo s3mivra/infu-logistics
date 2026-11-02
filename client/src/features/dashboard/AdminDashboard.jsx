@@ -654,7 +654,7 @@ export default function AdminDashboard() {
   // Reserve-only mode: place order with status 'Reserved' (no payment yet).
   // Cashier later promotes Reserved → Pending (pay later) or Preparing (pay now).
   const [posReserveOnly, setPosReserveOnly] = useState(false);
-  const [posTable, setPosTable] = useState(BUSINESS_TYPE === 'log' ? 'Pickup' : 'Dine-In');
+  const [posTable, setPosTable] = useState(BUSINESS_TYPE === 'log' ? 'Walk In' : 'Dine-In');
   // Which branch/location THIS DEVICE rings sales up as - a StorageLocation
   // name, persisted per-device (not per-user) since a POS tablet physically
   // lives at one branch. Stamped onto every order so Analytics can compare
@@ -2621,7 +2621,7 @@ export default function AdminDashboard() {
       setPosCustomerPhone('');
       setPosDeliveryFee('');
       setPosScheduledTime('');
-      setPosTable(BUSINESS_TYPE === 'log' ? 'Pickup' : 'Dine-In');
+      setPosTable(BUSINESS_TYPE === 'log' ? 'Walk In' : 'Dine-In');
       setPosSearch('');
       setPosNotes('');
       setPosGuestCount(1);

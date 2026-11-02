@@ -698,13 +698,36 @@ export default function OrdersTab({ ctx }) {
                         </select></div>
                       );
                     })()}
-                    <input type="text"
-                      placeholder={BUSINESS_TYPE === 'fb' && posTable === 'Dine-In' && !posClientId
-                        ? 'Customer name (blank = Walk-in)'
-                        : 'Customer / Driver Name *'}
-                      value={posCustomerName} onChange={e => setPosCustomerName(e.target.value)}
-                      aria-label="Customer name"
-                      className="flex-1 min-w-0 bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold placeholder-fg/70 outline-none focus:border-brand/60 text-sm transition" />
+                    {(() => {
+                      // A name that starts like an existing client's: Tab fills it in
+                      // and picks that client, so their prices and tier apply.
+                      const typed = posCustomerName.trim().toLowerCase();
+                      const nameOf = (c) => c.name || c.username || '';
+                      const match = !posClientId && typed.length >= 2
+                        ? (clientAccounts || []).find(c => c.isActive !== false && nameOf(c).toLowerCase().startsWith(typed))
+                        : null;
+                      const pick = (c) => { setWalkInMode('guest'); setPosClientId(String(c._id)); setPosCustomerName(nameOf(c)); };
+                      return (
+                        <div className="flex-1 min-w-0 relative">
+                          <input type="text"
+                            placeholder={BUSINESS_TYPE === 'fb' && posTable === 'Dine-In' && !posClientId
+                              ? 'Customer name (blank = Walk-in)'
+                              : 'Customer / Driver Name *'}
+                            value={posCustomerName} onChange={e => setPosCustomerName(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Tab' && !e.shiftKey && match) { e.preventDefault(); pick(match); } }}
+                            onBlur={() => { const exact = !posClientId && typed && (clientAccounts || []).find(c => nameOf(c).trim().toLowerCase() === typed); if (exact) pick(exact); }}
+                            aria-label="Customer name"
+                            className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2 text-fg font-bold placeholder-fg/70 outline-none focus:border-brand/60 text-sm transition" />
+                          {match && (
+                            <button type="button" onMouseDown={e => { e.preventDefault(); pick(match); }}
+                              className="absolute left-0 right-0 top-full mt-1 z-20 text-left bg-surface-2 border border-brand/30 rounded-lg px-3 py-1.5 text-xs text-fg shadow-lg">
+                              <span className="font-bold">{nameOf(match)}</span> <span className="text-fg/60">({match.clientCode})</span>
+                              <span className="float-right text-[10px] font-bold text-brand-text uppercase tracking-wider">Tab</span>
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                     </div>
                     {(posTable === 'Manual Delivery' || posTable === 'Pickup' || posTable === 'Lalamove') && (
                       <div className="space-y-2 border border-brand/20 rounded-xl p-2.5 bg-brand/5">
