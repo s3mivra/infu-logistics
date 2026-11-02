@@ -33,7 +33,7 @@ export function suggestedGross({ dailyRate = 0, daysWorked = 0, paidLeaveDays = 
 export default function registerTimeOff(ctx) {
   const {
     app, mongoose, IS_PROD, BUSINESS_TYPE, tenantScope, LeaveRequest, OvertimeRequest, ClockEntry, User,
-    logAudit, verifyToken, requireStaff, requirePermission,
+    logAudit, verifyToken, requireStaff, requirePermission, requireAnyPermission,
   } = ctx;
   const fail = (req, res, err) => (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   const canDecide = (u) => hasPermission(u, 'scheduling.manage');
@@ -122,7 +122,8 @@ export default function registerTimeOff(ctx) {
   decideRoute('/api/overtime-requests/:id/:decision', OvertimeRequest, 'OvertimeRequest');
 
   // ── TIMESHEET for a pay period ──
-  app.get('/api/payroll/timesheet', verifyToken, requireStaff, requirePermission('accounting.view'), async (req, res) => {
+  // The books or payroll: HR fills a pay run from it without seeing the books.
+  app.get('/api/payroll/timesheet', verifyToken, requireStaff, requireAnyPermission('accounting.view', 'payroll.view'), async (req, res) => {
     try {
       const start = ymd(req.query.start), end = ymd(req.query.end);
       if (!start || !end || end < start) return res.status(400).json({ success: false, error: 'Give the pay period as YYYY-MM-DD.' });

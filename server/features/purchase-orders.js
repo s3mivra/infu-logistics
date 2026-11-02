@@ -55,6 +55,7 @@ export default function registerPurchaseOrders(ctx) {
     requireStaff,
     requireSuperAdmin,
     requirePermission,
+    requireAnyPermission,
     escapeRegex,
   } = ctx;
 
@@ -64,6 +65,9 @@ export default function registerPurchaseOrders(ctx) {
   // creating/editing/deleting a supplier or PO is not).
   const canViewProc   = [requireStaff, requirePermission('procurement.view')];
   const canManageProc = [requireStaff, requirePermission('procurement.manage')];
+  // Receiving is also the stock clerk's job (the Warehouse role): purchasing
+  // OR stock rights may record what arrived.
+  const canReceive = [requireStaff, requireAnyPermission('procurement.manage', 'inventory.manage')];
   const canDeleteProc = [requireStaff, requirePermission('procurement.delete')];
 
   // Round money to 2dp; guard against NaN from bad client input.
@@ -578,7 +582,7 @@ export default function registerPurchaseOrders(ctx) {
   // Sets receivedQty per line, computes actualTotal, and flips status to Complete
   // (every line received ≥ ordered) or Incomplete (any short). Terminal - the PO
   // becomes read-only afterward.
-  app.post('/api/purchase-orders/:id/receive', verifyToken, ...canManageProc, atomic(mongoose, async (req, res) => {
+  app.post('/api/purchase-orders/:id/receive', verifyToken, ...canReceive, atomic(mongoose, async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
       const po = await PurchaseOrder.findOne({ _id: req.params.id, ...tenantScope(req) });

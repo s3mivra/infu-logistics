@@ -1194,6 +1194,18 @@ const runStartupTasks = async () => {
         }
         await Settings.findOneAndUpdate({ key: 'ownerRoleSeedV1' }, { key: 'ownerRoleSeedV1', value: true }, { upsert: true });
       }
+      // Once: the ready-made job roles (lib/authz.js ROLE_PRESETS). A name
+      // already taken by a role made by hand is left alone.
+      if (!(await Settings.findOne({ key: 'rolePresetsSeedV1' }).lean())) {
+        const { ROLE_PRESETS } = await import('./lib/authz.js');
+        for (const r of ROLE_PRESETS) {
+          const esc = r.name.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+          if (!(await Role.exists({ name: { $regex: `^${esc}$`, $options: 'i' } }))) await Role.create({ name: r.name, permissions: r.permissions });
+        }
+        await Settings.findOneAndUpdate({ key: 'rolePresetsSeedV1' }, { key: 'rolePresetsSeedV1', value: true }, { upsert: true });
+        await refreshCustomRolePerms();
+        log.info('✅ Job roles created');
+      }
     } catch (err) {
       log.error({ err }, 'Owner role seed failed');
     }

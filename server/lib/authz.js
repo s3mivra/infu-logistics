@@ -233,6 +233,39 @@ export const OWNER_ROLE_PERMISSIONS = [
   'requisitions.approve', 'production.approve', 'pricing.approve', 'journal.approve', 'credit.approve', 'inventory.approve',
 ];
 
+// Ready-made roles for the common jobs, created once as ordinary roles (like
+// Owner): assign one to an account as it is, or change what it holds in the
+// Admin Panel. Each is the narrowest set that lets that person do the job.
+// A "screen." key narrows its tab to just those pages (withScreens).
+export const ROLE_PRESETS = [
+  {
+    name: 'Warehouse',
+    about: 'Stock levels, receiving deliveries, counts, transfers and waste. No prices to change, no books or payroll.',
+    permissions: ['inventory.view', 'inventory.manage', 'inventory.waste', 'inventory.count', 'production.view', 'products.view',
+      'procurement.view', 'screen.procurement.receiving'],
+  },
+  {
+    name: 'Purchasing',
+    about: 'Suppliers, purchase orders, receiving and the reorder forecast. No payments.',
+    permissions: ['procurement.view', 'procurement.manage', 'inventory.view', 'products.view', 'analytics.view', 'requisitions.view'],
+  },
+  {
+    name: 'HR / Payroll',
+    about: 'Staff accounts and their government numbers, timesheets, leave and overtime, payroll runs, rules and report. No sales or books.',
+    permissions: ['payroll.view', 'payroll.manage', 'scheduling.manage', 'shifts.view', 'users.manage'],
+  },
+  {
+    name: 'Salesperson',
+    about: 'The till, their orders, clients and quotations.',
+    permissions: ['pos.use', 'orders.view', 'orders.manage', 'clients.create', 'clients.edit', 'clients.links', 'clients.invite', 'products.view', 'inventory.view'],
+  },
+  {
+    name: 'Driver',
+    about: 'Orders to deliver and the delivery sheet - no other report.',
+    permissions: ['orders.view', 'reports.view', 'screen.reports.deliverysheet'],
+  },
+];
+
 export function withSplitScreens(list = []) {
   const set = new Set(list);
   if (set.has('accounting.view')) { set.add('payroll.view'); set.add('assets.view'); set.add('bankrec.view'); }
