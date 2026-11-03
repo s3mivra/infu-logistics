@@ -35,6 +35,10 @@ const items = partialModal.items || [];
       const rTotal = items.reduce((s, it, i) => s + netUnit(it) * (rem(it) - fNow(it, i)), 0);
       const paidNow = tenders.reduce((s, t) => s + (Number(t.amount) || 0), 0);
       const isAmount = partialMode === 'amount';
+      // What is still unpaid on the whole order (this batch + what stays on it,
+      // less anything already paid ahead). More than that has nowhere to go.
+      const leftToPay = Math.max(0, fTotal + rTotal - (partialModal.depositRemaining || 0));
+      const overpaid = isAmount && paidNow - leftToPay > 0.005;
       return (
       <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
         <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-md w-full p-6 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
@@ -196,15 +200,19 @@ const items = partialModal.items || [];
                 <span className="text-fg/70">Paying now</span>
                 <span className="font-mono font-bold text-fg">₱{paidNow.toFixed(2)}</span>
               </div>
-              <p className={`text-[10px] font-bold ${paidNow - fTotal > 0.005 ? 'text-success' : paidNow < fTotal - 0.005 ? 'text-warning' : 'text-fg/60'}`}>
+              {overpaid ? (
+                <p className="text-[10px] font-bold text-danger">
+                  ₱{(paidNow - leftToPay).toFixed(2)} more than is left to pay on this order (₱{leftToPay.toFixed(2)}). Lower the amount{tenders.some(t => t.method === 'Cash') ? ' - give the extra back as change' : ''}.
+                </p>
+              ) : <p className={`text-[10px] font-bold ${paidNow - fTotal > 0.005 ? 'text-success' : paidNow < fTotal - 0.005 ? 'text-warning' : 'text-fg/60'}`}>
                 {paidNow - fTotal > 0.005 ? `₱${(paidNow - fTotal).toFixed(2)} kept as a deposit for the rest of the order`
                   : paidNow < fTotal - 0.005 ? `₱${(fTotal - paidNow).toFixed(2)} of this batch stays owed (receivable)`
                   : 'Exactly this batch'}
-              </p>
+              </p>}
             </div>
           )}
 
-          <button onClick={submitPartialFulfill} disabled={partialBusy}
+          <button onClick={submitPartialFulfill} disabled={partialBusy || overpaid}
             className="w-full py-3 bg-brand text-on-brand font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand-dark transition disabled:opacity-50">
             {partialBusy ? 'Processing…' : 'Fulfill & Set Aside Remaining'}
           </button>
