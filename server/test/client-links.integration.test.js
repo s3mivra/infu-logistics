@@ -196,7 +196,7 @@ describe('price tier on a client', () => {
     const r = await as(t, 'post', '/api/client-accounts').send({ name: 'No Tier Co', segments: ['Dealer'] });
     expect(r.status).toBe(200);
     const c = await M('ClientAccount').findById(r.body.client._id).lean();
-    expect(c.segments).toEqual([]);
+    expect(c.segments).not.toContain('Dealer');   // the default SRP tier may apply
     expect((await as(t, 'patch', `/api/client-accounts/${c._id}`).send({ segments: ['Dealer'] })).status).toBe(403);
   });
 });

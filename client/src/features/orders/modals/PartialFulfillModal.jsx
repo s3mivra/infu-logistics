@@ -1,4 +1,7 @@
+import { useState, useEffect } from 'react';
 import { useDashboard } from '../../dashboard/DashboardContext';
+
+const METHODS = ['Cash', 'Bank Transfer', 'Check', 'GCash', 'Maya', 'Maribank', 'Other E-Wallet', 'QR'];
 
 // Extracted from AdminDashboard; reads shared state via useDashboard().
 export default function PartialFulfillModal() {
@@ -6,8 +9,15 @@ export default function PartialFulfillModal() {
     partialBusy, partialModal, partialMode, partialPayment, partialQtys,
     setPartialModal, setPartialMode, setPartialPayment, setPartialQtys, submitPartialFulfill,
     partialRef, setPartialRef, partialCheckDate, setPartialCheckDate,
-    systemSettings, setPayQrOpen,
+    systemSettings, setPayQrOpen, partialTenders, setPartialTenders,
   } = useDashboard();
+  // "Enter amount": rows of { method, amount, reference }. One row is a plain
+  // amount; more rows are a split payment.
+  const tenders = partialTenders || [];
+  const setRow = (i, k, v) => setPartialTenders(tenders.map((t, j) => (j === i ? { ...t, [k]: v } : t)));
+  useEffect(() => {
+    if (partialModal && !tenders.length) setPartialTenders([{ method: partialPayment || 'Cash', amount: '', reference: '' }]);
+  }, [partialModal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A partial batch takes real money, so it needs the same evidence a full
   // sale does. Paying one by QR or by check with nowhere to put the
@@ -23,6 +33,8 @@ const items = partialModal.items || [];
       const netUnit = (it) => (it.price || 0) * (1 - (it.productDiscountPercent || 0) / 100);
       const fTotal = items.reduce((s, it, i) => s + netUnit(it) * fNow(it, i), 0);
       const rTotal = items.reduce((s, it, i) => s + netUnit(it) * (rem(it) - fNow(it, i)), 0);
+      const paidNow = tenders.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+      const isAmount = partialMode === 'amount';
       return (
       <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-fade-in">
         <div className="bg-surface border border-gray-700 rounded-2xl shadow-2xl max-w-md w-full p-6 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
@@ -70,7 +82,7 @@ const items = partialModal.items || [];
             <div className="flex justify-between text-fg/70"><span>Remaining on order</span><span className="font-mono font-bold text-warning">₱{rTotal.toFixed(2)}</span></div>
           </div>
 
-          <div>
+          {!isAmount && <div>
             <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1.5">Payment Method</label>
             <select value={partialPayment} onChange={e => setPartialPayment(e.target.value)}
               className="w-full bg-page-bg border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm font-bold outline-none focus:border-brand/60">
@@ -92,7 +104,7 @@ const items = partialModal.items || [];
                 <option value="Manual Delivery">Manual / Direct</option>
               </optgroup>
             </select>
-          </div>
+          </div>}
 
           {/* Scan to pay, at the moment of paying. */}
           {scannable && systemSettings?.paymentQrImage && (
@@ -102,7 +114,7 @@ const items = partialModal.items || [];
             </button>
           )}
 
-          {needsRef && (
+          {!isAmount && needsRef && (
             <div className="space-y-2">
               <div>
                 <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1.5">
@@ -134,7 +146,7 @@ const items = partialModal.items || [];
 
           <div>
             <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1.5">Payment</label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <button type="button" onClick={() => setPartialMode('partial')}
                 className={`py-2.5 rounded-xl border text-xs font-bold transition ${partialMode === 'partial' ? 'bg-brand/20 border-brand/60 text-fg' : 'bg-page-bg border-white/10 text-fg/75'}`}>
                 Pay partial only<br/><span className="text-[9px] font-normal opacity-70">₱{fTotal.toFixed(2)} now · rest billed later</span>
@@ -143,8 +155,54 @@ const items = partialModal.items || [];
                 className={`py-2.5 rounded-xl border text-xs font-bold transition ${partialMode === 'full' ? 'bg-brand/20 border-brand/60 text-fg' : 'bg-page-bg border-white/10 text-fg/75'}`}>
                 Pay full now<br/><span className="text-[9px] font-normal opacity-70">remaining prepaid (deposit)</span>
               </button>
+              <button type="button" onClick={() => setPartialMode('amount')}
+                className={`py-2.5 rounded-xl border text-xs font-bold transition ${isAmount ? 'bg-brand/20 border-brand/60 text-fg' : 'bg-page-bg border-white/10 text-fg/75'}`}>
+                Enter amount<br/><span className="text-[9px] font-normal opacity-70">type it, or split it</span>
+              </button>
             </div>
           </div>
+
+          {isAmount && (
+            <div className="space-y-2 bg-page-bg border border-white/10 rounded-xl p-3">
+              {tenders.map((t, i) => (
+                <div key={i} className="space-y-1.5">
+                  <div className="flex gap-2">
+                    <select value={t.method} onChange={e => setRow(i, 'method', e.target.value)} aria-label={`Payment ${i + 1} method`}
+                      className="flex-1 min-w-0 bg-surface border border-white/10 rounded-lg px-2 py-2 text-fg text-sm font-bold outline-none focus:border-brand/60">
+                      {METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <input type="number" min="0" step="0.01" inputMode="decimal" value={t.amount} placeholder="Amount"
+                      onChange={e => setRow(i, 'amount', e.target.value)} aria-label={`Payment ${i + 1} amount`}
+                      className="w-28 bg-surface border border-white/10 rounded-lg px-2 py-2 text-fg text-sm font-bold text-right outline-none focus:border-brand/60" />
+                    {tenders.length > 1 && (
+                      <button type="button" onClick={() => setPartialTenders(tenders.filter((_, j) => j !== i))} aria-label={`Remove payment ${i + 1}`}
+                        className="px-2 rounded-lg text-fg/60 hover:text-danger hover:bg-red-500/10">✕</button>
+                    )}
+                  </div>
+                  {['QR', 'Check'].includes(t.method) && (
+                    <input type="text" value={t.reference} onChange={e => setRow(i, 'reference', e.target.value)}
+                      placeholder={t.method === 'Check' ? 'Check No. (required)' : 'Reference No. (required)'} aria-label={`Payment ${i + 1} reference`}
+                      className={`w-full bg-surface border rounded-lg px-2 py-1.5 text-fg text-xs font-mono outline-none ${(t.reference || '').trim() ? 'border-white/10' : 'border-red-500/60'}`} />
+                  )}
+                </div>
+              ))}
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <button type="button" onClick={() => setPartialTenders([...tenders, { method: 'GCash', amount: '', reference: '' }])}
+                  className="font-bold text-brand-text hover:underline">+ Split payment</button>
+                <button type="button" onClick={() => setRow(0, 'amount', Math.max(0, fTotal - tenders.slice(1).reduce((s, t) => s + (Number(t.amount) || 0), 0)).toFixed(2))}
+                  className="font-bold text-fg/70 hover:text-fg">Fill this batch (₱{fTotal.toFixed(2)})</button>
+              </div>
+              <div className="flex justify-between text-xs border-t border-white/10 pt-2">
+                <span className="text-fg/70">Paying now</span>
+                <span className="font-mono font-bold text-fg">₱{paidNow.toFixed(2)}</span>
+              </div>
+              <p className={`text-[10px] font-bold ${paidNow - fTotal > 0.005 ? 'text-success' : paidNow < fTotal - 0.005 ? 'text-warning' : 'text-fg/60'}`}>
+                {paidNow - fTotal > 0.005 ? `₱${(paidNow - fTotal).toFixed(2)} kept as a deposit for the rest of the order`
+                  : paidNow < fTotal - 0.005 ? `₱${(fTotal - paidNow).toFixed(2)} of this batch stays owed (receivable)`
+                  : 'Exactly this batch'}
+              </p>
+            </div>
+          )}
 
           <button onClick={submitPartialFulfill} disabled={partialBusy}
             className="w-full py-3 bg-brand text-on-brand font-black rounded-xl uppercase tracking-widest text-sm hover:bg-brand-dark transition disabled:opacity-50">

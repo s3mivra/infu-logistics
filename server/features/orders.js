@@ -3459,7 +3459,30 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
   session.startTransaction();
   try {
     const { fulfill, paymentMode, paymentMethod } = req.body;
-    const mode = paymentMode === 'full' ? 'full' : 'partial';
+    const mode = ['full', 'amount'].includes(paymentMode) ? paymentMode : 'partial';
+    // 'amount': the cashier says how much is paid now, in one method or split
+    // across several. Less than this batch's value leaves the rest owed (A/R);
+    // more is held as a deposit for what is still to come.
+    let tenders = null;
+    if (mode === 'amount') {
+      const raw = Array.isArray(req.body.payments) && req.body.payments.length
+        ? req.body.payments
+        : [{ method: paymentMethod, amount: req.body.amount, reference: req.body.paymentReference }];
+      tenders = raw.slice(0, 6).map((t) => ({
+        method: String(t?.method || paymentMethod || 'Cash').trim().slice(0, 40),
+        amount: +(Number(t?.amount) || 0).toFixed(2),
+        reference: String(t?.reference || '').trim().slice(0, 60),
+      })).filter((t) => t.amount > 0);
+      if (raw.some((t) => Number(t?.amount) < 0)) {
+        await session.abortTransaction(); session.endSession();
+        return res.status(400).json({ success: false, error: 'A payment amount cannot be negative.' });
+      }
+      const noRef = tenders.find((t) => ['QR', 'CHECK'].includes(t.method.toUpperCase()) && !t.reference);
+      if (noRef) {
+        await session.abortTransaction(); session.endSession();
+        return res.status(400).json({ success: false, error: noRef.method.toUpperCase() === 'CHECK' ? 'A check number is required when paying by check.' : 'A payment reference number is required for QR payments.' });
+      }
+    }
 
     // A partial batch takes real money, so it carries the same evidence a full
     // sale does. Paying a partial delivery by QR or by check with no reference
@@ -3467,11 +3490,11 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     // handle on it afterwards was simply missing on this path.
     const partialRef = String(req.body.paymentReference || '').trim().slice(0, 60);
     const partialTender = String(paymentMethod || '').trim().toUpperCase();
-    if (partialTender === 'QR' && !partialRef) {
+    if (!tenders && partialTender === 'QR' && !partialRef) {
       await session.abortTransaction(); session.endSession();
       return res.status(400).json({ success: false, error: 'A payment reference number is required for QR payments. Enter the confirmation number from the payment app.' });
     }
-    if (partialTender === 'CHECK' && !partialRef) {
+    if (!tenders && partialTender === 'CHECK' && !partialRef) {
       await session.abortTransaction(); session.endSession();
       return res.status(400).json({ success: false, error: 'A check number is required when paying by check.' });
     }
@@ -3638,7 +3661,28 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     // 2) Collect cash for the rest. In 'full' mode, take the entire remaining
     //    unpaid goods value now and park the not-yet-earned part as a deposit.
     const needRevenue = +(deltaValue - fromDeposit).toFixed(2);
-    if (needRevenue > 0.005) {
+    if (tenders) {
+      const remainingUnpaid = +(goodsTotal - (order.amountPaid || 0)).toFixed(2);
+      const collectNow = +tenders.reduce((t, x) => t + x.amount, 0).toFixed(2);
+      if (collectNow - remainingUnpaid > 0.005) {
+        await session.abortTransaction(); session.endSession();
+        return res.status(400).json({ success: false, error: `That is more than is left to pay on this order (₱${remainingUnpaid.toFixed(2)}).` });
+      }
+      for (const t of tenders) {
+        const acct = debitAccountFor(t.method);
+        lines.push({ accountCode: acct.code, accountName: acct.name, debit: t.amount, credit: 0 });
+      }
+      if (needRevenue > 0.005) lines.push(...saleRevenueLines({ gross: needRevenue, vatAmount: vatShare(order, needRevenue) }));
+      const diff = +(collectNow - Math.max(0, needRevenue)).toFixed(2);
+      if (diff > 0.005) {
+        lines.push({ accountCode: depAcct, accountName: depName, debit: 0, credit: diff });
+        order.depositAccount = depAcct;
+        order.depositRemaining = +((order.depositRemaining || 0) + diff).toFixed(2);
+      } else if (diff < -0.005) {
+        lines.push({ accountCode: '120000', accountName: 'Accounts Receivable', debit: -diff, credit: 0 });
+      }
+      order.amountPaid = +((order.amountPaid || 0) + collectNow).toFixed(2);
+    } else if (needRevenue > 0.005) {
       const remainingUnpaid = +(goodsTotal - (order.amountPaid || 0)).toFixed(2);
       const collectNow = mode === 'full' ? remainingUnpaid : needRevenue;
       lines.push({ accountCode: cash.code, accountName: cash.name, debit: collectNow, credit: 0 });
@@ -3675,7 +3719,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     const totalDebit = +lines.reduce((s, l) => s + l.debit, 0).toFixed(2);
     const totalCredit = +lines.reduce((s, l) => s + l.credit, 0).toFixed(2);
     assertBalanced(lines, reference);
-    await JournalEntry.create([{ reference, description: `Partial fulfillment round ${priorRounds + 1} (${mode === 'full' ? 'pay full' : 'pay partial'}): ${order.orderNumber}`, lines, totalDebit, totalCredit }], { session });
+    await JournalEntry.create([{ reference, description: `Partial fulfillment round ${priorRounds + 1} (${mode === 'full' ? 'pay full' : mode === 'amount' ? `paid ${tenders.map((t) => `${t.method} ₱${t.amount.toFixed(2)}`).join(' + ') || 'nothing'}` : 'pay partial'}): ${order.orderNumber}`, lines, totalDebit, totalCredit }], { session });
 
     // Apply fulfilled units and advance status on the SAME order.
     for (const { i, want } of deltas) order.items[i].fulfilledQty = (order.items[i].fulfilledQty || 0) + want;
@@ -3683,7 +3727,11 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
     const allFulfilled = order.items.every(it => (it.fulfilledQty || 0) >= (it.quantity || 0));
     order.status = allFulfilled ? 'Completed' : 'Partially Fulfilled';
     if (allFulfilled) order.completedAt = new Date();
-    if (paymentMethod) order.paymentMethod = paymentMethod;
+    // Each tender of a split is its own journal line (and named in the entry's
+    // description); the order keeps the largest one as its method.
+    if (tenders?.length) order.paymentMethod = [...tenders].sort((x, y) => y.amount - x.amount)[0].method;
+    else if (paymentMethod) order.paymentMethod = paymentMethod;
+    if (tenders?.length === 1 && tenders[0].reference) order.paymentReference = tenders[0].reference;
     // Keep the evidence with the order, same as a full sale does.
     if (partialRef) order.paymentReference = partialRef;
     if (partialCheckDate) order.paymentCheckDate = partialCheckDate;

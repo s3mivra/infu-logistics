@@ -2167,11 +2167,13 @@ export default function AdminDashboard() {
   // ── Partial fulfillment (logistics) ────────────────────────────────────────
   const [partialModal, setPartialModal] = useState(null);  // the order being split
   const [partialQtys, setPartialQtys] = useState({});      // { [itemIndex]: fulfilledQty }
-  const [partialMode, setPartialMode] = useState('partial');// 'partial' | 'full'
+  const [partialMode, setPartialMode] = useState('partial');// 'partial' | 'full' | 'amount'
   const [partialPayment, setPartialPayment] = useState('Cash');
   // The confirmation number for a partial batch paid by QR or by check.
   const [partialRef, setPartialRef] = useState('');
   const [partialCheckDate, setPartialCheckDate] = useState('');
+  // Enter amount: [{ method, amount, reference }], more than one row is a split.
+  const [partialTenders, setPartialTenders] = useState([]);
   const [partialBusy, setPartialBusy] = useState(false);
   const openPartial = (order) => {
     setPartialModal(order);
@@ -2179,6 +2181,7 @@ export default function AdminDashboard() {
     setPartialPayment(order.paymentMethod || 'Cash');
     setPartialRef('');
     setPartialCheckDate('');
+    setPartialTenders([{ method: order.paymentMethod && order.paymentMethod !== 'Split' ? order.paymentMethod : 'Cash', amount: '', reference: '' }]);
     // Default: fulfill all that's still outstanding; operator lowers the short lines.
     setPartialQtys(Object.fromEntries((order.items || []).map((it, i) => [i, (it.quantity || 0) - (it.fulfilledQty || 0)])));
   };
@@ -2192,7 +2195,12 @@ export default function AdminDashboard() {
     // Refused here as well as on the server: the cashier is standing at the
     // counter, and finding out after the round trip is worse than being told
     // before it.
-    if (['QR', 'Check'].includes(partialPayment) && !partialRef.trim()) {
+    if (partialMode === 'amount') {
+      const rows = partialTenders || [];
+      if (rows.some(t => Number(t.amount) < 0)) return ui.alert('A payment amount cannot be negative.');
+      const missing = rows.find(t => Number(t.amount) > 0 && ['QR', 'Check'].includes(t.method) && !(t.reference || '').trim());
+      if (missing) return ui.alert(missing.method === 'Check' ? 'Enter the check number for the check payment.' : 'Enter the reference number for the QR payment.');
+    } else if (['QR', 'Check'].includes(partialPayment) && !partialRef.trim()) {
       return ui.alert(partialPayment === 'Check'
         ? 'Enter the check number before saving this batch.'
         : 'Enter the reference number from the payment app before saving this batch.');
@@ -2203,6 +2211,7 @@ export default function AdminDashboard() {
         method: 'POST',
         body: JSON.stringify({
           fulfill, paymentMode: partialMode, paymentMethod: partialPayment || 'Cash',
+          ...(partialMode === 'amount' ? { payments: (partialTenders || []).map(t => ({ method: t.method, amount: Number(t.amount) || 0, reference: (t.reference || '').trim() })) } : {}),
           ...(partialRef.trim() ? { paymentReference: partialRef.trim() } : {}),
           ...(partialPayment === 'Check' && partialCheckDate ? { paymentCheckDate: partialCheckDate } : {}),
         }),
@@ -7089,7 +7098,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     partialModal, setPartialModal, partialQtys, setPartialQtys,
     partialMode, setPartialMode, partialPayment, setPartialPayment,
     partialBusy, openPartial, submitPartialFulfill, dropRemaining,
-    partialRef, setPartialRef, partialCheckDate, setPartialCheckDate,
+    partialRef, setPartialRef, partialCheckDate, setPartialCheckDate, partialTenders, setPartialTenders,
     payQrOpen, setPayQrOpen,
     pnlData, pnlRange, setPnlRange, fetchPnl, bsData, fetchBalanceSheet, reconcileInventory,
     pnlMonthly, pnlmRange, setPnlmRange, pnlmView, setPnlmView, fetchPnlMonthly, exportPnlMonthlyPDF,
