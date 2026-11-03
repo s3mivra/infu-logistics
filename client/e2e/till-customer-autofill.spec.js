@@ -14,10 +14,11 @@ test('Tab fills an existing client on the till; order type starts on Walk In', a
   await login(page);
   await page.getByRole('button', { name: /^Orders & POS/ }).first().click();
   await page.getByRole('button', { name: /Manual Order/i }).first().click();
-  await expect(page.getByText('Walk In', { exact: true }).first()).toBeVisible();
+  // Walk In is the logistics default; a cafe build starts on Dine-In.
+  if (process.env.VITE_BUSINESS_TYPE === 'log') await expect(page.getByText('Walk In', { exact: true }).first()).toBeVisible();
   const who = page.getByLabel('Customer name');
   await who.fill(name.slice(0, 12));
   await who.press('Tab');
-  await expect(who).toHaveValue(name);
-  await expect(page.getByText(new RegExp(`${name} \(`)).first()).toBeVisible();
+  await expect(who).toHaveValue(new RegExp(`^${name}$`, 'i'));   // names are stored in capitals
+  await expect(page.getByText(new RegExp(`${name} \\(`, 'i')).first()).toBeVisible();
 });
