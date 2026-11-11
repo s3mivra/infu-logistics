@@ -91,6 +91,7 @@ describe('GET /api/orders/:id - IDOR/PII projection (fix verification)', () => {
       orderNumber: 'ORD-2026-A9001', status: 'Preparing', table: 'T9',
       customerName: 'Jane', customerPhone: '09171234567', deliveryAddress: '123 Secret St',
       total: 250, items: [{ name: 'Latte', quantity: 1, itemStatus: 'Received' }],
+      viewKey: 'qr-view-key-abc',
     });
     orderId = o._id.toString();
   });
@@ -99,7 +100,9 @@ describe('GET /api/orders/:id - IDOR/PII projection (fix verification)', () => {
     expect(res.status).toBe(404);
   });
   it('anonymous caller gets status fields but NOT phone/address', async () => {
-    const res = await request(app).get(`/api/orders/${orderId}`);
+    // Without the QR order's view key it is not found at all (2026-11 audit, M21).
+    expect((await request(app).get(`/api/orders/${orderId}`)).status).toBe(404);
+    const res = await request(app).get(`/api/orders/${orderId}?key=qr-view-key-abc`);
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('Preparing');
     expect(res.body.customerPhone).toBeUndefined();

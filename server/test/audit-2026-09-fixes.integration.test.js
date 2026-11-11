@@ -279,11 +279,10 @@ describe('P2: append-only ledger and audit log', () => {
 });
 
 describe('P2: anonymous order view carries no customer name', () => {
-  it('an order looked up without a token shows status and items, not who placed it', async () => {
+  it('an order looked up without a token or view key is not found (2026-11 audit, M21)', async () => {
     const placed = await auth('post', '/api/orders', tok.afStaff).send({ items: [line(1)], table: 'Takeout', customerName: 'Maria Santos' });
     const res = await request(app).get(`/api/orders/${placed.body.order._id}`);
-    expect(res.status).toBe(200);
-    expect(res.body.status).toBeTruthy();
+    expect(res.status).toBe(404);
     expect(res.body.customerName).toBeUndefined();
   });
 });

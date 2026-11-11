@@ -1413,8 +1413,12 @@ app.put('/api/users-commission-rate', verifyToken, requireUserAdmin, async (req,
     if (!Number.isFinite(rate) || rate < 0 || rate > 100) return res.status(400).json({ success: false, error: 'A rate is a percent from 0 to 100.' });
     const names = Array.isArray(req.body?.names) ? req.body.names.map(String) : null;
     const q = names ? { name: { $in: names } } : {};
-    // A delegate (users.manage) cannot change a superadmin's account.
-    if (String(req.user?.role || '').toLowerCase() !== 'superadmin') q.role = { $not: /^superadmin$/i };
+    // A delegate (users.manage) cannot change a superadmin's account - nor
+    // their own rate: a delegate set everyone's, their own included, to 100%.
+    if (String(req.user?.role || '').toLowerCase() !== 'superadmin') {
+      q.role = { $not: /^superadmin$/i };
+      q._id = { $ne: req.user?._id };
+    }
     const r = await User.updateMany(q, { $set: { commissionRate: rate } });
     await logAudit(req, { action: 'update', entity: 'CommissionRate', after: { rate, names: names || 'everyone', changed: r.modifiedCount } });
     res.json({ success: true, changed: r.modifiedCount });

@@ -91,7 +91,9 @@ export function refreshSession(API_URL) {
 }
 
 export async function logout(API_URL) {
-  try { await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' }); }
+  // The access token goes too, so the server ends it now rather than letting
+  // it run for the rest of its fifteen minutes.
+  try { await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include', headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} }); }
   catch { /* best-effort */ }
   finally { accessToken = null; setUser(null); }
 }

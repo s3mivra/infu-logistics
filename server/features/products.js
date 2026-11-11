@@ -309,7 +309,7 @@ app.get('/api/products', async (req, res) => {
     try {
       const raw = req.headers.authorization?.replace(/^Bearer /, '') || req.cookies?.client_token || '';
       if (raw) {
-        const dec = jwt.verify(raw, process.env.JWT_SECRET);
+        const dec = jwt.verify(raw, process.env.JWT_SECRET, { algorithms: ['HS256'] });
         if (dec?.role === 'client') buyerClientId = String(dec.clientId || dec._id || '');
         else if (dec?.role) isAdminCaller = true; // any non-client authenticated user is staff/admin
       }

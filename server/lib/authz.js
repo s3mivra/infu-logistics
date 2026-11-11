@@ -446,8 +446,22 @@ export function requireUserAdmin(req, res, next) {
 //   3. No granting a permission the grantor does not hold, which is how a
 //      narrow delegate would otherwise widen themselves one account at a time
 //      (make a new user with accounting.manage, log in as them).
-export function guardStaffEscalation(actor, { targetUser = null, role, permissions } = {}) {
+// What an account is paid. Nobody but the owner sets their own.
+export const SELF_PAY_FIELDS = ['commissionRate', 'dailyRate', 'isEmployee'];
+
+export function guardStaffEscalation(actor, { targetUser = null, role, permissions, fields = [] } = {}) {
+  // "client" is the portal's audience, not a staff role: a staff account given
+  // it was read as a client by some routes and as staff by others.
+  if (role !== undefined && norm(role) === 'client') {
+    return 'A staff account cannot have the role "client" - client logins are made from the Clients screen.';
+  }
   if (norm(actor?.role) === 'superadmin') return null;
+  // Separation of duties: a users.manage delegate raised their own commission
+  // to 50% and their daily rate to P99,999.
+  if (targetUser && String(targetUser._id) === String(actor?.id || actor?._id)
+      && fields.some((f) => SELF_PAY_FIELDS.includes(f))) {
+    return 'You cannot change your own pay or commission. Ask the owner.';
+  }
 
   if (targetUser && norm(targetUser.role) === 'superadmin') {
     return 'Only a superadmin can modify a superadmin account.';

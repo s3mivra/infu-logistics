@@ -159,7 +159,16 @@ const server = http.createServer(app);
 // - Trust the single upstream proxy (Railway/Vercel) so req.ip + rate-limit keys
 //   reflect the real client IP, not the load balancer's.
 app.disable('x-powered-by');
-app.set('trust proxy', 1);
+// How many proxies sit in front of the API. The platform puts two there
+// (Caddy -> the tenant's nginx -> api): trusting only one made req.ip Caddy's
+// address for every visitor, so every IP-keyed limit was one bucket for the
+// whole tenant (five wrong passwords from anyone locked out everyone).
+// TRUST_PROXY=2 is set by platform/tenant-compose.yml; a single nginx in front
+// (docker-compose.yml) is the default of 1.
+app.set('trust proxy', (() => {
+  const n = Number.parseInt(process.env.TRUST_PROXY ?? '1', 10);
+  return Number.isInteger(n) && n >= 0 && n <= 5 ? n : 1;
+})());
 // Makes the acting user visible to code deep in a request (journal entries
 // stamp postedBy from it). Must come before every route.
 app.use(requestContext);
@@ -252,7 +261,7 @@ app.use(createIdempotencyMiddleware({
   identify: (req) => {
     const h = req.headers.authorization || '';
     if (!h.startsWith('Bearer ')) return null;
-    try { const d = jwt.verify(h.slice(7), process.env.JWT_SECRET); return d?._id ? `u:${d.aud || 'staff'}:${d._id}` : null; }
+    try { const d = jwt.verify(h.slice(7), process.env.JWT_SECRET, { algorithms: ['HS256'] }); return d?._id ? `u:${d.aud || 'staff'}:${d._id}` : null; }
     catch { return null; }
   },
 }));
@@ -415,8 +424,22 @@ const signAccessToken = (user) => jwt.sign(
   // the DB; legacy tokens without it fall back to role defaults in hasPermission.
   { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, tenantId: user.tenantId || null, perms: resolvePermissions(user), tv: user.tokenVersion || 0, aud: 'staff' },
   process.env.JWT_SECRET,
-  { expiresIn: ACCESS_TTL }
+  // jti: lets logout cancel THIS access token (see loggedOutTokens) without
+  // signing the person out of their other devices.
+  { expiresIn: ACCESS_TTL, algorithm: 'HS256', jwtid: crypto.randomBytes(12).toString('hex') }
 );
+
+// Access tokens ended by logout before their 15 minutes ran out: jti -> exp
+// (ms). Single process per tenant; entries drop once the token would have
+// expired anyway.
+const loggedOutTokens = new Map();
+const forgetLoggedOut = () => { const now = Date.now(); for (const [k, exp] of loggedOutTokens) if (exp <= now) loggedOutTokens.delete(k); };
+const endAccessToken = (decoded) => {
+  if (!decoded?.jti) return;
+  forgetLoggedOut();
+  loggedOutTokens.set(decoded.jti, (Number(decoded.exp) || 0) * 1000);
+};
+const accessTokenEnded = (decoded) => !!decoded?.jti && loggedOutTokens.has(decoded.jti);
 
 const hashToken = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
 
@@ -451,6 +474,7 @@ const issueSession = async (res, user, meta = {}) => {
     tokenHash: hashToken(rawRefresh),
     userId: user._id,
     expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
+    familyStart: new Date(),
     userAgent: meta.userAgent?.slice(0, 200),
   });
   res.cookie(REFRESH_COOKIE, rawRefresh, refreshCookieOptions());
@@ -483,7 +507,15 @@ const revokeUserSessions = async (userId) => {
   await RefreshSession.updateMany({ userId, revoked: false }, { revoked: true });
   const u = await User.findByIdAndUpdate(userId, { $inc: { tokenVersion: 1 } }, { new: true, projection: { tokenVersion: 1 } }).lean().catch(() => null);
   tokenVersionCache.set(String(userId), { tv: u ? (u.tokenVersion || 0) : Number.POSITIVE_INFINITY, at: Date.now() });
+  disconnectUserSockets(userId);
 };
+
+// Live connections end with the access they were opened under. Rooms are
+// assigned once, at connect, so a fired, demoted or signed-out person kept
+// receiving every order and ledger event for as long as their tab stayed open.
+function disconnectUserSockets(userId) {
+  try { io.in(`user:${String(userId)}`).disconnectSockets(true); } catch { /* io not up yet */ }
+}
 
 // ── BOUNDARY VALIDATION ──────────────────────────────────────────────────────
 // validate(schema) parses req.body against a Zod schema. Zod strips unknown keys
@@ -691,7 +723,7 @@ const rateLimitKey = (req) => {
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
     try {
-      const verified = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+      const verified = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET, { algorithms: ['HS256'] });
       if (verified?._id) return `u:${verified._id}`;
     } catch { /* unsigned, expired or forged - fall through to IP */ }
   }
@@ -1363,12 +1395,22 @@ mongoose.connect(process.env.MONGO_URI, {
     try {
       // Stage 1 - signature/expiry. A malformed/expired token throws here and never
       // reaches the audience/role logic below.
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
       // Stage 2 - audience. A client-audience token must never satisfy the staff gate,
       // even before role checks. This makes every verifyToken route client-hostile by
       // default (defense-in-depth alongside requireStaff). aud beats role.
       if (decoded.aud === 'client') {
         return res.status(403).json({ success: false, message: 'Forbidden: client token not permitted here.' });
+      }
+      // Only a staff session token. Tokens minted before `aud` existed have long
+      // expired (15 minutes), and anything else signed with this secret - an
+      // approval token, say - skipped the revocation check below entirely.
+      if (decoded.aud !== 'staff') {
+        return res.status(401).json({ success: false, message: 'Unauthorized: Invalid or expired token' });
+      }
+      // Signed out on this device (see /api/auth/logout).
+      if (accessTokenEnded(decoded)) {
+        return res.status(401).json({ success: false, message: 'Unauthorized: signed out' });
       }
       req.user = decoded; // Stage 3 (role allowlist) is enforced by requireStaff on staff routes.
       // Stage 4 - still current? A token minted before the user's last
@@ -1423,7 +1465,7 @@ mongoose.connect(process.env.MONGO_URI, {
     }
     let decoded;
     try {
-      decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+      decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET, { algorithms: ['HS256'] });
     } catch {
       return res.status(401).json({ success: false, error: 'Unauthorized: Invalid or expired token' });
     }
@@ -1464,7 +1506,7 @@ mongoose.connect(process.env.MONGO_URI, {
       const token = authHeader.split(' ')[1];
       let decoded;
       try {
-        decoded = jwt.verify(token, process.env.JWT_SECRET);
+        decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
       } catch {
         // 401 so the client refreshes + retries instead of failing an expired session.
         return res.status(401).json({ success: false, error: 'Invalid or expired token.' });
@@ -1486,6 +1528,10 @@ mongoose.connect(process.env.MONGO_URI, {
         return next();
       }
       if (!evaluateStaffAccess(decoded).ok) return res.status(403).json({ success: false, error: 'Forbidden: staff access required.' });
+      // The same staff-session rules as verifyToken: a staff audience, not
+      // signed out, and current (tokenVersion).
+      if (decoded.aud !== 'staff' || !decoded._id) return res.status(401).json({ success: false, error: 'Invalid or expired token.' });
+      if (accessTokenEnded(decoded)) return res.status(401).json({ success: false, error: 'Signed out.' });
       if (decoded._id) {
         try {
           const tv = await currentTokenVersion(decoded._id);
@@ -2458,6 +2504,7 @@ const UserSchema = new mongoose.Schema({
   // unless a query asks for them by name, so no list of users can carry them.
   totpEnabled:     { type: Boolean, default: false },
   totpSecret:      { type: String, default: '', select: false },
+  totpLastStep:    { type: Number, default: 0, select: false },   // last code step accepted; older ones refused
   totpPending:     { type: String, default: '', select: false },     // set up but not yet confirmed with a code
   totpBackupCodes: { type: [String], default: [], select: false },   // sha256 of each unused code
   // Devices that passed the second step and need not again for a while. Only
@@ -2470,6 +2517,10 @@ const UserSchema = new mongoose.Schema({
   // Failed attempts on this PIN, so a short code cannot simply be guessed.
   pinFailedCount:  { type: Number, default: 0 },
   pinLockedUntil:  { type: Date, default: null },
+  // Wrong passwords against THIS account, from anywhere. The login limiter is
+  // per address, which a botnet or a rotated X-Forwarded-For walks around.
+  loginFailedCount: { type: Number, default: 0 },
+  loginLockedUntil: { type: Date, default: null },
   // On the payroll: Payroll offers this account by name when lines are added,
   // so the name - and the numbers below - match the account exactly.
   isEmployee:      { type: Boolean, default: false },
@@ -2583,20 +2634,26 @@ const emitToMgr  = (evt, data) => io.to('manager').emit(evt, data);             
 // auth.token (preferred) or the Authorization header. Unauthenticated
 // connections are still allowed for public surfaces (customer menu, QR session)
 // but they don't get room membership for sensitive broadcasts.
-io.use((socket, next) => {
+io.use(async (socket, next) => {
+  socket.data.user = null;
   try {
     const raw =
       socket.handshake.auth?.token ||
       (socket.handshake.headers?.authorization || '').replace(/^Bearer /, '') ||
       '';
-    if (!raw) { socket.data.user = null; return next(); }
-    const decoded = jwt.verify(raw, process.env.JWT_SECRET);
+    if (!raw) return next();
+    const decoded = jwt.verify(raw, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+    // Only a current STAFF session joins staff rooms: an approval token, a
+    // client token or a token from before the user's last privilege change
+    // (tokenVersion) is treated as anonymous, exactly as verifyToken refuses it.
+    if (decoded?.aud !== 'staff' || !evaluateStaffAccess(decoded).ok || !decoded._id) return next();
+    const tv = await currentTokenVersion(decoded._id);
+    if ((decoded.tv || 0) < tv) return next();
     socket.data.user = decoded;        // { _id, name, role, ... }
     return next();
   } catch {
     // Invalid / expired token - treat as anonymous rather than refusing the
     // connection, so public surfaces keep working without auth.
-    socket.data.user = null;
     return next();
   }
 });
@@ -2617,6 +2674,16 @@ io.on('connection', (socket) => {
     socket.join('cashier'); // order flow for every staff member
     if (hasPermission(user, 'accounting.view')) socket.join('manager');
     if (role === 'kitchen') socket.join('kitchen');
+    // Addressable per user, so revoking their sessions can drop this socket.
+    socket.join(`user:${String(user._id)}`);
+    // And it ends when the access token it was opened with does: the client
+    // reconnects with its refreshed token, which is checked afresh.
+    const msLeft = (Number(user.exp) || 0) * 1000 - Date.now();
+    if (msLeft > 0) {
+      const t = setTimeout(() => socket.disconnect(true), Math.min(msLeft, 2 ** 31 - 1));
+      t.unref?.();
+      socket.on('disconnect', () => clearTimeout(t));
+    }
   }
 
   // Back-compat shim: ignore client-declared roles for room placement so an
@@ -3303,6 +3370,8 @@ const ProductionOrder = mongoose.model('ProductionOrder', ProductionOrderSchema)
 // model/helper/middleware they use is passed via this ctx object. Registration
 // order preserves the original in-file route order per feature.
 const ctx = {
+  currentTokenVersion,
+  endAccessToken,
   Budget,
   LeaveRequest,
   OvertimeRequest,
@@ -3571,6 +3640,34 @@ const ctx = {
   // live getter: refreshPaymentMap() reassigns this module-level variable
   get PAYMENT_MAP_CACHE() { return PAYMENT_MAP_CACHE; },
 };
+// ── Page permissions, enforced on the server ────────────────────────────────
+// Report endpoints guarded only by their tab's permission (reports.view) let a
+// role narrowed to one page - the Driver preset: "the delivery sheet, no other
+// report" - call the API directly and read the P&L, balance sheet and books
+// health. Each endpoint here also needs the page (or permission) that shows
+// it; holding any one of the listed keys is enough. Checked before the route's
+// own guards; a token that does not verify is left to the route (401).
+const ROUTE_PERMISSIONS = {
+  '/api/reports/pnl': ['screen.reports.pnlmonthly'],
+  '/api/reports/balance-sheet': ['screen.reports.bsmonthly'],
+  '/api/reports/books-health': ['screen.ledger.bookshealth'],
+  '/api/reports/inventory-turnover': ['analytics.view'],
+  '/api/reports/sales-trend': ['analytics.view'],
+  '/api/reports/purchase-order': ['procurement.view'],
+  '/api/insights/what-changed': ['owner.view'],
+  '/api/insights/product-profitability': ['owner.view'],
+};
+app.use((req, res, next) => {
+  const needed = ROUTE_PERMISSIONS[req.path];
+  if (!needed) return next();
+  const h = String(req.headers.authorization || '');
+  if (!h.startsWith('Bearer ')) return next();
+  let decoded;
+  try { decoded = jwt.verify(h.slice(7), process.env.JWT_SECRET, { algorithms: ['HS256'] }); } catch { return next(); }
+  if (needed.some((p) => hasPermission(decoded, p))) return next();
+  return res.status(403).json({ success: false, error: `Forbidden: needs one of ${needed.map((p) => `"${p}"`).join(', ')}.` });
+});
+
 registerTenants(ctx);
 registerAddons(ctx);
 registerUsers(ctx);

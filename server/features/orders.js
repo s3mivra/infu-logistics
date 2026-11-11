@@ -32,6 +32,7 @@ export default function registerOrders(ctx) {
   const {
     app,
     io,
+    currentTokenVersion,
     server,
     express,
     http,
@@ -583,16 +584,24 @@ app.get('/api/orders/:id', async (req, res) => {
     try {
       const raw = req.headers.authorization?.replace(/^Bearer /, '') || '';
       if (raw) {
-        const d = jwt.verify(raw, process.env.JWT_SECRET);
+        const d = jwt.verify(raw, process.env.JWT_SECRET, { algorithms: ['HS256'] });
         const isClient = d?.aud === 'client' || String(d?.role || '').toLowerCase() === 'client';
         if (isClient) {
           const clientId = String(d.clientId || d._id || '');
           isPrivileged = !!clientId && !!(await Order.exists({ _id: req.params.id, clientId }));
-        } else if (d?.role) {
-          isPrivileged = true;
+        } else if (d?.aud === 'staff' && d._id && hasPermission(d, 'orders.view')) {
+          // A current staff session that may see orders - not any signed token
+          // with a role: a revoked or demoted person's token kept full access.
+          isPrivileged = (Number(d.tv) || 0) >= await currentTokenVersion(d._id);
         }
       }
     } catch { /* invalid/expired token → treat as anonymous */ }
+    // Anonymous (QR status page): only with the order's view key.
+    if (!isPrivileged) {
+      const keyed = await Order.findById(req.params.id, { viewKey: 1 }).select('+viewKey').lean();
+      const key = String(req.query.key || '');
+      if (!keyed?.viewKey || !key || key !== keyed.viewKey) return res.status(404).json({ success: false, message: "Order not found" });
+    }
     const safeProjection = {
       orderNumber: 1, status: 1, dispatchStatus: 1, isParked: 1, table: 1,
       // No customerName: an order id is all an anonymous caller has, and the
@@ -1413,6 +1422,8 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       ...(billingNumber && { billingNumber }),
       ...(isClientOrder && { clientId: req.user._id || req.user.clientId || '', clientUsername: req.user.username || '' }),
       ...(idempotencyKey && { idempotencyKey, idempotencyOwner }),
+      // The QR diner's key to look this order up again (GET /api/orders/:id?key=).
+      ...(req.qrSession && { viewKey: crypto.randomBytes(16).toString('hex') }),
       ...(placedAt && { createdAt: placedAt }),
       // Wholesale when the buyer is a wholesale account; staff may also say so.
       channel: (!selfServiceOrder && ['Retail', 'Wholesale'].includes(req.body.channel)) ? req.body.channel

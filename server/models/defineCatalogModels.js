@@ -244,6 +244,10 @@ export default function defineCatalogModels({ BUSINESS_TYPE }) {
     // A repeated key is only answered with the order to the caller who placed
     // it; anyone else holding the key learns nothing about it.
     idempotencyOwner: { type: String, default: '', select: false },
+    // Handed to a QR diner with their order and needed (as ?key=) to look the
+    // order up without signing in. An order id alone used to be enough, and
+    // ids are sequential enough to walk.
+    viewKey: { type: String, default: '', select: false },
     customerName: { type: String, default: 'Guest' },
     paymentMethod: { type: String, default: 'Cash' },
 

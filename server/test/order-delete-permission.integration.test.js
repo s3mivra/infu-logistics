@@ -122,9 +122,9 @@ describe('voiding a completed order', () => {
   beforeAll(async () => {
     await makeUser({ name: 'VoidOwner', role: 'superadmin' });
     const ownerTok = await loginStaff(app, 'VoidOwner');
-    const role = await as(ownerTok)('post', '/api/roles').send({ name: 'Head Barista', permissions: ['pos.use', 'orders.view', 'orders.delete'] });
-    expect(role.body.success).toBe(true);
-    await makeUser({ name: 'Hana Head', role: 'Head Barista' });
+    const role = await as(ownerTok)('post', '/api/roles').send({ name: 'Void Lead', permissions: ['pos.use', 'orders.view', 'orders.delete'] });
+    expect(role.body.success, JSON.stringify(role.body)).toBe(true);
+    await makeUser({ name: 'Hana Head', role: 'Void Lead' });
     headTok = await loginStaff(app, 'Hana Head');
   });
   const completed = async () => {

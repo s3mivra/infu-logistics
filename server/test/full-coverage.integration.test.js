@@ -106,7 +106,7 @@ describe('catalog CRUD: categories, products, addons, modifier-groups, combos, d
 
   it('GET/POST/DELETE role', async () => {
     ran(await req('get', '/api/roles', T.staff));
-    const r = await req('post', '/api/roles', T.super).send({ name: 'Barista' });
+    const r = await req('post', '/api/roles', T.super).send({ name: 'Coverage Barista' });
     expect(r.status).toBe(200);
     const rid = r.body.role?._id || r.body._id;
     ran(await req('delete', `/api/roles/${rid}`, T.staff));

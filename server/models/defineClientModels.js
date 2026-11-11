@@ -147,6 +147,8 @@ export default function defineClientModels({ BUSINESS_TYPE, log }) {
     userId:    { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     revoked:   { type: Boolean, default: false },
     replacedBy:{ type: String },          // tokenHash of the rotated successor (audit trail)
+    rotatedAt: { type: Date },            // when it was swapped for replacedBy (reuse detection)
+    familyStart: { type: Date },          // first sign-in of this chain - caps its total life
     userAgent: { type: String },
     expiresAt: { type: Date, required: true },
   }, { timestamps: true });

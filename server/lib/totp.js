@@ -46,13 +46,21 @@ export function codeAt(secret, timeMs = Date.now()) {
 // The code now, or the one just before or after: a phone's clock is rarely
 // exact, and a code typed at second 29 arrives at second 31.
 export function verifyCode(secret, code, timeMs = Date.now()) {
+  return verifyCodeStep(secret, code, timeMs) !== null;
+}
+
+// The same check, returning WHICH 30-second step the code belongs to (or
+// null). Sign-in records the last step used and refuses it and anything older,
+// so a code read over someone's shoulder cannot be replayed in its window.
+export function verifyCodeStep(secret, code, timeMs = Date.now()) {
   const typed = String(code || '').replace(/\s/g, '');
-  if (!secret || !/^\d{6}$/.test(typed)) return false;
+  if (!secret || !/^\d{6}$/.test(typed)) return null;
   for (const drift of [0, -1, 1]) {
-    const expected = codeAt(secret, timeMs + drift * STEP_SECONDS * 1000);
-    if (crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(typed))) return true;
+    const at = timeMs + drift * STEP_SECONDS * 1000;
+    const expected = codeAt(secret, at);
+    if (crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(typed))) return Math.floor(at / 1000 / STEP_SECONDS);
   }
-  return false;
+  return null;
 }
 
 // What the QR code holds; scanning it adds the account to the app.
