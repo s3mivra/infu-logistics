@@ -857,12 +857,28 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
   // ReferenceError, which as an uncaught rejection in an async handler hangs
   // the request with no response instead of erroring cleanly.
   const idempotencyKey = req.headers['idempotency-key'];
+  // The key was globally unique and treated as proof of ownership: anyone who
+  // repeated another caller's key was handed that caller's whole order
+  // (customer, address, totals). Replays now go only to the original sender.
+  const idempotencyOwner = req.qrSession ? `q:${req.qrSession.sessionId}`
+    : (req.user?.aud === 'client' || String(req.user?.role || '').toLowerCase() === 'client')
+      ? `c:${req.user.clientId || req.user._id || ''}`
+      : `u:${req.user?._id || ''}`;
+  const replayDuplicate = async () => {
+    const existingOrder = await Order.findOne({ idempotencyKey }).select('+idempotencyOwner');
+    if (!existingOrder) return false;
+    if (existingOrder.idempotencyOwner !== idempotencyOwner) {
+      res.status(409).json({ success: false, error: 'This request key has already been used. Please try again.' });
+      return true;
+    }
+    const order = existingOrder.toObject();
+    delete order.idempotencyOwner;
+    res.status(200).json({ success: true, order, message: "Duplicate prevented." });
+    return true;
+  };
   try {
     // 1. IDEMPOTENCY CHECK
-    if (idempotencyKey) {
-      const existingOrder = await Order.findOne({ idempotencyKey });
-      if (existingOrder) return res.status(200).json({ success: true, order: existingOrder, message: "Duplicate prevented." });
-    }
+    if (idempotencyKey && await replayDuplicate()) return undefined;
 
     let { items, discountPercent = 0, discountFlat = 0, table, customerName, sessionId, isComplimentary = false, employeeName = '', orderNotes = '', guestCount = 1, payments: paymentsInput, paymentMethod: bodyPaymentMethod, termsOfPayment, reserveOnly = false, location = '' } = req.body;
     // Delivery fields (logistics/delivery orders). These were previously never
@@ -1327,7 +1343,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       ...(termsOfPayment && { termsOfPayment }),
       ...(billingNumber && { billingNumber }),
       ...(isClientOrder && { clientId: req.user._id || req.user.clientId || '', clientUsername: req.user.username || '' }),
-      ...(idempotencyKey && { idempotencyKey }),
+      ...(idempotencyKey && { idempotencyKey, idempotencyOwner }),
       ...(placedAt && { createdAt: placedAt }),
       // Wholesale when the buyer is a wholesale account; staff may also say so.
       channel: (!selfServiceOrder && ['Retail', 'Wholesale'].includes(req.body.channel)) ? req.body.channel
@@ -1367,8 +1383,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // turns the loser into an E11000 here instead of a duplicate order;
     // resolve it the same way the findOne check would have.
     if (error?.code === 11000 && error?.keyPattern?.idempotencyKey && idempotencyKey) {
-      const existingOrder = await Order.findOne({ idempotencyKey });
-      if (existingOrder) return res.status(200).json({ success: true, order: existingOrder, message: "Duplicate prevented." });
+      if (await replayDuplicate()) return undefined;
     }
     // A refusal about the ORDER (bad quantity, an item not on the menu, a
     // quotation already used) is the caller's to fix, so it goes back as a 400
@@ -1855,6 +1870,16 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ success: false, error: 'Completed orders are immutable. Use the void workflow for cancellations.' });
+    }
+    // Closed orders are closed for good. A voided, refunded or cancelled order
+    // already had its sale reversed (or never posted); setting it back to
+    // Completed here re-ran the posting engine, so the sale was booked and the
+    // stock taken a second time - and could be voided again, in a loop. The
+    // only way back from a void is the superadmin unvoid route.
+    if (['Voided', 'Refunded', 'Cancelled'].includes(previousStatus)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(409).json({ success: false, error: `This order is ${previousStatus.toLowerCase()} and can no longer be changed.` });
     }
 
     // Dine-in in the bar's own cups, or take-out cups after all - decided any
@@ -3862,8 +3887,21 @@ const refundOnce = async (req, res, mayRetry) => {
     if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
     if (order.status !== 'Completed') return res.status(400).json({ success: false, error: 'Can only refund Completed orders.' });
     if (order.transactionType === 'REFUND') return res.status(400).json({ success: false, error: 'Already refunded.' });
-    const amt = parseFloat(refundAmount) || order.total;
-    if (amt <= 0 || amt > order.total + 0.01) return res.status(400).json({ success: false, error: `Refund amount must be between ₱0.01 and ₱${order.total.toFixed(2)}.` });
+    // What is still refundable: the total less every partial refund already
+    // paid back. Measuring against the face total let a full refund after a
+    // partial one pay the partial share out a second time (784 back on a 448
+    // sale). Exchanges are already netted into order.total.
+    const alreadyRefunded = Number(order.refundedAmount) || 0;
+    const refundable = Math.round((order.total - alreadyRefunded) * 100) / 100;
+    if (refundable < 0.01) return res.status(400).json({ success: false, error: 'Nothing is left to refund on this order.' });
+    const amt = Math.round((parseFloat(refundAmount) || refundable) * 100) / 100;
+    if (!(amt >= 0.01) || amt > refundable + 0.001) return res.status(400).json({ success: false, error: `Refund amount must be between ₱0.01 and ₱${refundable.toFixed(2)}.` });
+    // Items already returned by a partial refund went back to stock then. The
+    // whole-order stock reversal below would put them back again, so once part
+    // of an order has been returned, the rest goes back through partial refund.
+    if (alreadyRefunded > 0 && (inventoryAction === 'Restock' || inventoryAction === 'Spoilage')) {
+      return res.status(400).json({ success: false, error: 'Part of this order was already refunded. Use Partial Refund to return the remaining items to stock.' });
+    }
     const reference = mkRef('REFUND', order.orderNumber);
     const lines = [
       ...saleRevenueLines({ gross: amt, vatAmount: vatShare(order, amt), side: 'debit' }),
@@ -3875,7 +3913,7 @@ const refundOnce = async (req, res, mayRetry) => {
     // Operator chooses per refund: 'Restock' (goods returned, put stock back & reverse COGS)
     // or 'Spoilage' (goods unusable, move COGS → waste expense). Complimentary orders carry
     // no COGS reversal here (cost was already expensed at completion).
-    const isFullRefund = Math.abs(amt - order.total) <= 0.01;
+    const isFullRefund = alreadyRefunded === 0 && Math.abs(amt - order.total) <= 0.01;
     const invAction = inventoryAction === 'Restock' || inventoryAction === 'Spoilage' ? inventoryAction : 'None';
     if (isFullRefund && invAction !== 'None' && !order.isComplimentary) {
       let totalCogs = 0;

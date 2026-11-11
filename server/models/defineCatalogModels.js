@@ -240,6 +240,10 @@ export default function defineCatalogModels({ BUSINESS_TYPE }) {
     // create() completes). The unique index turns a lost race into an E11000
     // the create-order route catches, instead of a duplicate order.
     idempotencyKey: { type: String, index: true, unique: true, sparse: true },
+    // Who sent that key ('u:<staff id>', 'c:<client id>', 'q:<QR session>').
+    // A repeated key is only answered with the order to the caller who placed
+    // it; anyone else holding the key learns nothing about it.
+    idempotencyOwner: { type: String, default: '', select: false },
     customerName: { type: String, default: 'Guest' },
     paymentMethod: { type: String, default: 'Cash' },
 
