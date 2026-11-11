@@ -14,6 +14,7 @@
 
 import mongoose from 'mongoose';
 import crypto from 'node:crypto';
+import { isClientError } from './requestSafety.js';
 
 const COLLECTION = 'errorevents';
 const CAP_BYTES = 32 * 1024 * 1024;   // ~32 MB of history per tenant
@@ -69,6 +70,10 @@ export function captureError(req, err, { status = 500, kind = 'request' } = {}) 
   // (lib/atomicRoute.js) answers 500 after catching it, and the wrapper needs
   // to know whether that 500 was a transient transaction error worth retrying.
   if (req && typeof req === 'object') req.__lastError = err;
+  // A refusal the caller can act on (a closed period, a 409 state conflict) is
+  // not a fault: it is answered with its own status (see clientErrorStatus in
+  // lib/requestSafety.js) and kept out of the error log.
+  if (isClientError(err)) return;
   try {
     if (!ready || !Model) return;
     const message = String(err?.message || err || 'Unknown error').slice(0, 500);

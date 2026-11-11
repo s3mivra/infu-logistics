@@ -31,7 +31,7 @@ import { ACCOUNTS, EXPENSE_CATEGORIES, CODE_MAP } from './lib/chartOfAccounts.js
 import { resolveUnit, displayToBase, effectiveDisplay, UNIT_TO_BASE, unitTypeOf, basePerPack } from './lib/units.js';
 import { zTitle, zText, zMoneyLoose, zMoneyStrict, MONEY_MAX } from './lib/normalize.js';
 import { addBatch, consumeBatches, consumeSpecificBatch, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
-import { stripQueryOperators, forwardAsyncErrors } from './lib/requestSafety.js';
+import { stripQueryOperators, forwardAsyncErrors, clientErrorStatus } from './lib/requestSafety.js';
 import { withFloorActions, withSplitScreens } from './lib/authz.js';
 import { requireStaff, evaluateStaffAccess, evaluateClientAccess, requirePermission, requireAnyPermission, requireUserAdmin, guardStaffEscalation, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
@@ -163,6 +163,9 @@ app.set('trust proxy', 1);
 // Makes the acting user visible to code deep in a request (journal entries
 // stamp postedBy from it). Must come before every route.
 app.use(requestContext);
+// A 4xx error thrown inside a handler keeps its status and message even where
+// the route's own catch block answers 500 - see lib/requestSafety.js.
+app.use(clientErrorStatus);
 
 // Hardened security headers. This is a JSON API consumed by a separate SPA origin,
 // so the restrictive default CSP is relaxed to avoid breaking nothing-served-here,
@@ -1862,7 +1865,15 @@ JournalEntrySchema.pre('save', function () {
   if (!this.isNew && !inLedgerMaintenance()) throw refuseLedgerRewrite('save');
 });
 
-JournalEntrySchema.pre('validate', function () {
+JournalEntrySchema.pre('validate', async function () {
+  // A closed month is closed to EVERY posting path, not only the routes that
+  // remembered to call periodLockFor() (depreciation, check clearing, PO
+  // prepayment and others did not). New entries only; a declared ledger
+  // maintenance (a superadmin restore) is the one exception.
+  if (this.isNew && !inLedgerMaintenance()) {
+    const lock = await periodLockFor(this.date || new Date());
+    if (lock) throw periodClosedError(lock, this.reference);
+  }
   if (!this.postedBy) {
     const actor = currentActor();
     if (actor) { this.postedBy = actor.name; this.postedById = actor.id; }
@@ -2308,14 +2319,26 @@ const ClosedPeriod = mongoose.model('ClosedPeriod', ClosedPeriodSchema);
 
 // Check if a given date falls in a closed period. Returns the period doc if
 // closed, else null. Use this to gate any back-dated write.
+// The month is read in the BUSINESS time zone (Settings > Time zone), the same
+// clock every report and day boundary uses. getFullYear()/getMonth() read the
+// server's own zone, so an entry made at 00:30 Manila on the 1st landed in the
+// previous month's lock check on a UTC host.
 async function periodLockFor(date) {
   if (!date) return null;
   const d = new Date(date);
   if (isNaN(d.getTime())) return null;
-  const lock = await ClosedPeriod.findOne({
-    year: d.getFullYear(), month: d.getMonth() + 1, isOpen: false,
-  }).lean();
+  const [year, month] = businessDateStr(d).split('-').map(Number);
+  const lock = await ClosedPeriod.findOne({ year, month, isOpen: false }).lean();
   return lock || null;
+}
+
+// Thrown by the JournalEntry hook when an entry is dated inside a closed month.
+// Routes that catch errors generically still answer 423 through errorStatus().
+function periodClosedError(lock, reference) {
+  return Object.assign(
+    new Error(`${lock.year}-${String(lock.month).padStart(2, '0')} is closed - nothing can be posted into it${reference ? ` (${reference})` : ''}. Reopen the period first.`),
+    { status: 423, httpStatus: 423, code: 'PERIOD_CLOSED' },
+  );
 }
 
 // --- CHART OF ACCOUNTS ---
@@ -3600,7 +3623,8 @@ app.use((err, req, res, next) => {
   if (SENTRY_ON && status >= 500) Sentry.captureException(err);
   res.status(status).json({
     success: false,
-    error: IS_PROD ? 'An unexpected error occurred.' : (err.message || 'Internal error'),
+    // A 4xx is the caller's to fix and its message says how; only faults are hidden.
+    error: IS_PROD && status >= 500 ? 'An unexpected error occurred.' : (err.message || 'Internal error'),
   });
 });
 

@@ -167,6 +167,17 @@ export default function registerFixedAssets(ctx) {
   // Posts whatever whole months are owed, capped at the remaining depreciable
   // value. Catching up several missed months in one entry is normal and safe;
   // what must never happen is writing an asset below its salvage value.
+  // Depreciation is charged for months that have happened. A future "as of"
+  // date posted years of charges at once (51 months in one entry), so it is
+  // refused; so is a date inside a closed month.
+  const asOfProblem = async (asOf) => {
+    if (Number.isNaN(asOf.getTime())) return { status: 400, error: 'Invalid "as of" date.' };
+    if (asOf.getTime() > dayEnd(new Date()).getTime()) return { status: 400, error: 'Depreciation cannot be charged for a future date.' };
+    const lock = await periodLockFor(asOf);
+    if (lock) return { status: 423, error: `${lock.year}-${String(lock.month).padStart(2, '0')} is closed - depreciation cannot be posted into it.` };
+    return null;
+  };
+
   const depreciateOne = async (asset, asOf, req) => {
     const due = depreciationDue(asset, asOf);
     if (due.amount <= 0) return { posted: false, due };
@@ -180,26 +191,40 @@ export default function registerFixedAssets(ctx) {
       { accountCode: accumCode, accountName: nameOf(accumCode), debit: 0, credit: due.amount },
     ];
     assertBalanced(lines, reference);
-    await JournalEntry.create({
-      date: asOf, reference,
-      description: `Depreciation for ${asset.assetCode} - ${asset.name} (${due.months} month${due.months === 1 ? '' : 's'})${due.capped ? ' - final charge, capped at remaining value' : ''}`,
-      lines, totalDebit: due.amount, totalCredit: due.amount,
-    });
-
     const next = applyDepreciation(asset, due.amount, asOf);
-    await FixedAsset.updateOne({ _id: asset._id }, {
-      $set: {
-        accumulatedDepreciation: next.accumulatedDepreciation,
-        lastDepreciationDate: next.lastDepreciationDate,
-        status: next.status,
-      },
-      $push: {
-        depreciationHistory: {
-          amount: due.amount, months: due.months, throughDate: asOf,
-          journalRef: reference, by: req.user?.name || '',
+
+    // Claim the asset in the state it was read in, inside the same transaction
+    // as the entry. Two runs at once both read the same balance and both
+    // posted (6 entries, 1 register line); now only the first claim matches,
+    // and a later one finds nothing due.
+    const posted = await mongoose.connection.transaction(async () => {
+      const claim = await FixedAsset.updateOne({
+        _id: asset._id,
+        // `null` also matches a field an older asset never had.
+        accumulatedDepreciation: asset.accumulatedDepreciation ?? { $in: [0, null] },
+        lastDepreciationDate: asset.lastDepreciationDate ?? null,
+      }, {
+        $set: {
+          accumulatedDepreciation: next.accumulatedDepreciation,
+          lastDepreciationDate: next.lastDepreciationDate,
+          status: next.status,
         },
-      },
+        $push: {
+          depreciationHistory: {
+            amount: due.amount, months: due.months, throughDate: asOf,
+            journalRef: reference, by: req.user?.name || '',
+          },
+        },
+      });
+      if (!claim.modifiedCount) return false;
+      await JournalEntry.create([{
+        date: asOf, reference,
+        description: `Depreciation for ${asset.assetCode} - ${asset.name} (${due.months} month${due.months === 1 ? '' : 's'})${due.capped ? ' - final charge, capped at remaining value' : ''}`,
+        lines, totalDebit: due.amount, totalCredit: due.amount,
+      }]);
+      return true;
     });
+    if (!posted) return { posted: false, due, error: 'This asset was depreciated by another request just now.' };
     return { posted: true, due, reference, status: next.status };
   };
 
@@ -211,6 +236,8 @@ export default function registerFixedAssets(ctx) {
       if (asset.status === 'Disposed') return res.status(409).json({ success: false, error: 'This asset has been disposed of.' });
 
       const asOf = req.body?.asOf ? dayEnd(req.body.asOf) : new Date();
+      const problem = await asOfProblem(asOf);
+      if (problem) return res.status(problem.status).json({ success: false, error: problem.error });
       const out = await depreciateOne(asset, asOf, req);
       if (!out.posted) {
         return res.status(409).json({ success: false, error: out.error || 'Nothing is due yet - depreciation is charged in whole months.', due: out.due });
@@ -227,6 +254,8 @@ export default function registerFixedAssets(ctx) {
   app.post('/api/fixed-assets/run-depreciation', verifyToken, ...canPost, async (req, res) => {
     try {
       const asOf = req.body?.asOf ? dayEnd(req.body.asOf) : new Date();
+      const problem = await asOfProblem(asOf);
+      if (problem) return res.status(problem.status).json({ success: false, error: problem.error });
       const assets = await FixedAsset.find({
         businessType: BUSINESS_TYPE, ...tenantScope(req), status: { $ne: 'Disposed' },
       }).lean();
