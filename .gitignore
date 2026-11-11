@@ -144,3 +144,6 @@ DerivedData/
 client/test-results/
 client/playwright-report/
 client/.playwright/
+
+# Audit workspace (local only)
+AUDIT/
