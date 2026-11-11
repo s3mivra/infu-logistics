@@ -55,7 +55,22 @@ export default function registerSetupImport(ctx) {
     Advance, ADVANCE_ACCOUNTS, currentBranchCode,
   } = ctx;
 
-  const canPost = [requireStaff, requirePermission('accounting.manage')];
+  // The setup window. Opening balances, receivables, client credit and
+  // payables carried in from the old books create balances with no sale or
+  // payment behind them - right while the books are being set up, wrong once
+  // the business is trading: finance could hand a client P250,000 of credit
+  // with no journal entry. After the first completed sale these importers are
+  // the owner's only (superadmin), and every use is still audited.
+  const setupWindow = async (req, res, next) => {
+    if (String(req.user?.role || '').toLowerCase() === 'superadmin') return next();
+    try {
+      if (await Order.exists({ status: 'Completed' })) {
+        return res.status(423).json({ success: false, error: 'The business is already trading, so opening balances can only be imported by the owner now.' });
+      }
+      return next();
+    } catch (err) { return next(err); }
+  };
+  const canPost = [requireStaff, requirePermission('accounting.manage'), setupWindow];
   const fail = (req, res, err) => (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   const text = (v) => String(v ?? '').trim();
   const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;

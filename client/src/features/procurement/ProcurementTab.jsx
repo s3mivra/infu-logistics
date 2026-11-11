@@ -903,8 +903,16 @@ export default function ProcurementTab({ ctx }) {
           productionDate: receiveExpiry[l._id || i] ? null : (receiveProduction[l._id || i] || null),
         }))
         .filter(r => r.receivedQty > 0); // only send lines the user actually entered a delivered qty for
-      const res = await apiFetch(`/api/purchase-orders/${po._id}/receive`, { method: 'POST', body: JSON.stringify({ received, notes: receiveNotes, claimInputVat: receiveClaimVat, paidOnDelivery: receivePaidFrom ? { account: receivePaidFrom } : false }) });
-      const d = await res.json();
+      const send = (acceptOverReceipt) => apiFetch(`/api/purchase-orders/${po._id}/receive`, { method: 'POST', body: JSON.stringify({ received, notes: receiveNotes, claimInputVat: receiveClaimVat, paidOnDelivery: receivePaidFrom ? { account: receivePaidFrom } : false, acceptOverReceipt }) });
+      let d = await (await send(false)).json();
+      // More arrived than was ordered: the server asks for an explicit yes
+      // (the bill it raises is still flagged at three-way match).
+      if (!d.success && Array.isArray(d.overReceipt) && d.overReceipt.length) {
+        const list = d.overReceipt.map(o => `${o.item}: ${o.received} received, ${o.left} still on order`).join('\n');
+        const ok = await ui.confirm({ title: 'Receive more than was ordered?', message: list, detail: 'The supplier bill will be flagged for review at matching.', confirmLabel: 'Receive anyway' });
+        if (ok) d = await (await send(true)).json();
+        else { setError(d.error); return; }
+      }
       if (d.success) { setReceiveId(null); await fetchPOs(); }
       else setError(d.error || 'Failed to reconcile delivery.');
     } catch { setError('Network error reconciling delivery.'); }

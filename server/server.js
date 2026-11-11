@@ -32,7 +32,7 @@ import { resolveUnit, displayToBase, effectiveDisplay, UNIT_TO_BASE, unitTypeOf,
 import { zTitle, zText, zMoneyLoose, zMoneyStrict, MONEY_MAX } from './lib/normalize.js';
 import { addBatch, consumeBatches, consumeSpecificBatch, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
 import { stripQueryOperators, forwardAsyncErrors, clientErrorStatus } from './lib/requestSafety.js';
-import { withFloorActions, withSplitScreens } from './lib/authz.js';
+import { withFloorActions, withSplitScreens, withOrderOverride } from './lib/authz.js';
 import { requireStaff, evaluateStaffAccess, evaluateClientAccess, requirePermission, requireAnyPermission, requireUserAdmin, guardStaffEscalation, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
 import { computeOrderVat, extractVat, normaliseVatRate, DEFAULT_VAT_RATE } from './lib/vat.js';
@@ -1138,6 +1138,27 @@ const runStartupTasks = async () => {
       }
     } catch (err) {
       log.error({ err }, 'Floor-action permission migration failed');
+    }
+
+    // Once: orders.override (price changes, manual discounts and comps at the
+    // till) goes to every stored role and person who could already void or
+    // approve prices. Everyone else now needs an approver's PIN for those.
+    try {
+      const done = await Settings.findOne({ key: 'permsOrderOverrideV1' }).lean();
+      if (!done) {
+        for (const r of await Role.find().lean()) {
+          const next = withOrderOverride(r.permissions || []);
+          if (next.length !== (r.permissions || []).length) await Role.updateOne({ _id: r._id }, { $set: { permissions: next } });
+        }
+        for (const u of await User.find({ 'permissions.0': { $exists: true } }, { permissions: 1 }).lean()) {
+          const next = withOrderOverride(u.permissions);
+          if (next.length !== u.permissions.length) await User.updateOne({ _id: u._id }, { $set: { permissions: next } });
+        }
+        await Settings.findOneAndUpdate({ key: 'permsOrderOverrideV1' }, { key: 'permsOrderOverrideV1', value: true }, { upsert: true });
+        log.info('✅ orders.override given to existing roles and users who can void or approve prices');
+      }
+    } catch (err) {
+      log.error({ err }, 'orders.override permission migration failed');
     }
 
     // Once: backdated sales "On Account" were booked to Accounts Payable - post
@@ -3145,6 +3166,7 @@ const RequisitionSlipSchema = new mongoose.Schema({
 
   notes: { type: String, default: '' },
   preparedBy: { type: String, default: '' },               // requester's name - the slip's "Prepared By" line
+  preparedById: { type: String, default: '' },             // requester's user id - they may not approve their own slip
   approvedBy: { type: String, default: '' },                // the slip's "Approved By" line, once set
   approvedAt: { type: Date, default: null },
   rejectedBy: { type: String, default: '' },

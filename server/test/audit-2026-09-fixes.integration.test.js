@@ -13,7 +13,9 @@ let ctx, app, prod, inv;
 const tok = {};
 let clientTok;
 const auth = (m, p, t) => request(app)[m](p).set('Authorization', `Bearer ${t}`);
-const line = (qty = 1) => ({ productId: String(prod._id), name: 'Latte', price: 1, quantity: qty });
+// The catalogue price: a staff account ringing up a different one is a price
+// override and needs orders.override (2026-11 audit, M12).
+const line = (qty = 1) => ({ productId: String(prod._id), name: 'Latte', price: 150, quantity: qty });
 const waitFor = async (fn, ms = 8000) => {
   const until = Date.now() + ms;
   for (;;) {
@@ -82,8 +84,11 @@ describe('P0: order-level discounts are the cashier\'s, never the buyer\'s', () 
     expect(res.status).toBe(403);
   });
 
-  it('a cashier can still discount (clamped to 0-100)', async () => {
-    const res = await auth('post', '/api/orders', tok.afStaff).send({ items: [line(1)], table: 'Takeout', discountPercent: 250 });
+  it('a manual discount needs orders.override; a holder can give one (clamped to 0-100)', async () => {
+    const staff = await auth('post', '/api/orders', tok.afStaff).send({ items: [line(1)], table: 'Takeout', discountPercent: 250 });
+    expect(staff.status).toBe(403);
+    expect(staff.body.needsApproval).toBe('orders.override');
+    const res = await auth('post', '/api/orders', tok.afAdmin).send({ items: [line(1)], table: 'Takeout', discountPercent: 250 });
     expect(res.status).toBe(200);
     expect(res.body.order.discountPercent).toBe(100);
   });
@@ -133,12 +138,22 @@ describe('P1: a revoked staff token cannot place orders', () => {
 });
 
 describe('P1: offline replay keeps the day the sale was taken', () => {
-  it('honours placedAt on a staff replay within 72h', async () => {
-    const at = new Date(Date.now() - 26 * 3600_000); // yesterday
+  it('honours placedAt on a staff replay within 12h, and within 72h for sales.backdate', async () => {
+    const recent = new Date(Date.now() - 6 * 3600_000);
     const res = await auth('post', '/api/orders', tok.afStaff).set('Idempotency-Key', 'af-offline-1')
-      .send({ items: [line(1)], table: 'Takeout', placedAt: at.toISOString() });
+      .send({ items: [line(1)], table: 'Takeout', placedAt: recent.toISOString() });
     expect(res.status).toBe(200);
-    expect(Math.abs(new Date(res.body.order.createdAt).getTime() - at.getTime())).toBeLessThan(1000);
+    expect(Math.abs(new Date(res.body.order.createdAt).getTime() - recent.getTime())).toBeLessThan(1000);
+
+    // Yesterday: too far back for a plain till account (it would move the sale
+    // into another shift's count), still fine for someone who may backdate.
+    const yesterday = new Date(Date.now() - 26 * 3600_000);
+    const staff = await auth('post', '/api/orders', tok.afStaff).set('Idempotency-Key', 'af-offline-1b')
+      .send({ items: [line(1)], table: 'Takeout', placedAt: yesterday.toISOString() });
+    expect(Date.now() - new Date(staff.body.order.createdAt).getTime()).toBeLessThan(60_000);
+    const owner = await auth('post', '/api/orders', tok.afSuper).set('Idempotency-Key', 'af-offline-1c')
+      .send({ items: [line(1)], table: 'Takeout', placedAt: yesterday.toISOString() });
+    expect(Math.abs(new Date(owner.body.order.createdAt).getTime() - yesterday.getTime())).toBeLessThan(1000);
   });
 
   it('ignores placedAt that is too old, in the future, or without an idempotency key', async () => {

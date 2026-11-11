@@ -572,8 +572,14 @@ app.post('/api/client-accounts/import', verifyToken, requireStaff, requirePermis
         const password = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
         const token = crypto.randomBytes(24).toString('hex');
 
-        const segments = String(r.segments ?? r.Segments ?? '')
-          .split(',').map(x => x.trim()).filter(Boolean);
+        // The same rules as creating one client: a credit line or terms need
+        // pricing.approve, and a segment (which sets the price tier) needs
+        // pricing.tiers. The import used to let clients.create alone set a
+        // P5,000,000 limit on 365-day terms.
+        const mayCredit = hasPermission(req.user, 'pricing.approve');
+        const mayTier = hasPermission(req.user, 'pricing.tiers');
+        const segments = mayTier ? String(r.segments ?? r.Segments ?? '')
+          .split(',').map(x => x.trim()).filter(Boolean) : [];
 
         const client = await ClientAccount.create({
           clientCode,
@@ -582,8 +588,10 @@ app.post('/api/client-accounts/import', verifyToken, requireStaff, requirePermis
           username: `_pending_${clientCode.toLowerCase()}`,
           password, name: cleanName,
           paymentMethod: String(r.paymentMethod ?? r['Payment Method'] ?? 'Cash').trim() || 'Cash',
-          creditLimit: parseCreditLimit(r.creditLimit ?? r['Credit Limit']),
-          creditTermsDays: parseTermsDays(r.creditTermsDays ?? r['Credit Terms (days)']),
+          ...(mayCredit ? {
+            creditLimit: parseCreditLimit(r.creditLimit ?? r['Credit Limit']),
+            creditTermsDays: parseTermsDays(r.creditTermsDays ?? r['Credit Terms (days)']),
+          } : {}),
           segments: [...new Set(segments)],
           phone: cleanPhone(r.phone ?? r.Phone ?? ''),
           email: emailVal,

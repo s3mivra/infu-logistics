@@ -59,7 +59,9 @@ describe('commission report', () => {
     await auth('put', `/api/orders/${created.body.order._id}`, cashierTok).send({ status: 'Completed' });
 
     // A complimentary order - must NOT count toward sales/commission.
-    const compCreated = await auth('post', '/api/orders', cashierTok).send({ ...orderBody, isComplimentary: true });
+    // Comps need orders.override (2026-11 audit, M12), so the owner rings it -
+    // still credited to the cashier as salesperson, which is what is tested.
+    const compCreated = await auth('post', '/api/orders', superTok).send({ ...orderBody, isComplimentary: true, salesperson: 'commCashier' });
     expect(compCreated.status).toBe(200);
 
     const res = await auth('get', '/api/reports/commissions', superTok);

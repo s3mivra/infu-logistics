@@ -18,7 +18,7 @@ const receive = async ({ ordered = 10, received = 10, unitCost = 50 } = {}) => {
     supplier: 'Metro Packaging', supplierId,
     lines: [{ invId: String(inv._id), itemName: 'Cups', itemCode: 'CUP', unit: 'pcs', orderedQty: ordered, unitCost }],
   });
-  const rcv = await as(tok.super, 'post', `/api/purchase-orders/${po.body.purchaseOrder._id}/receive`).send({ received: [{ index: 0, receivedQty: received }] });
+  const rcv = await as(tok.super, 'post', `/api/purchase-orders/${po.body.purchaseOrder._id}/receive`).send({ received: [{ index: 0, receivedQty: received }], acceptOverReceipt: received > ordered });
   expect(rcv.status, JSON.stringify(rcv.body)).toBe(200);
   return rcv.body.bill;
 };

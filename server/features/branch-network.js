@@ -75,7 +75,11 @@ export default function registerBranchNetwork(ctx) {
 
   // Create or update a master catalog entry (by SKU). Each change bumps its
   // version, which branches record when they sync.
-  app.post('/api/hub/catalog', verifyToken, requireAuth, permit('products.manage'), async (req, res) => {
+  // The catalogue, its sync and per-branch overrides write Product.basePrice
+  // directly, so they sit behind the same sign-off as any price change
+  // (pricing.approve) - a manager could set a price from P100 to P1 here with
+  // no change request.
+  app.post('/api/hub/catalog', verifyToken, requireAuth, permit('products.manage'), permit('pricing.approve'), async (req, res) => {
     try {
       const it = cleanCatalogItem(req.body);
       const { sku, ...rest } = it;
@@ -96,7 +100,7 @@ export default function registerBranchNetwork(ctx) {
 
   // Pull the master catalog from a linked branch (or this one's own, with
   // sourceSlug 'self') into this branch's products.
-  app.post('/api/hub/catalog/sync', verifyToken, requireAuth, permit('products.manage'), async (req, res) => {
+  app.post('/api/hub/catalog/sync', verifyToken, requireAuth, permit('products.manage'), permit('pricing.approve'), async (req, res) => {
     try {
       const sourceSlug = String(req.body?.sourceSlug || '').trim();
       if (!sourceSlug) throw httpError(400, 'sourceSlug is required.');
@@ -121,7 +125,7 @@ export default function registerBranchNetwork(ctx) {
   });
 
   // Body: { price: number | null } - null goes back to following the master.
-  app.put('/api/hub/catalog/links/:sku/override', verifyToken, requireAuth, permit('products.manage'), async (req, res) => {
+  app.put('/api/hub/catalog/links/:sku/override', verifyToken, requireAuth, permit('products.manage'), permit('pricing.approve'), async (req, res) => {
     try {
       const link = await setPriceOverride(env, req.params.sku, req.body?.price ?? null);
       await audit(req, { action: 'update', entity: 'CatalogLink', entityId: link.sku, after: { overridePrice: link.overridePrice } });

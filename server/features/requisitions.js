@@ -37,6 +37,8 @@ export default function registerRequisitions(ctx) {
   // granting someone the general ledger doesn't silently also hand them the
   // Approvals queue, and vice versa.
   const canApproveReq = [requireStaff, requirePermission('requisitions.approve')];
+  // An expense account in the chart (built-in or a custom child of one).
+  const isExpenseCode = (code) => acctMeta(code)?.type === 'expense';
 
   // ── LIST ──────────────────────────────────────────────────────────────────
   // Any staff can see this - just not everyone's, without requisitions.view.
@@ -92,7 +94,7 @@ export default function registerRequisitions(ctx) {
           slipNumber, type: 'new-fund', status: 'Pending',
           fundName: name, amount: amt, description: String(description || '').trim(),
           categoryCode: sourceAccount || '111000', // funding source account
-          preparedBy,
+          preparedBy, preparedById: String(req.user?._id || ''),
         });
         await logAudit(req, { action: 'create', entity: 'RequisitionSlip', entityId: slip._id, after: { slipNumber, type, amount: amt } });
         return res.json({ success: true, slip });
@@ -117,7 +119,7 @@ export default function registerRequisitions(ctx) {
           slipNumber, type: 'fund-replenish', status: 'Pending',
           fundId: fund._id, fundName: fund.name, amount: amt,
           description: String(note || '').trim(), categoryCode: sourceAccount || '111000',
-          preparedBy,
+          preparedBy, preparedById: String(req.user?._id || ''),
         });
         await logAudit(req, { action: 'create', entity: 'RequisitionSlip', entityId: slip._id, after: { slipNumber, type, fundName: fund.name, amount: amt } });
         return res.json({ success: true, slip });
@@ -134,14 +136,19 @@ export default function registerRequisitions(ctx) {
         // Balance is re-checked at approval time too (it can move between
         // filing and approval) - this is just an early, friendly reject.
         if (amt > fund.currentBalance) return res.status(400).json({ success: false, error: `Exceeds fund balance. Available: ₱${fund.currentBalance.toFixed(2)}` });
+        // The account the money is spent against must exist and be an expense:
+        // any code was accepted (111000, ZZZ999), and the P&L silently dropped
+        // the unknown ones.
+        const spendCode = String(categoryCode || '760000');
+        if (!isExpenseCode(spendCode)) return res.status(400).json({ success: false, error: `"${spendCode}" is not an expense account.` });
 
         const slip = await RequisitionSlip.create({
           slipNumber, type: 'petty-cash', status: 'Pending',
           fundId: fund._id, fundName: fund.name, amount: amt,
-          description: description.trim(), categoryCode: categoryCode || '760000',
+          description: description.trim(), categoryCode: spendCode,
           payee: String(req.body.payee || '').trim().slice(0, 120),
           refNo: String(req.body.refNo || '').trim().slice(0, 60),
-          preparedBy,
+          preparedBy, preparedById: String(req.user?._id || ''),
         });
         await attachBudgetCheck(req, slip);
         await logAudit(req, { action: 'create', entity: 'RequisitionSlip', entityId: slip._id, after: { slipNumber, type, amount: amt } });
@@ -155,7 +162,14 @@ export default function registerRequisitions(ctx) {
       for (const l of lines) {
         const qty = Number(l.orderedQty), cost = Number(l.unitCost);
         if (!l.itemName?.trim() || !Number.isFinite(qty) || qty <= 0) return res.status(400).json({ success: false, error: 'Each line needs an item name and a positive quantity.' });
+        // A negative unit cost made a purchase order worth -4,900.
+        if (l.unitCost !== undefined && l.unitCost !== '' && (!Number.isFinite(cost) || cost < 0)) {
+          return res.status(400).json({ success: false, error: `${String(l.itemName).trim()}: the unit cost must be zero or more.` });
+        }
         const kind = ['inventory', 'fixedAsset', 'expense'].includes(l.purchaseType) ? l.purchaseType : 'inventory';
+        if (kind === 'expense' && !isExpenseCode(String(l.expenseAccountCode || ''))) {
+          return res.status(400).json({ success: false, error: `${String(l.itemName).trim()}: "${l.expenseAccountCode || ''}" is not an expense account.` });
+        }
         cleanLines.push({
           purchaseType: kind,
           assetAccountCode: kind === 'fixedAsset' ? String(l.assetAccountCode || '') : '',
@@ -179,7 +193,7 @@ export default function registerRequisitions(ctx) {
         lines: cleanLines, estTotal, notes: notes || '',
         // Paid on delivery from a cash, bank or e-wallet account (11xxxx).
         ...(payOnDelivery && /^11[123]/.test(String(payOnDeliveryAccount || '111000')) ? { payOnDelivery: true, payOnDeliveryAccount: String(payOnDeliveryAccount || '111000') } : {}),
-        preparedBy,
+        preparedBy, preparedById: String(req.user?._id || ''),
       });
       await attachBudgetCheck(req, slip);
       await logAudit(req, { action: 'create', entity: 'RequisitionSlip', entityId: slip._id, after: { slipNumber, type, estTotal } });
@@ -210,6 +224,12 @@ export default function registerRequisitions(ctx) {
       const slip = await RequisitionSlip.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
       if (!slip) return res.status(404).json({ success: false, error: 'Not found' });
       if (slip.status !== 'Pending') return res.status(409).json({ success: false, error: `Only a Pending slip can be approved (this one is ${slip.status}).` });
+      // Four eyes: the person who asked for the money does not approve it.
+      // The owner (superadmin) may, since a one-person business has no one else.
+      const isOwner = String(req.user?.role || '').toLowerCase() === 'superadmin';
+      const mine = (slip.preparedById && slip.preparedById === String(req.user?._id || ''))
+        || (!slip.preparedById && slip.preparedBy && slip.preparedBy === (req.user?.name || ''));
+      if (mine && !isOwner) return res.status(403).json({ success: false, error: 'You prepared this slip - someone else has to approve it.' });
 
       // Over budget: approved only when the approver says so, and why. Checked
       // again now - the month may have moved on since the slip was filed.

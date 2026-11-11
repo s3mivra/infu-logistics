@@ -959,8 +959,29 @@ export default function AdminDashboard() {
   // blowing straight through the API rate limiter (429 spam). Nothing this
   // closes over is reactive (API_URL/auth are module-level, the setters are
   // React-guaranteed stable), so an empty dep array is correct, not a lie.
+  // Set below, once the approval dialog exists (it needs apiFetch itself).
+  const approvalRef = useRef(null);
   const apiFetch = useCallback(async (endpoint, options = {}) => {
-    const response = await auth.apiFetch(API_URL, endpoint, options);
+    let response = await auth.apiFetch(API_URL, endpoint, options);
+    // A change only a manager may make (a price override, a manual discount,
+    // a comp, a large drawer variance): the server answers 403 with
+    // `needsApproval`. Ask for an approver's PIN here and send the same
+    // request once more with their signed approval. Cancelling returns the
+    // original refusal, so the screen shows its message as before.
+    if (response.status === 403 && approvalRef.current && typeof options.body === 'string') {
+      const refusal = await response.clone().json().catch(() => null);
+      if (refusal?.needsApproval) {
+        const got = await approvalRef.current({
+          permission: refusal.needsApproval, target: refusal.target || '',
+          title: 'Manager approval needed', detail: refusal.error,
+        });
+        if (got?.approval) {
+          let body;
+          try { body = { ...JSON.parse(options.body), approval: got.approval }; } catch { body = null; }
+          if (body) response = await auth.apiFetch(API_URL, endpoint, { ...options, body: JSON.stringify(body) });
+        }
+      }
+    }
     if (response.status === 401) {
       setIsAuthenticated(false);
       setActiveAdmin(null);
@@ -968,8 +989,9 @@ export default function AdminDashboard() {
     }
     return response;
   }, []);
-  // The PIN prompt for an approver (credit release) - needs apiFetch above.
+  // The PIN prompt for an approver (credit release, overrides) - needs apiFetch above.
   const { requestApproval, approvalDialog } = useManagerApproval(apiFetch);
+  approvalRef.current = requestApproval;
 
   // Staff names for the POS salesperson picker (logistics sells through reps;
   // a cafe till has none). Names only reach this screen.

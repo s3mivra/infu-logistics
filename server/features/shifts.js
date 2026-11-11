@@ -4,6 +4,8 @@
 import { captureError } from '../lib/errorLog.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { hasPermission, requirePermission } from '../lib/authz.js';
+import { checkApproval } from '../lib/approval.js';
+import { MONEY_MAX } from '../lib/normalize.js';
 
 import { atomic } from '../lib/atomicRoute.js';
 export default function registerShifts(ctx) {
@@ -189,11 +191,12 @@ export default function registerShifts(ctx) {
 //   blindClose         hide the expected figure from whoever is counting
 //   varianceThreshold  peso amount past which a close is flagged for review
 const drawerSettings = async () => {
-  const [shared, blind, thresh, maxRow] = await Promise.all([
+  const [shared, blind, thresh, maxRow, approvalRow] = await Promise.all([
     Settings.findOne({ key: 'sharedDrawer' }).lean(),
     Settings.findOne({ key: 'blindClose' }).lean(),
     Settings.findOne({ key: 'varianceThreshold' }).lean(),
     Settings.findOne({ key: 'drawerMaxHours' }).lean(),
+    Settings.findOne({ key: 'varianceApprovalThreshold' }).lean(),
   ]);
   return {
     sharedDrawer: shared?.value === true,
@@ -212,6 +215,11 @@ const drawerSettings = async () => {
     // people's hands in the till.
     blindClose: blind?.value !== false,
     varianceThreshold: Number.isFinite(Number(thresh?.value)) ? Math.abs(Number(thresh.value)) : 50,
+    // A count this far off is not a short day - it is a typo or a fraud (a
+    // typed 900,000,000 used to post P900M of income). Past it, a manager
+    // confirms the count before the drawer closes; flagging for review stays
+    // at varianceThreshold.
+    varianceApprovalThreshold: Number.isFinite(Number(approvalRow?.value)) ? Math.abs(Number(approvalRow.value)) : 5000,
   };
 };
 
@@ -375,6 +383,20 @@ app.post('/api/shifts/movement', verifyToken, requireStaff, atomic(mongoose, asy
     // left marked unfiled so it can be chased rather than forgotten.
     let journalRef = '';
     const spendAccount = type === 'out' ? String(expenseAccount || '').trim() : '';
+    // Filing an expense posts a journal entry and issues a check voucher to the
+    // named payee. That is an accounting action: any till account could post
+    // one (accounting.manage was refused on /api/expenses but not here).
+    if (spendAccount && !hasPermission(req.user, 'funds.spend') && !hasPermission(req.user, 'accounting.manage')) {
+      return res.status(403).json({ success: false, error: 'Recording a pay-out as an expense needs the "funds.spend" permission. Record it without an expense account and someone with that permission can file it.' });
+    }
+    // Money cannot leave a drawer that does not hold it. The amount was
+    // unbounded (P999,999,999 "paid out" of a P0 float).
+    if (type === 'out') {
+      const inDrawer = expectedFor(shift, await liveSalesFor(shift));
+      if (amt > inDrawer + 0.005) {
+        return res.status(400).json({ success: false, error: `The drawer should only hold P${inDrawer.toFixed(2)} - a pay-out cannot be more than that.` });
+      }
+    }
     if (spendAccount) {
       if (typeof ctx.createExpenseEntry !== 'function') {
         return res.status(500).json({ success: false, error: 'Expense posting is unavailable.' });
@@ -406,7 +428,7 @@ app.post('/api/shifts/movement', verifyToken, requireStaff, atomic(mongoose, asy
 app.post('/api/shifts/end', verifyToken, requireStaff, atomic(mongoose, async (req, res) => {
   try {
     const { actualCash, handover } = req.body;
-    const { sharedDrawer, varianceThreshold } = await drawerSettings();
+    const { sharedDrawer, varianceThreshold, varianceApprovalThreshold } = await drawerSettings();
     const shift = await findOpenShift(req.user, sharedDrawer);
     if (!shift) return res.status(404).json({ success: false, error: 'No open shift found.' });
 
@@ -414,6 +436,21 @@ app.post('/api/shifts/end', verifyToken, requireStaff, atomic(mongoose, async (r
     const salesTotal   = await liveSalesFor(shift);
     const expectedCash = expectedFor(shift, salesTotal);
     const actual       = parseFloat(actualCash) || 0;
+    if (!Number.isFinite(actual) || actual < 0 || actual > MONEY_MAX) {
+      return res.status(400).json({ success: false, error: 'Enter the cash counted in the drawer.' });
+    }
+    // A count far from what the drawer should hold posts a Cash Short & Over
+    // entry for the difference. Past the approval threshold it needs a
+    // manager's sign-off (orders.override, or their PIN approval for this
+    // shift) - a typed count of 900,000,000 used to post P900M of income.
+    if (Math.abs(actual - expectedCash) > varianceApprovalThreshold
+        && !hasPermission(req.user, 'orders.override')
+        && !checkApproval(req.body?.approval, { permission: 'orders.override', requestedBy: req.user?._id, target: String(shift._id) })) {
+      return res.status(403).json({
+        success: false, needsApproval: 'orders.override', target: String(shift._id),
+        error: `The count is P${Math.abs(actual - expectedCash).toFixed(2)} ${actual < expectedCash ? 'short' : 'over'} - a manager needs to confirm it before the drawer closes.`,
+      });
+    }
 
     shift.shiftEnd     = new Date();
     shift.salesTotal   = salesTotal;
