@@ -134,15 +134,20 @@ function validateSlug(slug) {
   return null;
 }
 
-// Writes KEY=value lines. Values are NOT quoted because docker compose's
-// --env-file parser treats quotes literally in some versions; instead we reject
-// newlines, which are the only character that could forge a second variable.
+// Writes KEY=value lines. A value with anything compose would reinterpret is
+// single-quoted: Compose v2 reads a single-quoted value literally - no ${VAR}
+// expansion, no "#" comment. Unquoted, an admin password with " #" in it was
+// cut short, and ${JWT_SECRET} typed into a business name was expanded into
+// the public web bundle (2026-11 audit, M38). A single quote cannot be
+// represented inside single quotes, and a newline would forge a second
+// variable, so both are refused.
 function toEnvFile(obj) {
   return Object.entries(obj)
     .map(([k, v]) => {
       const s = v === undefined || v === null ? '' : String(v);
       if (/[\r\n]/.test(s)) throw new Error(`Value for ${k} may not contain newlines.`);
-      return `${k}=${s}`;
+      if (s.includes("'")) throw new Error(`Value for ${k} may not contain a single quote (').`);
+      return /[\s$#"`\\]/.test(s) ? `${k}='${s}'` : `${k}=${s}`;
     })
     .join('\n') + '\n';
 }
@@ -153,7 +158,10 @@ function parseEnvFile(text) {
     const t = line.trim();
     if (!t || t.startsWith('#')) continue;
     const i = t.indexOf('=');
-    if (i > 0) out[t.slice(0, i)] = t.slice(i + 1);
+    if (i <= 0) continue;
+    let v = t.slice(i + 1);
+    if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) v = v.slice(1, -1);   // see toEnvFile
+    out[t.slice(0, i)] = v;
   }
   return out;
 }
@@ -392,36 +400,79 @@ async function requireTestTenant(req, res, next) {
 // here (this package intentionally has none but express, see package.json);
 // a small in-memory sliding window is enough for a tool one person reaches
 // through a tunnel, mirrors the main app's loginLimiter (server/server.js).
-const attempts = new Map(); // key -> array of attempt timestamps (ms)
-function rateLimited(key, { max, windowMs }) {
-  const now = Date.now();
-  const hits = (attempts.get(key) || []).filter((t) => now - t < windowMs);
-  hits.push(now);
-  attempts.set(key, hits);
-  return hits.length > max;
+//
+// Counts FAILED attempts only, per action, per client address (2026-11 audit,
+// M15). It used to count every attempt, successes included, in one bucket
+// shared by login, wipe, restore and delete - and behind Caddy without
+// 'trust proxy' every caller had Caddy's address, so five requests from anyone
+// locked the operator out.
+const attempts = new Map(); // key -> array of failure timestamps (ms)
+const WINDOW_MS = 15 * 60 * 1000;
+const MAX_FAILS = 5;
+const recentFails = (key) => (attempts.get(key) || []).filter((t) => Date.now() - t < WINDOW_MS);
+function noteFailure(req) {
+  const key = req.limiterKey;
+  if (!key) return;
+  attempts.set(key, [...recentFails(key), Date.now()]);
 }
 function passwordAttemptLimiter(req, res, next) {
-  if (rateLimited(`pw:${req.ip}`, { max: 5, windowMs: 15 * 60 * 1000 })) {
-    return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
+  req.limiterKey = `pw:${req.path.split('/').slice(-1)[0] || 'login'}:${req.ip}`;
+  if (recentFails(req.limiterKey).length >= MAX_FAILS) {
+    return res.status(429).json({ error: 'Too many wrong passwords. Try again in 15 minutes.' });
   }
   next();
 }
 
 // ── app ──────────────────────────────────────────────────────────────────────
 const app = express();
+// Behind Caddy: the client address is the one Caddy forwarded.
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '256kb' }));
+
+// Operator audit log (2026-11 audit, M41/M72): every API call that reads or
+// changes a tenant - including revealing an admin password or downloading a
+// database - leaves a line with when, from where and what. Append-only file on
+// the host, outside every tenant's reach.
+const AUDIT_FILE = path.join(STACK_ROOT, 'platform', 'operator-audit.log');
+app.use('/api', (req, res, next) => {
+  res.on('finish', () => {
+    const line = JSON.stringify({ at: new Date().toISOString(), ip: req.ip, method: req.method, path: req.originalUrl.split('?')[0], status: res.statusCode }) + String.fromCharCode(10);
+    fs.appendFile(AUDIT_FILE, line).catch(() => {});
+  });
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
 app.post('/api/login', passwordAttemptLimiter, (req, res) => {
   if (!safeEqual(req.body?.password || '', CP_PASSWORD)) {
+    noteFailure(req);
     return res.status(401).json({ error: 'Wrong password.' });
   }
   const token = crypto.randomBytes(32).toString('hex');
   sessions.set(token, Date.now() + TOKEN_TTL);
   res.json({ token, domain: DOMAIN, localMode: LOCAL_MODE });
 });
+
+// Sign out: the session ends now, not in eight hours.
+app.post('/api/logout', requireAuth, (req, res) => {
+  sessions.delete((req.get('authorization') || '').replace(/^Bearer /, ''));
+  res.json({ ok: true });
+});
+
+// The second password guards reading secrets too, not only destroying data:
+// every tenant's admin password, database downloads and the offsite recovery
+// key were one login away (2026-11 audit, M16).
+function requireDangerPassword(req, res, next) {
+  req.limiterKey = `pw:danger:${req.ip}`;
+  if (recentFails(req.limiterKey).length >= MAX_FAILS) return res.status(429).json({ error: 'Too many wrong passwords. Try again in 15 minutes.' });
+  if (!safeEqual(req.get('x-danger-password') || '', CP_DANGER_PASSWORD)) {
+    noteFailure(req);
+    return res.status(403).json({ error: 'This needs the second (danger) password.', needsDangerPassword: true });
+  }
+  next();
+}
 
 app.get('/api/tenants', requireAuth, async (_req, res) => {
   const slugs = await listSlugs();
@@ -1277,7 +1328,7 @@ app.post('/api/backup/offsite', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/backup/offsite-key', requireAuth, async (_req, res) => {
+app.get('/api/backup/offsite-key', requireAuth, requireDangerPassword, async (_req, res) => {
   const env = await readOffsiteEnv();
   if (!env?.OFFSITE_CRYPT_PASSWORD) return res.status(404).json({ error: 'Offsite backup is not set up yet.' });
   res.json({ recoveryKey: `${env.OFFSITE_CRYPT_PASSWORD} / ${env.OFFSITE_CRYPT_SALT}` });
@@ -1358,7 +1409,7 @@ app.get('/api/tenants/:slug/logs', requireAuth, async (req, res) => {
 // and lives in the tenant's .env (ADMIN_PASS) — this hands it back so it can be
 // re-shared with the client without resetting anything. Only reachable through
 // the same SSH-tunnel'd, password-gated control plane as everything else here.
-app.get('/api/tenants/:slug/admin-password', requireAuth, async (req, res) => {
+app.get('/api/tenants/:slug/admin-password', requireAuth, requireDangerPassword, async (req, res) => {
   const slug = req.params.slug;
   if (!(await listSlugs()).includes(slug)) return res.status(404).json({ error: 'No such tenant.' });
   try {
@@ -1375,6 +1426,7 @@ app.post('/api/tenants/:slug/wipe', requireAuth, passwordAttemptLimiter, async (
   const slug = req.params.slug;
   if (!(await listSlugs()).includes(slug)) return res.status(404).json({ error: 'No such tenant.' });
   if (!safeEqual(req.body?.dangerPassword || '', CP_DANGER_PASSWORD)) {
+    noteFailure(req);
     return res.status(403).json({ error: 'Second password is wrong.' });
   }
   if (req.body?.confirmSlug !== slug) {
@@ -1449,7 +1501,7 @@ async function dumpTenant(slug, file) {
 }
 
 // Download one client's data as a single file.
-app.get('/api/tenants/:slug/backup', requireAuth, async (req, res) => {
+app.get('/api/tenants/:slug/backup', requireAuth, requireDangerPassword, async (req, res) => {
   const slug = req.params.slug;
   if (!(await listSlugs()).includes(slug)) return res.status(404).json({ error: 'No such tenant.' });
   const tmp = path.join(os.tmpdir(), `download-${slug}-${crypto.randomBytes(6).toString('hex')}.archive.gz`);
@@ -1476,7 +1528,7 @@ app.get('/api/backups', requireAuth, async (_req, res) => {
     res.status(500).json({ error: String(err.message).slice(-500) });
   }
 });
-app.get('/api/backups/:name', requireAuth, async (req, res) => {
+app.get('/api/backups/:name', requireAuth, requireDangerPassword, async (req, res) => {
   const name = req.params.name;
   if (!ARCHIVE_NAME_RE.test(name)) return res.status(400).json({ error: 'Not a backup file.' });
   const file = path.join(BACKUP_DIR, name);
@@ -1500,7 +1552,7 @@ app.get('/api/backups/:name', requireAuth, async (req, res) => {
 app.post('/api/tenants/:slug/restore', requireAuth, passwordAttemptLimiter, async (req, res) => {
   const slug = req.params.slug;
   if (!(await listSlugs()).includes(slug)) return res.status(404).json({ error: 'No such tenant.' });
-  if (!safeEqual(req.get('x-danger-password') || '', CP_DANGER_PASSWORD)) return res.status(403).json({ error: 'Second password is wrong.' });
+  if (!safeEqual(req.get('x-danger-password') || '', CP_DANGER_PASSWORD)) { noteFailure(req); return res.status(403).json({ error: 'Second password is wrong.' }); }
   if (req.get('x-confirm-slug') !== slug) return res.status(400).json({ error: `Type "${slug}" to confirm.` });
   if (restoring.has(slug)) return res.status(409).json({ error: 'A restore for this client is already running.' });
   restoring.add(slug);
@@ -1643,6 +1695,7 @@ app.delete('/api/tenants/:slug', requireAuth, passwordAttemptLimiter, async (req
   const slug = req.params.slug;
   if (!(await listSlugs()).includes(slug)) return res.status(404).json({ error: 'No such tenant.' });
   if (!safeEqual(req.get('x-danger-password') || '', CP_DANGER_PASSWORD)) {
+    noteFailure(req);
     return res.status(403).json({ error: 'Second password is wrong.' });
   }
   if (req.get('x-confirm-slug') !== slug) return res.status(400).json({ error: `Type "${slug}" to confirm.` });

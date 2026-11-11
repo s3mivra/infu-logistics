@@ -5,9 +5,15 @@
 	{$CADDY_GLOBAL_EXTRA}
 }
 
-# Control plane, public at CP_HOST (e.g. app.semivra.asia). Protected by its own
-# login (CP_PASSWORD, rate-limited); it holds the Docker socket, so keep that strong.
+# Control plane at CP_HOST (e.g. app.semivra.asia). It holds the Docker socket
+# (root on this host), so a password is not its only lock: only the addresses
+# in CP_ALLOWED_IPS reach it (space-separated IPs or CIDR ranges - the
+# operator's office or VPN). Everyone else gets a 404. The default lets in
+# nothing but this host itself, which suits an SSH tunnel
+# (ssh -L 9443:127.0.0.1:443 ...). 2026-11 audit, M14.
 {$CP_HOST} {
+	@outsiders not remote_ip {$CP_ALLOWED_IPS:127.0.0.1/32 ::1/128}
+	respond @outsiders 404
 	reverse_proxy control-plane:9000
 }
 

@@ -699,7 +699,7 @@ document.addEventListener('click', async (ev) => {
   if (what === 'offsite') return openOffsite();
   if (what === 'backups') return openBackups();
   if (what === 'key') {
-    try { const d = await api('/api/backup/offsite-key'); openPasswordModal('Offsite backups', d.recoveryKey, { title: 'Offsite recovery key', note: 'Needed to read the offsite copies back. Keep it off this server.' }); }
+    try { const pw = askDanger(); if (!pw) return; const d = await api('/api/backup/offsite-key', { headers: { 'x-danger-password': pw } }); openPasswordModal('Offsite backups', d.recoveryKey, { title: 'Offsite recovery key', note: 'Needed to read the offsite copies back. Keep it off this server.' }); }
     catch (e) { alert(e.message); }
     return;
   }
@@ -779,7 +779,7 @@ async function act(slug, action, btn) {
     }
     else if (action === 'password') {
       const t = LAST_TENANTS.find((x) => x.slug === slug);
-      const d = await api(`/api/tenants/${slug}/admin-password`);
+      const pw = askDanger(); if (!pw) return; const d = await api(`/api/tenants/${slug}/admin-password`, { headers: { 'x-danger-password': pw } });
       openPasswordModal(t?.businessName || slug, d.adminPass || '');
     }
     else if (action === 'resources') {
@@ -815,8 +815,14 @@ async function act(slug, action, btn) {
 }
 
 // Downloads need the session token, which a plain link cannot send.
+// Reading a secret (an admin password, a database, the offsite key) needs the
+// second password as well; it is asked for each time and never kept.
+function askDanger() { return prompt('Second password (needed to read passwords, backups and keys):') || ''; }
+
 async function downloadWithAuth(url, fallbackName) {
-  const res = await fetch(url, { headers: { Authorization: 'Bearer ' + TOKEN } });
+  const dangerPassword = askDanger();
+  if (!dangerPassword) return;
+  const res = await fetch(url, { headers: { Authorization: 'Bearer ' + TOKEN, 'x-danger-password': dangerPassword } });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || ('HTTP ' + res.status)); }
   const m = /filename="?([^";]+)"?/.exec(res.headers.get('content-disposition') || '');
   const blob = await res.blob();

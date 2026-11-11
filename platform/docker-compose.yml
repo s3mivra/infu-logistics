@@ -22,6 +22,8 @@ services:
       ACME_EMAIL: ${ACME_EMAIL}
       CADDY_GLOBAL_EXTRA: ${CADDY_GLOBAL_EXTRA:-}
       CP_HOST: ${CP_HOST:?set CP_HOST in platform/.env}
+      # Who may reach the control plane (see Caddyfile). Unset = this host only.
+      CP_ALLOWED_IPS: ${CP_ALLOWED_IPS:-127.0.0.1/32 ::1/128}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./tenants-caddy:/etc/caddy/tenants
