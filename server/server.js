@@ -38,6 +38,7 @@ import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
 import { computeOrderVat, extractVat, normaliseVatRate, DEFAULT_VAT_RATE } from './lib/vat.js';
 import { validateDateRange } from './lib/reportRange.js';
 import { initErrorLog } from './lib/errorLog.js';
+import { fieldCryptPlugin, encryptValue } from './lib/fieldCrypt.js';
 import registerTenants from './features/tenants.js';
 import registerAddons from './features/addons.js';
 import registerUsers from './features/users.js';
@@ -1170,6 +1171,32 @@ const runStartupTasks = async () => {
       }
     } catch (err) {
       log.error({ err }, 'Floor-action permission migration failed');
+    }
+
+    // Once: seal the sensitive fields written before they were encrypted
+    // (lib/fieldCrypt.js). Straight through the driver, value by value, so
+    // nothing else on the documents changes. Values already sealed are skipped.
+    try {
+      const done = await Settings.findOne({ key: 'sealSensitiveFieldsV1' }).lean();
+      if (!done) {
+        const sealAll = async (collection, fields) => {
+          const coll = mongoose.connection.db.collection(collection);
+          const or = fields.map((f) => ({ [f]: { $type: 'string', $not: /^v1\./, $ne: '' } }));
+          let n = 0;
+          for await (const d of coll.find({ $or: or }, { projection: Object.fromEntries(fields.map((f) => [f, 1])) })) {
+            const set = {};
+            for (const f of fields) if (typeof d[f] === 'string' && d[f] && !d[f].startsWith('v1.')) set[f] = encryptValue(d[f]);
+            if (Object.keys(set).length) { await coll.updateOne({ _id: d._id }, { $set: set }); n++; }
+          }
+          return n;
+        };
+        const users = await sealAll(User.collection.collectionName, ['sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin', 'totpSecret']);
+        const orders = await sealAll(mongoose.model('Order').collection.collectionName, ['scPwdIdNumber']);
+        await Settings.findOneAndUpdate({ key: 'sealSensitiveFieldsV1' }, { key: 'sealSensitiveFieldsV1', value: true }, { upsert: true });
+        log.info({ users, orders }, '✅ Sensitive personal fields sealed at rest');
+      }
+    } catch (err) {
+      log.error({ err }, 'Sealing sensitive fields failed - they stay readable as before; will retry next start');
     }
 
     // Once: orders.override (price changes, manual discounts and comps at the
@@ -2539,6 +2566,8 @@ const UserSchema = new mongoose.Schema({
   // the access token so Phase 2b can scope every query by the caller's tenant.
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null }
 }, { timestamps: true });
+// Government ID numbers and the two-step secret are sealed at rest (lib/fieldCrypt.js).
+UserSchema.plugin(fieldCryptPlugin, { fields: ['sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin', 'totpSecret'] });
 const User = mongoose.model('User', UserSchema);
 
 const {
@@ -3369,8 +3398,17 @@ const ProductionOrder = mongoose.model('ProductionOrder', ProductionOrderSchema)
 // Routes were moved verbatim into ./features/*. They close over nothing: every
 // model/helper/middleware they use is passed via this ctx object. Registration
 // order preserves the original in-file route order per feature.
+// Step-up for destructive actions (purge, restore): the signed-in person types
+// their password again. A session alone - hijacked, or left open - is not enough.
+const confirmPassword = async (req, password) => {
+  if (!password || !req.user?._id) return false;
+  const u = await User.findById(req.user._id).select('password').lean();
+  return !!u?.password && bcrypt.compare(String(password), u.password);
+};
+
 const ctx = {
   currentTokenVersion,
+  confirmPassword,
   endAccessToken,
   Budget,
   LeaveRequest,

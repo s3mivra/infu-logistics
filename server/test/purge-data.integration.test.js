@@ -45,7 +45,7 @@ describe('purge data', () => {
 
     // Purge only inventory - product must survive.
     const res = await request(app).post('/api/admin/purge-data').set(auth(superToken))
-      .send({ confirmPhrase: 'PURGE', categories: ['inventory'] });
+      .send({ confirmPhrase: 'PURGE', password: 'pw', categories: ['inventory'] });
     expect(res.body.success).toBe(true);
     expect(res.body.categories).toEqual(['inventory']);
     expect(res.body.deleted.inventory).toBeGreaterThanOrEqual(1);
@@ -68,7 +68,7 @@ describe('purge data', () => {
 
     // Purging "inventory" alone must NOT touch transfer history.
     const invOnly = await request(app).post('/api/admin/purge-data').set(auth(superToken))
-      .send({ confirmPhrase: 'PURGE', categories: ['inventory'] });
+      .send({ confirmPhrase: 'PURGE', password: 'pw', categories: ['inventory'] });
     expect(invOnly.body.success).toBe(true);
     expect(invOnly.body.deleted.stockTransfers).toBeUndefined();
     const stillThere = await request(app).get('/api/stock-transfers').set(auth(superToken));
@@ -76,7 +76,7 @@ describe('purge data', () => {
 
     // Purging "transfers" alone clears it.
     const res = await request(app).post('/api/admin/purge-data').set(auth(superToken))
-      .send({ confirmPhrase: 'PURGE', categories: ['transfers'] });
+      .send({ confirmPhrase: 'PURGE', password: 'pw', categories: ['transfers'] });
     expect(res.body.success).toBe(true);
     expect(res.body.deleted.stockTransfers).toBeGreaterThanOrEqual(1);
 
@@ -97,7 +97,7 @@ describe('purge data', () => {
     const productId = prod.body.product._id;
 
     const res = await request(app).post('/api/admin/purge-data').set(auth(superToken))
-      .send({ confirmPhrase: 'PURGE', categories: ['menu'] });
+      .send({ confirmPhrase: 'PURGE', password: 'pw', categories: ['menu'] });
     expect(res.body.success).toBe(true);
     expect(res.body.deleted.products).toBeGreaterThanOrEqual(1);
 
@@ -107,7 +107,7 @@ describe('purge data', () => {
 
   it('rejects an empty category list', async () => {
     const res = await request(app).post('/api/admin/purge-data').set(auth(superToken))
-      .send({ confirmPhrase: 'PURGE', categories: [] });
+      .send({ confirmPhrase: 'PURGE', password: 'pw', categories: [] });
     expect(res.status).toBe(400);
   });
 });
@@ -124,7 +124,7 @@ describe('suppliers in the purge', () => {
 
     // The ledger goes, suppliers stay: their credit balance goes with the ledger.
     const ledgerOnly = await request(app).post('/api/admin/purge-data').set(auth(superToken))
-      .send({ confirmPhrase: 'PURGE', categories: ['ledger'] });
+      .send({ confirmPhrase: 'PURGE', password: 'pw', categories: ['ledger'] });
     expect(ledgerOnly.body.success).toBe(true);
     const kept = await Supplier.findOne({ name: /^Lauriat Beverages$/i }).lean();
     expect(kept).toBeTruthy();
@@ -133,7 +133,7 @@ describe('suppliers in the purge', () => {
     expect((await mongoose.model('ClientAccount').findOne({ clientCode: 'CL-PURGE' }).lean()).creditBalance).toBe(0);
 
     const chosen = await request(app).post('/api/admin/purge-data').set(auth(superToken))
-      .send({ confirmPhrase: 'PURGE', categories: ['suppliers'] });
+      .send({ confirmPhrase: 'PURGE', password: 'pw', categories: ['suppliers'] });
     expect(chosen.body.success).toBe(true);
     expect(chosen.body.deleted.suppliers).toBeGreaterThanOrEqual(1);
     expect(await Supplier.countDocuments({})).toBe(0);
@@ -142,7 +142,7 @@ describe('suppliers in the purge', () => {
 
 describe('purging client accounts', () => {
   const CA = () => mongoose.model('ClientAccount');
-  const purge = (categories) => request(app).post('/api/admin/purge-data').set(auth(superToken)).send({ confirmPhrase: 'PURGE', categories });
+  const purge = (categories) => request(app).post('/api/admin/purge-data').set(auth(superToken)).send({ confirmPhrase: 'PURGE', password: 'pw', categories });
 
   it('auto-created walk-in clients go; real client accounts stay', async () => {
     await CA().create({ name: 'PG WALKIN', clientCode: 'PG-1', username: '_pos_pg-1', password: 'x', source: 'pos' });

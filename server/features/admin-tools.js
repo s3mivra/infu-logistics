@@ -1434,7 +1434,8 @@ const PURGE_CATEGORIES = {
   requisitions:    { label: 'Requisition Slips', defaultOn: true },
   eod:             { label: 'End-of-Day Records', defaultOn: true },
   fixedAssets:     { label: 'Fixed Asset Register', defaultOn: false },
-  auditLog:        { label: 'Audit Log', defaultOn: true },
+  // The audit log is not purgeable: it is the record that a purge happened,
+  // and it is append-only everywhere else (2026-11 audit, M18).
   menu:            { label: 'Menu Setup (Products, Categories, Combos, Add-ons, Modifiers, Price Tiers)', defaultOn: false },
   // Master data, like the menu: off unless asked for, so a routine purge of
   // transactions never takes the vendor list with it.
@@ -1456,6 +1457,11 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
     const phrase = String(req.body.confirmPhrase || '').trim();
     if (phrase !== PURGE_CONFIRM_PHRASE) {
       return res.status(400).json({ success: false, error: `Type ${PURGE_CONFIRM_PHRASE} exactly (all caps) to confirm.` });
+    }
+    // Step-up: the owner's password again. A word anyone can read off the
+    // screen was the only thing between a hijacked session and an empty ledger.
+    if (!(await ctx.confirmPassword?.(req, req.body?.password))) {
+      return res.status(403).json({ success: false, needsPassword: true, error: 'Enter your password to purge data.' });
     }
     // Explicit selection wins; omitting `categories` entirely falls back to
     // "everything except menu" (the original behavior) rather than nothing,
@@ -1551,7 +1557,7 @@ app.post('/api/admin/purge-data', verifyToken, requireSuperAdmin, async (req, re
       await del('collectionReminders', CollectionReminder);
       await del('qrSessions', QRSession, false);
     }
-    if (selected.has('auditLog')) await withLedgerMaintenance(() => del('auditLog', AuditLog, false));
+    // (no audit-log category - see PURGE_CATEGORIES)
 
     if (selected.has('menu')) {
       // No businessType field on these (see hasBizField note above).

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { fieldCryptPlugin } from '../lib/fieldCrypt.js';
 import mongoose from 'mongoose';
 import { } from '../lib/normalize.js';
 
@@ -614,6 +615,8 @@ export default function defineCatalogModels({ BUSINESS_TYPE }) {
   // the status and a date range together.
   OrderSchema.index({ clientId: 1, createdAt: -1 });
   OrderSchema.index({ businessType: 1, status: 1, createdAt: -1 });
+  // The SC/PWD card number is sensitive personal information (RA 10173): sealed at rest.
+  OrderSchema.plugin(fieldCryptPlugin, { fields: ['scPwdIdNumber'] });
   const Order = mongoose.model('Order', OrderSchema);
 
   const QRSessionSchema = new mongoose.Schema({

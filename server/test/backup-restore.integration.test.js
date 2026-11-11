@@ -119,7 +119,7 @@ describe('restoring a collection in slices', () => {
     expect(docs.length).toBe(25);
 
     const send = (slice, replace) => auth('post', '/api/backup/restore')
-      .send({ collection: 'Product', docs: slice, replace, businessType: 'log', confirm: 'RESTORE' });
+      .send({ collection: 'Product', docs: slice, replace, businessType: 'log', confirm: 'RESTORE', password: 'pw' });
 
     const first = await send(docs.slice(0, 10), true);
     expect(first.body.restored).toBe(10);
@@ -138,7 +138,15 @@ describe('purge, then restore', () => {
     const orderBefore = await M('Order').findOne({ status: 'Completed' }).lean();
 
     // The disaster: everything gone.
-    for (const c of snapshot.collections) await withLedgerMaintenance(() => M(c.name).deleteMany({}));
+    // The audit log and closed periods are never restored (they are the record
+    // of what happened), and the owner's own account is what proves the
+    // password for the restore - so the wipe spares those (2026-11 audit, M18/M19).
+    const KEPT = new Set(['AuditLog', 'ClosedPeriod']);
+    for (const c of snapshot.collections) {
+      if (KEPT.has(c.name)) continue;
+      if (c.name === 'User') { await M('User').deleteMany({ name: { $ne: 'BackupSuper' } }); continue; }
+      await withLedgerMaintenance(() => M(c.name).deleteMany({}));
+    }
     expect((await census()).orders).toBe(0);
 
     // Sessions are gone with the database, so sign in again the way a person
@@ -146,9 +154,9 @@ describe('purge, then restore', () => {
     // users first, with the token from before the purge (still valid: it is a
     // signed JWT, not a database row).
     for (const c of snapshot.collections) {
-      if (!c.docs.length) continue;
+      if (!c.docs.length || KEPT.has(c.name)) continue;
       const res = await auth('post', '/api/backup/restore')
-        .send({ collection: c.name, docs: c.docs, replace: true, businessType: snapshot.businessType, confirm: 'RESTORE' });
+        .send({ collection: c.name, docs: c.docs, replace: true, businessType: snapshot.businessType, confirm: 'RESTORE', password: 'pw' });
       expect(res.status).toBe(200);
       expect(res.body.failed).toBe(0);
     }
@@ -169,7 +177,7 @@ describe('purge, then restore', () => {
 
   it('refuses a backup from the other business type, and an unconfirmed restore', async () => {
     const wrongType = await auth('post', '/api/backup/restore')
-      .send({ collection: 'Product', docs: [], businessType: 'fb', confirm: 'RESTORE' });
+      .send({ collection: 'Product', docs: [], businessType: 'fb', confirm: 'RESTORE', password: 'pw' });
     expect(wrongType.status).toBe(400);
     expect(wrongType.body.error).toMatch(/fb/);
 
@@ -178,7 +186,7 @@ describe('purge, then restore', () => {
     expect(unconfirmed.body.error).toMatch(/RESTORE/);
 
     const unknown = await auth('post', '/api/backup/restore')
-      .send({ collection: 'RefreshSession', docs: [], confirm: 'RESTORE' });
+      .send({ collection: 'RefreshSession', docs: [], confirm: 'RESTORE', password: 'pw' });
     expect(unknown.status).toBe(400);
   }, 30000);
 
@@ -186,9 +194,9 @@ describe('purge, then restore', () => {
     const before = await census();
     const snapshot = (await auth('get', '/api/backup/snapshot')).body;
     for (const c of snapshot.collections) {
-      if (!c.docs.length) continue;
+      if (!c.docs.length || ['AuditLog', 'ClosedPeriod'].includes(c.name)) continue;
       await auth('post', '/api/backup/restore')
-        .send({ collection: c.name, docs: c.docs, replace: true, businessType: 'log', confirm: 'RESTORE' });
+        .send({ collection: c.name, docs: c.docs, replace: true, businessType: 'log', confirm: 'RESTORE', password: 'pw' });
     }
     expect(await census()).toEqual(before);
   }, 120000);

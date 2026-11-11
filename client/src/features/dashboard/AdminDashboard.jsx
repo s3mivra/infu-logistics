@@ -5164,17 +5164,22 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           try { docs.push(JSON.parse(json)); }
           catch { /* a hand-edited row - skipped rather than aborting the restore */ }
         }
-        collections.push({ name, docs });
+        // The audit log and closed periods are never overwritten (the server refuses).
+        if (name !== 'AuditLog' && name !== 'ClosedPeriod') collections.push({ name, docs });
       }
       const total = collections.reduce((s, c) => s + c.docs.length, 0);
       if (!total) { ui.alert('That backup has no records in it.'); return; }
 
-      const ok = await ui.confirm(
-        `Restore ${total.toLocaleString()} record(s) from ${formatDateTime(stamp('Taken') || Date.now())}?`
-        + String.fromCharCode(10, 10)
-        + 'Everything currently in this system is replaced by what is in the file. This cannot be undone.',
-      );
-      if (!ok) return;
+      // The server asks for the owner's password again before it restores.
+      const password = await ui.confirmWithPassword({
+        title: 'Restore backup',
+        message: `Restore ${total.toLocaleString()} record(s) from ${formatDateTime(stamp('Taken') || Date.now())}?`
+          + String.fromCharCode(10, 10)
+          + 'Everything currently in this system is replaced by what is in the file. This cannot be undone.',
+        detail: 'The audit log and closed periods are kept as they are.',
+        confirmLabel: 'Restore', tone: 'danger',
+      });
+      if (!password) return;
 
       let restored = 0;
       const failures = [];
@@ -5194,7 +5199,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             method: 'POST',
             body: JSON.stringify({
               collection: c.name, docs: slice,
-              replace: from === 0, businessType: fileType, confirm: 'RESTORE',
+              replace: from === 0, businessType: fileType, confirm: 'RESTORE', password,
             }),
           });
           const d = await res.json();

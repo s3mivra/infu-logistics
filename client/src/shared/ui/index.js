@@ -135,3 +135,13 @@ export function confirm(input) {
   }
   return handlers.confirm(opts);
 }
+
+// The same dialog with a password box, for the few actions the server makes
+// you re-enter your password for (purging data, restoring a backup).
+// Resolves to the typed password, or null when cancelled.
+export async function confirmWithPassword(input) {
+  const opts = typeof input === 'string' ? { message: input } : (input || {});
+  if (!handlers) return null;
+  const result = await handlers.confirm({ ...opts, askPassword: true });
+  return typeof result === 'string' && result ? result : null;
+}

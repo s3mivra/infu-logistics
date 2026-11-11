@@ -490,19 +490,25 @@ app.get('/api/orders', verifyToken, requireStaff, async (req, res) => {
       baseFilter.$or = [{ customerName: rx }, { orderNumber: rx }, { table: rx }];
     }
     const query = Order.find(baseFilter).sort({ createdAt: -1 }).lean();
+    // An SC/PWD cardholder's ID number is sensitive personal information: the
+    // order board shows its last four digits to anyone without the books
+    // (2026-11 audit, M74). The full number stays on the order for the BIR.
+    const seesIds = hasPermission(req.user, 'accounting.view');
+    const maskIds = (list) => (seesIds ? list : list.map((o) => (o.scPwdIdNumber
+      ? { ...o, scPwdIdNumber: `****${String(o.scPwdIdNumber).slice(-4)}` } : o)));
     if (page && limit) {
       const pageNum = Math.max(1, parseInt(page, 10));
       const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10)));
       query.skip((pageNum - 1) * limitNum).limit(limitNum);
       const [orders, total] = await Promise.all([query, Order.countDocuments(baseFilter)]);
-      return res.json({ success: true, orders, total, page: pageNum, limit: limitNum });
+      return res.json({ success: true, orders: maskIds(orders), total, page: pageNum, limit: limitNum });
     }
     // Unpaginated callers (the live order board) get the most recent 2,000.
     // The end-of-day archive keeps the active set far below that; the cap is
     // what stops a register left un-archived for months from returning its
     // whole history in one response.
     const orders = await query.limit(2000);
-    res.json({ success: true, orders });
+    res.json({ success: true, orders: maskIds(orders) });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

@@ -15,6 +15,7 @@ import { BUSINESS_TYPE } from '../../shared/businessType.js';
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
 import { API_URL } from '../../shared/apiBase.js';
+import * as ui from '../../shared/ui';
 
 const ROLE_META = {
   superadmin: { label: 'Superadmin', bg: 'bg-emerald-500/20', text: 'text-success', border: 'border-emerald-500/30' },
@@ -687,9 +688,12 @@ export default function SuperAdminPanel() {
   const handlePurgeData = async () => {
     if (purgeModal.phrase.trim() !== 'PURGE') return;
     if (purgeSelected.size === 0) { setPurgeModal(m => ({ ...m, error: 'Select at least one category to purge.' })); return; }
+    // The server asks for the password again before anything is deleted.
+    const password = await ui.confirmWithPassword({ title: 'Confirm purge', message: 'Enter your password to permanently delete the selected data.', confirmLabel: 'Purge', tone: 'danger' });
+    if (!password) return;
     setPurgeModal(m => ({ ...m, busy: true, error: '' }));
     try {
-      const res = await apiFetch('/api/admin/purge-data', { method: 'POST', body: JSON.stringify({ confirmPhrase: purgeModal.phrase.trim(), categories: [...purgeSelected] }) });
+      const res = await apiFetch('/api/admin/purge-data', { method: 'POST', body: JSON.stringify({ confirmPhrase: purgeModal.phrase.trim(), categories: [...purgeSelected], password }) });
       const d = await res.json();
       if (d.success) setPurgeModal(m => ({ ...m, busy: false, result: d.deleted }));
       else setPurgeModal(m => ({ ...m, busy: false, error: d.error || 'Purge failed.' }));
