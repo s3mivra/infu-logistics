@@ -3,6 +3,7 @@
 /* eslint-disable no-unused-vars */
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
+import { csvCell } from '../lib/csv.js';
 
 export default function registerAudit(ctx) {
   const {
@@ -254,11 +255,9 @@ app.get('/api/audit-logs/export', verifyToken, ...canViewAudit, async (req, res)
   if (action && action !== 'all') filter.action = String(action);
   if (actor) filter.userId = String(actor);
 
-  const esc = (v) => {
-    if (v === null || v === undefined) return '';
-    const s = String(v).replace(/"/g, '""');
-    return /[",\n]/.test(s) ? `"${s}"` : s;
-  };
+  // Formula-safe (lib/csv.js): an anonymous failed sign-in could plant
+  // =HYPERLINK(...) in this file's user column.
+  const esc = csvCell;
 
   const fileName = `audit_log_${start}_to_${end}.csv`.replace(/[^a-zA-Z0-9._-]/g, '_');
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');

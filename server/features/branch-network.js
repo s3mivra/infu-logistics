@@ -3,6 +3,7 @@
 // LinkedBusiness row and its link token (see features/hub.js), which already
 // covers transfers and the consolidated books.
 import { requirePermission as permit } from '../lib/authz.js';
+import { peerBase } from './hub.js';
 import { defineBranchModels, applyCatalog, setPriceOverride, httpError } from '../lib/branchNetwork.js';
 
 const TENANT = (() => {
@@ -41,7 +42,7 @@ export default function registerBranchNetwork(ctx) {
   const linkFor = (slug) => LinkedBusiness.findOne({ businessType: BUSINESS_TYPE, partnerSlug: slug, status: 'active' }).lean();
 
   async function partnerFetch(link, path, { method = 'GET', body, timeout = 15_000 } = {}) {
-    const r = await fetch(`${link.partnerUrl}${path}`, {
+    const r = await fetch(`${peerBase(link)}${path}`, {
       method,
       headers: { 'Content-Type': 'application/json', 'x-link-token': link.linkToken },
       ...(body ? { body: JSON.stringify(body) } : {}),

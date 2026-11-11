@@ -22,6 +22,7 @@ import { RECEIVABLE_STATUSES, arBalance } from '../lib/credit.js';
 import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 import { mailConfigured, sendMail, isEmail, mailFrom, mailSource, setStoredMailConfig } from '../lib/mailer.js';
 import { seal, open } from '../lib/secretBox.js';
+import { isInternalHost } from '../lib/netGuard.js';
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const peso = (n) => `PHP ${r2(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -142,10 +143,20 @@ export default function registerNotify(ctx) {
       const user = String(b.user || '').trim().slice(0, 200);
       const from = String(b.from || '').trim().slice(0, 200);
       if (!HOST.test(host) || host.length > 253) return res.status(400).json({ success: false, error: 'The mail server should look like smtp.gmail.com.' });
+      // A mail server is on the internet. Loopback, private and link-local
+      // addresses (the database, the other tenants, the cloud metadata
+      // service) are refused, so this cannot be pointed at them.
+      if (isInternalHost(host)) return res.status(400).json({ success: false, error: 'That address is on the internal network. Use your mail provider\'s server, e.g. smtp.gmail.com.' });
       if (!(port >= 1 && port <= 65535)) return res.status(400).json({ success: false, error: 'The port is a number such as 587 or 465.' });
       if (/[\r\n]/.test(from) || !isEmail((from.match(/<([^>]+)>/)?.[1] ?? from))) return res.status(400).json({ success: false, error: 'Send from should be an address, e.g. Infusions <you@gmail.com>.' });
       const prev = await readAccount();
       const typed = String(b.pass ?? '').replace(/\s+/g, '');   // Google shows app passwords in groups of four
+      // The saved password goes only to the server it was saved for: a new
+      // host needs it typed again, or the next mail would hand it to whoever
+      // runs that host.
+      if (!typed && prev?.passSealed && prev.host && prev.host !== host) {
+        return res.status(400).json({ success: false, error: 'Re-enter the password when you change the mail server.' });
+      }
       const passSealed = typed ? seal(typed) : (prev?.passSealed || '');
       if (user && !passSealed) return res.status(400).json({ success: false, error: 'Enter the password for that login.' });
       await Settings.findOneAndUpdate({ key: ACCOUNT_KEY }, { key: ACCOUNT_KEY, value: { host, port, user, from, passSealed } }, { upsert: true });
@@ -178,7 +189,9 @@ export default function registerNotify(ctx) {
       if (!client) return res.status(404).json({ success: false, error: 'Client not found.' });
       if (!isEmail(client.email)) return res.status(400).json({ success: false, error: `${client.name} has no email address on file. Add one under Edit details.` });
       const text = String(req.body?.text || '').trim();
-      const subject = String(req.body?.subject || '').trim() || `Statement of account - ${client.name}`;
+      // The subject is fixed: a free one made this a way to send any message,
+      // under the business's name, to any address put on a client record.
+      const subject = `Statement of account - ${client.name}`;
       if (text.length < 20) return res.status(400).json({ success: false, error: 'The statement is empty.' });
       const sent = await sendMail({ to: client.email, subject, text });
       if (!sent.ok) return res.status(mailConfigured() ? 502 : 409).json({ success: false, error: sent.error, notSetUp: !mailConfigured() });

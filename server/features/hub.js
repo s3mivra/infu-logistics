@@ -28,6 +28,18 @@ const HUB_URL_PATTERN = process.env.HUB_URL_PATTERN || 'http://{slug}-api:5002';
 // Inter-branch clearing account. Declared in lib/chartOfAccounts.js.
 export const HUB_CLEARING_CODE = '160200';
 const hubUrlFor = (slug) => HUB_URL_PATTERN.replace('{slug}', slug);
+// Where a linked business is reached: always derived from its slug, never the
+// URL stored on the link. A restored backup could set that URL to anything,
+// and the network summary then fetched it and handed the body to any staff
+// account (2026-11 audit, M30).
+// A link a browser will follow: http(s) only.
+const safeAppUrl = (u) => (/^https?:\/\/[^\s"'<>]+$/i.test(String(u || '')) ? String(u) : '');
+
+export const peerBase = (link) => {
+  const slug = String(link?.partnerSlug || '');
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,59}$/.test(slug)) throw Object.assign(new Error('Linked business has an invalid name.'), { status: 400 });
+  return hubUrlFor(slug);
+};
 
 // Where a person opens that branch, which is NOT where this server calls it.
 // HUB_URL_PATTERN points at the internal API - a container name on an internal
@@ -84,7 +96,7 @@ export default function registerHub(ctx) {
   }
 
   async function partnerCall(link, path, body) {
-    const res = await fetch(`${link.partnerUrl}${path}`, {
+    const res = await fetch(`${peerBase(link)}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-link-token': link.linkToken },
       body: JSON.stringify(body),
@@ -167,15 +179,20 @@ export default function registerHub(ctx) {
       const own = await ownSnapshot();
       const partners = await Promise.all(links.map(async (link) => {
         try {
-          const r = await fetch(`${link.partnerUrl}/api/hub/internal/summary`, {
+          const r = await fetch(`${peerBase(link)}/api/hub/internal/summary`, {
             headers: { 'x-link-token': link.linkToken },
             signal: AbortSignal.timeout(8_000),
           });
           const data = await r.json();
           if (!r.ok) throw new Error(data.error || `Partner returned ${r.status}`);
-          return { partnerSlug: link.partnerSlug, partnerName: link.partnerName, dashboardUrl: link.partnerAppUrl || appUrlFor(link.partnerSlug, link.partnerUrl), ok: true, ...data };
-        } catch (err) {
-          return { partnerSlug: link.partnerSlug, partnerName: link.partnerName, dashboardUrl: link.partnerAppUrl || appUrlFor(link.partnerSlug, link.partnerUrl), ok: false, error: err.message };
+          // Our own fields last: the peer's JSON used to be spread over them,
+          // so a peer chose its own name, status and dashboard link - a
+          // `javascript:` link included (2026-11 audit, M115).
+          return { ...data, partnerSlug: link.partnerSlug, partnerName: link.partnerName, dashboardUrl: safeAppUrl(link.partnerAppUrl || appUrlFor(link.partnerSlug, peerBase(link))), ok: true };
+        } catch {
+          let dashboardUrl = '';
+          try { dashboardUrl = safeAppUrl(link.partnerAppUrl || appUrlFor(link.partnerSlug, peerBase(link))); } catch { /* invalid slug: no link */ }
+          return { partnerSlug: link.partnerSlug, partnerName: link.partnerName, dashboardUrl, ok: false, error: 'Could not reach this branch.' };
         }
       }));
       res.json({ own, partners });
@@ -1341,7 +1358,7 @@ export default function registerHub(ctx) {
       const own = await ownTrialBalances(range);
       const fetched = await Promise.all(links.map(async (link) => {
         try {
-          const r = await fetch(`${link.partnerUrl}/api/hub/internal/trial-balance?${qs}`, {
+          const r = await fetch(`${peerBase(link)}/api/hub/internal/trial-balance?${qs}`, {
             headers: { 'x-link-token': link.linkToken },
             signal: AbortSignal.timeout(15_000),
           });

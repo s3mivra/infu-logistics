@@ -27,8 +27,30 @@ export const pick = (...vals) => {
   return '';
 };
 
-const esc = (v) => String(v ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+// Quotes too: the same helper fills attribute values.
+export const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const peso = (n) => '&#x20B1;' + Number(n || 0).toFixed(2);
+
+// Branding settings go into CSS and an <img src>, where escaping alone is not
+// enough. Anything that is not plainly a size, a colour or an image is dropped
+// (2026-11 audit: a logo setting carried script into every printed receipt).
+export const safeCssSize = (v, fallback = '8px') => (/^\d{1,3}(\.\d{1,2})?(px|%|rem|em)?$/.test(String(v || '').trim()) ? String(v).trim() : fallback);
+export const safeCssColor = (v) => {
+  const s = String(v || '').trim();
+  return /^#[0-9a-f]{3,8}$/i.test(s) || /^[a-z]{3,20}$/i.test(s) || /^rgba?\(\s*[\d.\s,%]+\)$/i.test(s) ? s : '';
+};
+export const safeImageSrc = (v) => {
+  const s = String(v || '').trim();
+  if (/^data:image\/(png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(s)) return s;
+  if (/^https:\/\/[^\s"'<>]+$/i.test(s)) return s;
+  if (/^\/[^\s"'<>]*$/.test(s) && !s.startsWith('//')) return s;
+  return '';
+};
+// Links printed from settings: http(s) and mailto only - never javascript:.
+export const safeHref = (v) => {
+  const s = String(v || '').trim();
+  return /^(https?:\/\/|mailto:)/i.test(s) ? s : '';
+};
 
 // Resolve the shared header/footer content from settings → env → defaults.
 export function resolveLetterhead(settings = {}) {
@@ -60,9 +82,9 @@ export function resolveLetterhead(settings = {}) {
   );
   // Print logo: dedicated print logo takes priority unless "use business logo" toggle is on
   // Default: use business logo unless user explicitly set printLogoUseBusiness=false AND uploaded a print logo
-  const logo = (s.printLogoEnabled && s.printLogo) ? s.printLogo : (s.businessLogo || '');
-  const logoColor = s.logoColor || '';
-  const logoRadius = s.logoRadius || '8px';
+  const logo = safeImageSrc((s.printLogoEnabled && s.printLogo) ? s.printLogo : (s.businessLogo || ''));
+  const logoColor = safeCssColor(s.logoColor);
+  const logoRadius = safeCssSize(s.logoRadius, '8px');
   return { logo, logoColor, logoRadius, companyName, address, phone, email, announcement, paymentInstructions, supportLink, supportLabel, slipFooter, vatRegistered };
 }
 
@@ -104,10 +126,13 @@ export function buildReceiptHTML({
   const marginMm = 4;
   const contentWidthMm = Math.max(30, paperWidthMm - marginMm * 2);
 
+  // Every caller-supplied value is escaped: these carry what customers typed
+  // (name, address, phone, scheduled time from the portal and the QR menu),
+  // and printed raw they ran as script in the staff member's session.
   const metaHTML = [
-    ...(docNumber ? [{ label: docNumber.label, value: `<strong>${esc(docNumber.value || '-')}</strong>` }] : []),
+    ...(docNumber ? [{ label: docNumber.label, html: `<strong>${esc(docNumber.value || '-')}</strong>` }] : []),
     ...metaRows.filter(r => r && pick(r.value)),
-  ].map(r => `<tr><td>${esc(r.label)}</td><td>${r.value}</td></tr>`).join('');
+  ].map(r => `<tr><td>${esc(r.label)}</td><td>${r.html ?? esc(r.value)}</td></tr>`).join('');
 
   // A line may carry `printName` (typed at the till): the customer's copy shows
   // it, the DUPLICATE shows the real product name.
@@ -193,7 +218,7 @@ ${(duplicate ? ['', 'DUPLICATE'] : ['']).map(copyTag => `
   ${copyTag ? `<div class="copy-tag">-- ${esc(copyTag)} --</div>` : ''}
   <div class="center">
     <div class="logo-row">
-      ${lh.logo ? `<span class="logo-wrap" style="${lh.logoColor ? `background:${lh.logoColor};padding:3px;` : ''}"><img class="logo-img" src="${lh.logo}" alt="" /></span>` : ''}
+      ${lh.logo ? `<span class="logo-wrap" style="${lh.logoColor ? `background:${lh.logoColor};padding:3px;` : ''}"><img class="logo-img" src="${esc(lh.logo)}" alt="" /></span>` : ''}
       <div class="store">${esc(lh.companyName)}</div>
     </div>
     ${lh.address ? `<div class="addr">${esc(lh.address)}</div>` : ''}

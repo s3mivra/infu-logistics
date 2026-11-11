@@ -620,7 +620,7 @@ app.get('/api/shifts', verifyToken, requireStaff, requirePermission('shifts.view
     // only cash reconciliation invisible.
     const notOwner = { cashierId: { $nin: owner.ids }, cashierName: { $nin: owner.names } };
     const filter = { $or: [{ scope: 'drawer' }, notOwner] };
-    if (cashier) filter.cashierName = { $regex: cashier, $options: 'i' };
+    if (cashier) filter.cashierName = { $regex: escapeRegex(String(cashier).slice(0, 100)), $options: 'i' };
     const pageNum = Math.max(1, parseInt(page) || 1);
     const pageSize = Math.min(100, parseInt(lim) || 20);
     const [shifts, total] = await Promise.all([
@@ -777,7 +777,7 @@ app.get('/api/clock/entries', verifyToken, requireStaff, requirePermission('shif
     // Hide the owner - by _id and by name (catches orphaned superadmin ids).
     const filter = { staffId: { $nin: owner.ids }, staffName: { $nin: owner.names } };
     if (date) filter.date = date;
-    if (staff) filter.staffName = { $regex: staff, $options: 'i', $nin: owner.names };
+    if (staff) filter.staffName = { $regex: escapeRegex(String(staff).slice(0, 100)), $options: 'i', $nin: owner.names };
     const pageNum = Math.max(1, parseInt(page) || 1);
     const pageSize = Math.min(100, parseInt(lim) || 30);
     const [entries, total] = await Promise.all([

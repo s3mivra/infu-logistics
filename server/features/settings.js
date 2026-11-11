@@ -361,10 +361,38 @@ app.get('/api/settings/document-series', verifyToken, requireStaff, async (req, 
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
+// Settings with their own routes and their own permission (the mail account is
+// the owner's, behind /api/mail/account), or that only the server writes. The
+// generic PATCH below used to accept them: a settings.manage Admin rewrote the
+// mail account's host to their own server while keeping the stored password,
+// and the next mail sent it to them.
+const PROTECTED_SETTING_KEYS = new Set(['mailAccount', 'mailSettings', 'mailLastRun', 'mailRemindersSent']);
+const isProtectedSettingKey = (key) => PROTECTED_SETTING_KEYS.has(key) || /^perms[A-Za-z]+V\d+$|FixV\d+$|UpperV\d+$/.test(key);
+
+// Values that are printed into receipts as CSS or an image: only a real size,
+// colour or image is stored (2026-11 audit, M10).
+const BRANDING_RULES = {
+  logoRadius: (v) => v === '' || /^\d{1,3}(\.\d{1,2})?(px|%|rem|em)?$/.test(String(v).trim()),
+  logoColor: (v) => v === '' || /^#[0-9a-f]{3,8}$/i.test(String(v).trim()) || /^[a-z]{3,20}$/i.test(String(v).trim()) || /^rgba?\(\s*[\d.\s,%]+\)$/i.test(String(v).trim()),
+  businessLogo: (v) => v === '' || /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=\s]+$/.test(String(v)) || /^https:\/\/[^\s"'<>]+$/.test(String(v)),
+  printLogo: (v) => v === '' || /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=\s]+$/.test(String(v)) || /^https:\/\/[^\s"'<>]+$/.test(String(v)),
+  portalSupportLink: (v) => v === '' || /^(https?:\/\/|mailto:)[^\s"'<>]+$/i.test(String(v).trim()),
+};
+
+// Nothing secret leaves in a settings listing: the mail account is shown
+// without its sealed password (the mail screen only needs to know one is set).
+const publicSettingValue = (key, value) => {
+  if (key === 'mailAccount' && value && typeof value === 'object') {
+    const { passSealed, ...rest } = value;
+    return { ...rest, hasPassword: !!passSealed };
+  }
+  return value;
+};
+
 app.get('/api/settings', verifyToken, requireStaff, async (req, res) => {
   try {
     const rows = await Settings.find().lean();
-    res.json({ success: true, settings: Object.fromEntries(rows.map(s => [s.key, s.value])) });
+    res.json({ success: true, settings: Object.fromEntries(rows.map(s => [s.key, publicSettingValue(s.key, s.value)])) });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
@@ -471,6 +499,13 @@ app.patch('/api/settings/currency', verifyToken, requireStaff, requirePermission
 app.patch('/api/settings/:key', verifyToken, requireStaff, requirePermission('settings.manage'), async (req, res) => {
   try {
     const { value } = req.body;
+    if (isProtectedSettingKey(req.params.key)) {
+      return res.status(403).json({ success: false, error: 'That setting is changed from its own screen.' });
+    }
+    const rule = BRANDING_RULES[req.params.key];
+    if (rule && !rule(value ?? '')) {
+      return res.status(400).json({ success: false, error: `That is not a valid value for ${req.params.key}.` });
+    }
 
     // branchCode identifies this deployment in a consolidated report
     // ("AC-A001": business AC, location A, inventory 001). A malformed code is

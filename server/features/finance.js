@@ -22,6 +22,7 @@ import { roundMoney } from '../lib/money.js';
 import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 
 import { atomic } from '../lib/atomicRoute.js';
+import { csvCell } from '../lib/csv.js';
 export default function registerFinance(ctx) {
   const {
     app,
@@ -1251,11 +1252,8 @@ app.get('/api/journal/export', verifyToken, ...canViewAcct, async (req, res) => 
     return res.status(400).json({ success: false, error: range.error });
   }
 
-  const esc = (v) => {
-    if (v === null || v === undefined) return '';
-    const s = String(v).replace(/"/g, '""');
-    return /[",\n]/.test(s) ? `"${s}"` : s;
-  };
+  // Formula-safe (lib/csv.js): descriptions carry typed text.
+  const esc = csvCell;
 
   const fileName = `journal_${start}_to_${end}.csv`.replace(/[^a-zA-Z0-9._-]/g, '_');
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
