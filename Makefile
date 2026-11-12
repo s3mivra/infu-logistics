@@ -17,8 +17,8 @@ setup:          ## Generate .env with strong secrets (interactive)
 	@bash scripts/setup-env.sh
 
 install:        ## Install dependencies for server + client
-	@cd server && npm install
-	@cd client && npm install
+	@cd server && npm ci
+	@cd client && npm ci
 
 dev:            ## Run server + client in dev mode (two terminals recommended)
 	@echo "Run these in two terminals:"

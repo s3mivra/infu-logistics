@@ -981,6 +981,15 @@ app.post('/api/tenants/:slug/testlab/seed', requireAuth, requireTestTenant, asyn
   }
 });
 
+// Test-lab helper images, pinned by version and digest (2026-11 audit, M81):
+// a ':latest' pulled at run time is whatever the registry serves that day.
+// owasp/zap2docker-stable is deprecated; zaproxy/zap-stable replaces it.
+const TESTLAB_IMAGES = {
+  k6: 'grafana/k6:1.8.2@sha256:00fdcebafbc86cb0137d429529b1caa401a02e09025f02fc74866fa6e2b004d8',
+  curl: 'curlimages/curl:8.23.0@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93',
+  zap: 'zaproxy/zap-stable:2.17.0@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af',
+};
+
 // One scenario from scripts/k6/ per run, executed as a one-off grafana/k6
 // container on semivra-net so it can reach the tenant's api service by its
 // internal DNS alias — no Caddy hop, no k6 binary baked into this image.
@@ -1026,7 +1035,7 @@ app.post('/api/tenants/:slug/testlab/loadtest', requireAuth, requireTestTenant, 
       '-e', 'STAFF_NAME=Super Admin',
       '-e', `STAFF_PASSWORD=${env.ADMIN_PASS || ''}`,
       ...(scenario === 'soak' ? ['-e', 'DURATION=2m', '-e', 'VUS=10'] : []),
-      'grafana/k6:latest',
+      TESTLAB_IMAGES.k6,
       'run', `/scripts/${file}`,
       `--summary-export=/results/${summaryFile}`,
     ];
@@ -1090,7 +1099,7 @@ app.post('/api/tenants/:slug/testlab/security-scan', requireAuth, requireTestTen
     // confirm the app degrades to 429s rather than accepting unlimited tries.
     const loginUrl = `http://${slug}-api:5002/api/users/login`;
     const rateLimitProbe = await docker([
-      'run', '--rm', '--network', 'semivra-net', 'curlimages/curl:latest', 'sh', '-c',
+      'run', '--rm', '--network', 'semivra-net', TESTLAB_IMAGES.curl, 'sh', '-c',
       `for i in $(seq 1 20); do curl -s -o /dev/null -w "%{http_code}\\n" -X POST "${loginUrl}" -H "Content-Type: application/json" -d '{"name":"Super Admin","password":"wrong"}'; done`,
     ], { timeout: 60_000 });
     const codes = rateLimitProbe.trim().split('\n').filter(Boolean);
@@ -1114,13 +1123,13 @@ app.post('/api/tenants/:slug/testlab/security-scan', requireAuth, requireTestTen
       // curl -d payload and inject shell commands.
       const loginResp = await docker([
         'run', '--rm', '--network', 'semivra-net', '-e', `ADMIN_PASS=${env.ADMIN_PASS || ''}`,
-        'curlimages/curl:latest', 'sh', '-c',
+        TESTLAB_IMAGES.curl, 'sh', '-c',
         `curl -s -X POST "http://${slug}-api:5002/api/users/login" -H "Content-Type: application/json" -d "{\\"name\\":\\"Super Admin\\",\\"password\\":\\"$ADMIN_PASS\\"}"`,
       ], { timeout: 30_000 });
       const tokenMatch = loginResp.match(/"token":"([^"]+)"/);
       if (tokenMatch) {
         const crossResp = await docker([
-          'run', '--rm', '--network', 'semivra-net', 'curlimages/curl:latest', 'sh', '-c',
+          'run', '--rm', '--network', 'semivra-net', TESTLAB_IMAGES.curl, 'sh', '-c',
           `curl -s -o /dev/null -w "%{http_code}" "http://${otherTestSlug}-api:5002/api/analytics/dashboard" -H "Authorization: Bearer ${tokenMatch[1]}"`,
         ], { timeout: 30_000 });
         const rejected = crossResp.trim() === '401' || crossResp.trim() === '403';
@@ -1147,7 +1156,7 @@ app.post('/api/tenants/:slug/testlab/security-scan', requireAuth, requireTestTen
         await docker([
           'run', '--rm', '--network', 'semivra-net',
           '-v', `${resultsDir}:/zap/wrk:rw`,
-          'owasp/zap2docker-stable', 'zap-baseline.py',
+          TESTLAB_IMAGES.zap, 'zap-baseline.py',
           '-t', `http://${slug}-api:5002`,
           '-J', `${zapRunId}.json`,
         ], { timeout: 15 * 60_000 });

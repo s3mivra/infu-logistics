@@ -96,10 +96,18 @@ import defineClientModels from './models/defineClientModels.js';
 import defineWorkflowModels from './models/defineWorkflowModels.js';
 import defineCatalogModels from './models/defineCatalogModels.js';
 
+// Production unless told otherwise (2026-11 audit, M42). Every safeguard below
+// - secret strength, the default admin password, Secure cookies, LAN CORS,
+// hidden error details - used to switch on only for NODE_ENV === 'production'
+// exactly, so a typo or a missing variable silently ran a live shop in
+// development mode. Only an explicit 'development' or 'test' relaxes them.
+const NODE_ENV = String(process.env.NODE_ENV || '').trim().toLowerCase();
+const IS_PROD = !['development', 'test'].includes(NODE_ENV);
+
 const log = pino({
-  level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
+  level: process.env.LOG_LEVEL || (IS_PROD ? 'info' : 'debug'),
   base: { service: 'semivra-pos' },
-  ...(process.env.NODE_ENV !== 'production' && { transport: { target: 'pino-pretty', options: { colorize: true, translateTime: 'HH:MM:ss.l' } } })
+  ...(!IS_PROD && { transport: { target: 'pino-pretty', options: { colorize: true, translateTime: 'HH:MM:ss.l' } } })
 });
 
 // Optional error monitoring - completely inert unless SENTRY_DSN is set.
@@ -121,7 +129,10 @@ if (!process.env.MONGO_URI || !process.env.JWT_SECRET) {
 
 // Production config hardening - refuse to boot with weak/default secrets so a
 // deployment can never silently ship a guessable signing key or admin password.
-if (process.env.NODE_ENV === 'production') {
+if (IS_PROD) {
+  if (NODE_ENV !== 'production') {
+    console.warn(`⚠️  NODE_ENV is ${NODE_ENV ? '"' + NODE_ENV + '"' : 'not set'} - running with production safeguards. Set NODE_ENV=development to relax them on a developer machine.`);
+  }
   const weakReasons = [];
   if ((process.env.JWT_SECRET || '').length < 32) {
     weakReasons.push('JWT_SECRET must be at least 32 chars (use `openssl rand -hex 32`)');
@@ -177,6 +188,22 @@ app.use(requestContext);
 // the route's own catch block answers 500 - see lib/requestSafety.js.
 app.use(clientErrorStatus);
 
+// Readiness (2026-11 audit, M45). The port opens at once, but the database
+// connects and the startup migrations run afterwards - and requests used to be
+// served against a half-migrated database while /health said ok. Until both are
+// done every request but /health gets a 503 with Retry-After, which the client
+// and the load balancer already treat as 'try again shortly'. Tests drive the
+// app in-process while startup runs, as before.
+let startupState = 'starting';   // 'starting' | 'ready' | 'failed'
+app.use((req, res, next) => {
+  if (startupState === 'ready' || NODE_ENV === 'test' || req.path === '/health') return next();
+  res.set('Retry-After', '5');
+  return res.status(503).json({
+    success: false,
+    error: startupState === 'failed' ? 'The server could not finish starting.' : 'The server is starting - try again in a few seconds.',
+  });
+});
+
 // Hardened security headers. This is a JSON API consumed by a separate SPA origin,
 // so the restrictive default CSP is relaxed to avoid breaking nothing-served-here,
 // while HSTS, nosniff, frameguard, and referrer policy are enforced.
@@ -189,7 +216,6 @@ app.use(helmet({
 app.use(compression());
 
 // --- CORS CONFIG (env-driven for production, LAN auto-allow for dev) ---
-const IS_PROD = process.env.NODE_ENV === 'production';
 // 'fb' = food & beverage (QR ordering), 'log' = logistics (client-login ordering)
 const BUSINESS_TYPE = (process.env.BUSINESS_TYPE || 'fb').toLowerCase();
 // Reserved standard customer ID for walk-in/guest sales (no linked ClientAccount).
@@ -198,8 +224,9 @@ const BUSINESS_TYPE = (process.env.BUSINESS_TYPE || 'fb').toLowerCase();
 const WALK_IN_CUSTOMER_CODE = 'CUS-1000-A0001';
 const ENV_ORIGINS = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || '')
   .split(',').map(s => s.trim()).filter(Boolean);
+// The Vite dev server's origin is a developer convenience, never a production one.
 const allowedOrigins = [
-  "http://localhost:3000",
+  ...(!IS_PROD ? ['http://localhost:3000'] : []),
   ...ENV_ORIGINS
 ];
 
@@ -671,10 +698,12 @@ const invalidateBranchCodeCache = () => { _branchCodeCache = { value: '', at: 0 
 app.get('/health', (req, res) => {
   const dbState = mongoose.connection.readyState; // 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
   const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
-  const healthy = dbState === 1;
+  // Healthy only once the startup migrations have finished too (M45).
+  const healthy = dbState === 1 && (startupState === 'ready' || NODE_ENV === 'test');
   res.status(healthy ? 200 : 503).json({
     status: healthy ? 'ok' : 'degraded',
     db: states[dbState] || 'unknown',
+    startup: startupState,
     // Exposed so the client can detect a build/server BUSINESS_TYPE mismatch
     // (the #1 mis-deployment: fb client pointed at a log server or vice-versa).
     businessType: BUSINESS_TYPE,
@@ -1404,7 +1433,9 @@ mongoose.connect(process.env.MONGO_URI, {
   // captureError() is a no-op until then, so early boot errors are simply not
   // recorded rather than crashing the process.
   .then(() => { initErrorLog(); return runStartupTasks(); })
+  .then(() => { startupState = 'ready'; log.info('Startup tasks complete - accepting requests'); })
   .catch(err => {
+    startupState = 'failed';
     console.error('❌ MongoDB Connection Error:', err);
     // Running on without a database only answers every request with an error
     // until someone notices. In production, exit and let Docker restart us.
@@ -3824,5 +3855,15 @@ const fatalExit = (kind) => (err) => {
 };
 if (!IS_TEST) {
   process.on('uncaughtException', fatalExit('uncaughtException'));
-  process.on('unhandledRejection', fatalExit('unhandledRejection'));
+  // A rejected promise nobody awaited - in a socket handler, a timer, a router
+  // that forwardAsyncErrors does not wrap - used to restart the whole API in the
+  // middle of a shift (2026-11 audit, M47). Unlike a thrown exception it leaves
+  // no half-run synchronous code behind, so it is logged and reported, and the
+  // process carries on. A genuine uncaught exception still restarts.
+  let rejectionCount = 0;
+  process.on('unhandledRejection', (reason) => {
+    rejectionCount += 1;
+    log.error({ err: reason, rejectionCount }, 'unhandledRejection (kept running)');
+    if (SENTRY_ON) { try { Sentry.captureException(reason); } catch { /* never throw from here */ } }
+  });
 }

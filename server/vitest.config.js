@@ -28,7 +28,9 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text-summary', 'text'],
-      include: ['server.js', 'lib/**/*.js'],
+      // features/ holds most of the business logic; leaving it out (2026-11
+      // audit, M44) reported coverage for the part that is least of it.
+      include: ['server.js', 'lib/**/*.js', 'features/**/*.js', 'models/**/*.js'],
       exclude: ['lib/**/*.test.js', 'test/**'],
     },
   },

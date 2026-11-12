@@ -1,12 +1,13 @@
 {
   "name": "qr-menu-backend",
   "version": "1.0.0",
+  "engines": { "node": ">=24" },
   "description": "Backend for QR Digital Menu System",
   "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js",
+    "dev": "node --import ./lib/devMode.js --watch server.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "coverage": "vitest run --coverage",

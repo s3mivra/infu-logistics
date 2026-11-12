@@ -52,7 +52,7 @@ services:
       test: ["CMD", "wget", "-qO-", "http://localhost:5002/health"]
       interval: 30s
       timeout: 5s
-      start_period: 20s
+      start_period: 120s   # startup migrations run before /health is ok
       retries: 3
     networks:
       semivra-net:

@@ -1,0 +1,29 @@
+# Images and actions are pinned by digest/SHA (2026-11 audit, M43/M44/M83).
+# Pins only stay safe if someone moves them: Dependabot opens the update PRs,
+# CI proves them, a person merges them.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /server
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch: { update-types: [minor, patch] }
+  - package-ecosystem: npm
+    directory: /client
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch: { update-types: [minor, patch] }
+  - package-ecosystem: npm
+    directory: /platform/control-plane
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directories: [/server, /client, /platform/control-plane]
+    schedule: { interval: weekly }
+  - package-ecosystem: docker-compose
+    directories: [/, /platform]
+    schedule: { interval: weekly }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
