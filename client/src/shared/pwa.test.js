@@ -70,3 +70,24 @@ describe('clock queue owners', () => {
     expect(getQueuedClock().map((e) => e.userId)).toEqual(['ana']);
   });
 });
+
+// 2026-11 audit, M109: a queued sale belongs to whoever rang it up.
+describe('offline orders and who rang them up', () => {
+  it('replays only the signed-in person\'s orders; the rest wait for them', async () => {
+    queueOrder({ n: 1 }, 'ana-sale', 'ana');
+    queueOrder({ n: 2 }, 'ben-sale', 'ben');
+    const sent = [];
+    const r = await flushQueue(async (e) => { sent.push(e.id); return 'sent'; }, 'ben');
+    expect(sent).toEqual(['ben-sale']);
+    expect(r.sent).toBe(1);
+    expect(getQueuedOrders().map((e) => e.id)).toEqual(['ana-sale']);
+  });
+
+  it('still sends an order queued before owners were kept, rather than drop a paid sale', async () => {
+    queueOrder({ n: 1 }, 'legacy');
+    const sent = [];
+    await flushQueue(async (e) => { sent.push(e.id); return 'sent'; }, 'ben');
+    expect(sent).toEqual(['legacy']);
+    expect(getQueuedOrders()).toEqual([]);
+  });
+});

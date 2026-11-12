@@ -1,4 +1,5 @@
-﻿// Shared thermal-receipt template used by BOTH the Orders order-slip print and
+import { roundMoney } from './money.js';
+// Shared thermal-receipt template used by BOTH the Orders order-slip print and
 // the Procurement purchase-order print, so every printed slip looks the same and
 // only the labels differ ("OFFICIAL ORDER SLIP" vs "PURCHASE ORDER").
 //
@@ -29,7 +30,9 @@ export const pick = (...vals) => {
 
 // Quotes too: the same helper fills attribute values.
 export const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-export const peso = (n) => '&#x20B1;' + Number(n || 0).toFixed(2);
+// Rounded the server's way before printing: toFixed(2) alone printed 1.005 as
+// 1.00 where the server books 1.01 (2026-11 audit, M118).
+export const peso = (n) => '&#x20B1;' + roundMoney(n).toFixed(2);
 
 // Branding settings go into CSS and an <img src>, where escaping alone is not
 // enough. Anything that is not plainly a size, a colour or an image is dropped

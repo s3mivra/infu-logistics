@@ -323,7 +323,7 @@ export default function SuperAdminPanel() {
     // Only an expired/invalid session logs out. A 403 is the server refusing
     // one action (a delegate granting something they do not hold) - the
     // caller shows its reason; throwing the user out would lose their work.
-    if (res.status === 401 && endpoint !== '/api/users/login') handleLogout();
+    if (res.status === 401 && endpoint !== '/api/users/login' && await auth.isTokenRejection(res)) handleLogout();
     return res;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

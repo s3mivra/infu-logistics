@@ -1,7 +1,9 @@
 ﻿import { useFormDraft } from '../../shared/useFormDraft';
 import LoadingRows from '../../shared/LoadingRows';
 import { formatDate, formatDateTime } from '../../shared/dates.js';
-import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, Suspense } from 'react';
+import { lazyRetry } from '../../shared/lazyRetry';
+import PanelBoundary from '../../shared/PanelBoundary';
 import { useNavigate } from 'react-router-dom';
 import { socket, reconnectSocket } from '../../shared/staffSocket.js';
 import { broadcastRefresh } from '../../shared/refreshBus';
@@ -60,32 +62,37 @@ import { PACK_UNIT } from '../../shared/packUnit.js';
 import { setUpdateGuard } from '../../shared/autoUpdate.js';
 // Tabs are lazy-loaded so only the active tab's code ships on first dashboard
 // paint; the rest load on demand when the operator opens them.
-const AnalyticsTab  = lazy(() => import('../analytics/AnalyticsTab'));
-const OwnerOverview = lazy(() => import('../owner/OwnerOverview'));
-const HomeTab = lazy(() => import('../home/HomeTab'));
-const OrdersTab     = lazy(() => import('../orders/OrdersTab'));
-const HistoryTab    = lazy(() => import('../orders/HistoryTab'));
-const InventoryTab  = lazy(() => import('../inventory/InventoryTab'));
-const LedgerTab     = lazy(() => import('../ledger/LedgerTab'));
-const PricingTab    = lazy(() => import('../pricing/PricingTab'));
-const AuditTab      = lazy(() => import('../audit/AuditTab'));
-const ProductsTab   = lazy(() => import('../products/ProductsTab'));
-const ProcurementTab = lazy(() => import('../procurement/ProcurementTab'));
-const CostingTab = lazy(() => import('../costing/CostingTab'));
-const SettingsTab   = lazy(() => import('../settings/SettingsTab'));
-const ClientsTab    = lazy(() => import('../clients/ClientsTab'));
-const HubTab        = lazy(() => import('../hub/HubTab'));
-const ProductionTab = lazy(() => import('../production/ProductionTab'));
-const FixedAssetsTab = lazy(() => import('../fixed-assets/FixedAssetsTab'));
-const BankReconciliationTab = lazy(() => import('../finance-modules/BankReconciliationTab'));
-const WithholdingTaxTab = lazy(() => import('../finance-modules/WithholdingTaxTab'));
-const PayrollTab = lazy(() => import('../finance-modules/PayrollTab'));
-const TimeOffTab = lazy(() => import('../finance-modules/TimeOffTab'));
-const QuotationsTab = lazy(() => import('../quotations/QuotationsTab'));
+const AnalyticsTab  = lazyRetry(() => import('../analytics/AnalyticsTab'));
+const OwnerOverview = lazyRetry(() => import('../owner/OwnerOverview'));
+const HomeTab = lazyRetry(() => import('../home/HomeTab'));
+const OrdersTab     = lazyRetry(() => import('../orders/OrdersTab'));
+const HistoryTab    = lazyRetry(() => import('../orders/HistoryTab'));
+const InventoryTab  = lazyRetry(() => import('../inventory/InventoryTab'));
+const LedgerTab     = lazyRetry(() => import('../ledger/LedgerTab'));
+const PricingTab    = lazyRetry(() => import('../pricing/PricingTab'));
+const AuditTab      = lazyRetry(() => import('../audit/AuditTab'));
+const ProductsTab   = lazyRetry(() => import('../products/ProductsTab'));
+const ProcurementTab = lazyRetry(() => import('../procurement/ProcurementTab'));
+const CostingTab = lazyRetry(() => import('../costing/CostingTab'));
+const SettingsTab   = lazyRetry(() => import('../settings/SettingsTab'));
+const ClientsTab    = lazyRetry(() => import('../clients/ClientsTab'));
+const HubTab        = lazyRetry(() => import('../hub/HubTab'));
+const ProductionTab = lazyRetry(() => import('../production/ProductionTab'));
+const FixedAssetsTab = lazyRetry(() => import('../fixed-assets/FixedAssetsTab'));
+const BankReconciliationTab = lazyRetry(() => import('../finance-modules/BankReconciliationTab'));
+const WithholdingTaxTab = lazyRetry(() => import('../finance-modules/WithholdingTaxTab'));
+const PayrollTab = lazyRetry(() => import('../finance-modules/PayrollTab'));
+const TimeOffTab = lazyRetry(() => import('../finance-modules/TimeOffTab'));
+const QuotationsTab = lazyRetry(() => import('../quotations/QuotationsTab'));
 
 // Small fallback shown while a tab chunk loads.
 const TabFallback = () => (
   <div className="p-6"><LoadingRows rows={6} /></div>
+);
+// One tab: its own error boundary (a crash there leaves the cart and the rest of
+// the dashboard alone) around its lazy load (2026-11 audit, M111).
+const TabSlot = ({ children }) => (
+  <PanelBoundary><Suspense fallback={<TabFallback />}>{children}</Suspense></PanelBoundary>
 );
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
@@ -982,7 +989,9 @@ export default function AdminDashboard() {
         }
       }
     }
-    if (response.status === 401) {
+    // Signed out only when the session itself was refused - a wrong password
+    // in a form is a 401 too, and is the form's to show (2026-11 audit, M116).
+    if (response.status === 401 && await auth.isTokenRejection(response)) {
       setIsAuthenticated(false);
       setActiveAdmin(null);
       auth.clearToken();
@@ -1636,7 +1645,7 @@ export default function AdminDashboard() {
 
   const flushOfflineQueue = () => {
     if (!navigator.onLine || !isAuthenticated) return;
-    syncQueue(sendQueuedOrder).then(({ sent }) => { if (sent > 0) fetchOrders(); });
+    syncQueue(sendQueuedOrder, auth.getUser()?._id).then(({ sent }) => { if (sent > 0) fetchOrders(); });
     if (getQueuedClock().length > 0) {
       flushClockQueue(sendQueuedClock, auth.getUser()?._id).then(({ sent }) => { if (sent > 0) fetchClockStatus(); });
     }
@@ -2663,7 +2672,7 @@ export default function AdminDashboard() {
 
     // OFFLINE: if the device is offline, queue the order locally and move on.
     if (!navigator.onLine) {
-      queueOrder(payload, idemKey);
+      queueOrder(payload, idemKey, auth.getUser()?._id);
       refreshQueue();
       resetPosForm();
       ui.alert('You are offline. Order saved and will sync automatically when the connection returns.');
@@ -2701,7 +2710,7 @@ export default function AdminDashboard() {
       // Network died mid-request - queue it under the SAME idempotency key so the
       // replay can't duplicate an order the server may have already received.
       console.error(e);
-      queueOrder(payload, idemKey);
+      queueOrder(payload, idemKey, auth.getUser()?._id);
       refreshQueue();
       resetPosForm();
       ui.alert('Connection lost. Order saved and will sync automatically when the connection returns.');
@@ -7563,7 +7572,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             </p>
           </div>
           {isOnline && queuedCount > 0 && (
-            <button onClick={() => syncQueue(sendQueuedOrder).then(({ sent }) => { if (sent > 0) fetchOrders(); })}
+            <button onClick={() => syncQueue(sendQueuedOrder, auth.getUser()?._id).then(({ sent }) => { if (sent > 0) fetchOrders(); })}
               className="shrink-0 flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-warning px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition">
               <RefreshCw size={12} /> Sync now
             </button>
@@ -7663,27 +7672,27 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       )}
 
       {/* --- ANALYTICS DASHBOARD TAB --- */}
-      {activeTab === 'home' && <Suspense fallback={<TabFallback />}><HomeTab apiFetch={apiFetch} can={can} navigate={navigate}
+      {activeTab === 'home' && <TabSlot><HomeTab apiFetch={apiFetch} can={can} navigate={navigate}
         user={activeAdmin} isSuperAdmin={activeAdmin?.role === 'superadmin'} alerts={notifData}
-        go={(tab, sub) => { if (sub && tab === 'inventory') setInvSubTab(sub); else if (sub) setLedgerSubTab(sub); setActiveTab(tab); }} /></Suspense>}
-      {activeTab === 'owner' && <Suspense fallback={<TabFallback />}><OwnerOverview apiFetch={apiFetch} can={can} go={setActiveTab} /></Suspense>}
-      {activeTab === 'analytics' && <Suspense fallback={<TabFallback />}><AnalyticsTab ctx={ctx} /></Suspense>}
+        go={(tab, sub) => { if (sub && tab === 'inventory') setInvSubTab(sub); else if (sub) setLedgerSubTab(sub); setActiveTab(tab); }} /></TabSlot>}
+      {activeTab === 'owner' && <TabSlot><OwnerOverview apiFetch={apiFetch} can={can} go={setActiveTab} /></TabSlot>}
+      {activeTab === 'analytics' && <TabSlot><AnalyticsTab ctx={ctx} /></TabSlot>}
 
       {/* --- ACTIVE ORDERS TAB (Kitchen & Bar View) --- */}
       {/* --- ACTIVE ORDERS TAB (Kitchen & Bar View) --- */}
-      {activeTab === 'orders' && <Suspense fallback={<TabFallback />}><OrdersTab ctx={ctx} /></Suspense>}
+      {activeTab === 'orders' && <TabSlot><OrdersTab ctx={ctx} /></TabSlot>}
 
       {/* --- SALES HISTORY & REGISTER TAB --- */}
-      {activeTab === 'history' && <Suspense fallback={<TabFallback />}><HistoryTab ctx={ctx} /></Suspense>}
+      {activeTab === 'history' && <TabSlot><HistoryTab ctx={ctx} /></TabSlot>}
 
 
       {/* --- INVENTORY TAB --- */}
-      {activeTab === 'inventory' && <Suspense fallback={<TabFallback />}><InventoryTab ctx={ctx} /></Suspense>}
-      {activeTab === 'hub' && <Suspense fallback={<TabFallback />}><HubTab ctx={ctx} /></Suspense>}
-      {activeTab === 'production' && <Suspense fallback={<TabFallback />}><ProductionTab ctx={ctx} /></Suspense>}
+      {activeTab === 'inventory' && <TabSlot><InventoryTab ctx={ctx} /></TabSlot>}
+      {activeTab === 'hub' && <TabSlot><HubTab ctx={ctx} /></TabSlot>}
+      {activeTab === 'production' && <TabSlot><ProductionTab ctx={ctx} /></TabSlot>}
 
       {/* --- ACCOUNTING & LEDGER TAB --- */}
-      {(activeTab === 'ledger' || activeTab === 'reports' || activeTab === 'approvals') && <Suspense fallback={<TabFallback />}><LedgerTab ctx={ctx} /></Suspense>}
+      {(activeTab === 'ledger' || activeTab === 'reports' || activeTab === 'approvals') && <TabSlot><LedgerTab ctx={ctx} /></TabSlot>}
 
       {/* ===== REVOLVING FUND MODALS ===== */}
 
@@ -7705,33 +7714,33 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       <BounceCheckModal />
 
       {/* --- PRICING & DISCOUNTS TAB --- */}
-      {activeTab === 'pricing' && <Suspense fallback={<TabFallback />}><PricingTab ctx={ctx} /></Suspense>}
+      {activeTab === 'pricing' && <TabSlot><PricingTab ctx={ctx} /></TabSlot>}
 
 {/* --- AUDIT REPORT --- */}
-      {activeTab === 'audit' && <Suspense fallback={<TabFallback />}><AuditTab ctx={ctx} /></Suspense>}
+      {activeTab === 'audit' && <TabSlot><AuditTab ctx={ctx} /></TabSlot>}
 
 {/* --- FIXED ASSETS (register, depreciation, disposal) --- */}
-      {activeTab === 'fixedassets' && <Suspense fallback={<TabFallback />}><FixedAssetsTab /></Suspense>}
+      {activeTab === 'fixedassets' && <TabSlot><FixedAssetsTab /></TabSlot>}
 
 {/* --- OPTIONAL ACCOUNTING MODULES --- */}
-      {activeTab === 'bankrec' && <Suspense fallback={<TabFallback />}><BankReconciliationTab /></Suspense>}
-      {activeTab === 'wht' && <Suspense fallback={<TabFallback />}><WithholdingTaxTab /></Suspense>}
-      {activeTab === 'payroll' && <Suspense fallback={<TabFallback />}><PayrollTab /></Suspense>}
-      {activeTab === 'timeoff' && <Suspense fallback={<TabFallback />}><TimeOffTab /></Suspense>}
-      {activeTab === 'quotations' && <Suspense fallback={<TabFallback />}><QuotationsTab /></Suspense>}
+      {activeTab === 'bankrec' && <TabSlot><BankReconciliationTab /></TabSlot>}
+      {activeTab === 'wht' && <TabSlot><WithholdingTaxTab /></TabSlot>}
+      {activeTab === 'payroll' && <TabSlot><PayrollTab /></TabSlot>}
+      {activeTab === 'timeoff' && <TabSlot><TimeOffTab /></TabSlot>}
+      {activeTab === 'quotations' && <TabSlot><QuotationsTab /></TabSlot>}
 
 {/* --- MENU SETUP (PRODUCTS/CATEGORIES) --- */}
-      {activeTab === 'products' && <Suspense fallback={<TabFallback />}><ProductsTab ctx={ctx} /></Suspense>}
+      {activeTab === 'products' && <TabSlot><ProductsTab ctx={ctx} /></TabSlot>}
 
 {/* --- PROCUREMENT (PURCHASE ORDERS) --- */}
-      {activeTab === 'procurement' && <Suspense fallback={<TabFallback />}><ProcurementTab ctx={ctx} /></Suspense>}
-      {activeTab === 'costing' && <Suspense fallback={<TabFallback />}><CostingTab ctx={ctx} /></Suspense>}
+      {activeTab === 'procurement' && <TabSlot><ProcurementTab ctx={ctx} /></TabSlot>}
+      {activeTab === 'costing' && <TabSlot><CostingTab ctx={ctx} /></TabSlot>}
 
       {/* --- CLIENTS TAB --- */}
-      {activeTab === 'clients' && <Suspense fallback={<TabFallback />}><ClientsTab /></Suspense>}
+      {activeTab === 'clients' && <TabSlot><ClientsTab /></TabSlot>}
 
 {/* --- SETTINGS --- */}
-      {activeTab === 'settings' && <Suspense fallback={<TabFallback />}><SettingsTab ctx={ctx} /></Suspense>}
+      {activeTab === 'settings' && <TabSlot><SettingsTab ctx={ctx} /></TabSlot>}
 
       {/* --- STOCK MOVEMENT HISTORY MODAL --- */}
       <StockHistoryModal />

@@ -51,7 +51,13 @@ requires, including, as the Service stands today:
 - an audit trail of changes, recording who made them;
 - customer-portal accounts that can see only their own orders;
 - input sanitisation against query injection, and automated tests of the above;
-- separate data per business, and backups of the database.
+- a separate database for each business. All businesses' databases run on
+  one shared database server, so the separation is logical (the software only
+  ever opens its own business's database), not separate machines;
+- government ID numbers (SSS, PhilHealth, Pag-IBIG, TIN), two-step sign-in
+  secrets and senior citizen/PWD card numbers additionally encrypted at rest;
+- daily backups of the database, checked by a test restore before they are
+  kept, and an encrypted copy held off the server (see section 4).
 
 Semivra limits access by its own personnel to those who need it to run the
 Service, binds them to confidentiality, and trains them on it.
@@ -62,9 +68,20 @@ The Business authorises these sub-processors:
 
 | Sub-processor | Service | Location |
 |---|---|---|
-| MongoDB, Inc. (MongoDB Atlas) | Database hosting and backups | [region] |
-| Hostinger | Application server | [location] |
+| [Server host, e.g. Hostinger] | The server that runs the application **and the database** (a self-managed MongoDB on the same server; MongoDB, Inc. does not hold the data) | [location] |
+| [Offsite backup storage: Cloudflare R2 or Backblaze B2] - *if offsite backup is set up* | Holds copies of the backups. They are encrypted before they leave the server, with a key the storage provider does not have | [region] |
+| [E-mail provider whose SMTP server the Business configures] - *if e-mail is enabled* | Sends statements, receipts and reminders: the recipient's address, name and the document | [location] |
+| Let's Encrypt (Internet Security Research Group) | Issues the HTTPS certificate for the Business's address. Receives the address (domain name) only, no personal information | United States |
+| Telegram Messenger Inc. - *if a daily summary webhook is set up* | Receives the daily sales summary. Totals only; no customer or staff details | [region] |
 | Functional Software, Inc. (Sentry) - *if enabled* | Error reports, which may include the page or request where an error occurred | [region] |
+
+If the Business links its branches (the hub), each linked branch receives the
+summaries and transfers the link is used for. Linked branches are the
+Business's own or ones it chose to link; they are not Semivra's sub-processors.
+
+The application loads no fonts, scripts or trackers from third parties, so
+opening the menu or the portal sends nothing to anyone but the Business's own
+server.
 
 Semivra will give the Business at least **thirty (30) days'** notice before
 adding or replacing a sub-processor, and will bind each one to obligations at
