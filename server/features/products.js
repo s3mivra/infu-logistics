@@ -297,6 +297,50 @@ app.delete('/api/categories/:id', verifyToken, requireStaff, permit('products.ma
   }
 });
 
+// ── Product photos at their own address (2026-11 audit, M112) ──────────────
+// Photos are stored as data URLs on the product. Sent inside GET /api/products
+// they made every catalogue refresh ~1 MB per three photos - on every screen,
+// after every completed order. The list now carries a URL instead, versioned by
+// the product's updatedAt so a browser caches it for good and a new photo is a
+// new address.
+const PRODUCT_IMAGE_URL = /\/api\/products\/[0-9a-f]{24}\/image(\?|$)/i;
+const productImageUrl = (req, p) =>
+  `${req.protocol}://${req.get('host')}/api/products/${p._id}/image?v=${new Date(p.updatedAt || 0).getTime()}`;
+
+app.get('/api/products/:id/image', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).end();
+    const p = await Product.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE }, { image: 1 }).lean();
+    const m = /^data:(image\/(?:png|jpe?g|webp|gif));base64,(.+)$/i.exec(String(p?.image || ''));
+    if (!m) return res.status(404).end();
+    // The superadmin switch that hides photos from customers still applies;
+    // a staff screen keeps them, as the list does.
+    const imgSetting = await Settings.findOne({ key: 'imagesEnabled' }).lean();
+    if (imgSetting?.value === false) {
+      let staff = false;
+      try { staff = !!jwt.verify(String(req.headers.authorization || '').replace(/^Bearer /, ''), process.env.JWT_SECRET, { algorithms: ['HS256'] })?.role; } catch { /* anonymous */ }
+      if (!staff) return res.status(404).end();
+    }
+    res.set('Content-Type', m[1].toLowerCase());
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.set('X-Content-Type-Options', 'nosniff');
+    return res.send(Buffer.from(m[2], 'base64'));
+  } catch (err) {
+    captureError(req, err);
+    return res.status(500).end();
+  }
+});
+
+// The edit form sends back what the list gave it. If that is this server's own
+// photo address, the photo did not change: drop the field so the stored data
+// URL stays, rather than overwriting it with a link to itself.
+app.use('/api/products', (req, res, next) => {
+  if (['POST', 'PUT', 'PATCH'].includes(req.method) && typeof req.body?.image === 'string' && PRODUCT_IMAGE_URL.test(req.body.image)) {
+    delete req.body.image;
+  }
+  next();
+});
+
 // Products
 app.get('/api/products', async (req, res) => {
   try {
@@ -365,6 +409,7 @@ app.get('/api/products', async (req, res) => {
     // just the per-client override this endpoint used to consider alone.
     products.forEach(p => {
       if (!isAdminCaller && !imagesEnabled) p.image = '';
+      else if (typeof p.image === 'string' && p.image.startsWith('data:')) p.image = productImageUrl(req, p);
       p.effectiveDiscountPercent = resolveEffectiveDiscountPercent(p, {
         buyerClientId, buyerSegments, tierDefaultPct, perProductTiers,
       });

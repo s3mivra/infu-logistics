@@ -38,6 +38,10 @@ export default function registerOwnerInsights(ctx) {
     if (isDate(q.start)) startKey = String(q.start);
     else startKey = shiftKey(endKey, -(Math.min(366, Math.max(1, Math.round(Number(q.days) || 30))) - 1));
     if (startKey > endKey) [startKey, endKey] = [endKey, startKey];
+    // At most a year, like the `days` form above: these read every order of the
+    // window with its items (2026-11 audit, M107).
+    const earliest = shiftKey(endKey, -365);
+    if (startKey < earliest) startKey = earliest;
     const len = Math.round((dayStart(endKey).getTime() - dayStart(startKey).getTime()) / DAY) + 1;
     const prevEnd = shiftKey(startKey, -1), prevStart = shiftKey(prevEnd, -(len - 1));
     return {

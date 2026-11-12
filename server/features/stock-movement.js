@@ -208,6 +208,10 @@ export default function registerStockMovement(ctx) {
       const from = dayStart(startKey);
       const to = new Date(Math.min(dayEnd(endKey).getTime(), Date.now()));
       if (!(to > from)) return { status: 400, error: 'The end date must be after the start date.' };
+      // At most a year: every order in the window is read into memory, so a
+      // start of 2000-01-01 loaded the whole history on the till's process
+      // (2026-11 audit, M107).
+      if ((to - from) / DAY > 366) return { status: 400, error: 'Choose a range of at most a year.' };
       const scope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
       const windowDays = Math.max(1, (to - from) / DAY);
 

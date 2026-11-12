@@ -29,6 +29,18 @@ import { atomic } from '../lib/atomicRoute.js';
 import { stockMovesFrom, movesToReturn, hasStockMoves, roundQty } from '../lib/stockMoves.js';
 import { readNegativeStockMode, saleStockFilter, blockedNote, flagBelowZero } from '../lib/negativeStock.js';
 export default function registerOrders(ctx) {
+  // Every completed sale used to tell every open screen - dashboards, QR
+  // phones, portals - to reload the catalogue (2026-11 audit, M112). The stock
+  // it changed matters, so the signal still goes, but at most once in
+  // MENU_REFRESH_MS however many sales complete: one refresh for a rush, not
+  // one per order. Products going unavailable still announce themselves at once.
+  const MENU_REFRESH_MS = 10_000;
+  let menuTimer = null;
+  const menuUpdatedSoon = () => {
+    if (menuTimer) return;
+    menuTimer = setTimeout(() => { menuTimer = null; ctx.emitToAll('menuUpdated'); }, MENU_REFRESH_MS);
+    menuTimer.unref?.();
+  };
   const {
     app,
     io,
@@ -2686,7 +2698,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
     if (status === 'Completed' && wasNotCompleted) alertBelowZero(req, order);
     // Push menuUpdated so CustomerMenu instantly re-fetches products and recomputes
     // stockAvailable - catches the moment an ingredient hits zero during service.
-    if (status === 'Completed') emitToAll('menuUpdated');
+    if (status === 'Completed') menuUpdatedSoon();
     res.json({ success: true, order });
     if (status === 'Completed' && wasNotCompleted) maybePromoteWalkInClient(order);
 

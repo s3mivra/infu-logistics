@@ -446,17 +446,18 @@ export default function CustomerMenu() {
   const fetchProducts = async () => {
     try {
       // Fetch Products
-      const res = await fetch(`${API_URL}/api/products?t=${new Date().getTime()}`, { cache: 'no-store' });
+      // Revalidate (ETag, 304 when unchanged) instead of always re-downloading (M112).
+      const res = await fetch(`${API_URL}/api/products`, { cache: 'no-cache' });
       const data = await res.json();
       if (data.success) setProducts(data.products);
 
       // FIX: Fetch Categories so the dynamic Kitchen/Bar routing knows where to send items!
-      const catRes = await fetch(`${API_URL}/api/categories?t=${new Date().getTime()}`, { cache: 'no-store' });
+      const catRes = await fetch(`${API_URL}/api/categories`, { cache: 'no-cache' });
       const catData = await catRes.json();
       if (catData.success) setCategories(catData.categories);
 
       // Combos / promos (active only)
-      const cbRes = await fetch(`${API_URL}/api/combos?t=${new Date().getTime()}`, { cache: 'no-store' });
+      const cbRes = await fetch(`${API_URL}/api/combos`, { cache: 'no-cache' });
       const cbData = await cbRes.json();
       if (cbData.success) setCombos(cbData.combos || []);
 

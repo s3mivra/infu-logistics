@@ -777,6 +777,10 @@ const PUBLIC_BUCKETS = [
   { re: /^\/api\/sessions\/[^/]+\/heartbeat$/, windowMs: 60_000, max: 600, what: 'session checks' },
   { re: /^\/api\/sessions\/[^/]+\/(claim|close)$/, windowMs: 60_000, max: 120, what: 'table sessions' },
   { re: /^\/api\/qr-devices\/session$/, windowMs: 60_000, max: 60, what: 'device sessions' },
+  // Menu photos: one request per photo per device, then cached for a year. A
+  // room of diners opening a photographed menu at once would empty the general
+  // bucket in seconds (M112).
+  { re: /^\/api\/products\/[0-9a-f]{24}\/image$/i, windowMs: 60_000, max: 3000, what: 'photo requests', countReads: true },
 ].map((b) => ({
   ...b,
   limiter: rateLimit({

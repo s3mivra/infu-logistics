@@ -513,7 +513,12 @@ app.post('/api/finance/opening-balances', verifyToken, ...canPostAcct, atomic(mo
 app.get('/api/finance/balances', verifyToken, ...canViewAcct, async (req, res) => {
   try {
     // Aggregate at MongoDB level - no full collection load, OOM-safe at scale
+    // Match BEFORE unwinding, so the { lines.accountCode, date } index picks out
+    // only the entries that touch cash. Unwinding first read every journal entry
+    // ever posted, on each call - and the owner's dashboard calls this after
+    // every order (2026-11 audit, M112).
     const agg = await JournalEntry.aggregate([
+      { $match: { 'lines.accountCode': '111000' } },
       { $unwind: '$lines' },
       { $match: { 'lines.accountCode': '111000' } },
       { $group: {

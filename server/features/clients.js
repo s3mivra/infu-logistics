@@ -6,7 +6,7 @@
 // meant matching rows by NAME, which breaks the moment two clients share one.
 // Here everything is keyed by account id.
 import { roundMoney } from '../lib/money.js';
-import { ageingBuckets, resolveCreditLimit, withArBalance, DEFAULT_CREDIT_MODE, isReceivableStatus } from '../lib/credit.js';
+import { ageingBuckets, resolveCreditLimit, withArBalance, arBalance, DEFAULT_CREDIT_MODE, isReceivableStatus } from '../lib/credit.js';
 
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
@@ -134,7 +134,9 @@ export default function registerClients(ctx) {
         const aged = ageingBuckets(withArBalance(list.filter(o => isReceivableStatus(o.status) && isReceivable(o))));
         const exposure = +list
           .filter(o => isLive(o) && isReceivable(o))
-          .reduce((s, o) => s + Math.max(0, (Number(o.total) || 0) - (Number(o.refundedAmount) || 0)), 0)
+          // What is still unpaid: a partly collected invoice counted at face value
+          // put a client who had paid most of it over their limit (M107).
+          .reduce((s, o) => s + Math.max(0, arBalance(o)), 0)
           .toFixed(2);
 
         const st = statsByClient.get(String(c._id));
