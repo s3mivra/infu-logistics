@@ -102,6 +102,11 @@ services:
     env_file:
       - path: ./offsite.env
         required: false
+    environment:
+      # Offsite copies older than this are deleted after each sync, so a
+      # tenant's data does not outlive its contract in the bucket forever
+      # (2026-11 audit, M75). Longer than the local window on purpose.
+      OFFSITE_RETENTION_DAYS: ${OFFSITE_RETENTION_DAYS:-90}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >
@@ -115,6 +120,8 @@ services:
             --include 'semivra-*.archive.gz' --include 'LAST_*' --s3-no-check-bucket
           && date -u +%FT%TZ > /backups/LAST_OFFSITE_SYNC
           || { echo "offsite sync failed"; date -u +%FT%TZ > /backups/LAST_OFFSITE_FAILURE; };
+          rclone delete secure: --include 'semivra-*.archive.gz' --min-age "$${OFFSITE_RETENTION_DAYS}d" --s3-no-check-bucket
+          || echo "offsite prune failed (archives are kept)";
           sleep 21600;
         done
     volumes:

@@ -784,11 +784,14 @@ app.delete('/api/users/:id', verifyToken, requireUserAdmin, async (req, res) => 
   try {
     // Delete stays idempotent (a missing id is not an error, as before); the
     // escalation guard only has something to check when the account exists.
-    const target = await User.findById(req.params.id).select('role permissions').lean();
+    const target = await User.findById(req.params.id).select('role permissions name userCode').lean();
     const denied = target ? guardStaffEscalation(req.user, { targetUser: target }) : null;
     if (denied) return res.status(403).json({ success: false, error: denied });
     await User.findByIdAndDelete(req.params.id);
     await revokeUserSessions(req.params.id); // kill any active sessions for the deleted account
+    // Who removed whom, and when - a staff delete left no trace at all (2026-11
+    // audit, M76). Only what identifies the account; none of its personal data.
+    if (target) await logAudit(req, { action: 'delete', entity: 'User', entityId: target._id, before: { name: target.name, userCode: target.userCode, role: target.role } });
     res.json({ success: true });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));

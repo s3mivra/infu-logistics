@@ -37,7 +37,7 @@ import { requireStaff, evaluateStaffAccess, evaluateClientAccess, requirePermiss
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
 import { computeOrderVat, extractVat, normaliseVatRate, DEFAULT_VAT_RATE } from './lib/vat.js';
 import { validateDateRange } from './lib/reportRange.js';
-import { initErrorLog } from './lib/errorLog.js';
+import { initErrorLog, logSafeUrl } from './lib/errorLog.js';
 import { fieldCryptPlugin, encryptValue } from './lib/fieldCrypt.js';
 import registerTenants from './features/tenants.js';
 import registerAddons from './features/addons.js';
@@ -266,7 +266,7 @@ app.use(pinoHttp({
     return 'info';
   },
   serializers: {
-    req: req => ({ method: req.method, url: req.url, id: req.id }),
+    req: req => ({ method: req.method, url: logSafeUrl(req.url), id: req.id }),
     res: res => ({ statusCode: res.statusCode })
   }
 }));
@@ -764,6 +764,34 @@ const rateLimitKey = (req) => {
   // when a custom keyGenerator returns req.ip raw.
   return `ip:${ipKeyGenerator(req.ip)}`;
 };
+// The anonymous endpoints - a diner's QR session, feedback, a client opening
+// their onboarding link - each get a bucket of their own, per address, sized to
+// a full cafe on one wifi address, far below a flood (2026-11 audit, M113). In the shared general bucket
+// one anonymous caller could spend the allowance of everyone behind the same
+// address - a whole cafe's wifi - and a feedback form could be posted 300 times
+// a minute.
+const PUBLIC_BUCKETS = [
+  { re: /^\/api\/feedback$/, windowMs: 60_000, max: 30, what: 'feedback' },
+  // Reading the link counts too: guessing onboarding tokens is a GET.
+  { re: /^\/api\/client-onboard\//, windowMs: 15 * 60_000, max: 20, what: 'onboarding attempts', countReads: true },
+  { re: /^\/api\/sessions\/[^/]+\/heartbeat$/, windowMs: 60_000, max: 600, what: 'session checks' },
+  { re: /^\/api\/sessions\/[^/]+\/(claim|close)$/, windowMs: 60_000, max: 120, what: 'table sessions' },
+  { re: /^\/api\/qr-devices\/session$/, windowMs: 60_000, max: 60, what: 'device sessions' },
+].map((b) => ({
+  ...b,
+  limiter: rateLimit({
+    windowMs: b.windowMs, max: b.max, standardHeaders: true, legacyHeaders: false,
+    keyGenerator: (req) => `ip:${ipKeyGenerator(req.ip)}`,
+    skip: (req) => req.method === 'GET' && !b.countReads,
+    message: { success: false, error: `Too many ${b.what} from this address. Wait a moment and try again.` },
+  }),
+}));
+const publicBucketFor = (req) => PUBLIC_BUCKETS.find((b) => b.re.test(req.originalUrl.split('?')[0]));
+app.use((req, res, next) => {
+  const bucket = publicBucketFor(req);
+  return bucket ? bucket.limiter(req, res, next) : next();
+});
+
 const generalApiLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   // Generous per user; no longer shared across a whole location. Overridable
@@ -773,6 +801,8 @@ const generalApiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: rateLimitKey,
+  // Public endpoints are counted in their own buckets above, not here.
+  skip: (req) => !!publicBucketFor(req),
   message: { success: false, error: 'Too many requests. Please slow down.' }
 });
 app.use('/api', generalApiLimiter);
@@ -1226,6 +1256,30 @@ const runStartupTasks = async () => {
       }
     } catch (err) {
       log.error({ err }, 'Sealing sensitive fields failed - they stay readable as before; will retry next start');
+    }
+
+    // Once: the government numbers in payroll run snapshots, sealed like the
+    // staff profile they were copied from (2026-11 audit, M76).
+    try {
+      const done = await Settings.findOne({ key: 'sealPayrollSnapshotsV1' }).lean();
+      if (!done) {
+        const GOV = ['sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin'];
+        const coll = mongoose.model('PayrollRun').collection;
+        let runs = 0;
+        for await (const run of coll.find({}, { projection: { lines: 1 } })) {
+          let changed = false;
+          const lines = (run.lines || []).map((l) => {
+            const next = { ...l };
+            for (const f of GOV) if (typeof l[f] === 'string' && l[f] && !l[f].startsWith('v1.')) { next[f] = encryptValue(l[f]); changed = true; }
+            return next;
+          });
+          if (changed) { await coll.updateOne({ _id: run._id }, { $set: { lines } }); runs++; }
+        }
+        await Settings.findOneAndUpdate({ key: 'sealPayrollSnapshotsV1' }, { key: 'sealPayrollSnapshotsV1', value: true }, { upsert: true });
+        log.info({ runs }, '✅ Payroll run snapshots sealed at rest');
+      }
+    } catch (err) {
+      log.error({ err }, 'Sealing payroll snapshots failed - they stay readable as before; will retry next start');
     }
 
     // Once: orders.override (price changes, manual discounts and comps at the
@@ -3726,8 +3780,32 @@ const ROUTE_PERMISSIONS = {
   '/api/insights/what-changed': ['owner.view'],
   '/api/insights/product-profitability': ['owner.view'],
 };
+// Back-office reads that used to check only 'is staff' (2026-11 audit, M20):
+// a till or a driver could read linked branches' revenue, stock counts,
+// production, petty-cash funds and the setup checklist. Each needs one of the
+// permissions of the screen that shows it (navRegistry.js). Reads the till does
+// use - products, discounts, settings, the chart of accounts behind every
+// 'paid from' list, client accounts for on-account sales - stay open to staff,
+// and the change-request and requisition lists already narrow to the caller's own.
+const READ_PERMISSIONS = [
+  [/^\/api\/hub\/network-summary$/, ['owner.view', 'accounting.view', 'screen.hub.compare', 'screen.hub.books']],
+  [/^\/api\/hub\/(info|transfers|transfer-requests|catalog|catalog\/links)$/, ['inventory.view', 'products.manage', 'owner.view']],
+  [/^\/api\/inventory\/eod-(data|history)(\/.*)?$/, ['inventory.view', 'inventory.count']],
+  [/^\/api\/stock-transfers$/, ['inventory.view']],
+  [/^\/api\/production-orders(\/[^/]+)?$/, ['production.view', 'inventory.view']],
+  [/^\/api\/revolving-funds$/, ['funds.spend', 'accounting.view', 'requisitions.view', 'requisitions.approve']],
+  [/^\/api\/sales$/, ['products.view', 'analytics.view', 'reports.view']],
+  [/^\/api\/settings\/(readiness|document-series)$/, ['settings.manage']],
+  [/^\/api\/roles$/, ['users.manage', 'settings.manage']],
+];
+const readPermissionsFor = (req) => {
+  if (req.method !== 'GET') return null;
+  for (const [re, perms] of READ_PERMISSIONS) if (re.test(req.path)) return perms;
+  return null;
+};
+
 app.use((req, res, next) => {
-  const needed = ROUTE_PERMISSIONS[req.path];
+  const needed = ROUTE_PERMISSIONS[req.path] || readPermissionsFor(req);
   if (!needed) return next();
   const h = String(req.headers.authorization || '');
   if (!h.startsWith('Bearer ')) return next();

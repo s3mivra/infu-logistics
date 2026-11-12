@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { } from '../lib/normalize.js';
+import { fieldCryptPlugin } from '../lib/fieldCrypt.js';
 
 // Database definitions: purchase orders, bills, check vouchers, journals awaiting approval, attachments, budgets, leave, advances, stock reservations, fixed assets, bank reconciliation, quotations and payroll.
 // Moved out of server.js as it was. It is called once, at the same point in
@@ -861,6 +862,9 @@ export default function defineWorkflowModels({ BUSINESS_TYPE, currentBranchCode,
     createdBy:  { type: String, default: '' },
   }, { timestamps: true });
   PayrollRunSchema.index({ businessType: 1, status: 1, periodEnd: -1 });
+  // The government numbers copied into each line are kept as long as the
+  // payroll records are, so they are sealed at rest like the staff profile.
+  PayrollRunSchema.plugin(fieldCryptPlugin, { arrays: { lines: ['sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin'] } });
   const PayrollRun = mongoose.model('PayrollRun', PayrollRunSchema);
 
   return {

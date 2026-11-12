@@ -50,8 +50,16 @@ export function initErrorLog() {
 
 // Strips anything that could carry customer data or secrets out of the route.
 // /api/orders/6a69.../cancel -> /api/orders/:id/cancel
+// Path segments that ARE secrets: an onboarding link, a QR order's view key.
+const SECRET_SEGMENTS = /(\/api\/client-onboard\/)[^/?]+/gi;
+// The address as it is safe to write to a log: no query string (customer-name
+// searches, view keys) and no secret path segment (2026-11 audit, M79).
+export function logSafeUrl(url) {
+  return String(url || '').split('?')[0].replace(SECRET_SEGMENTS, '$1:token').slice(0, 300);
+}
+
 function normalizeRoute(req) {
-  const raw = (req?.originalUrl || req?.url || '').split('?')[0];
+  const raw = logSafeUrl(req?.originalUrl || req?.url || '');
   return raw
     .replace(/\/[0-9a-f]{24}(?=\/|$)/gi, '/:id')
     .replace(/\/\d+(?=\/|$)/g, '/:n')

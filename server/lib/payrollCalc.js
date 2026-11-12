@@ -112,7 +112,14 @@ export function readRules(body) {
     keys.add(t.key);
     t.taxable = !!t.taxable; t.regular = !!t.regular;
   }
-  return { rules: r };
+  // Multipliers are numbers in a sane range, and nothing but the known rule
+  // keys is kept: the whole body used to be stored as sent (2026-11 audit, M108).
+  const ot = Number(r.overtimeMultiplier), hours = Number(r.hoursPerDay);
+  if (!(Number.isFinite(ot) && ot >= 1 && ot <= 5)) return { error: 'Overtime pay must be 1 to 5 times the hourly rate (e.g. 1.25).' };
+  if (!(Number.isFinite(hours) && hours >= 1 && hours <= 24)) return { error: 'Hours per day must be between 1 and 24.' };
+  r.overtimeMultiplier = ot; r.hoursPerDay = hours;
+  const known = Object.fromEntries(Object.keys(DEFAULT_RULES).map((k) => [k, r[k]]));
+  return { rules: known };
 }
 
 /** Withholding tax on `taxable` for a pay period, from the bracket table. */
@@ -178,7 +185,10 @@ export function computeLine(input, rulesIn, frequency = 'semiMonthly') {
   const taxablePay = round2(lines.filter((l) => l.taxable).reduce((s, l) => s + l.amount, 0));
   const nonTaxablePay = round2(gross - taxablePay);
   const regularPay = round2(lines.filter((l) => l.regular).reduce((s, l) => s + l.amount, 0));
-  const absenceDeduction = round2((Number(input.absentDays) || 0) * daily + (Number(input.lateMinutes) || 0) * (hourly / 60));
+  // Every count and deduction is zero or more: a negative "absent days" or
+  // "other deductions" used to RAISE net pay (2026-11 audit, M108).
+  const nonNeg = (v) => Math.max(0, Number(v) || 0);
+  const absenceDeduction = round2(nonNeg(input.absentDays) * daily + nonNeg(input.lateMinutes) * (hourly / 60));
 
   // Contributions are figured on the month, then split over the pay periods in it.
   const monthly = Math.max(0, (regularPay - absenceDeduction) * per);
@@ -187,7 +197,7 @@ export function computeLine(input, rulesIn, frequency = 'semiMonthly') {
   const sss = input.skipContributions ? { ee: 0, er: 0 } : sssFor(monthly, rules.sss);
   const ph = input.skipContributions ? { ee: 0, er: 0 } : philhealthFor(monthly, rules.philhealth);
   const pi = input.skipContributions ? { ee: 0, er: 0 } : pagibigFor(monthly, rules.pagibig);
-  const pick = (k, v) => (ov[k] !== undefined && ov[k] !== '' && ov[k] !== null ? round2(ov[k]) : v);
+  const pick = (k, v) => (ov[k] !== undefined && ov[k] !== '' && ov[k] !== null ? round2(nonNeg(ov[k])) : v);
   const out = {
     earnings: lines,
     grossPay: gross, taxablePay, nonTaxablePay, absenceDeduction,
@@ -197,7 +207,7 @@ export function computeLine(input, rulesIn, frequency = 'semiMonthly') {
   out.taxableIncome = round2(Math.max(0, taxablePay - absenceDeduction - out.sss - out.philhealth - out.pagibig));
   const table = rules.taxTables[frequency] || rules.taxTables.monthly;
   out.withholdingTax = pick('withholdingTax', taxFromTable(out.taxableIncome, table));
-  out.otherDeductions = round2(input.otherDeductions);
+  out.otherDeductions = round2(nonNeg(input.otherDeductions));
   out.netPay = round2(gross - absenceDeduction - out.sss - out.philhealth - out.pagibig - out.withholdingTax - out.otherDeductions);
   return out;
 }

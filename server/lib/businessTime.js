@@ -59,10 +59,20 @@ const YMD = /^(\d{4})-(\d{2})-(\d{2})$/;
 // Start of the given day in the business's zone. A plain YYYY-MM-DD is a
 // calendar day; anything richer (a full ISO timestamp) already carries its own
 // instant and is passed through untouched.
+// A YYYY-MM-DD that names a real calendar day. "2026-02-30" and "2026-13-01"
+// used to be rolled forward by Date.UTC, so a report "to 2026-02-30" silently
+// ran to 2 March (2026-11 audit, M108). An impossible date is an Invalid Date,
+// which validateDateRange and every caller already refuse.
+const isRealDay = (y, mo, d) => {
+  const t = new Date(Date.UTC(y, mo - 1, d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d;
+};
+
 export function businessDayStart(value, tz = businessTz) {
   const s = String(value).trim();
   const m = YMD.exec(s);
   if (!m) return new Date(s);
+  if (!isRealDay(Number(m[1]), Number(m[2]), Number(m[3]))) return new Date(NaN);
   return zonedInstant(Number(m[1]), Number(m[2]), Number(m[3]), 0, 0, 0, 0, tz);
 }
 
@@ -75,10 +85,13 @@ export function businessDayEnd(value, tz = businessTz) {
   const s = String(value).trim();
   const m = YMD.exec(s);
   if (!m) {
+    // Not a plain day: end of the business day that instant falls on - in the
+    // business zone, not the server process's (M108).
     const d = new Date(s);
-    d.setHours(23, 59, 59, 999);
-    return d;
+    if (Number.isNaN(d.getTime())) return d;
+    return businessDayEnd(businessDateStr(d, tz), tz);
   }
+  if (!isRealDay(Number(m[1]), Number(m[2]), Number(m[3]))) return new Date(NaN);
   const nextDay = zonedInstant(Number(m[1]), Number(m[2]), Number(m[3]) + 1, 0, 0, 0, 0, tz);
   return new Date(nextDay.getTime() - 1);
 }

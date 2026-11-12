@@ -36,10 +36,29 @@ export const decryptValue = (v) => {
 
 const READ_HOOKS = ['find', 'findOne', 'findOneAndUpdate', 'findOneAndReplace', 'findOneAndDelete'];
 
-export function fieldCryptPlugin(schema, { fields = [] } = {}) {
+// A hydrated document: write the plain value into the raw store without
+// marking it modified, so a later save() re-seals it only if the route
+// actually changes it. A lean object is just assigned.
+const openField = (holder, key) => {
+  if (!holder || !isSealed(holder[key])) return;
+  const plain = decryptValue(holder[key]);
+  if (holder.$__ && holder._doc) holder._doc[key] = plain;
+  else holder[key] = plain;
+};
+
+// `arrays` seals fields inside an array of subdocuments, e.g. the government
+// numbers copied into every payroll run line ({ lines: ['tin', ...] }). Those
+// snapshots are kept for years as payroll records, so they are sealed like the
+// staff profile they were copied from (2026-11 audit, M73/M76).
+export function fieldCryptPlugin(schema, { fields = [], arrays = {} } = {}) {
   for (const f of fields) {
     if (!schema.path(f)) continue;
     schema.path(f).set(encryptValue);
+  }
+  for (const [arr, subFields] of Object.entries(arrays)) {
+    const sub = schema.path(arr)?.schema;
+    if (!sub) continue;
+    for (const f of subFields) if (sub.path(f)) sub.path(f).set(encryptValue);
   }
   const openDoc = (d) => {
     if (!d || typeof d !== 'object') return;
@@ -47,17 +66,12 @@ export function fieldCryptPlugin(schema, { fields = [] } = {}) {
       const parts = f.split('.');
       let holder = d;
       for (let i = 0; i < parts.length - 1 && holder; i++) holder = holder[parts[i]];
-      const last = parts[parts.length - 1];
-      if (!holder || !isSealed(holder[last])) continue;
-      const plain = decryptValue(holder[last]);
-      if (holder.$__ && holder._doc) {
-        // A hydrated document: write the plain value into the raw store
-        // without marking it modified, so a later save() re-seals it only if
-        // the route actually changes it.
-        holder._doc[last] = plain;
-      } else {
-        holder[last] = plain;
-      }
+      openField(holder, parts[parts.length - 1]);
+    }
+    for (const [arr, subFields] of Object.entries(arrays)) {
+      const items = d[arr];
+      if (!Array.isArray(items)) continue;
+      for (const item of items) for (const f of subFields) openField(item, f);
     }
   };
   for (const hook of READ_HOOKS) {

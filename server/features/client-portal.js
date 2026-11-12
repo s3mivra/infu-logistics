@@ -1,6 +1,7 @@
 ﻿// client-portal routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { PRIVACY_NOTICE_VERSION } from '../lib/legal.js';
 import { title, partyName, lower } from '../lib/normalize.js';
 
 // A credit limit of 0 means "cash only" and must survive as 0, while '' / null
@@ -919,6 +920,9 @@ app.post('/api/client-onboard/:token', clientLoginOnly, async (req, res) => {
     client.sessionsValidFrom = new Date();   // a login issued again ends the sessions of the old one
     client.onboardingToken = null;
     client.onboardingTokenExpiresAt = null;
+    // Finishing setup is agreeing to the notice the page shows beside the button.
+    client.privacyNoticeAcceptedAt = new Date();
+    client.privacyNoticeVersion = PRIVACY_NOTICE_VERSION;
     await client.save();
 
     res.json({ success: true, client: { clientCode: client.clientCode, username: client.username, name: client.name } });
