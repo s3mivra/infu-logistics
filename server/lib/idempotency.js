@@ -42,14 +42,21 @@ const EXPLICIT_KEY_TTL_MS = 60_000;
 // Hard cap so a flood cannot grow the map without bound.
 const MAX_TRACKED = 5000;
 
-// Login and refresh mint tokens and set cookies; collapsing them would hand two
-// sessions the same response. Health checks are not writes worth tracking.
+// Routes that mint tokens, set cookies or prove identity some other way
+// (cookie, PIN, link token, one-time code). Collapsing them would hand one
+// caller another caller's response - this list used to name paths that did not
+// exist, so /api/auth/refresh was collapsed per IP and a caller with no cookie
+// received whoever refreshed at the same moment's access token.
 const SKIP = [
+  '/api/auth/',               // refresh, logout (cookie-authenticated)
   '/api/users/login',
-  '/api/users/refresh',
-  '/api/users/logout',
-  '/api/clients/login',
-  '/api/clients/refresh',
+  '/api/users/switch',        // PIN -> new session
+  '/api/users/authorize',     // PIN -> signed approval
+  '/api/client-auth/',        // client portal login
+  '/api/client-onboard/',     // one-time onboarding token
+  '/api/hub/internal/',       // peer link token
+  '/api/qr-devices/',         // device enrolment and QR sessions
+  '/api/sessions/',           // QR table sessions
 ];
 
 export function createIdempotencyMiddleware({ log, identify } = {}) {
@@ -65,7 +72,7 @@ export function createIdempotencyMiddleware({ log, identify } = {}) {
     // retry after the 15-minute token refresh still finds its first attempt.
     // Keyed on the raw header, it did not - a new token was a new person.
     const who = crypto.createHash('sha256')
-      .update(String((identify && identify(req)) || req.get('Authorization') || req.ip || ''))
+      .update(String(identify(req)))
       .digest('hex').slice(0, 16);
     if (explicit) return { key: `k:${who}:${String(explicit).slice(0, 200)}`, explicit: true };
     const body = (() => { try { return JSON.stringify(req.body ?? {}); } catch { return ''; } })();
@@ -87,6 +94,12 @@ export function createIdempotencyMiddleware({ log, identify } = {}) {
     if (req.method !== 'POST') return next();
     if (!req.originalUrl.startsWith('/api/')) return next();
     if (SKIP.some(p => req.originalUrl.startsWith(p))) return next();
+    // Only collapse requests from a VERIFIED identity. Falling back to the IP
+    // (or a raw, unchecked header) meant two different people behind one
+    // address - every visitor, behind the platform's proxies - shared a key and
+    // could be served each other's responses. Unauthenticated creates (QR
+    // orders) are still protected by their own Idempotency-Key unique index.
+    if (!identify || !identify(req)) return next();
 
     const { key, explicit } = fingerprint(req);
     const existing = inFlight.get(key);
