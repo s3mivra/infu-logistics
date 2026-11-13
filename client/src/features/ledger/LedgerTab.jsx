@@ -50,6 +50,8 @@ import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
 import PagedRows from '../../shared/PagedRows';
 import GoogleSheetModal, { useInventorySheet, pullWorkbook } from '../inventory/GoogleSheetLink';
+import DailySalesImport from './DailySalesImport';
+import { readDailySales } from '../../shared/dailySales';
 // ── LedgerTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 // The P&L and the Balance Sheet each used to be two pages, one per period
@@ -533,6 +535,8 @@ export default function LedgerTab({ ctx }) {
   // Excel, so the preview and every check are the same (features/inventory-sheet.js).
   const [salesSheet, setSalesSheet, reloadSalesSheet] = useInventorySheet(apiFetch, canBackdate, '/api/sales-sheet');
   const [salesSheetOpen, setSalesSheetOpen] = useState(false);
+  // A daily sales summary workbook (one row per day by payment channel).
+  const [dailyImport, setDailyImport] = useState(null);
   const [salesSheetPulling, setSalesSheetPulling] = useState(false);
   const pullSalesSheet = async () => {
     setSalesSheetPulling(true);
@@ -938,6 +942,20 @@ Cost of goods sold booked for ${costed} order(s) - ${php(costSum)}.` : '')
       xlsxRef.current = XLSX;
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheetNames = wb.SheetNames || [];
+      // A daily sales summary (one row per day: cash, bank, Grab, deposits) has
+      // its own importer - every day of every tab that has that layout.
+      {
+        const dailyRows = []; const tabs = []; let bankLabel = '';
+        for (const n of sheetNames) {
+          const got = readDailySales(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '', raw: false }));
+          if (got && got.rows.length) { dailyRows.push(...got.rows.map((r) => ({ ...r, sheetRow: `${n}!${r.sheetRow}` }))); tabs.push(n); bankLabel = bankLabel || got.bankLabel; }
+        }
+        if (dailyRows.length) {
+          setDailyImport({ rows: dailyRows, bankLabel, source: `${file.name === 'google-sheet.xlsx' ? 'the Google Sheet' : file.name} (${tabs.join(', ')})` });
+          setBdImporting(false);
+          return;
+        }
+      }
       // An Orders export, not a billing statement: it has its own importer, and
       // this is the button people reach for with it - so take it here too.
       if (await importOrdersExport(XLSX, wb)) { setBdImporting(false); return; }
@@ -2993,6 +3011,9 @@ It posts only what is not already accrued for that month.`)) return;
                         onChange={e => { parseBackdateExcel(e.target.files?.[0]); e.target.value = ''; }} />
                     </label>
                   </div>
+                )}
+                {dailyImport && (
+                  <DailySalesImport apiFetch={apiFetch} data={dailyImport} onClose={() => setDailyImport(null)} onDone={() => fetchERPData()} />
                 )}
                 {salesSheetOpen && (
                   <GoogleSheetModal apiFetch={apiFetch} sheet={salesSheet} setSheet={setSalesSheet} base="/api/sales-sheet"

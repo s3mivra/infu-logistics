@@ -4,6 +4,7 @@
 import { sheetDay, SHEET_DATE_HELP } from '../lib/sheetDate.js';
 import { reopenOrdersClosedByPendingBills } from '../lib/billPoLink.js';
 import { roundMoney } from '../lib/money.js';
+import { businessDateStr, businessDayStart } from '../lib/businessTime.js';
 import { saleDebitAccount } from '../lib/saleAccounts.js';
 import { captureError } from '../lib/errorLog.js';
 import { saleRevenueLines, vatFromInclusive } from '../lib/vatPosting.js';
@@ -1199,6 +1200,203 @@ app.post('/api/orders/import', verifyToken, requireStaff, requirePermission('sal
     });
   } catch (err) {
     log.error?.({ err }, 'POST /api/orders/import failed');
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// ── DAILY SALES SUMMARY IMPORT ──────────────────────────────────────────────
+// A sheet of one row per day, split by how the money came in (client:
+// shared/dailySales.js reads it). Each day becomes up to three backdated
+// sales, each with an import reference so a re-import skips what is in:
+//
+//   cash   CASH SALES less the day's discount (its type kept in the notes)
+//   bank   the bank's GROSS AMOUNT (e.g. RCBC), paid straight into the bank
+//          account the payment method posts to - recorded as collected
+//   grab   GRAB gross, booked to Accounts Receivable as every Grab order is,
+//          then settled the same day: what Grab credited to the payout
+//          account, Grab's COMMISSION to the chosen expense account
+//
+// and, with postDeposits, the cash after discount moved from Cash on Hand to
+// the bank on DATE DEPOSITED, referenced by the deposit slip. Revenue is the
+// gross of every channel; the commission is an expense, so profit equals the
+// sheet's. No stock moves: a summary has no items.
+const DAILY_PARTS = ['cash', 'bank', 'grab'];
+app.post('/api/orders/import-daily', verifyToken, requireStaff, requirePermission('sales.backdate'), async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    if (!rows.length) return res.status(400).json({ success: false, error: 'No days to import.' });
+    if (rows.length > 400) return res.status(400).json({ success: false, error: 'At most 400 days at a time.' });
+    const num = (v) => { const n = Number(String(v ?? '').replace(/[₱,\s]/g, '')); return Number.isFinite(n) ? roundMoney(n) : 0; };
+    const bankMethod = String(req.body?.bankMethod || 'Bank Transfer').trim().slice(0, 60);
+    const pick = (code, test, fallback) => (test.test(String(code || '')) && acctMeta(code) ? String(code) : fallback);
+    const payoutAccount = pick(req.body?.payoutAccount, /^11[23]/, '112000');
+    const depositAccount = pick(req.body?.depositAccount, /^112/, '112000');
+    const commissionAccount = pick(req.body?.commissionAccount, /^[67]\d{5}$/, '670000');
+    const postDeposits = req.body?.postDeposits !== false;
+    const bankAcct = saleDebitAccount(accountForPaymentMethod, bankMethod);
+    // Shown in the preview; the import itself reads each sale's own entry.
+    const grabAcct = saleDebitAccount(accountForPaymentMethod, 'Grab Delivery');
+    const today = businessDateStr();
+    const name = (code) => acctMeta(code)?.name || code;
+
+    const days = [];
+    for (const [i, r] of rows.entries()) {
+      const day = sheetDay(r?.date);
+      const d = {
+        row: r?.sheetRow || i + 1, date: day || String(r?.date ?? ''),
+        cash: num(r?.cashSales), discount: Math.max(0, num(r?.discount)), discountType: String(r?.discountType || '').trim().slice(0, 80),
+        bank: num(r?.bankSales), grab: num(r?.grabGross), commission: Math.max(0, num(r?.grabCommission)),
+        depositDate: sheetDay(r?.depositDate) || '', depositSlip: String(r?.depositSlip || '').trim().slice(0, 60),
+        errors: [], parts: {},
+      };
+      if (!day) d.errors.push(`"${r?.date ?? ''}" is not a date. ${SHEET_DATE_HELP}`);
+      else if (day > today) d.errors.push(`${day} is in the future.`);
+      if (d.discount > d.cash + 0.005) d.errors.push('The discount is more than the cash sales.');
+      if (d.commission > d.grab + 0.005) d.errors.push('Grab commission is more than the Grab sales.');
+      if (r?.depositDate && !d.depositDate) d.errors.push(`Deposit date "${r.depositDate}" is not a date.`);
+      if (d.depositDate && day && d.depositDate < day) d.errors.push('The deposit date is before the sale date.');
+      d.cashAfter = roundMoney(d.cash - d.discount);
+      d.credited = roundMoney(d.grab - d.commission);
+      if (day && !d.errors.length) {
+        for (const part of DAILY_PARTS) {
+          const amount = part === 'cash' ? d.cash : part === 'bank' ? d.bank : d.grab;
+          if (!(amount > 0)) continue;
+          const ref = `DSR-${day}-${part.toUpperCase()}`;
+          const done = await Order.exists({ businessType: BUSINESS_TYPE, importRef: ref, isBackdated: true });
+          d.parts[part] = { ref, amount, status: done ? 'already' : 'ready' };
+        }
+        if (postDeposits && d.cashAfter > 0 && d.depositDate) {
+          const ref = `DSR-${day}-DEP`;
+          d.parts.deposit = { ref, amount: d.cashAfter, date: d.depositDate, status: (await JournalEntry.exists({ reference: ref })) ? 'already' : 'ready' };
+        }
+      }
+      days.push(d);
+    }
+
+    const ok = days.filter((d) => !d.errors.length);
+    const sum = (f) => roundMoney(ok.reduce((s, d) => s + f(d), 0));
+    const summary = {
+      days: days.length, ready: ok.filter((d) => Object.values(d.parts).some((p) => p.status === 'ready')).length,
+      problems: days.length - ok.length,
+      cash: sum((d) => d.cash), discount: sum((d) => d.discount), bank: sum((d) => d.bank), grab: sum((d) => d.grab),
+      commission: sum((d) => d.commission), deposits: sum((d) => d.parts.deposit?.amount || 0),
+      accounts: {
+        bank: `${bankMethod} → ${bankAcct.code} ${bankAcct.name}`,
+        grabSale: `Grab Delivery → ${grabAcct.code} ${grabAcct.name}`,
+        grabPayout: `${payoutAccount} ${name(payoutAccount)}`,
+        commission: `${commissionAccount} ${name(commissionAccount)}`,
+        deposits: postDeposits ? `${depositAccount} ${name(depositAccount)}` : 'not posted',
+      },
+    };
+    const view = (d) => ({
+      row: d.row, date: d.date, errors: d.errors, cash: d.cash, discount: d.discount, discountType: d.discountType,
+      bank: d.bank, grab: d.grab, commission: d.commission, depositDate: d.depositDate, depositSlip: d.depositSlip, parts: d.parts,
+    });
+    if (req.body?.preview === true) return res.json({ success: true, preview: true, summary, days: days.map(view) });
+
+    // Settle a sale booked to Accounts Receivable: money to `to`, an optional
+    // fee to `feeAccount`. The order is marked collected the way settle-ar does.
+    const settle = async (order, { from, to, fee = 0, feeAccount, date, reference, note }) => {
+      const gross = roundMoney(order.total);
+      const received = roundMoney(gross - fee);
+      const lines = [
+        { accountCode: to, accountName: name(to), debit: received, credit: 0 },
+        ...(fee > 0 ? [{ accountCode: feeAccount, accountName: name(feeAccount), debit: fee, credit: 0 }] : []),
+        { accountCode: from, accountName: name(from), debit: 0, credit: gross },
+      ];
+      await mongoose.connection.transaction(async () => {
+        await JournalEntry.create([{ date, reference, description: `${note} ${order.orderNumber}`, lines, totalDebit: gross, totalCredit: gross }]);
+        await Order.updateOne({ _id: order._id }, {
+          $push: { arPayments: { amount: gross, paymentMethod: name(to), referenceNumber: reference, note, collectionDate: date, depositDate: date, recordedBy: req.user?.name || '', journalRef: reference } },
+          $set: { arPaidAmount: gross, arSettled: true, arSettledAt: date, arSettledAmount: gross, arSettledMethod: name(to), arSettledReference: reference, arSettledNote: note },
+        });
+      });
+    };
+    // A sale whose payment method posts straight to a bank or wallet is not
+    // owed by anyone: recorded as collected, with no entry (the sale's own
+    // entry already debited the bank).
+    const markCollected = (order, date) => Order.updateOne({ _id: order._id }, { $set: {
+      arPaidAmount: roundMoney(order.total), arSettled: true, arSettledAt: date, arSettledAmount: roundMoney(order.total), arSettledMethod: bankMethod,
+    } });
+
+    const results = [];
+    for (const d of ok) {
+      const done = [], failed = [];
+      const saleDate = d.date;
+      for (const part of DAILY_PARTS) {
+        const p = d.parts[part];
+        if (!p || p.status !== 'ready') continue;
+        try {
+          const isCash = part === 'cash';
+          const result = await createBackdatedSale({
+            date: saleDate, amount: p.amount, importRef: p.ref,
+            paymentMethod: isCash ? 'Cash' : part === 'bank' ? bankMethod : 'Grab Delivery',
+            discountAmount: isCash ? d.discount : 0,
+            customerName: isCash ? 'Daily cash sales' : part === 'bank' ? `Daily ${bankMethod} sales` : 'Daily Grab sales',
+            notes: isCash
+              ? `Daily sales summary${d.discount > 0 ? `, discount ${d.discount.toFixed(2)}${d.discountType ? ` (${d.discountType})` : ''}` : ''}`
+              : part === 'grab' ? `Daily sales summary, Grab gross; commission ${d.commission.toFixed(2)}` : 'Daily sales summary',
+          }, req.user?.name);
+          const order = result.order;
+          const when = businessDayStart(saleDate);
+          if (part !== 'cash') {
+            // Where this sale's own entry put the money - read from the entry,
+            // not predicted: the payment-method map can send Grab to a Grab
+            // receivable sub-account, or a bank method to a bank sub-account.
+            const saleJe = await JournalEntry.findOne({ reference: result.journalReference }).lean();
+            const debit = (saleJe?.lines || []).find((l) => (l.debit || 0) > 0 && /^1/.test(String(l.accountCode)));
+            const from = String(debit?.accountCode || '120000');
+            const owed = from.startsWith('12');
+            if (part === 'grab' && owed) {
+              await settle(order, { from, to: payoutAccount, fee: d.commission, feeAccount: commissionAccount, date: when, reference: `${p.ref}-SET`, note: 'Grab payout (less commission) for' });
+            } else if (part === 'grab') {
+              // The gross went straight into `from`: Grab's commission comes
+              // back out of it, to the expense.
+              if (d.commission > 0) {
+                await JournalEntry.create({
+                  date: when, reference: `${p.ref}-COM`, description: `Grab commission on ${order.orderNumber}`,
+                  lines: [
+                    { accountCode: commissionAccount, accountName: name(commissionAccount), debit: d.commission, credit: 0 },
+                    { accountCode: from, accountName: name(from), debit: 0, credit: d.commission },
+                  ],
+                  totalDebit: d.commission, totalCredit: d.commission,
+                });
+              }
+              await markCollected(order, when);
+            } else if (owed) {
+              await settle(order, { from, to: payoutAccount, date: when, reference: `${p.ref}-SET`, note: `${bankMethod} collected for` });
+            } else {
+              await markCollected(order, when);
+            }
+          }
+          done.push(part);
+        } catch (e) {
+          failed.push(`${part}: ${e.message}`);
+        }
+      }
+      const dep = d.parts.deposit;
+      if (dep && dep.status === 'ready' && !failed.some((f) => f.startsWith('cash'))) {
+        try {
+          await JournalEntry.create({
+            date: businessDayStart(dep.date), reference: dep.ref,
+            description: `Bank deposit of ${d.date} cash sales${d.depositSlip ? ` (slip ${d.depositSlip})` : ''}`,
+            lines: [
+              { accountCode: depositAccount, accountName: name(depositAccount), debit: dep.amount, credit: 0 },
+              { accountCode: '111000', accountName: 'Cash on Hand', debit: 0, credit: dep.amount },
+            ],
+            totalDebit: dep.amount, totalCredit: dep.amount,
+          });
+          done.push('deposit');
+        } catch (e) { failed.push(`deposit: ${e.message}`); }
+      }
+      results.push({ row: d.row, date: d.date, done, failed });
+    }
+    const imported = results.filter((r) => r.done.length).length;
+    await logAudit(req, { action: 'import', entity: 'Order', entityId: 'daily-sales', after: { days: imported, cash: summary.cash, bank: summary.bank, grab: summary.grab, commission: summary.commission, deposits: summary.deposits } });
+    if (imported) emitToMgr('erpUpdated');
+    res.json({ success: true, imported, results, problems: days.filter((d) => d.errors.length).map(view) });
+  } catch (err) {
+    log.error?.({ err }, 'POST /api/orders/import-daily failed');
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
 });
