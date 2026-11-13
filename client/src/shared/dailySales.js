@@ -96,3 +96,21 @@ export function dailyChecks(r) {
   if (r.totalSales && off(total, r.totalSales)) out.push(`total sales is ${r.totalSales.toFixed(2)}, but cash + bank + Grab credited is ${total.toFixed(2)}`);
   return out;
 }
+
+// The same date on two tabs (a period tab and a month tab, say) would be two
+// days of sales. Days come back from the server preview with the date already
+// read the same way; the first is kept and later ones are marked, saying when
+// their numbers differ so someone checks which tab is right.
+export function markRepeatedDays(days = []) {
+  const seen = new Map();
+  return days.map((d) => {
+    if (d.errors?.length) return d;
+    const first = seen.get(d.date);
+    if (first) {
+      const same = ['cash', 'discount', 'bank', 'grab', 'commission'].every((k) => Math.abs((first[k] || 0) - (d[k] || 0)) < 0.01);
+      return { ...d, repeatOf: first.row, repeatDiffers: !same };
+    }
+    seen.set(d.date, d);
+    return d;
+  });
+}

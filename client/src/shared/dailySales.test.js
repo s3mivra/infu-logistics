@@ -2,7 +2,7 @@
 // header, CASH / RCBC / GRAB labels above their columns. Numbers are made up
 // but add up the same way the real sheet does.
 import { describe, it, expect } from 'vitest';
-import { readDailySales, findDailyHeader, dailyChecks } from './dailySales.js';
+import { readDailySales, findDailyHeader, dailyChecks, markRepeatedDays } from './dailySales.js';
 
 const tsv = [
   '1,000.00\t\t\t\t\t\t\t\t500.00\t\t\t',
@@ -35,5 +35,15 @@ describe('daily sales summary sheet', () => {
     expect(dailyChecks(ok)).toEqual([]);
     expect(dailyChecks({ ...ok, totalSales: 1499 })[0]).toMatch(/total sales is 1499.00/);
     expect(dailyChecks({ ...ok, grabCredited: 650 })[0]).toMatch(/Grab 800.00 less commission 200.00/);
+  });
+});
+
+describe('the same date on two tabs', () => {
+  it('keeps the first, marks the rest, and says when the numbers differ', () => {
+    const day = (row, date, cash) => ({ row, date, cash, errors: [] });
+    const out = markRepeatedDays([day('01P26!4', '2026-01-01', 500), day('JANUARY!4', '2026-01-01', 500), day('JANUARY!5', '2026-01-01', 700), day('01P26!5', '2026-01-02', 300)]);
+    expect(out.map((d) => d.repeatOf || '')).toEqual(['', '01P26!4', '01P26!4', '']);
+    expect(out[1].repeatDiffers).toBe(false);
+    expect(out[2].repeatDiffers).toBe(true);
   });
 });
