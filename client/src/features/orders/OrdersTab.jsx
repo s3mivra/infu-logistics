@@ -14,6 +14,46 @@ import { lookupBarcode, needsChoice, scannedLine, addScanned } from './barcodeCa
 // Icon-based replacement for a native <select> - browsers can't render custom
 // icons inside native <option> popups, so this is a real dropdown (button +
 // floating panel) instead.
+// A line's cashier discount, as a percent or as the price to charge. "%"
+// applies as it is typed, as it always has; "₱" is the unit price the customer
+// pays for this item, applied on Enter or when the box is left (a price typed
+// digit by digit would otherwise be sent as 1, 14, 140...). The server turns a
+// price into the exact percent, so the line lands on that price to the centavo.
+function LineDiscountInput({ unitPrice, percent, onPercent, onPrice }) {
+  const [mode, setMode] = React.useState('percent');
+  const [draft, setDraft] = React.useState('');
+  const commitPrice = () => {
+    const v = draft.trim();
+    if (v === '') return;
+    onPrice(v);
+    setDraft('');
+  };
+  const box = 'bg-white/5 border border-white/10 rounded py-0.5 text-fg text-[10px] font-bold outline-none focus:border-brand/60 placeholder:text-fg/65 tabular-nums';
+  return (
+    <div className="flex items-center gap-1">
+      <button type="button" onClick={() => setMode(m => (m === 'percent' ? 'price' : 'percent'))}
+        title={mode === 'percent' ? 'Switch to typing the price to charge' : 'Switch to typing a percent off'}
+        className="text-[9px] font-black px-1 py-0.5 rounded border border-white/10 text-fg/70 hover:text-fg hover:border-brand/50">
+        {mode === 'percent' ? '%' : '₱'}
+      </button>
+      {mode === 'percent' ? (
+        <div className="relative">
+          <input type="number" min="0" max="100" step="1" placeholder="0" value={percent || ''}
+            onChange={e => onPercent(e.target.value)} title="Percent off this line"
+            className={`w-12 pl-1.5 pr-4 ${box}`} />
+          <span className="absolute right-1 top-1/2 -translate-y-1/2 text-fg/65 text-[9px] font-bold pointer-events-none">%</span>
+        </div>
+      ) : (
+        <input type="number" min="0" step="0.01" placeholder={unitPrice.toFixed(2)} value={draft}
+          onChange={e => setDraft(e.target.value)} onBlur={commitPrice}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitPrice(); } }}
+          title="Price to charge for one of this item (press Enter)"
+          className={`w-16 px-1.5 ${box}`} />
+      )}
+    </div>
+  );
+}
+
 function IconSelect({ value, onChange, options, className = '' }) {
   const [open, setOpen] = React.useState(false);
   const selected = options.find(o => o.value === value) || options[0];
@@ -202,6 +242,8 @@ export default function OrdersTab({ ctx }) {
   // of every card to sit unused. Collapsed by default, and opened for you when
   // the order already carries one so an applied discount is never hidden.
   const [discountsOpen, setDiscountsOpen] = React.useState({});
+  // The "₱ total" box of each order's discount row (a price instead of a percent).
+  const [totalInputs, setTotalInputs] = React.useState({});
 
   // Amend: correct an open order's quantities before it is completed. Once it
   // is Completed it is an invoice, and only a refund may change it.
@@ -1438,17 +1480,12 @@ export default function OrdersTab({ ctx }) {
                                                         ₱{(lineGross * (1 - effPct / 100)).toFixed(2)}
                                                       </span>
                                                       {canEditPct && (
-                                                        <div className="relative">
-                                                          <input
-                                                            type="number" min="0" max="100" step="1"
-                                                            placeholder="0"
-                                                            value={item.discountPercent || ''}
-                                                            onChange={e => applyItemDiscount(order._id, item.originalIdx, e.target.value)}
-                                                            title="Cashier discount override for this line"
-                                                            className="w-12 bg-white/5 border border-white/10 rounded pl-1.5 pr-4 py-0.5 text-fg text-[10px] font-bold outline-none focus:border-brand/60 placeholder:text-fg/65 tabular-nums"
-                                                          />
-                                                          <span className="absolute right-1 top-1/2 -translate-y-1/2 text-fg/65 text-[9px] font-bold pointer-events-none">%</span>
-                                                        </div>
+                                                        <LineDiscountInput
+                                                          unitPrice={lineGross / (item.quantity || 1)}
+                                                          percent={item.discountPercent}
+                                                          onPercent={v => applyItemDiscount(order._id, item.originalIdx, v)}
+                                                          onPrice={v => applyItemDiscount(order._id, item.originalIdx, v, 'price')}
+                                                        />
                                                       )}
                                                     </div>
                                                   </div>
@@ -1695,6 +1732,26 @@ export default function OrdersTab({ ctx }) {
                                                 title="Manual discount - percent off the whole order"
                                                 className="w-12 bg-page-bg border border-white/10 rounded px-1 text-[10px] text-fg tabular-nums outline-none h-6 focus:border-brand"
                                               />
+                                              {/* Or the total to charge, when a deal is agreed as a
+                                                  price ("make it ₱950") rather than a percent. The
+                                                  server works out the percent on the ticked items. */}
+                                              {order.isVatInclusive !== false && !order.isVatExempt && (
+                                                <input
+                                                  type="number" min="0" step="0.01" inputMode="decimal"
+                                                  placeholder="₱ total"
+                                                  value={totalInputs[order._id] || ''}
+                                                  onChange={(e) => setTotalInputs(prev => ({ ...prev, [order._id]: e.target.value }))}
+                                                  onKeyDown={(e) => {
+                                                    if (e.key === 'Enter' && String(totalInputs[order._id] || '').trim() !== '') {
+                                                      applyDiscount(order._id, false, totalInputs[order._id]);
+                                                      setTotalInputs(prev => ({ ...prev, [order._id]: '' }));
+                                                    }
+                                                  }}
+                                                  aria-label="Total to charge for the whole order"
+                                                  title="Or type the total to charge (press Enter)"
+                                                  className="w-16 bg-page-bg border border-white/10 rounded px-1 text-[10px] text-fg tabular-nums outline-none h-6 focus:border-brand"
+                                                />
+                                              )}
                                               </>
                                                 );
                                               })()}
