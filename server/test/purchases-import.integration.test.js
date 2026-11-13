@@ -113,4 +113,9 @@ describe('the purchases sheet link', () => {
     const cashier = await loginStaff(app, 'PiCashier');
     expect((await request(app).get('/api/purchases-sheet').set('Authorization', `Bearer ${cashier}`)).status).toBe(403);
   });
+
+  it('the past-sales sheet is only for whoever may backdate', async () => {
+    expect((await request(app).get('/api/sales-sheet').set('Authorization', `Bearer ${backdateTok}`)).status).toBe(200);
+    expect((await request(app).get('/api/sales-sheet').set('Authorization', `Bearer ${stockTok}`)).status).toBe(403);
+  });
 });

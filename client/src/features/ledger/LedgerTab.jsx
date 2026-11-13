@@ -49,6 +49,7 @@ import SalesByOrderTab from './SalesByOrderTab';
 import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
 import PagedRows from '../../shared/PagedRows';
+import GoogleSheetModal, { useInventorySheet, pullWorkbook } from '../inventory/GoogleSheetLink';
 // ── LedgerTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 // The P&L and the Balance Sheet each used to be two pages, one per period
@@ -526,6 +527,23 @@ export default function LedgerTab({ ctx }) {
   // etc.) is identical to entering them by hand - just faster for a batch.
   const [bdImportPreview, setBdImportPreview] = useState(null); // { groups: [...], skipped }
   const [bdImporting, setBdImporting] = useState(false);
+  // Backdating is its own permission (sales.backdate), not only the owner's.
+  const canBackdate = isSuperAdmin || auth.can('sales.backdate');
+  // Past sales kept in a Google Sheet: pulled into the same reader as Import
+  // Excel, so the preview and every check are the same (features/inventory-sheet.js).
+  const [salesSheet, setSalesSheet, reloadSalesSheet] = useInventorySheet(apiFetch, canBackdate, '/api/sales-sheet');
+  const [salesSheetOpen, setSalesSheetOpen] = useState(false);
+  const [salesSheetPulling, setSalesSheetPulling] = useState(false);
+  const pullSalesSheet = async () => {
+    setSalesSheetPulling(true);
+    try {
+      const { XLSX, wb } = await pullWorkbook(apiFetch, '/api/sales-sheet');
+      const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+      reloadSalesSheet();
+      await parseBackdateExcel(new File([out], 'google-sheet.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    } catch (e) { ui.alert(e.message || 'Could not pull the sheet.'); }
+    finally { setSalesSheetPulling(false); }
+  };
   const [bdImportSettings, setBdImportSettings] = useState({ paymentMethod: 'Cash', affectInventory: false, replaceExisting: false });
   // Workbooks with more than one tab pause here so the user can pick which
   // sheet(s) to pull sales from, instead of silently only reading the first.
@@ -2956,8 +2974,16 @@ It posts only what is not already accrued for that month.`)) return;
                   <h3 className="text-xl font-black text-fg flex items-center gap-2"><Clock size={18} className="text-brand-text"/> Backdate Sale</h3>
                   <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-1">Ring up a historical sale like the register, then post it to a past date. Books a real, balanced journal entry.</p>
                 </div>
-                {isSuperAdmin && (
+                {canBackdate && (
                   <div className="flex items-center gap-2 shrink-0">
+                    <button onClick={() => setSalesSheetOpen(true)} title="Link the Google Sheet you keep past sales in, and pull it into this import" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition">
+                      <FileText size={15} /> Google Sheet{salesSheet?.url ? (salesSheet.changedAt ? ' · changed' : ' · linked') : ''}
+                    </button>
+                    {salesSheet?.url && (
+                      <button onClick={pullSalesSheet} disabled={salesSheetPulling || bdImporting} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition disabled:opacity-50">
+                        <Download size={15} className="rotate-180" /> {salesSheetPulling ? 'Pulling…' : 'Pull sheet'}
+                      </button>
+                    )}
                     <button onClick={downloadBackdateTemplate} title="Download a blank template with the expected headers" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg font-bold text-sm px-4 py-2.5 rounded-xl transition">
                       <FileText size={15} /> Template
                     </button>
@@ -2967,6 +2993,14 @@ It posts only what is not already accrued for that month.`)) return;
                         onChange={e => { parseBackdateExcel(e.target.files?.[0]); e.target.value = ''; }} />
                     </label>
                   </div>
+                )}
+                {salesSheetOpen && (
+                  <GoogleSheetModal apiFetch={apiFetch} sheet={salesSheet} setSheet={setSalesSheet} base="/api/sales-sheet"
+                    title="Sales Google Sheet"
+                    intro='Link the Google Sheet you keep past sales in. Share it as "Anyone with the link can view".'
+                    pullLabel="Pull the sheet"
+                    pullNote="Pulling opens the sheet in the backdate import, the same as Import Excel - nothing is posted until you confirm. Orders already imported are skipped."
+                    onPull={() => { setSalesSheetOpen(false); pullSalesSheet(); }} pulling={salesSheetPulling} onClose={() => setSalesSheetOpen(false)} />
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-3 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
