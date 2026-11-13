@@ -1,29 +1,35 @@
 # Images and actions are pinned by digest/SHA (2026-11 audit, M43/M44/M83).
-# Pins only stay safe if someone moves them: Dependabot opens the update PRs,
-# CI proves them, a person merges them.
+#
+# Routine version-update pull requests are switched off
+# (open-pull-requests-limit: 0): changes go straight to main, and most of what
+# the bot proposed were major upgrades (MongoDB 7 -> 9, Express 5, Tailwind 4)
+# that need planned work, not a one-click merge. With the limit at 0, Dependabot
+# still raises SECURITY updates for known vulnerabilities - keep those, and
+# review the pins by hand now and then (Settings -> Code security -> Dependabot
+# alerts lists what is outdated or vulnerable).
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /server
     schedule: { interval: weekly }
-    open-pull-requests-limit: 5
-    groups:
-      minor-and-patch: { update-types: [minor, patch] }
+    open-pull-requests-limit: 0
   - package-ecosystem: npm
     directory: /client
     schedule: { interval: weekly }
-    open-pull-requests-limit: 5
-    groups:
-      minor-and-patch: { update-types: [minor, patch] }
+    open-pull-requests-limit: 0
   - package-ecosystem: npm
     directory: /platform/control-plane
     schedule: { interval: weekly }
+    open-pull-requests-limit: 0
   - package-ecosystem: docker
     directories: [/server, /client, /platform/control-plane]
     schedule: { interval: weekly }
+    open-pull-requests-limit: 0
   - package-ecosystem: docker-compose
     directories: [/, /platform]
     schedule: { interval: weekly }
+    open-pull-requests-limit: 0
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    open-pull-requests-limit: 0
