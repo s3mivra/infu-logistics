@@ -15,6 +15,7 @@ import { Download, Upload, FileSpreadsheet } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { availableTemplates, buildSetupWorkbook, readSetupWorkbook, previewStep, runSetupImport } from '../../shared/setupWorkbook';
 import SetupImportReport from '../../shared/SetupImportReport';
+import { loadXlsx } from '../../shared/xlsx';
 
 export default function TemplatesCard({ apiFetch, can, isSuperAdmin, businessType, parseImportFile, onImported }) {
   const [busy, setBusy] = useState('');
@@ -26,7 +27,7 @@ export default function TemplatesCard({ apiFetch, can, isSuperAdmin, businessTyp
   const downloadAll = async () => {
     setBusy('Building the workbook…');
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = await buildSetupWorkbook(XLSX, available, apiFetch, { businessType });
       if (!wb) { ui.alert('There is nothing here you have permission to import.'); return; }
       XLSX.writeFile(wb, 'Setup-workbook.xlsx');
@@ -43,7 +44,7 @@ export default function TemplatesCard({ apiFetch, can, isSuperAdmin, businessTyp
     setReport(null);
     setBusy('Reading the workbook…');
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
       const steps = await readSetupWorkbook(XLSX, wb, available, apiFetch);
       if (!steps.length) {

@@ -52,6 +52,8 @@ import PagedRows from '../../shared/PagedRows';
 import GoogleSheetModal, { useInventorySheet, pullWorkbook } from '../inventory/GoogleSheetLink';
 import DailySalesImport from './DailySalesImport';
 import { readDailySales } from '../../shared/dailySales';
+import { startTask, updateTask, endTask } from '../../shared/progress';
+import { loadXlsx } from '../../shared/xlsx';
 // ── LedgerTab - extracted from AdminDashboard.jsx ──
 // All state and handlers come in via the `ctx` prop.
 // The P&L and the Balance Sheet each used to be two pages, one per period
@@ -363,7 +365,7 @@ export default function LedgerTab({ ctx }) {
   const cvStamp = () => `${cvFilter.start || 'start'}_to_${cvFilter.end || todayStr()}`;
   const exportCvExcel = async () => {
     if (!(checkVouchers || []).length) return ui.alert('No vouchers to export.');
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const body = checkVouchers.map((v, i) => [...cvExportRows()[i], v.amount || 0]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[...CV_HEAD, 'Amount'], ...body, [], ['TOTAL ISSUED (voided excluded)', '', '', '', '', '', '', '', '', cvTotal || 0]]), 'Check Vouchers');
@@ -416,7 +418,7 @@ export default function LedgerTab({ ctx }) {
   );
   const exportSssExcel = async () => {
     if (!salesSummary) return ui.alert('Load the report first.');
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const day = sssGroup === 'day';
     const head = ['Date', ...(day ? ['Orders'] : ['Customer ID', 'Customer Name', 'Order']), 'Cash', 'E-Wallet', 'Bank', 'Delivery', 'Gross Sales', 'Sales After Discount'];
     const body = sssRows.map(r => [r.date ? dateStr(r.date) : '', ...(day ? [r.count] : [r.customerId || '', r.customerName || '', r.orderNumber]), r.cash || 0, r.ewallet || 0, r.bank || 0, r.delivery || 0, r.subtotal || 0, r.total || 0]);
@@ -444,7 +446,7 @@ export default function LedgerTab({ ctx }) {
   };
   const fmtD = (d) => (d ? dateStr(d) : '');
   const exportSliExcel = async () => {
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const wb = XLSX.utils.book_new();
     if (sliView === 'summary') {
       if (!sliSummary) return ui.alert('Load the summary first.');
@@ -587,7 +589,7 @@ export default function LedgerTab({ ctx }) {
   };
 
   const downloadBackdateTemplate = async () => {
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const headers = ['TRANSACTION NO.', 'PAYABLE TO', 'SUBMITTED DATE', 'CODE', 'DESCRIPTION', 'QTY', 'UNIT PRICE'];
     const sample = [
       ['2026-08-1936', "DAR'S KITCHEN", '2026-08-25', 'P30008', 'HORCHATA POWDER 1KG', 2, 800],
@@ -800,6 +802,7 @@ export default function LedgerTab({ ctx }) {
     let allGroups = [], totalSkipped = 0, anyHeaderFound = false;
     let totalCancelled = 0, cancelledSheets = 0;
     setBdParseProgress({ done: 0, total: sheetNames.length });
+    const readTask = startTask(`Reading ${sheetNames.length} sheet(s) of sales`, { total: sheetNames.length });
     let i = 0;
     for (const name of sheetNames) {
       const sheet = wb.Sheets[name];
@@ -817,10 +820,12 @@ export default function LedgerTab({ ctx }) {
       // the whole parse running as one blocking synchronous loop.
       if (i % 5 === 0 || i === sheetNames.length) {
         setBdParseProgress({ done: i, total: sheetNames.length });
+        updateTask(readTask, { done: i });
         await new Promise(r => setTimeout(r, 0));
       }
     }
     setBdParseProgress(null);
+    endTask(readTask, { ok: true });
     if (!anyHeaderFound) { ui.alert('Could not find the header row (needs at least a Description and Qty column) in the selected sheet(s).'); return; }
     if (allGroups.length === 0) {
       // Distinguish "nothing importable" from "everything was cancelled" -
@@ -899,17 +904,22 @@ export default function LedgerTab({ ctx }) {
     setBulkOpInProgress?.(true);
     try {
       let created = 0, sum = 0, costed = 0, costSum = 0; const skipped = [], problems = [];
-      // In batches, so a long export is never one enormous request.
+      // In batches, so a long export is never one enormous request - each one
+      // moving the progress panel's bar.
+      const batchCount = Math.ceil(rows.length / 200);
+      const taskId = startTask(`Importing ${rows.length} order(s)`, { total: batchCount });
       for (let i = 0; i < rows.length; i += 200) {
+        updateTask(taskId, { done: i / 200 });
         const part = rows.slice(i, i + 200);
         const nums = new Set(part.map(r => String(r['Order No']).trim()));
         const d = await (await apiFetch('/api/orders/import', {
           method: 'POST', body: JSON.stringify({ rows: part, lines: lines.filter(l => nums.has(String(l['Order No'] || '').trim())) }),
         })).json();
-        if (!d.success) { ui.alert(d.error || 'The import failed - nothing more was imported.'); break; }
+        if (!d.success) { endTask(taskId, { ok: false, message: d.error || 'Stopped.' }); ui.alert(d.error || 'The import failed - nothing more was imported.'); break; }
         created += d.created || 0; sum += d.total || 0; costed += d.costed || 0; costSum += d.costTotal || 0;
         skipped.push(...(d.skipped || []).map(x => x.error)); problems.push(...(d.problems || []));
       }
+      endTask(taskId, { ok: true });
       const already = skipped.filter(e => /already in the app/i.test(e)).length;
       const other = skipped.filter(e => !/already in the app/i.test(e));
       ui.alert(
@@ -938,7 +948,7 @@ Cost of goods sold booked for ${costed} order(s) - ${php(costSum)}.` : '')
     setBdParseProgress(null);
     setBdImporting(true);
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       xlsxRef.current = XLSX;
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheetNames = wb.SheetNames || [];
@@ -1553,7 +1563,7 @@ It posts only what is not already accrued for that month.`)) return;
     if (!file) return;
     setBillImporting(true);
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
       if (rows.length === 0) { ui.alert('That sheet has no rows.'); return; }

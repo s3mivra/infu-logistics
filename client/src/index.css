@@ -319,6 +319,12 @@ input:-webkit-autofill:active {
 /* ============================================================
  * UTILITY ANIMATIONS
  * ============================================================ */
+/* The progress panel's bar while the size of a task is not known. */
+@keyframes progressSlide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0);   }

@@ -10,6 +10,7 @@ import { socket } from '../../shared/staffSocket.js';
 import { useDashboard } from '../dashboard/DashboardContext';
 import RangePresets from '../../shared/RangePresets';
 import { useRefreshTick } from '../../shared/refreshBus';
+import { loadXlsx } from '../../shared/xlsx';
 
 // Order changes arrive on the dashboard's signed-in connection. This tab used
 // to open its own, without a token, which the server places in no room - so
@@ -393,7 +394,7 @@ export default function ClientsTab() {
     if (!file) return;
     setImporting(true);
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
       if (rows.length === 0) { ui.alert('That sheet has no rows.'); return; }

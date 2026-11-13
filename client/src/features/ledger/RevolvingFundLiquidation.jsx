@@ -4,6 +4,7 @@ import { CheckCircle, XCircle, Download, RefreshCw } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import * as auth from '../auth/auth';
 import { dateStr, todayStr } from '../../shared/businessDay.js';
+import { loadXlsx } from '../../shared/xlsx';
 
 // The revolving-fund liquidation report, laid out like the sheet the office
 // fills in by hand, with the validation step in front of replenishment:
@@ -54,7 +55,7 @@ export default function RevolvingFundLiquidation({ apiFetch, fund, onChanged }) 
   // Excel in the same shape as the hand-kept liquidation sheet.
   const exportXlsx = async () => {
     if (!data?.rows) return;
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const aoa = [
       ['REVOLVING FUND - LIQUIDATION REPORT'],
       [fund.name],

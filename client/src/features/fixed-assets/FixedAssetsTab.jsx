@@ -13,6 +13,7 @@ import * as ui from '../../shared/ui';
 import { todayStr } from '../../shared/businessDay.js';
 import { useRefreshTick } from '../../shared/refreshBus';
 import PagedRows from '../../shared/PagedRows';
+import { loadXlsx } from '../../shared/xlsx';
 // Fixed assets - what the business owns, what it has worn off, what it is
 // still worth.
 //
@@ -141,7 +142,7 @@ export default function FixedAssetsTab() {
     if (!file) return;
     setBusy('import');
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
       if (rows.length === 0) { ui.alert('That sheet has no rows.'); return; }

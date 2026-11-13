@@ -5,6 +5,7 @@ import { RefreshCw, Download, Check, Pencil } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import { monthStartStr, todayStr } from '../../shared/businessDay.js';
+import { loadXlsx } from '../../shared/xlsx';
 
 // The store checklist, the supplier statement, and one client's record.
 const peso = formatPeso;
@@ -129,7 +130,7 @@ export function SupplierStatementReport({ apiFetch }) {
     } catch { ui.alert('Network error.'); } finally { setLoading(false); }
   }, [apiFetch, f]);
   const exportXlsx = async () => {
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
       [`${data.supplier.name} - our account, ${data.start} to ${data.end}`], [],
@@ -205,7 +206,7 @@ export function SupplierStatementReport({ apiFetch }) {
 export async function downloadClientRecord(apiFetch, client) {
   const r = await call(apiFetch, `/api/client-accounts/${client._id}/record`);
   if (!r.success) { ui.alert(r.error || 'Could not get the record.'); return; }
-  const XLSX = await import('xlsx');
+  const XLSX = await loadXlsx();
   const wb = XLSX.utils.book_new();
   const c = r.client;
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([

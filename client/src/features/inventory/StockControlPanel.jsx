@@ -8,6 +8,7 @@ import { todayStr } from '../../shared/businessDay.js';
 import { PACK_UNIT } from '../../shared/packUnit.js';
 
 import PagedRows from '../../shared/PagedRows';
+import { loadXlsx } from '../../shared/xlsx';
 // Stock control: keeping the stock figures true, so Analytics, the Suggested
 // PO and Costing read real numbers. (Server: features/stock-control.js)
 //
@@ -174,7 +175,7 @@ function VarianceReport({ apiFetch, countUnit, qty }) {
 
   const kindLabel = (k) => (k === 'rolling' ? 'Rolling' : 'End of day');
   const exportXlsx = async () => {
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
       [`Stock count variance ${data.start} to ${data.end}`], [],

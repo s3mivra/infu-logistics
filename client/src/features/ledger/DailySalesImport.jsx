@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { X, CheckCircle, AlertTriangle } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { dailyChecks, markRepeatedDays } from '../../shared/dailySales';
+import { track } from '../../shared/progress';
 
 // A daily sales summary (one row per day: cash less discounts, a bank such as
 // RCBC, Grab less commission, the cash deposits) imported as backdated sales
@@ -59,31 +60,38 @@ export default function DailySalesImport({ apiFetch, data, onClose, onDone }) {
     };
   };
 
+  // Each batch also moves the progress panel's bar (shared/progress.js).
   const run = async (isPreview) => {
     setBusy(isPreview ? 'preview' : 'import');
     try {
       if (isPreview) {
-        const all = []; let accounts = null;
         const parts = batches(data.rows);
-        for (const [i, rows] of parts.entries()) {
-          setProgress(parts.length > 1 ? `Checking ${i + 1} of ${parts.length}…` : '');
-          const d = await send(rows, true);
-          all.push(...d.days); accounts = d.summary.accounts;
-        }
-        const days = markRepeatedDays(all);
-        setPreview({ days, summary: summarise(days, accounts) });
+        await track(`Checking ${data.rows.length} day(s) of sales`, async (step) => {
+          const all = []; let accounts = null;
+          for (const [i, rows] of parts.entries()) {
+            setProgress(parts.length > 1 ? `Checking ${i + 1} of ${parts.length}…` : '');
+            step(i, parts.length);
+            const d = await send(rows, true);
+            all.push(...d.days); accounts = d.summary.accounts;
+          }
+          const days = markRepeatedDays(all);
+          setPreview({ days, summary: summarise(days, accounts) });
+        }, { total: parts.length });
       } else {
         // Only the days the preview showed as usable: no problem rows, no repeats.
         const skip = new Set(preview.days.filter((d) => d.errors.length || d.repeatOf).map((d) => String(d.row)));
         const rows = data.rows.filter((r) => !skip.has(String(r.sheetRow)));
-        const merged = { imported: 0, results: [] };
         const parts = batches(rows);
-        for (const [i, chunk] of parts.entries()) {
-          setProgress(parts.length > 1 ? `Importing ${i + 1} of ${parts.length}…` : '');
-          const d = await send(chunk, false);
-          merged.imported += d.imported; merged.results.push(...d.results);
-        }
-        setResult(merged); setPreview(null); onDone?.();
+        await track(`Importing ${rows.length} day(s) of sales`, async (step) => {
+          const merged = { imported: 0, results: [] };
+          for (const [i, chunk] of parts.entries()) {
+            setProgress(parts.length > 1 ? `Importing ${i + 1} of ${parts.length}…` : '');
+            step(i, parts.length);
+            const d = await send(chunk, false);
+            merged.imported += d.imported; merged.results.push(...d.results);
+          }
+          setResult(merged); setPreview(null); onDone?.();
+        }, { total: parts.length });
       }
     } catch (e) { ui.alert(e.message || 'Network error.'); }
     finally { setBusy(''); setProgress(''); }

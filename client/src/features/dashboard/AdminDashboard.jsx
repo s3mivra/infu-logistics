@@ -36,6 +36,7 @@ import NotificationBell from '../notifications/NotificationBell';
 import HelpTip from '../../shared/HelpTip';
 import PhoneTabBar from './PhoneTabBar';
 import { withPrintedBy, setPrintedBy } from '../../shared/printedBy';
+import { withPdfProgress } from '../../shared/pdfProgress';
 import { noteRecent } from '../../shared/recent';
 import CommandPalette from './CommandPalette';
 import StaffGuide from './StaffGuide';
@@ -110,6 +111,7 @@ import makeReportExports from './makeReportExports.js';
 import makeFinanceFetchers from './makeFinanceFetchers.js';
 import { BUSINESS_TYPE, DEFAULT_DEPARTMENT, DELIVERY_METHODS, THANKS_LINE } from '../../shared/businessType.js';
 import makePdfExports from './makePdfExports.js';
+import { loadXlsx } from '../../shared/xlsx';
 // fb categories route to Kitchen; log categories route to Logistics. Every
 // catForm reset/fallback must use this so a new category in log mode isn't
 // silently saved as 'Kitchen' (which no log routing station serves).
@@ -122,7 +124,8 @@ const loadPdfLibs = () => {
   if (!_pdfLibsPromise) {
     _pdfLibsPromise = Promise.all([import('jspdf'), import('jspdf-autotable')])
       // withPrintedBy: every PDF report carries who printed it, and when.
-      .then(([m1, m2]) => ({ jsPDF: withPrintedBy(m1.default), autoTable: m2.default }));
+      // withPdfProgress: and each one shows in the progress panel while it is built.
+      .then(([m1, m2]) => ({ jsPDF: withPdfProgress(withPrintedBy(m1.default)), autoTable: m2.default }));
   }
   return _pdfLibsPromise;
 };
@@ -3008,7 +3011,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
     // want (new or existing), fill in prices, and importing it creates that
     // tier - see parsePriceTierExcel/submitPriceTierImport below.
     if (!pricingTable.products || pricingTable.products.length === 0) return ui.alert('No products to export yet.');
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const headers = ['Code', 'Product', 'List Price', ...pricingTable.tiers.map(t => t.name)];
     // Sorted by code so the sheet reads in item-numbering order (P10001,
     // P10002, ...) instead of whatever order the DB happened to return, and a
@@ -3051,7 +3054,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
   const parsePriceTierExcel = async (file) => {
     if (!file) return;
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
@@ -3543,7 +3546,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
   // (see createExpenseEntry in finance.js - the single-entry form above uses
   // the exact same server-side logic, just one row at a time).
   const downloadExpenseImportTemplate = async () => {
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const headers = ['Ref No.', 'Date', 'Category', 'Total Amount', 'Payment', 'Paid To', 'Description'];
     const sample = ['REC-00123', todayStr(), (expenseCategories[0]?.label || 'Miscellaneous Expense'), 500, (activePaymentMethods[0]?.name || 'Cash on Hand'), 'Meralco', 'July electricity bill'];
     const ws = XLSX.utils.aoa_to_sheet([headers, sample]);
@@ -3570,7 +3573,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
   const parseExpenseImportExcel = async (file) => {
     if (!file) return;
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
@@ -4312,7 +4315,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
     if (!file) return;
     importOpeningRef.current = opening === true;
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const buf = await file.arrayBuffer();
       // cellDates: true - without it a real Excel date cell (like Expiry date) comes
       // back as its raw serial number (e.g. 46033), which then gets stringified and
@@ -4633,7 +4636,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
     if (!file) return;
     setMsBusy(true); setMsPreview(null);
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       // The first sheet only: this format is one table, not a workbook of them.
       const first = wb.SheetNames[0];
@@ -4758,7 +4761,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
     if (!file) return;
     setRsBusy(true); setRsPreview(null);
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheets = {};
       for (const name of wb.SheetNames) {
@@ -4850,7 +4853,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   const parseMenuImportFile = async (file) => {
     if (!file) return;
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: 'array' });
       // Find the menu sheet instead of assuming it is the first. An Export All
@@ -4901,7 +4904,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       const d = await res.json();
       if (!d.success) { ui.alert(d.error || 'Export failed.'); return; }
 
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.utils.book_new();
 
       if (template && d.importable === false) {
@@ -4974,7 +4977,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       const res = await apiFetch(`/api/export/account-balances${asOf ? `?asOf=${asOf}` : ''}`);
       const d = await res.json();
       if (!d.success) { ui.alert(d.error || 'Export failed.'); return; }
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([d.columns, ...d.rows]), 'Account Balances');
       XLSX.writeFile(wb, `account-balances-${asOf || todayStr()}.xlsx`);
@@ -5125,7 +5128,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
 
       setBackupBusy('Building the workbook…');
       setBackupProgress({ done: snap.documents, total: snap.documents, label: 'Writing the file' });
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.utils.book_new();
 
       // A contents sheet first, so whoever opens the file knows what it is,
@@ -5185,7 +5188,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     setBackupBusy('Reading the file…');
     setBackupProgress(null);
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
 
       const contents = wb.Sheets.Contents
@@ -5296,7 +5299,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       const tick = () => { done += 1; setExportProgress(p => ({ ...(p || {}), done, total })); };
       const range = `${start || 'all'} to ${end || 'all'}`;
 
-      const XLSX = wantsSheets ? await import('xlsx') : null;
+      const XLSX = wantsSheets ? await loadXlsx() : null;
       const wb = wantsSheets ? XLSX.utils.book_new() : null;
       // Excel caps sheet names at 31 characters and refuses duplicates.
       const used = new Set();

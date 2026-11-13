@@ -10,6 +10,7 @@ import Pager from '../../shared/Pager';
 // Logistics sells whole pieces: "sold per day", in whole numbers. A café uses
 // grams and millilitres out of recipes, so there it stays "used per day".
 import { IS_LOG } from '../../shared/businessType.js';
+import { loadXlsx } from '../../shared/xlsx';
 const RATE_LABEL = IS_LOG ? 'Sold per day' : 'Used per day';
 
 const STATUS = {
@@ -56,7 +57,7 @@ export default function ReorderForecast({ rows = [], settings = {}, analyticsDis
   const lasts = (r) => (r.daysLeft == null ? '-' : r.daysLeft <= 0 ? 'Out' : `${r.daysLeft} day${r.daysLeft === 1 ? '' : 's'}`);
 
   const exportXlsx = async () => {
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const head = ['Item', 'Code', 'Unit', 'On hand', RATE_LABEL, 'Lasts (days)', 'Runs out on', 'On order', 'Buy for 2 weeks', 'Buy for 1 month', 'Status'];
     const body = shown.map(r => { const d = analyticsDisplay(r); const n = (v) => +(Number(v || 0) / d.mult).toFixed(2); return [r.itemName, r.itemCode || '', d.unit, n(r.stockQty), n(r.dailyUse), r.daysLeft ?? '', r.runsOutOn || '', n(r.onOrder), Math.ceil(n(r.buy14) - 1e-9), Math.ceil(n(r.buy30) - 1e-9), STATUS[r.status]?.[0] || '']; });
     const wb = XLSX.utils.book_new();

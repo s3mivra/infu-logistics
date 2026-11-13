@@ -33,6 +33,7 @@ const StatusBadge = ({ status }) => (
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
 import { BUSINESS_TYPE } from '../../shared/businessType.js';
 import ReorderForecast from '../analytics/ReorderForecast';
+import { loadXlsx } from '../../shared/xlsx';
 
 // The stand-in when ctx.can is missing: one function, not a new one per
 // render, or every effect that lists `can` would run on every render.
@@ -110,7 +111,7 @@ export default function ProcurementTab({ ctx }) {
     if (!file) return;
     setSupplierImporting(true);
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
       if (rows.length === 0) { ui.alert('That sheet has no rows.'); return; }
@@ -175,7 +176,7 @@ export default function ProcurementTab({ ctx }) {
   // Downloads a blank template with the exact header row the importer expects,
   // plus one filled-in sample row so the user can see the format at a glance.
   const downloadPoTemplate = async () => {
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const headers = [
       "SUPPLIER'S CODE", 'SUPPLIER NAME', 'ITEM CODE', 'PRODUCT DESCRIPTION', 'PO NO', 'LEAD TIME',
       'DATE (MMDDYYYY)', 'DR / SI', 'DATE (MMDDYYYY)', 'QTY', 'UNIT PRICE (COST PRICE)',
@@ -206,7 +207,7 @@ export default function ProcurementTab({ ctx }) {
     if (!file) return;
     setError(''); setImporting(true);
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }); // array-of-arrays

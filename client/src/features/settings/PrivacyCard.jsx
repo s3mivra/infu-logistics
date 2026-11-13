@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { UserSearch, Download, Eraser } from 'lucide-react';
 import * as ui from '../../shared/ui';
+import { loadXlsx } from '../../shared/xlsx';
 
 // A person's data, on request (Data Privacy Act): find a client, a walk-in
 // customer or a staff member, see what is held about them, export it, or erase
@@ -44,7 +45,7 @@ export default function PrivacyCard({ apiFetch, can }) {
     try {
       const d = await call(`/api/privacy/person?${qs({ ...picked.who, export: '1' })}`);
       if (!d.success) return ui.alert(d.error || 'Could not export.');
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.utils.book_new();
       const add = (name, rows) => { if (rows && rows.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), name); };
       add('Person', [{ person: d.data.person, type: d.data.type, exportedAt: d.data.gatheredAt }]);

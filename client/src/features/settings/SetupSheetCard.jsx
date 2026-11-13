@@ -4,6 +4,7 @@ import * as ui from '../../shared/ui';
 import GoogleSheetModal, { useInventorySheet, pullWorkbook } from '../inventory/GoogleSheetLink';
 import { availableTemplates, buildSetupWorkbook, readSetupWorkbook, runSetupImport } from '../../shared/setupWorkbook';
 import SetupImportReport from '../../shared/SetupImportReport';
+import { loadXlsx } from '../../shared/xlsx';
 
 // The setup workbook, kept in Google Sheets.
 //
@@ -30,7 +31,7 @@ export default function SetupSheetCard({ apiFetch, can, isSuperAdmin, businessTy
   const download = async () => {
     setBusy('Building the workbook…');
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = await buildSetupWorkbook(XLSX, available, apiFetch, { businessType });
       if (!wb) { ui.alert('There is nothing here you have permission to import.'); return; }
       XLSX.writeFile(wb, 'Setup-workbook.xlsx');

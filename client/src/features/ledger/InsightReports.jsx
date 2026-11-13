@@ -8,6 +8,7 @@ import * as ui from '../../shared/ui';
 import { monthStartStr, todayStr } from '../../shared/businessDay.js';
 
 import PagedRows from '../../shared/PagedRows';
+import { loadXlsx } from '../../shared/xlsx';
 // Two reports that only read what is already recorded:
 //   Waste Log      - every spoilage, what it cost and the reason given
 //   Sales by Hour  - when the business is busy: by hour, weekday and place
@@ -69,7 +70,7 @@ const Bar = ({ value, max }) => (
 );
 
 async function saveSheets(name, sheets) {
-  const XLSX = await import('xlsx');
+  const XLSX = await loadXlsx();
   const wb = XLSX.utils.book_new();
   for (const [title, rows] of sheets) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), title);
   XLSX.writeFile(wb, name);

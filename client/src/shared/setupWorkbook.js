@@ -3,6 +3,7 @@
 // the Settings card that pulls the same workbook from a linked Google Sheet, so
 // both do exactly the same thing with it.
 import { formatPeso } from './money.js';
+import { loadXlsx } from './xlsx';
 
 // Dependency order: a bill names a supplier, so suppliers come first; every
 // accounting sheet can use the old books' own account codes, so the chart of
@@ -269,7 +270,7 @@ export async function runSetupImport(steps, { apiFetch, parseImportFile, onProgr
   onProgress('');
 
   if (inventoryStep && parseImportFile) {
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const out = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(out, XLSX.utils.aoa_to_sheet(inventoryStep.grid), 'Inventory');
     const bytes = XLSX.write(out, { type: 'array', bookType: 'xlsx' });

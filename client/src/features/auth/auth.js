@@ -1,4 +1,5 @@
-﻿// ── CLIENT AUTH (in-memory access token + silent refresh) ────────────────────
+import { startTask, endTask } from '../../shared/progress';
+// ── CLIENT AUTH (in-memory access token + silent refresh) ────────────────────
 //
 // The access token is held ONLY in module memory - never localStorage - so an XSS
 // payload can't exfiltrate a long-lived credential. It's short-lived (15m). The
@@ -153,7 +154,41 @@ const withErrorField = async (response) => {
 // Drop-in replacement for the old per-page apiFetch. Attaches the in-memory token,
 // auto-injects JSON content-type, and silently refreshes + retries once on 401.
 // On a persistent 401 it returns the response so callers can run their logout flow.
+// (apiFetchInner below; apiFetch adds the progress panel's slow-request watch.)
+
+// What a slow request is, in words, for the progress panel.
+export function requestLabel(endpoint, method = 'GET') {
+  const p = String(endpoint || '').split('?')[0];
+  const q = String(endpoint || '').split('?')[1] || '';
+  if (/import/.test(p)) return 'Importing…';
+  if (/\/pull$/.test(p)) return 'Pulling the Google Sheet…';
+  if (/export|backup|snapshot|download/.test(p) || /(^|&)(export|format)=/.test(q)) return 'Preparing the export…';
+  if (String(method).toUpperCase() !== 'GET') return 'Saving…';
+  return 'Waiting for the server…';
+}
+// Background checks that run on their own: not worth a line in the panel.
+const QUIET = /\/api\/(notifications|clock\/heartbeat|auth\/refresh|health)/;
+// A request still unanswered after this long is shown in the progress panel,
+// so a slow server or connection is visible rather than a frozen screen.
+export const SLOW_REQUEST_MS = 1500;
+
 export async function apiFetch(API_URL, endpoint, options = {}) {
+  if (QUIET.test(String(endpoint))) return apiFetchInner(API_URL, endpoint, options);
+  let taskId = null;
+  const timer = setTimeout(() => { taskId = startTask(requestLabel(endpoint, options.method), { kind: 'request' }); }, SLOW_REQUEST_MS);
+  try {
+    const res = await apiFetchInner(API_URL, endpoint, options);
+    clearTimeout(timer);
+    if (taskId) endTask(taskId, { ok: res.ok, message: res.ok ? '' : `The server answered ${res.status}.` });
+    return res;
+  } catch (err) {
+    clearTimeout(timer);
+    if (taskId) endTask(taskId, { ok: false, message: 'The connection was lost.' });
+    throw err;
+  }
+}
+
+async function apiFetchInner(API_URL, endpoint, options = {}) {
   const build = () => {
     const headers = { ...(options.headers || {}) };
     if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;

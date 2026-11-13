@@ -6,6 +6,7 @@ import { todayStr } from '../../shared/businessDay.js';
 import { IS_LOG } from '../../shared/businessType.js';
 
 import PagedRows from '../../shared/PagedRows';
+import { loadXlsx } from '../../shared/xlsx';
 // Which items are fast-moving, slow-moving or dead stock, from what actually
 // sold - and how much of each to buy. A logistics business counts and buys
 // whole units (one bottle, one box); a cafe counts what its recipes used and
@@ -94,7 +95,7 @@ export default function StockMovement({ apiFetch, can }) {
   };
 
   const exportXlsx = async () => {
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
       [`Stock movement ${data.start} to ${data.end}`], [],

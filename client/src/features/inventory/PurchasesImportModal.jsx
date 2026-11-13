@@ -3,6 +3,7 @@ import { X, Download, Upload, Link2, RefreshCw, FileSpreadsheet, AlertTriangle, 
 import * as ui from '../../shared/ui';
 import GoogleSheetModal, { useInventorySheet, pullWorkbook } from './GoogleSheetLink';
 import { PURCHASE_COLUMNS, readPurchaseWorkbook } from '../../shared/purchaseSheet';
+import { loadXlsx } from '../../shared/xlsx';
 
 // Purchases from a spreadsheet: an Excel file or the linked purchases Google
 // Sheet (server: features/purchases.js). Every import is previewed first; the
@@ -52,7 +53,7 @@ export default function PurchasesImportModal({ apiFetch, can, onClose, onDone })
   const readFile = async (file) => {
     if (!file) return;
     try {
-      const XLSX = await import('xlsx');
+      const XLSX = await loadXlsx();
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
       takeWorkbook(XLSX, wb, file.name);
     } catch { ui.alert('That file could not be read. Save it as .xlsx and try again.'); }
@@ -69,7 +70,7 @@ export default function PurchasesImportModal({ apiFetch, can, onClose, onDone })
   };
 
   const downloadTemplate = async () => {
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet([PURCHASE_COLUMNS.map((c) => c.label), PURCHASE_COLUMNS.map((c) => c.example)]);
     ws['!cols'] = PURCHASE_COLUMNS.map((c) => ({ wch: Math.max(12, c.label.length + 2) }));
@@ -131,7 +132,7 @@ export default function PurchasesImportModal({ apiFetch, can, onClose, onDone })
 
   const exportList = async () => {
     if (!list?.purchases?.length) return ui.alert('No purchases in this range to export.');
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const data = list.purchases.map((p) => ({
       Date: new Date(p.date).toLocaleDateString('en-CA'), Reference: p.reference, 'Product Code': p.itemCode, Product: p.itemName,
       Qty: p.qty, Unit: p.unit, 'Amount Paid': p.amountPaid, 'Unit Cost': p.unitCost, Supplier: p.supplier, 'Paid From': p.paidFrom,

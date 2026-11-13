@@ -4,6 +4,7 @@ import { RefreshCw, Download, CheckCircle, Circle, AlertTriangle, Lock, Save } f
 import * as ui from '../../shared/ui';
 
 import PagedRows from '../../shared/PagedRows';
+import { loadXlsx } from '../../shared/xlsx';
 // The month-end and management pages from the process flow: the cash flow
 // statement, sales by channel, budgets against actual, the exception report
 // and the month-end closing checklist. Each one loads its own data.
@@ -54,7 +55,7 @@ function RangeBar({ start, end, setStart, setEnd, onLoad, loading, extra }) {
 }
 
 const exportSheet = async (name, rows) => {
-  const XLSX = await import('xlsx');
+  const XLSX = await loadXlsx();
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), name.slice(0, 31));
   XLSX.writeFile(wb, `${name.replace(/\s+/g, '-')}.xlsx`);

@@ -30,6 +30,7 @@ function ModeMismatchBanner() {
 }
 
 import UiProvider from './shared/ui/UiProvider';
+import ProgressPanel from './shared/ProgressPanel';
 
 const CustomerMenu = lazyRetry(() => import('./features/menu/CustomerMenu'));
 const CustomerDisplay = lazyRetry(() => import('./features/orders/CustomerDisplay'));
@@ -99,6 +100,8 @@ function App() {
           browser's native dialogs. */}
       <UiProvider>
       <ModeMismatchBanner />
+      {/* What is importing / exporting / waiting on the server, app-wide. */}
+      <ProgressPanel />
       <Router>
         <Suspense fallback={
           <div className="min-h-screen bg-page-bg flex flex-col items-center justify-center">

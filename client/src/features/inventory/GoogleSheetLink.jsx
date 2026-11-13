@@ -3,6 +3,7 @@ import { X, RefreshCw, Download, AlertTriangle, Link2 } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import { useRefreshTick } from '../../shared/refreshBus';
 import { mergeStockTabs } from '../../shared/mergeSheetTabs';
+import { loadXlsx } from '../../shared/xlsx';
 
 // A Google Sheet linked to the app (server: features/inventory-sheet.js).
 //
@@ -42,7 +43,7 @@ export async function pullWorkbook(apiFetch, base = '/api/inventory-sheet') {
     try { msg = (await r.json()).error || msg; } catch { /* not json */ }
     throw new Error(msg);
   }
-  const XLSX = await import('xlsx');
+  const XLSX = await loadXlsx();
   return { XLSX, wb: XLSX.read(await r.arrayBuffer(), { type: 'array', cellDates: true, cellNF: true }) };
 }
 
