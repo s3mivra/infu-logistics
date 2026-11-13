@@ -118,7 +118,9 @@ export function parseMenuSheet(rows = []) {
 
     const name = String(row[0] || '').trim();
     const sizeName = String(row[1] || '').trim();
-    const price = Number(row[PRICE_COL]);
+    // Number('') and Number('  ') are 0, so a blank price cell used to import
+    // the product at P0 with a clean preview (2026-11 audit, M108).
+    const price = blank(row[PRICE_COL]) ? NaN : Number(row[PRICE_COL]);
     const problems = [];
 
     const lines = [];
@@ -151,6 +153,8 @@ export function parseMenuSheet(rows = []) {
 
     if (!Number.isFinite(price)) {
       problems.push({ kind: 'missing-price', detail: `"${sizeName || current.name}" has no price.` });
+    } else if (price < 0) {
+      problems.push({ kind: 'negative-price', detail: `"${sizeName || current.name}" has a price below zero (${price}).` });
     }
     current.sizes.push({
       name: sizeName || 'Regular',

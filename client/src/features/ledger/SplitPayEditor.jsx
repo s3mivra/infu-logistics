@@ -1,5 +1,5 @@
 import { Plus, X } from 'lucide-react';
-import { formatPeso } from '../../shared/money.js';
+import { formatPeso, roundMoney } from '../../shared/money.js';
 
 // A sale paid in parts - ₱50,000 cash and ₱50,000 on account - the way the POS
 // already allows. Each part is booked to its own account; only an On Account
@@ -9,7 +9,10 @@ import { formatPeso } from '../../shared/money.js';
 export const SPLIT_METHODS = ['Cash', 'Bank Transfer', 'GCash', 'Maya', 'Check', 'On Account'];
 
 const money = formatPeso;
-const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+// The server's rounding (half away from zero, to the centavo): Math.round(n*100)
+// put 1.005 at 1.00 and -0.005 at -0.00, so a split that balanced here was
+// off by a centavo on the server (2026-11 audit, M118).
+const r2 = roundMoney;
 
 export const splitLeft = (total, parts = []) => r2(r2(total) - parts.reduce((s, p) => s + r2(p.amount), 0));
 const isCheck = (p) => p.method === 'Check';

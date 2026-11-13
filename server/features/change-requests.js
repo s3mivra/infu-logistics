@@ -89,6 +89,12 @@ export default function registerChangeRequests(ctx) {
       const reqDoc = await ChangeRequest.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
       if (!reqDoc) return res.status(404).json({ success: false, error: 'Request not found.' });
       if (reqDoc.status !== 'Pending') return res.status(400).json({ success: false, error: `Request is already ${reqDoc.status}.` });
+      // Whoever asked for a price or credit change does not sign it off. The
+      // owner (superadmin) may, since a one-person business has no one else.
+      if (reqDoc.requestedBy && reqDoc.requestedBy === (req.user?.name || '')
+          && String(req.user?.role || '').toLowerCase() !== 'superadmin') {
+        return res.status(403).json({ success: false, error: 'You asked for this change - someone else has to approve it.' });
+      }
 
       const Model = MODELS[reqDoc.entity];
       if (!Model) return res.status(400).json({ success: false, error: 'Unknown entity on this request.' });

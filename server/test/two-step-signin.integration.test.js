@@ -122,7 +122,12 @@ describe('the ways back', () => {
 // cookie jar, so each request below carries exactly the cookie it names.
 describe('remembered devices', () => {
   let user, cookie;
-  const codeSignIn = () => signIn({ name: 'twoAna', password: 'anapass123', code: codeAt(secret) });
+  // A code is single-use (2026-11 audit), and these sign in several times inside
+  // one 30-second window: forget the last used step to stand in for time passing.
+  const codeSignIn = async () => {
+    await User().updateOne({ name: 'twoAna' }, { $unset: { totpLastStep: 1 } });
+    return signIn({ name: 'twoAna', password: 'anapass123', code: codeAt(secret) });
+  };
   const deviceCookie = (res) => (res.headers['set-cookie'] || []).find(c => c.startsWith(`semivra_td_${user._id}=`))?.split(';')[0];
   const withCookie = (c) => request(app).post('/api/users/login').set('Cookie', c).send({ name: 'twoAna', password: 'anapass123' });
 

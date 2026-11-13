@@ -16,6 +16,7 @@
 // (POST /api/periods/close); reopening needs an approver.
 import { captureError } from '../lib/errorLog.js';
 import { roundMoney, toCentavos } from '../lib/money.js';
+import { businessDayStart, businessDayEnd } from '../lib/businessTime.js';
 
 const MANUAL = { prepayments: 'Accruals and prepayments reviewed', review: 'Finance review of the month' };
 const ticksKey = (y, m) => `closeChecklist:${y}-${String(m).padStart(2, '0')}`;
@@ -31,7 +32,11 @@ export default function registerClosing(ctx) {
   const readMonth = (q) => {
     const year = Number(q.year), month = Number(q.month);
     if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return null;
-    return { year, month, from: new Date(year, month - 1, 1, 0, 0, 0, 0), to: new Date(year, month, 0, 23, 59, 59, 999) };
+    // Cut in the business's time zone, like every report and the period lock -
+    // not the server process's clock (2026-11 audit, M107).
+    const mm = String(month).padStart(2, '0');
+    const lastDay = String(new Date(Date.UTC(year, month, 0)).getUTCDate()).padStart(2, '0');
+    return { year, month, from: businessDayStart(`${year}-${mm}-01`), to: businessDayEnd(`${year}-${mm}-${lastDay}`) };
   };
 
   const buildChecklist = async (req, { year, month, from, to }) => {
@@ -41,7 +46,15 @@ export default function registerClosing(ctx) {
       PurchaseOrder.countDocuments({ createdAt: { $lte: to }, status: { $in: ['Ordered', 'Processing'] } }),
       Bill.countDocuments({ ...scope, source: 'PO', status: 'Pending', createdAt: { $lte: to }, 'match.status': { $nin: ['Matched', 'Accepted'] } }),
       InventoryMovement.distinct('date', { date: { $gte: from, $lte: to }, isClosed: true }),
-      JournalEntry.distinct('lines.accountCode', { date: { $lte: to }, 'lines.accountCode': /^112/ }),
+      // The bank accounts themselves: distinct() on an array path returned every
+      // account on any entry that touched a bank (revenue, VAT, A/R...), so the
+      // step could never turn green (M107).
+      JournalEntry.aggregate([
+        { $match: { date: { $lte: to }, 'lines.accountCode': /^112/ } },
+        { $unwind: '$lines' },
+        { $match: { 'lines.accountCode': /^112/ } },
+        { $group: { _id: '$lines.accountCode' } },
+      ]).then((rows) => rows.map((r) => r._id).sort()),
       BankReconciliation.find({ statementDate: { $gte: from, $lte: to }, status: 'Reconciled' }, { accountCode: 1 }).lean(),
       FixedAsset.find({ status: 'Active', acquisitionDate: { $lte: to } }, { name: 1, lastDepreciationDate: 1 }).lean(),
       ManualJournal.countDocuments({ ...scope, status: 'Pending', createdAt: { $lte: to } }),

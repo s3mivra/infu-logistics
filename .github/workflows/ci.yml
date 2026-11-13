@@ -4,44 +4,101 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+
+# Read-only by default; no job here needs to write to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Actions are pinned to a full commit SHA (2026-11 audit, M44): a tag can be
+# moved to different code, a SHA cannot. Dependabot proposes the updates.
+# Node comes from .nvmrc, the same major the production images run (M80).
 
 jobs:
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   server:
-    name: Server — lint, test, build
+    name: Server - lint, test with coverage, audit
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '20'
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: server/package-lock.json
       - run: npm ci
       - run: node --check server.js
       - run: npm run lint
-      - run: npm test
+      - run: npm run coverage
       - name: Security audit (fails the build on high/critical)
         run: npm audit --audit-level=high --omit=dev
 
   client:
-    name: Client — build
+    name: Client - lint, unit tests, build, audit
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: client
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '20'
+          node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: client/package-lock.json
       - run: npm ci
       - run: npm run lint
+      - run: npm test
       - run: npm run build
+        env:
+          VITE_BUSINESS_TYPE: log
       - name: Security audit (fails the build on high/critical)
         run: npm audit --audit-level=high --omit=dev
+
+  control-plane:
+    name: Control plane - tests, audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platform/control-plane
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: 'npm'
+          cache-dependency-path: platform/control-plane/package-lock.json
+      - run: npm ci
+      - run: node --check server.js
+      - run: npm test
+      - name: Security audit (fails the build on high/critical)
+        run: npm audit --audit-level=high --omit=dev
+
+  images:
+    name: Docker images build
+    runs-on: ubuntu-latest
+    needs: [server, client, control-plane]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build API image
+        run: docker build -t semivra-api:ci server
+      - name: Build web image
+        run: docker build -t semivra-web:ci --build-arg VITE_BUSINESS_TYPE=log client
+      - name: Build control-plane image
+        run: docker build -t semivra-cp:ci platform/control-plane

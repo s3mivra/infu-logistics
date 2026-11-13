@@ -6,7 +6,7 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
 
-let ctx, app, superTok, staffTok;
+let ctx, app, superTok, staffTok, collectorTok;
 const auth = (method, path, token) => request(app)[method](path).set('Authorization', `Bearer ${token}`);
 const daysAgo = (n) => new Date(Date.now() - n * 86400000);
 
@@ -17,6 +17,9 @@ beforeAll(async () => {
   await makeUser({ name: 'collStaff', role: 'staff' });
   superTok = await loginStaff(app, 'collSuper');
   staffTok = await loginStaff(app, 'collStaff');
+  // Logging a reminder is a collections task (ar.collect), not a viewing one.
+  await makeUser({ name: 'collCollector', role: 'staff', permissions: ['ar.collect'] });
+  collectorTok = await loginStaff(app, 'collCollector');
 
   const Order = mongoose.model('Order');
   await Order.create([
@@ -55,20 +58,25 @@ describe('AR collection reminders', () => {
   });
 
   it('rejects logging a reminder with an invalid method', async () => {
-    const res = await auth('post', '/api/collections/reminders', staffTok).send({
+    const res = await auth('post', '/api/collections/reminders', collectorTok).send({
       client: 'Overdue Client', method: 'Carrier Pigeon',
     });
     expect(res.status).toBe(400);
   });
 
-  it('any staff with orders.view can log a reminder (broader than accounting.view)', async () => {
-    const res = await auth('post', '/api/collections/reminders', staffTok).send({
+  it('plain staff cannot log one (2026-11 audit, M107)', async () => {
+    const res = await auth('post', '/api/collections/reminders', staffTok).send({ client: 'Overdue Client', method: 'Call' });
+    expect(res.status).toBe(403);
+  });
+
+  it('a collector (ar.collect) can log a reminder, without the balance coming back to them', async () => {
+    const res = await auth('post', '/api/collections/reminders', collectorTok).send({
       client: 'Overdue Client', method: 'Call', note: 'Promised to pay next week',
       nextFollowUpDate: new Date(Date.now() + 7 * 86400000).toISOString(),
     });
     expect(res.status).toBe(200);
-    expect(res.body.reminder.amountOwedAtTime).toBeCloseTo(800, 2);
-    expect(res.body.reminder.loggedBy).toBe('collStaff');
+    expect(res.body.reminder.amountOwedAtTime).toBeUndefined();
+    expect(res.body.reminder.loggedBy).toBe('collCollector');
   });
 
   it('after logging a future follow-up, the client drops off the due-today list', async () => {
@@ -89,10 +97,12 @@ describe('AR collection reminders', () => {
     expect(res.status).toBe(200);
     expect(res.body.reminders.length).toBe(1);
     expect(res.body.reminders[0].note).toBe('Promised to pay next week');
+    // The snapshot is still kept, for whoever may read the books.
+    expect(res.body.reminders[0].amountOwedAtTime).toBeCloseTo(800, 2);
   });
 
   it('logging a reminder with a PAST follow-up date puts the client right back on the due-today list', async () => {
-    await auth('post', '/api/collections/reminders', staffTok).send({
+    await auth('post', '/api/collections/reminders', collectorTok).send({
       client: 'Overdue Client', method: 'SMS', nextFollowUpDate: new Date(Date.now() - 86400000).toISOString(),
     });
     const res = await auth('get', '/api/collections/due', superTok);

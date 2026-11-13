@@ -29,9 +29,22 @@ import { atomic } from '../lib/atomicRoute.js';
 import { stockMovesFrom, movesToReturn, hasStockMoves, roundQty } from '../lib/stockMoves.js';
 import { readNegativeStockMode, saleStockFilter, blockedNote, flagBelowZero } from '../lib/negativeStock.js';
 export default function registerOrders(ctx) {
+  // Every completed sale used to tell every open screen - dashboards, QR
+  // phones, portals - to reload the catalogue (2026-11 audit, M112). The stock
+  // it changed matters, so the signal still goes, but at most once in
+  // MENU_REFRESH_MS however many sales complete: one refresh for a rush, not
+  // one per order. Products going unavailable still announce themselves at once.
+  const MENU_REFRESH_MS = 10_000;
+  let menuTimer = null;
+  const menuUpdatedSoon = () => {
+    if (menuTimer) return;
+    menuTimer = setTimeout(() => { menuTimer = null; ctx.emitToAll('menuUpdated'); }, MENU_REFRESH_MS);
+    menuTimer.unref?.();
+  };
   const {
     app,
     io,
+    currentTokenVersion,
     server,
     express,
     http,
@@ -489,19 +502,25 @@ app.get('/api/orders', verifyToken, requireStaff, async (req, res) => {
       baseFilter.$or = [{ customerName: rx }, { orderNumber: rx }, { table: rx }];
     }
     const query = Order.find(baseFilter).sort({ createdAt: -1 }).lean();
+    // An SC/PWD cardholder's ID number is sensitive personal information: the
+    // order board shows its last four digits to anyone without the books
+    // (2026-11 audit, M74). The full number stays on the order for the BIR.
+    const seesIds = hasPermission(req.user, 'accounting.view');
+    const maskIds = (list) => (seesIds ? list : list.map((o) => (o.scPwdIdNumber
+      ? { ...o, scPwdIdNumber: `****${String(o.scPwdIdNumber).slice(-4)}` } : o)));
     if (page && limit) {
       const pageNum = Math.max(1, parseInt(page, 10));
       const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10)));
       query.skip((pageNum - 1) * limitNum).limit(limitNum);
       const [orders, total] = await Promise.all([query, Order.countDocuments(baseFilter)]);
-      return res.json({ success: true, orders, total, page: pageNum, limit: limitNum });
+      return res.json({ success: true, orders: maskIds(orders), total, page: pageNum, limit: limitNum });
     }
     // Unpaginated callers (the live order board) get the most recent 2,000.
     // The end-of-day archive keeps the active set far below that; the cap is
     // what stops a register left un-archived for months from returning its
     // whole history in one response.
     const orders = await query.limit(2000);
-    res.json({ success: true, orders });
+    res.json({ success: true, orders: maskIds(orders) });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -583,16 +602,24 @@ app.get('/api/orders/:id', async (req, res) => {
     try {
       const raw = req.headers.authorization?.replace(/^Bearer /, '') || '';
       if (raw) {
-        const d = jwt.verify(raw, process.env.JWT_SECRET);
+        const d = jwt.verify(raw, process.env.JWT_SECRET, { algorithms: ['HS256'] });
         const isClient = d?.aud === 'client' || String(d?.role || '').toLowerCase() === 'client';
         if (isClient) {
           const clientId = String(d.clientId || d._id || '');
           isPrivileged = !!clientId && !!(await Order.exists({ _id: req.params.id, clientId }));
-        } else if (d?.role) {
-          isPrivileged = true;
+        } else if (d?.aud === 'staff' && d._id && hasPermission(d, 'orders.view')) {
+          // A current staff session that may see orders - not any signed token
+          // with a role: a revoked or demoted person's token kept full access.
+          isPrivileged = (Number(d.tv) || 0) >= await currentTokenVersion(d._id);
         }
       }
     } catch { /* invalid/expired token → treat as anonymous */ }
+    // Anonymous (QR status page): only with the order's view key.
+    if (!isPrivileged) {
+      const keyed = await Order.findById(req.params.id, { viewKey: 1 }).select('+viewKey').lean();
+      const key = String(req.query.key || '');
+      if (!keyed?.viewKey || !key || key !== keyed.viewKey) return res.status(404).json({ success: false, message: "Order not found" });
+    }
     const safeProjection = {
       orderNumber: 1, status: 1, dispatchStatus: 1, isParked: 1, table: 1,
       // No customerName: an order id is all an anonymous caller has, and the
@@ -725,6 +752,25 @@ const buildLinePricing = async (req, items, { buyerClientId = '', buyerSegments 
 // A line that matches nothing in the catalogue is a staff-entered open item
 // and keeps its price when staff ring it up; from a client or a QR menu it is
 // refused. Returns { error } or { quoteIds } (quotations to link to the order).
+// ── Money levers at the till ─────────────────────────────────────────────────
+// A price other than the catalogue's, a manual discount and a comp each need
+// orders.override - or, for a cashier without it, a manager's PIN approval for
+// this order (lib/approval.js, the same as cancelling a paid order). Before,
+// any till account could sell at P0, give 100% off, or comp an order naming
+// any approver it liked. The statutory SC/PWD discount is the cashier's to
+// give and needs no approval.
+const SC_PWD_MAX_PERCENT = 20;
+const overrideOk = (req, target) => {
+  if (hasPermission(req.user, 'orders.override')) return { approverName: req.user?.name || '', approverId: String(req.user?._id || '') };
+  return checkApproval(req.body?.approval, { permission: 'orders.override', requestedBy: req.user?._id, target: String(target) });
+};
+const needsOverride = (res, what) => res.status(403).json({
+  success: false, needsApproval: 'orders.override',
+  error: `${what} needs a manager's approval.`,
+});
+const manualDiscount = (percent, flat, scPwd) =>
+  (Number(flat) || 0) > 0 || ((Number(percent) || 0) > 0 && !(scPwd && Number(percent) <= SC_PWD_MAX_PERCENT));
+
 const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, tierBuyerId = '', tierBuyerSegments = [] }) => {
   const Sale = mongoose.model('Sale');
   const Quotation = mongoose.model('Quotation');
@@ -732,7 +778,7 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
   const names = [...new Set(items.filter(i => !i.productId).map(i => i.name).filter(Boolean))];
   const [prods, combos, globalAddOns, groups, sales, quotes] = await Promise.all([
     Product.find({ $or: [{ _id: { $in: ids } }, { name: { $in: names } }] }, { name: 1, basePrice: 1, baseSize: 1, sizes: 1, addOns: 1, isArchived: 1, isAvailable: 1, clientDiscounts: 1, clientBulkBreaks: 1 }).lean(),
-    Combo.find({ _id: { $in: ids } }, { name: 1, price: 1 }).lean(),
+    Combo.find({ _id: { $in: ids } }, { name: 1, price: 1, items: 1 }).lean(),
     AddOn.find({}, { name: 1, price: 1 }).lean(),
     ModifierGroup.find({}, { name: 1, options: 1 }).lean(),
     Sale.find(activeSalesQuery()).lean(),
@@ -752,7 +798,7 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
     for (const l of (q.lines || [])) {
       if (l.quotedPrice == null) continue;
       const key = l.productId ? `id:${l.productId}` : `name:${l.name}`;
-      quoted.set(key, { price: Number(l.quotedPrice), quoteId: String(q._id) });
+      quoted.set(key, { price: Number(l.quotedPrice), quantity: Number(l.quantity) || 1, quoteId: String(q._id) });
     }
   }
   // The buyer's per-product tiers - a tier's set price is the unit price (priceTiers.js).
@@ -761,13 +807,18 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
     : { perProductTiers: [] };
   const quoteIds = new Set();
   // Self-service lines always take the catalogue price. Staff at the till may
-  // ring up a different one (a negotiated price, a quote read off paper) - it
-  // stands, but every such override is returned so it lands in the audit log.
+  // ring up a different one (a negotiated price, a quote read off paper), but
+  // every such override is returned: the caller requires orders.override or a
+  // manager's approval for it (see overrideOk) and writes it to the audit log.
+  // `kind` says whether it is the line's own price or an add-on's.
   const overrides = [];
-  const setPrice = (target, label, catalogue) => {
+  const badPrice = (v) => !Number.isFinite(v) || v < 0 || v > MONEY_MAX;
+  const setPrice = (target, label, catalogue, kind = 'item') => {
     const entered = Number(target.price);
-    if (selfService || !Number.isFinite(entered)) { target.price = catalogue; return; }
-    if (Math.abs(entered - catalogue) > 0.005) overrides.push({ item: label, catalogue, charged: entered });
+    if (selfService || target.price === undefined || target.price === null || target.price === '') { target.price = catalogue; return null; }
+    if (badPrice(entered)) return `Invalid price for ${label}.`;
+    if (Math.abs(entered - catalogue) > 0.005) overrides.push({ item: label, catalogue, charged: entered, kind });
+    return null;
   };
 
   const addOnPrice = (product, addOnName) => {
@@ -789,6 +840,11 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
     const qKey = item.productId ? `id:${item.productId}` : `name:${item.name}`;
     if (quoted.has(qKey)) {
       const hit = quoted.get(qKey);
+      // A quote prices the quantity that was asked for. Ordering 50 against a
+      // quote for 1 used to charge the quoted unit price for all 50.
+      if ((Number(item.quantity) || 0) > hit.quantity + 1e-9) {
+        return { error: `${item.name}: the accepted quote covers ${hit.quantity}. Ask for a new quote to order more at that price.` };
+      }
       item.price = hit.price;
       item.selectedAddOns = [];
       item._quoted = true;
@@ -799,16 +855,30 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
       const combo = comboById.get(String(item.productId));
       if (!combo) {
         if (selfService) return { error: `The combo "${item.name}" is no longer available.` };
+        // Not a catalogue combo: an open item, with no components to take
+        // from stock (a typed-in component list is never trusted).
+        item.isCombo = false;
+        item.comboItems = [];
+        if (badPrice(Number(item.price))) return { error: `Invalid price for ${item.name}.` };
         continue;
       }
       item.listPrice = Number(combo.price) || 0;
-      setPrice(item, item.name, Number(combo.price) || 0);
+      // What is IN the combo comes from the combo record, never the request: a
+      // P25 combo sent as "10x ribeye" printed on the ticket and took 10
+      // ribeyes from stock with their cost.
+      item.comboItems = (combo.items || []).map(c => ({
+        productId: c.productId ? String(c.productId) : '', name: c.name || '', sizeName: c.sizeName || '', quantity: Number(c.quantity) || 1,
+      }));
+      const err = setPrice(item, item.name, Number(combo.price) || 0);
+      if (err) return { error: err };
       continue;
     }
     const product = item.productId ? prodById.get(String(item.productId)) : prodByName.get(item.name);
     if (!product) {
       if (selfService) return { error: `"${item.name}" is not on the menu.` };
-      continue; // staff open item - keeps its entered price
+      // Staff open item - keeps its entered price, which must be a real amount.
+      if (badPrice(Number(item.price))) return { error: `Invalid price for ${item.name}.` };
+      continue;
     }
     if (selfService && (product.isArchived || product.isAvailable === false)) {
       return { error: `${product.name} is not available right now.` };
@@ -834,16 +904,24 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
       // the buyer's tier price applies. A different typed price still stands.
       if (Math.abs(Number(item.price) - (Number(product.basePrice) || 0)) < 0.005) item.price = tierUnit;
     }
-    setPrice(item, item.name, size ? Number(size.price) || 0 : (sale != null ? sale : (tierUnit ?? (Number(product.basePrice) || 0))));
+    const lineErr = setPrice(item, item.name, size ? Number(size.price) || 0 : (sale != null ? sale : (tierUnit ?? (Number(product.basePrice) || 0))));
+    if (lineErr) return { error: lineErr };
 
     if ((item.selectedAddOns || []).length) {
       for (const a of item.selectedAddOns) {
         const price = addOnPrice(product, a.name);
         if (price == null) {
           if (selfService) return { error: `The option "${a.name}" is not available for ${product.name}.` };
+          // An add-on that is not in the catalogue is priced by whoever typed
+          // it: a price override like any other. A negative one used to cut
+          // the order total with no trace (112 became 12).
+          const entered = Number(a.price);
+          if (badPrice(entered)) return { error: `Invalid price for ${item.name} + ${a.name}.` };
+          if (entered > 0) overrides.push({ item: `${item.name} + ${a.name}`, catalogue: null, charged: entered, kind: 'addon' });
           continue;
         }
-        setPrice(a, `${item.name} + ${a.name}`, price);
+        const addErr = setPrice(a, `${item.name} + ${a.name}`, price, 'addon');
+        if (addErr) return { error: addErr };
       }
     }
   }
@@ -927,6 +1005,27 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       } catch { /* invalid id - ignore, fall back to default discount */ }
     }
 
+    // A price tier picked at the till (Manual Order's tier picker). None - the
+    // default - is SRP: list price, plus whatever tier the chosen client already
+    // has. A picked tier prices THIS sale instead of the client's own tags, the
+    // same way a client in that tier would be charged. It is a lower price than
+    // SRP, so it needs pricing.tiers or orders.override, or a manager's PIN.
+    let pickedTier = '';
+    if (!isClientOrder && String(req.body.priceTier || '').trim()) {
+      const wanted = String(req.body.priceTier).trim();
+      const tier = await PriceTier.findOne(
+        { businessType: BUSINESS_TYPE, ...tenantScope(req), isActive: true, name: { $regex: `^${escapeRegex(wanted)}$`, $options: 'i' } },
+        { name: 1 },
+      ).lean();
+      if (!tier) return res.status(400).json({ success: false, error: `There is no active price tier called "${wanted}".` });
+      const target = `tier:${tier.name}`;
+      if (!hasPermission(req.user, 'pricing.tiers') && !overrideOk(req, target)) {
+        return res.status(403).json({ success: false, needsApproval: 'orders.override', target, error: `Charging the ${tier.name} price tier needs a manager's approval.` });
+      }
+      pickedTier = tier.name;
+      onBehalfSegments = [tier.name];
+    }
+
     // SC/PWD is a property of the SALE, not of the business's VAT registration -
     // the cashier marks it per order and the POS already sends the flag. A non-VAT
     // business still labels the discount SC/PWD; it simply has no VAT to strip.
@@ -959,6 +1058,13 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     isComplimentary = isComplimentary === true;
     discountPercent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
     discountFlat = Math.min(MONEY_MAX, Math.max(0, Number(discountFlat) || 0));
+    // A manual discount or a comp: orders.override, or a manager's approval
+    // for this new order (target 'new').
+    let overrideBy = null;
+    if (!selfServiceOrder && (isComplimentary || manualDiscount(discountPercent, discountFlat, isVatExempt))) {
+      overrideBy = overrideOk(req, 'new');
+      if (!overrideBy) return needsOverride(res, isComplimentary ? 'A complimentary order' : 'A manual discount');
+    }
 
     // An order rung up while the tablet was offline is replayed when the WiFi
     // returns, and it belongs to the day it was TAKEN: replayed after midnight
@@ -969,9 +1075,14 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // now, exactly as before.
     let placedAt = null;
     const claimedAt = req.body.placedAt ? new Date(req.body.placedAt) : null;
+    // The window is 72 hours only for someone who may backdate sales. For
+    // everyone else it is 12 hours - long enough for a sale rung up offline
+    // during a shift, not long enough to move a sale into an earlier day's
+    // shift and cash count (any key at all used to buy three days).
+    const replayWindowMs = (hasPermission(req.user, 'sales.backdate') ? 72 : 12) * 60 * 60 * 1000;
     if (claimedAt && !selfServiceOrder && idempotencyKey && !Number.isNaN(claimedAt.getTime())) {
       const age = Date.now() - claimedAt.getTime();
-      if (age > 0 && age <= 72 * 60 * 60 * 1000) {
+      if (age > 0 && age <= replayWindowMs) {
         const eod = await EODRecord.findOne({ dateString: businessDateStr(claimedAt) }).lean();
         const closed = eod?.status === 'LOCKED' || await periodLockFor(claimedAt);
         if (!closed) placedAt = claimedAt;
@@ -1036,6 +1147,10 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       tierBuyerId: _tierBuyerId, tierBuyerSegments: _tierBuyerSegments,
     });
     if (priced.error) return res.status(400).json({ success: false, error: priced.error });
+    if (priced.overrides?.length && !selfServiceOrder) {
+      overrideBy = overrideBy || overrideOk(req, 'new');
+      if (!overrideBy) return needsOverride(res, `Charging ${priced.overrides[0].item} at ${priced.overrides[0].charged} instead of the catalogue price`);
+    }
 
     // Authoritative department stamping - look up each product's category and resolve to Kitchen/Bar.
     // Combos resolve from their component products: all-Bar → Bar, otherwise Kitchen.
@@ -1325,8 +1440,11 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       total: finalTotal,
       isVatExempt, discountType, customerName,
       isComplimentary, employeeName, cashier,
+      // The approver is whoever actually authorised it, never a typed name.
+      ...(isComplimentary && overrideBy && { complimentaryApprovedBy: overrideBy.approverName }),
       placedByClient: isClientOrder,
       ...(onBehalfClientId ? { clientAccountId: onBehalfClientId } : {}),
+      ...(pickedTier ? { priceTier: pickedTier } : {}),
       // Reserve mode: items committed, no payment yet, status = Reserved.
       // Cashier later promotes Reserved → Pending (pay later) or Preparing (pay now)
       // via the existing PUT /api/orders/:id status transition.
@@ -1344,6 +1462,8 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       ...(billingNumber && { billingNumber }),
       ...(isClientOrder && { clientId: req.user._id || req.user.clientId || '', clientUsername: req.user.username || '' }),
       ...(idempotencyKey && { idempotencyKey, idempotencyOwner }),
+      // The QR diner's key to look this order up again (GET /api/orders/:id?key=).
+      ...(req.qrSession && { viewKey: crypto.randomBytes(16).toString('hex') }),
       ...(placedAt && { createdAt: placedAt }),
       // Wholesale when the buyer is a wholesale account; staff may also say so.
       channel: (!selfServiceOrder && ['Retail', 'Wholesale'].includes(req.body.channel)) ? req.body.channel
@@ -1364,7 +1484,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     if (priced.overrides?.length) {
       await logAudit(req, {
         action: 'priceOverride', entity: 'Order', entityId: newOrder._id,
-        after: { orderNumber: newOrder.orderNumber, cashier, overrides: priced.overrides },
+        after: { orderNumber: newOrder.orderNumber, cashier, overrides: priced.overrides, approvedBy: overrideBy?.approverName || '' },
       });
     }
     if (priced.quoteIds?.length) {
@@ -1400,26 +1520,32 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
 // --- COMPLIMENTARY: APPLY ---
 app.put('/api/orders/:id/complimentary', verifyToken, requireStaff, permit('orders.comp'), async (req, res) => {
   try {
-    const { reasonType, reasonNote, approvedBy, forEmployee } = req.body;
+    const { reasonType, reasonNote, forEmployee } = req.body;
     if (!reasonType) return res.status(400).json({ success: false, error: 'reasonType is required' });
 
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ success: false, error: 'Order not found' });
     if (order.status === 'Completed') return res.status(400).json({ success: false, error: 'Completed orders cannot be marked complimentary' });
+    if (['Voided', 'Refunded', 'Cancelled'].includes(order.status)) return res.status(409).json({ success: false, error: `This order is ${order.status.toLowerCase()}.` });
 
-    const year = new Date().getFullYear();
-    const compCount = await Order.countDocuments({ isComplimentary: true, businessType: BUSINESS_TYPE, ...tenantScope(req) });
-    const refNum = `COMP-${year}-${(compCount + 1).toString().padStart(4, '0')}`;
+    // The approver is proved, not typed: orders.override, or a manager's PIN
+    // approval for this order. `approvedBy` from the body is no longer trusted.
+    const approver = overrideOk(req, order._id);
+    if (!approver) return needsOverride(res, 'A complimentary order');
+
+    // Numbered from the atomic counter: a count of comp orders repeated a
+    // number whenever two were made at once or one was reversed.
+    const refNum = await mkSeqRef('COMP');
 
     order.isComplimentary = true;
     order.transactionType = 'COMPLIMENTARY';
     order.complimentaryReasonType = reasonType;
     order.complimentaryReasonNote = reasonNote || '';
-    order.complimentaryApprovedBy = approvedBy || 'Manager';
+    order.complimentaryApprovedBy = approver.approverName || 'Manager';
     order.complimentaryApprovedAt = new Date();
     order.complimentaryAmount = order.subtotal;
     order.complimentaryReferenceNumber = refNum;
-    order.employeeName = forEmployee || approvedBy || '';
+    order.employeeName = forEmployee || '';
     order.discountPercent = 0;
     order.discount = order.subtotal;
     order.total = 0;
@@ -1427,6 +1553,7 @@ app.put('/api/orders/:id/complimentary', verifyToken, requireStaff, permit('orde
     order.paymentMethod = 'Complimentary';
 
     await order.save();
+    await logAudit(req, { action: 'complimentary', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, amount: order.complimentaryAmount, approvedBy: order.complimentaryApprovedBy, reference: refNum } });
     emitToOps('orderUpdated', order.toObject());
     res.json({ success: true, order });
   } catch (err) {
@@ -1880,6 +2007,47 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       await session.abortTransaction();
       session.endSession();
       return res.status(409).json({ success: false, error: `This order is ${previousStatus.toLowerCase()} and can no longer be changed.` });
+    }
+
+    // Money levers on an open order: a new manual discount (order or line) and
+    // add-ons, re-priced from the catalogue. Add-ons used to be stored exactly
+    // as sent, so a negative one cut the total with no record of it.
+    {
+      const vatExemptAfter = isVatExempt !== undefined ? isVatExempt === true : !!order.isVatExempt;
+      let lever = '';
+      if (discountPercent !== undefined) {
+        const p = Math.min(100, Math.max(0, Number(discountPercent) || 0));
+        if (p !== (Number(order.discountPercent) || 0) && manualDiscount(p, 0, vatExemptAfter)) lever = 'A manual discount';
+      }
+      const addOnLines = [];
+      if (Array.isArray(items)) {
+        items.forEach((it, i) => {
+          const line = order.items[i];
+          if (!line || !it) return;
+          if (it.discountPercent !== undefined) {
+            const p = Math.min(100, Math.max(0, Number(it.discountPercent) || 0));
+            if (p !== (Number(line.discountPercent) || 0) && manualDiscount(p, 0, vatExemptAfter)) lever = lever || 'A manual discount';
+          }
+          if (Array.isArray(it.selectedAddOns)) {
+            addOnLines.push({ index: i, item: {
+              productId: line.productId, name: line.name, sizeName: line.sizeName, quantity: line.quantity,
+              selectedAddOns: it.selectedAddOns.map(a => ({ name: String(a?.name || ''), price: a?.price })),
+            } });
+          }
+        });
+      }
+      if (addOnLines.length) {
+        const priced = await resolveCatalogPrices(req, addOnLines.map(l => l.item), { selfService: false, buyerClientId: '' });
+        if (priced.error) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ success: false, error: priced.error }); }
+        if (priced.overrides.some(o => o.kind === 'addon')) lever = lever || 'An add-on price other than the catalogue\'s';
+        // What is stored is what was priced, never the raw request.
+        for (const l of addOnLines) items[l.index].selectedAddOns = l.item.selectedAddOns;
+      }
+      if (lever && !overrideOk(req, order._id)) {
+        await session.abortTransaction();
+        session.endSession();
+        return needsOverride(res, lever);
+      }
     }
 
     // Dine-in in the bar's own cups, or take-out cups after all - decided any
@@ -2552,7 +2720,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
     if (status === 'Completed' && wasNotCompleted) alertBelowZero(req, order);
     // Push menuUpdated so CustomerMenu instantly re-fetches products and recomputes
     // stockAvailable - catches the moment an ingredient hits zero during service.
-    if (status === 'Completed') emitToAll('menuUpdated');
+    if (status === 'Completed') menuUpdatedSoon();
     res.json({ success: true, order });
     if (status === 'Completed' && wasNotCompleted) maybePromoteWalkInClient(order);
 
@@ -4275,6 +4443,10 @@ app.post('/api/orders/:id/exchange', verifyToken, requireStaff, requirePermissio
     const order = await Order.findById(req.params.id).session(session);
     if (!order) return await fail(404, 'Order not found.');
     if (order.status !== 'Completed') return await fail(400, 'Can only exchange on Completed orders.');
+    // Nothing was paid for a complimentary order, so an exchange has nothing to
+    // give back - it used to pay the returned items' menu value out of cash
+    // (P880 credited to Cash on Hand, order total -880).
+    if (order.isComplimentary) return await fail(400, 'A complimentary order cannot be exchanged. Void it and ring the replacement up as a new complimentary order.');
 
     // --- Validate the return side (same rules as partial-refund) ---
     const seenIdx = new Set();

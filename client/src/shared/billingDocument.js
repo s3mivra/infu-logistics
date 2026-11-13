@@ -8,6 +8,8 @@
 // Support & Payment, and Welcome & Announcements. Anything left blank falls back
 // to VITE_BILLING_* env values, then to a sensible default.
 
+import { esc as escHtml, safeCssSize, safeCssColor, safeImageSrc } from './receiptTemplate.js';
+
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Kasa Lokal').toUpperCase();
 const ENV_BILLING = {
   name: import.meta.env.VITE_BILLING_NAME || '',
@@ -26,15 +28,18 @@ const ENV_BILLING = {
 const FB_LINK_ENV = import.meta.env.VITE_FB_LINK || '';
 
 const pick = (...vals) => { for (const v of vals) { const s = String(v ?? '').trim(); if (s) return s; } return ''; };
-const esc = (v) => String(v ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+// One escaper for every printed document (quotes included - see receiptTemplate.js).
+const esc = escHtml;
 const money = (n) => Number(n || 0).toFixed(2);
 
 // Resolve the shared letterhead + payment/contact strings from settings → env → default.
 export function resolveBillingLetterhead(settings = {}) {
   const s = settings || {};
-  const logo = (s.printLogoEnabled && s.printLogo) ? s.printLogo : (s.businessLogo || '');
-  const logoColor = s.logoColor || '';
-  const logoRadius = s.logoRadius || '10px';
+  // Branding settings land in CSS and an <img src>: only a real size, colour
+  // or image survives (2026-11 audit, M10).
+  const logo = safeImageSrc((s.printLogoEnabled && s.printLogo) ? s.printLogo : (s.businessLogo || ''));
+  const logoColor = safeCssColor(s.logoColor);
+  const logoRadius = safeCssSize(s.logoRadius, '10px');
   const companyName = pick(s.portalCompanyName, ENV_BILLING.name, BIZ_NAME);
   // Settings hold a single address field; env holds up to two lines. Prefer the
   // admin-entered value, else stitch the env lines.
@@ -240,7 +245,7 @@ ${copies.map(copyLabel => `
   </div>
   <div class="header">
     <div class="biz-row">
-      ${lh.logo ? `<span class="logo-wrap" style="${lh.logoColor ? `background:${lh.logoColor};padding:5px;` : ''}"><img class="biz-logo" src="${lh.logo}" alt="" /></span>` : ''}
+      ${lh.logo ? `<span class="logo-wrap" style="${lh.logoColor ? `background:${lh.logoColor};padding:5px;` : ''}"><img class="biz-logo" src="${esc(lh.logo)}" alt="" /></span>` : ''}
       <div class="biz">${esc(lh.companyName)}</div>
     </div>
     ${lh.addressLines.map(a => `<div class="addr">${esc(a)}</div>`).join('')}
@@ -272,7 +277,7 @@ ${copies.map(copyLabel => `
   <div class="footer-block">
     <div class="tcs">
       <h4>${esc(termsTitle)}</h4>
-      ${termsList.map(t => `<p>${t}</p>`).join('')}
+      ${termsList.map(t => `<p>${esc(t).replace(/&amp;nbsp;/g, '&nbsp;')}</p>`).join('')}
       ${terms ? '' : `<p>4. All bank and cheque payments must be made payable to ${esc(lh.accountName)}.</p>`}
       ${contactLine}
       ${lh.slipFooter ? `<p style="margin-top:4px;font-style:italic;">${esc(lh.slipFooter)}</p>` : ''}

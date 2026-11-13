@@ -187,7 +187,7 @@ app.get('/api/addons', async (req, res) => {
     let isStaff = false;
     try {
       const raw = req.headers.authorization?.replace(/^Bearer /, '') || '';
-      if (raw) { const dec = jwt.verify(raw, process.env.JWT_SECRET); isStaff = !!dec?.role && dec.role !== 'client'; }
+      if (raw) { const dec = jwt.verify(raw, process.env.JWT_SECRET, { algorithms: ['HS256'] }); isStaff = !!dec?.role && dec.role !== 'client'; }
     } catch { /* anonymous or expired: treated as the public */ }
     const addons = await AddOn.find({}, isStaff ? undefined : { recipe: 0 }).lean();
     res.json({ success: true, addons });

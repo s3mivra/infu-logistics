@@ -79,6 +79,11 @@ export default function defineClientModels({ BUSINESS_TYPE, log }) {
     // Sessions signed before this moment are refused: set when the office
     // resets the password or issues a new login, so an old session ends there.
     sessionsValidFrom: { type: Date, default: null },
+    // When the client accepted the privacy notice and terms, and which edition
+    // (lib/legal.js) - the record the Data Privacy Act asks a business to be
+    // able to show (2026-11 audit, M77).
+    privacyNoticeAcceptedAt: { type: Date, default: null },
+    privacyNoticeVersion: { type: String, default: '' },
     onboardingTokenExpiresAt: { type: Date, default: null },
     // A link made with no name: the account carries a placeholder until the
     // client types their own name on the sign-up page.
@@ -147,6 +152,8 @@ export default function defineClientModels({ BUSINESS_TYPE, log }) {
     userId:    { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     revoked:   { type: Boolean, default: false },
     replacedBy:{ type: String },          // tokenHash of the rotated successor (audit trail)
+    rotatedAt: { type: Date },            // when it was swapped for replacedBy (reuse detection)
+    familyStart: { type: Date },          // first sign-in of this chain - caps its total life
     userAgent: { type: String },
     expiresAt: { type: Date, required: true },
   }, { timestamps: true });

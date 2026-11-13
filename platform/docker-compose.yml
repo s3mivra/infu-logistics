@@ -12,7 +12,7 @@ name: semivra-platform
 
 services:
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee
     restart: unless-stopped
     ports:
       - "80:80"
@@ -22,6 +22,8 @@ services:
       ACME_EMAIL: ${ACME_EMAIL}
       CADDY_GLOBAL_EXTRA: ${CADDY_GLOBAL_EXTRA:-}
       CP_HOST: ${CP_HOST:?set CP_HOST in platform/.env}
+      # Who may reach the control plane (see Caddyfile). Unset = this host only.
+      CP_ALLOWED_IPS: ${CP_ALLOWED_IPS:-127.0.0.1/32 ::1/128}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./tenants-caddy:/etc/caddy/tenants
@@ -34,7 +36,7 @@ services:
     networks: [semivra-net]
 
   mongo:
-    image: mongo:7
+    image: mongo:7.0.48@sha256:9896df581dfd0718b7abe112f4c37598d0986c54060e4ec1384997e6503c8c71
     restart: unless-stopped
     # Replica set is mandatory: the app's money paths use multi-document
     # transactions, which MongoDB only allows on a replica set.
@@ -66,7 +68,7 @@ services:
   # read back with a dry-run restore before it is kept; see backup-loop.sh.
   # Prove a full restore periodically with: bash platform/restore-drill.sh
   backup:
-    image: mongo:7
+    image: mongo:7.0.48@sha256:9896df581dfd0718b7abe112f4c37598d0986c54060e4ec1384997e6503c8c71
     restart: unless-stopped
     entrypoint: ["/bin/bash", "/backup-loop.sh"]
     environment:
@@ -94,12 +96,17 @@ services:
   # leaked R2/B2 key does not leak every tenant's books. Keep the recovery key
   # (the panel shows it) somewhere other than this server.
   backup-offsite:
-    image: rclone/rclone:1.68
+    image: rclone/rclone:1.76.0@sha256:7cbeec24a44f206067597c0368be4de90ae19a64d5113c7d1938bd737a81e466
     profiles: ["offsite"]
     restart: unless-stopped
     env_file:
       - path: ./offsite.env
         required: false
+    environment:
+      # Offsite copies older than this are deleted after each sync, so a
+      # tenant's data does not outlive its contract in the bucket forever
+      # (2026-11 audit, M75). Longer than the local window on purpose.
+      OFFSITE_RETENTION_DAYS: ${OFFSITE_RETENTION_DAYS:-90}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >
@@ -113,6 +120,8 @@ services:
             --include 'semivra-*.archive.gz' --include 'LAST_*' --s3-no-check-bucket
           && date -u +%FT%TZ > /backups/LAST_OFFSITE_SYNC
           || { echo "offsite sync failed"; date -u +%FT%TZ > /backups/LAST_OFFSITE_FAILURE; };
+          rclone delete secure: --include 'semivra-*.archive.gz' --min-age "$${OFFSITE_RETENTION_DAYS}d" --s3-no-check-bucket
+          || echo "offsite prune failed (archives are kept)";
           sleep 21600;
         done
     volumes:

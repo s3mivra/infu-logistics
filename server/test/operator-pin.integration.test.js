@@ -59,7 +59,9 @@ describe('giving someone a PIN', () => {
     // A bare PIN has to identify exactly one person, or a sale lands on
     // whichever record happened to be read first.
     expect(res.status).toBe(409);
-    expect(res.body.error).toMatch(/already used by Ana/i);
+    expect(res.body.error).toMatch(/already taken/i);
+    // ...without saying whose it is (2026-11 audit: that names a PIN to try).
+    expect(res.body.error).not.toMatch(/Ana/);
   });
 
   it('refuses anything that is not 4 to 6 digits', async () => {

@@ -191,12 +191,15 @@ export async function restoreQueueFromIdb() {
   return back.length;
 }
 
-export function queueOrder(payload, id) {
+// `ownerId` is the staff account that rang the sale up. An untagged queue was
+// replayed under whoever signed in next, crediting the sale to the wrong
+// cashier (2026-11 audit, M109).
+export function queueOrder(payload, id, ownerId) {
   askToPersist();
   const queue = getQueuedOrders();
   const entryId = id || `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   if (queue.some(e => e.id === entryId)) return queue.length; // already queued - don't double
-  const entry = { id: entryId, payload, queuedAt: Date.now() };
+  const entry = { id: entryId, payload, queuedAt: Date.now(), ownerId: ownerId || null };
   queue.push(entry);
   localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
   idbPut(entry);
@@ -226,17 +229,21 @@ export const REJECTED = 'rejected';
 /**
  * Replay every queued order through `sender(entry)`.
  *
+ * With `ownerId`, only that person's orders are sent; anyone else's wait for
+ * them to sign in (M109). An order with no owner - queued before owners were
+ * kept - is still sent, as before: dropping a paid sale is worse.
+ *
  * The queue is re-read at the END and only the entries this flush actually
  * settled are removed. It used to overwrite the whole queue with the
  * survivors it computed at the START - so an order queued while a flush was
  * in progress was silently erased: a lost sale.
  */
 let _flushing = false;
-export async function flushQueue(sender) {
+export async function flushQueue(sender, ownerId) {
   if (_flushing) return { sent: 0, rejected: 0, remaining: getQueuedOrders().length };
   _flushing = true;
   try {
-    const snapshot = getQueuedOrders();
+    const snapshot = getQueuedOrders().filter(e => ownerId === undefined || !e.ownerId || e.ownerId === ownerId);
     if (snapshot.length === 0) return { sent: 0, rejected: 0, remaining: 0 };
     const settled = new Set();
     const refused = [];

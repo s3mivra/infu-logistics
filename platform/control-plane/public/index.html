@@ -699,7 +699,7 @@ document.addEventListener('click', async (ev) => {
   if (what === 'offsite') return openOffsite();
   if (what === 'backups') return openBackups();
   if (what === 'key') {
-    try { const d = await api('/api/backup/offsite-key'); openPasswordModal('Offsite backups', d.recoveryKey, { title: 'Offsite recovery key', note: 'Needed to read the offsite copies back. Keep it off this server.' }); }
+    try { const pw = askDanger(); if (!pw) return; const d = await api('/api/backup/offsite-key', { headers: { 'x-danger-password': pw } }); openPasswordModal('Offsite backups', d.recoveryKey, { title: 'Offsite recovery key', note: 'Needed to read the offsite copies back. Keep it off this server.' }); }
     catch (e) { alert(e.message); }
     return;
   }
@@ -735,8 +735,8 @@ async function refresh() {
       return `
       <div class="row">
         <div>
-          <div><strong>${t.businessName || t.slug}</strong> <span class="pill">${t.businessType || '?'}</span>${t.testTenant ? ' <span class="pill ok">TEST</span>' : ''}</div>
-          <div class="muted"><a href="${t.url}" target="_blank" rel="noopener">${t.url}</a></div>
+          <div><strong>${esc(t.businessName || t.slug)}</strong> <span class="pill">${esc(t.businessType || '?')}</span>${t.testTenant ? ' <span class="pill ok">TEST</span>' : ''}</div>
+          <div class="muted"><a href="${esc(/^https?:///.test(t.url || '') ? t.url : '#')}" target="_blank" rel="noopener">${esc(t.url)}</a></div>
           <div class="muted">mem ${mem} of ${u.memLimitMb ?? t.memMb ?? 1024} MB
             · cpu ${u.cpuShares ?? t.cpuShares ?? 1024}
             · db ${fmtBytes(u.dbBytes)}
@@ -744,22 +744,22 @@ async function refresh() {
         </div>
         <div>api ${statusPill(t.status.api)} web ${statusPill(t.status.web)}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="ghost" data-act="password" data-slug="${t.slug}" title="Show / copy this client's superadmin login password">Password</button>
-          <button class="ghost" data-act="resources" data-slug="${t.slug}">Resources</button>
-          <button class="ghost" data-act="rebuild" data-slug="${t.slug}" title="Rebuilds this tenant's web (branding/theme) image only. To update the server, use &quot;Update all apps&quot; above.">Rebuild web</button>
-          <button class="ghost" data-act="stop" data-slug="${t.slug}">Stop</button>
-          <button class="ghost" data-act="start" data-slug="${t.slug}">Start</button>
-          <button class="ghost" data-act="logs" data-slug="${t.slug}">Logs</button>
-          <button class="ghost" data-act="backup" data-slug="${t.slug}" title="Download all of this client's data as one file - keep it off this server">Download backup</button>
-          <button class="danger" data-act="restore" data-slug="${t.slug}" title="Put this client's data back from a backup">Restore</button>
-          <button class="danger" data-act="wipe" data-slug="${t.slug}">Wipe data</button>
-          <button class="danger" data-act="destroy" data-slug="${t.slug}">Delete</button>
+          <button class="ghost" data-act="password" data-slug="${esc(t.slug)}" title="Show / copy this client's superadmin login password">Password</button>
+          <button class="ghost" data-act="resources" data-slug="${esc(t.slug)}">Resources</button>
+          <button class="ghost" data-act="rebuild" data-slug="${esc(t.slug)}" title="Rebuilds this tenant's web (branding/theme) image only. To update the server, use &quot;Update all apps&quot; above.">Rebuild web</button>
+          <button class="ghost" data-act="stop" data-slug="${esc(t.slug)}">Stop</button>
+          <button class="ghost" data-act="start" data-slug="${esc(t.slug)}">Start</button>
+          <button class="ghost" data-act="logs" data-slug="${esc(t.slug)}">Logs</button>
+          <button class="ghost" data-act="backup" data-slug="${esc(t.slug)}" title="Download all of this client's data as one file - keep it off this server">Download backup</button>
+          <button class="danger" data-act="restore" data-slug="${esc(t.slug)}" title="Put this client's data back from a backup">Restore</button>
+          <button class="danger" data-act="wipe" data-slug="${esc(t.slug)}">Wipe data</button>
+          <button class="danger" data-act="destroy" data-slug="${esc(t.slug)}">Delete</button>
         </div>
       </div>`;
     }).join('');
   } catch (e) {
     if (/signed in/i.test(e.message)) { sessionStorage.removeItem('cp_token'); location.reload(); return; }
-    $('tenantList').innerHTML = '<p class="err">' + e.message + '</p>';
+    $('tenantList').innerHTML = '<p class="err">' + esc(e.message) + '</p>';
   }
 }
 
@@ -779,7 +779,7 @@ async function act(slug, action, btn) {
     }
     else if (action === 'password') {
       const t = LAST_TENANTS.find((x) => x.slug === slug);
-      const d = await api(`/api/tenants/${slug}/admin-password`);
+      const pw = askDanger(); if (!pw) return; const d = await api(`/api/tenants/${slug}/admin-password`, { headers: { 'x-danger-password': pw } });
       openPasswordModal(t?.businessName || slug, d.adminPass || '');
     }
     else if (action === 'resources') {
@@ -815,8 +815,14 @@ async function act(slug, action, btn) {
 }
 
 // Downloads need the session token, which a plain link cannot send.
+// Reading a secret (an admin password, a database, the offsite key) needs the
+// second password as well; it is asked for each time and never kept.
+function askDanger() { return prompt('Second password (needed to read passwords, backups and keys):') || ''; }
+
 async function downloadWithAuth(url, fallbackName) {
-  const res = await fetch(url, { headers: { Authorization: 'Bearer ' + TOKEN } });
+  const dangerPassword = askDanger();
+  if (!dangerPassword) return;
+  const res = await fetch(url, { headers: { Authorization: 'Bearer ' + TOKEN, 'x-danger-password': dangerPassword } });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || ('HTTP ' + res.status)); }
   const m = /filename="?([^";]+)"?/.exec(res.headers.get('content-disposition') || '');
   const blob = await res.blob();
@@ -1071,10 +1077,10 @@ async function loadBilling() {
           <div style="margin-top:6px">${recent.length ? recent.map((m) => `<span class="month-pill">${monthLabel(m)}</span>`).join('') : '<span class="muted">no payment history yet</span>'}</div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="ghost small" data-billact="fee" data-slug="${t.slug}">Set fee</button>
+          <button class="ghost small" data-billact="fee" data-slug="${esc(t.slug)}">Set fee</button>
           ${paid
-            ? `<button class="ghost small" data-billact="unmark" data-slug="${t.slug}">Unmark paid</button>`
-            : `<button class="small" data-billact="mark" data-slug="${t.slug}">Mark Paid</button>`}
+            ? `<button class="ghost small" data-billact="unmark" data-slug="${esc(t.slug)}">Unmark paid</button>`
+            : `<button class="small" data-billact="mark" data-slug="${esc(t.slug)}">Mark Paid</button>`}
         </div>
       </div>`;
     }).join('');

@@ -61,10 +61,12 @@ describe('the link to another branch', () => {
   it('still points somewhere when that branch is unreachable', async () => {
     // The partner's API is not answering - the link must still be right, since
     // that is exactly when somebody wants to go and look at it.
+    // The stored partnerUrl is never trusted (2026-11 audit, M30): the address
+    // always comes from the slug, so a tampered URL changes nothing.
     await link({ partnerUrl: 'http://nowhere-api:5002' });
     const net = await network();
     const partner = net.partners[0];
     expect(partner.ok).toBe(false);
-    expect(partner.dashboardUrl).toBe('http://nowhere');
+    expect(partner.dashboardUrl).toBe('http://infu-main');
   });
 });

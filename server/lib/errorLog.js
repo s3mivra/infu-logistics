@@ -14,6 +14,7 @@
 
 import mongoose from 'mongoose';
 import crypto from 'node:crypto';
+import { isClientError } from './requestSafety.js';
 
 const COLLECTION = 'errorevents';
 const CAP_BYTES = 32 * 1024 * 1024;   // ~32 MB of history per tenant
@@ -49,8 +50,16 @@ export function initErrorLog() {
 
 // Strips anything that could carry customer data or secrets out of the route.
 // /api/orders/6a69.../cancel -> /api/orders/:id/cancel
+// Path segments that ARE secrets: an onboarding link, a QR order's view key.
+const SECRET_SEGMENTS = /(\/api\/client-onboard\/)[^/?]+/gi;
+// The address as it is safe to write to a log: no query string (customer-name
+// searches, view keys) and no secret path segment (2026-11 audit, M79).
+export function logSafeUrl(url) {
+  return String(url || '').split('?')[0].replace(SECRET_SEGMENTS, '$1:token').slice(0, 300);
+}
+
 function normalizeRoute(req) {
-  const raw = (req?.originalUrl || req?.url || '').split('?')[0];
+  const raw = logSafeUrl(req?.originalUrl || req?.url || '');
   return raw
     .replace(/\/[0-9a-f]{24}(?=\/|$)/gi, '/:id')
     .replace(/\/\d+(?=\/|$)/g, '/:n')
@@ -69,6 +78,10 @@ export function captureError(req, err, { status = 500, kind = 'request' } = {}) 
   // (lib/atomicRoute.js) answers 500 after catching it, and the wrapper needs
   // to know whether that 500 was a transient transaction error worth retrying.
   if (req && typeof req === 'object') req.__lastError = err;
+  // A refusal the caller can act on (a closed period, a 409 state conflict) is
+  // not a fault: it is answered with its own status (see clientErrorStatus in
+  // lib/requestSafety.js) and kept out of the error log.
+  if (isClientError(err)) return;
   try {
     if (!ready || !Model) return;
     const message = String(err?.message || err || 'Unknown error').slice(0, 500);

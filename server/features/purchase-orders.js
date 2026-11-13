@@ -632,6 +632,23 @@ export default function registerPurchaseOrders(ctx) {
       // Collect this delivery's deltas per line BEFORE mutating, so stock posting
       // moves only what arrived now - a top-up delivery must not re-post the
       // quantities an earlier delivery already put into inventory.
+      // Nothing beyond what was ordered unless the receiver says so: 500
+      // received on a PO for 10 silently raised a payable for 500 and put 500
+      // into stock. A real over-delivery is confirmed explicitly, is audited,
+      // and the bill it raises is still an Exception at three-way match.
+      const over = [];
+      for (let idx = 0; idx < po.lines.length; idx++) {
+        const line = po.lines[idx];
+        const entry = byId.get(String(line._id)) ?? byId.get(`#${idx}`);
+        if (!entry) continue;
+        const left = (Number(line.orderedQty) || 0) - (Number(line.receivedQty) || 0);
+        if (entry.receivedQty > left + 1e-9) over.push({ item: line.itemName || `Line ${idx + 1}`, left: Math.max(0, left), received: entry.receivedQty });
+      }
+      if (over.length && req.body?.acceptOverReceipt !== true) {
+        const o = over[0];
+        return res.status(400).json({ success: false, overReceipt: over, error: `${o.item}: only ${o.left} still to receive on this order, ${o.received} entered. Confirm the over-delivery to receive it anyway.` });
+      }
+      if (over.length) await logAudit(req, { action: 'over-receipt', entity: 'PurchaseOrder', entityId: po._id, after: { poNumber: po.poNumber, over } });
       const deltas = [];
       po.lines.forEach((line, idx) => {
         let entry;

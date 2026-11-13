@@ -31,13 +31,14 @@ import { ACCOUNTS, EXPENSE_CATEGORIES, CODE_MAP } from './lib/chartOfAccounts.js
 import { resolveUnit, displayToBase, effectiveDisplay, UNIT_TO_BASE, unitTypeOf, basePerPack } from './lib/units.js';
 import { zTitle, zText, zMoneyLoose, zMoneyStrict, MONEY_MAX } from './lib/normalize.js';
 import { addBatch, consumeBatches, consumeSpecificBatch, soonestExpiry, sortBatchesFEFO, batchesTotal } from './lib/expiry.js';
-import { stripQueryOperators, forwardAsyncErrors } from './lib/requestSafety.js';
-import { withFloorActions, withSplitScreens } from './lib/authz.js';
+import { stripQueryOperators, forwardAsyncErrors, clientErrorStatus } from './lib/requestSafety.js';
+import { withFloorActions, withSplitScreens, withOrderOverride } from './lib/authz.js';
 import { requireStaff, evaluateStaffAccess, evaluateClientAccess, requirePermission, requireAnyPermission, requireUserAdmin, guardStaffEscalation, resolvePermissions, hasPermission, PERMISSIONS, PERMISSION_KEYS, ROLE_DEFAULT_PERMISSIONS } from './lib/authz.js';
 import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
 import { computeOrderVat, extractVat, normaliseVatRate, DEFAULT_VAT_RATE } from './lib/vat.js';
 import { validateDateRange } from './lib/reportRange.js';
-import { initErrorLog } from './lib/errorLog.js';
+import { initErrorLog, logSafeUrl } from './lib/errorLog.js';
+import { fieldCryptPlugin, encryptValue } from './lib/fieldCrypt.js';
 import registerTenants from './features/tenants.js';
 import registerAddons from './features/addons.js';
 import registerUsers from './features/users.js';
@@ -95,10 +96,18 @@ import defineClientModels from './models/defineClientModels.js';
 import defineWorkflowModels from './models/defineWorkflowModels.js';
 import defineCatalogModels from './models/defineCatalogModels.js';
 
+// Production unless told otherwise (2026-11 audit, M42). Every safeguard below
+// - secret strength, the default admin password, Secure cookies, LAN CORS,
+// hidden error details - used to switch on only for NODE_ENV === 'production'
+// exactly, so a typo or a missing variable silently ran a live shop in
+// development mode. Only an explicit 'development' or 'test' relaxes them.
+const NODE_ENV = String(process.env.NODE_ENV || '').trim().toLowerCase();
+const IS_PROD = !['development', 'test'].includes(NODE_ENV);
+
 const log = pino({
-  level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
+  level: process.env.LOG_LEVEL || (IS_PROD ? 'info' : 'debug'),
   base: { service: 'semivra-pos' },
-  ...(process.env.NODE_ENV !== 'production' && { transport: { target: 'pino-pretty', options: { colorize: true, translateTime: 'HH:MM:ss.l' } } })
+  ...(!IS_PROD && { transport: { target: 'pino-pretty', options: { colorize: true, translateTime: 'HH:MM:ss.l' } } })
 });
 
 // Optional error monitoring - completely inert unless SENTRY_DSN is set.
@@ -120,7 +129,10 @@ if (!process.env.MONGO_URI || !process.env.JWT_SECRET) {
 
 // Production config hardening - refuse to boot with weak/default secrets so a
 // deployment can never silently ship a guessable signing key or admin password.
-if (process.env.NODE_ENV === 'production') {
+if (IS_PROD) {
+  if (NODE_ENV !== 'production') {
+    console.warn(`⚠️  NODE_ENV is ${NODE_ENV ? '"' + NODE_ENV + '"' : 'not set'} - running with production safeguards. Set NODE_ENV=development to relax them on a developer machine.`);
+  }
   const weakReasons = [];
   if ((process.env.JWT_SECRET || '').length < 32) {
     weakReasons.push('JWT_SECRET must be at least 32 chars (use `openssl rand -hex 32`)');
@@ -159,10 +171,38 @@ const server = http.createServer(app);
 // - Trust the single upstream proxy (Railway/Vercel) so req.ip + rate-limit keys
 //   reflect the real client IP, not the load balancer's.
 app.disable('x-powered-by');
-app.set('trust proxy', 1);
+// How many proxies sit in front of the API. The platform puts two there
+// (Caddy -> the tenant's nginx -> api): trusting only one made req.ip Caddy's
+// address for every visitor, so every IP-keyed limit was one bucket for the
+// whole tenant (five wrong passwords from anyone locked out everyone).
+// TRUST_PROXY=2 is set by platform/tenant-compose.yml; a single nginx in front
+// (docker-compose.yml) is the default of 1.
+app.set('trust proxy', (() => {
+  const n = Number.parseInt(process.env.TRUST_PROXY ?? '1', 10);
+  return Number.isInteger(n) && n >= 0 && n <= 5 ? n : 1;
+})());
 // Makes the acting user visible to code deep in a request (journal entries
 // stamp postedBy from it). Must come before every route.
 app.use(requestContext);
+// A 4xx error thrown inside a handler keeps its status and message even where
+// the route's own catch block answers 500 - see lib/requestSafety.js.
+app.use(clientErrorStatus);
+
+// Readiness (2026-11 audit, M45). The port opens at once, but the database
+// connects and the startup migrations run afterwards - and requests used to be
+// served against a half-migrated database while /health said ok. Until both are
+// done every request but /health gets a 503 with Retry-After, which the client
+// and the load balancer already treat as 'try again shortly'. Tests drive the
+// app in-process while startup runs, as before.
+let startupState = 'starting';   // 'starting' | 'ready' | 'failed'
+app.use((req, res, next) => {
+  if (startupState === 'ready' || NODE_ENV === 'test' || req.path === '/health') return next();
+  res.set('Retry-After', '5');
+  return res.status(503).json({
+    success: false,
+    error: startupState === 'failed' ? 'The server could not finish starting.' : 'The server is starting - try again in a few seconds.',
+  });
+});
 
 // Hardened security headers. This is a JSON API consumed by a separate SPA origin,
 // so the restrictive default CSP is relaxed to avoid breaking nothing-served-here,
@@ -176,7 +216,6 @@ app.use(helmet({
 app.use(compression());
 
 // --- CORS CONFIG (env-driven for production, LAN auto-allow for dev) ---
-const IS_PROD = process.env.NODE_ENV === 'production';
 // 'fb' = food & beverage (QR ordering), 'log' = logistics (client-login ordering)
 const BUSINESS_TYPE = (process.env.BUSINESS_TYPE || 'fb').toLowerCase();
 // Reserved standard customer ID for walk-in/guest sales (no linked ClientAccount).
@@ -185,8 +224,9 @@ const BUSINESS_TYPE = (process.env.BUSINESS_TYPE || 'fb').toLowerCase();
 const WALK_IN_CUSTOMER_CODE = 'CUS-1000-A0001';
 const ENV_ORIGINS = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || '')
   .split(',').map(s => s.trim()).filter(Boolean);
+// The Vite dev server's origin is a developer convenience, never a production one.
 const allowedOrigins = [
-  "http://localhost:3000",
+  ...(!IS_PROD ? ['http://localhost:3000'] : []),
   ...ENV_ORIGINS
 ];
 
@@ -226,7 +266,7 @@ app.use(pinoHttp({
     return 'info';
   },
   serializers: {
-    req: req => ({ method: req.method, url: req.url, id: req.id }),
+    req: req => ({ method: req.method, url: logSafeUrl(req.url), id: req.id }),
     res: res => ({ statusCode: res.statusCode })
   }
 }));
@@ -249,7 +289,7 @@ app.use(createIdempotencyMiddleware({
   identify: (req) => {
     const h = req.headers.authorization || '';
     if (!h.startsWith('Bearer ')) return null;
-    try { const d = jwt.verify(h.slice(7), process.env.JWT_SECRET); return d?._id ? `u:${d.aud || 'staff'}:${d._id}` : null; }
+    try { const d = jwt.verify(h.slice(7), process.env.JWT_SECRET, { algorithms: ['HS256'] }); return d?._id ? `u:${d.aud || 'staff'}:${d._id}` : null; }
     catch { return null; }
   },
 }));
@@ -412,8 +452,22 @@ const signAccessToken = (user) => jwt.sign(
   // the DB; legacy tokens without it fall back to role defaults in hasPermission.
   { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, tenantId: user.tenantId || null, perms: resolvePermissions(user), tv: user.tokenVersion || 0, aud: 'staff' },
   process.env.JWT_SECRET,
-  { expiresIn: ACCESS_TTL }
+  // jti: lets logout cancel THIS access token (see loggedOutTokens) without
+  // signing the person out of their other devices.
+  { expiresIn: ACCESS_TTL, algorithm: 'HS256', jwtid: crypto.randomBytes(12).toString('hex') }
 );
+
+// Access tokens ended by logout before their 15 minutes ran out: jti -> exp
+// (ms). Single process per tenant; entries drop once the token would have
+// expired anyway.
+const loggedOutTokens = new Map();
+const forgetLoggedOut = () => { const now = Date.now(); for (const [k, exp] of loggedOutTokens) if (exp <= now) loggedOutTokens.delete(k); };
+const endAccessToken = (decoded) => {
+  if (!decoded?.jti) return;
+  forgetLoggedOut();
+  loggedOutTokens.set(decoded.jti, (Number(decoded.exp) || 0) * 1000);
+};
+const accessTokenEnded = (decoded) => !!decoded?.jti && loggedOutTokens.has(decoded.jti);
 
 const hashToken = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
 
@@ -448,6 +502,7 @@ const issueSession = async (res, user, meta = {}) => {
     tokenHash: hashToken(rawRefresh),
     userId: user._id,
     expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
+    familyStart: new Date(),
     userAgent: meta.userAgent?.slice(0, 200),
   });
   res.cookie(REFRESH_COOKIE, rawRefresh, refreshCookieOptions());
@@ -480,7 +535,15 @@ const revokeUserSessions = async (userId) => {
   await RefreshSession.updateMany({ userId, revoked: false }, { revoked: true });
   const u = await User.findByIdAndUpdate(userId, { $inc: { tokenVersion: 1 } }, { new: true, projection: { tokenVersion: 1 } }).lean().catch(() => null);
   tokenVersionCache.set(String(userId), { tv: u ? (u.tokenVersion || 0) : Number.POSITIVE_INFINITY, at: Date.now() });
+  disconnectUserSockets(userId);
 };
+
+// Live connections end with the access they were opened under. Rooms are
+// assigned once, at connect, so a fired, demoted or signed-out person kept
+// receiving every order and ledger event for as long as their tab stayed open.
+function disconnectUserSockets(userId) {
+  try { io.in(`user:${String(userId)}`).disconnectSockets(true); } catch { /* io not up yet */ }
+}
 
 // ── BOUNDARY VALIDATION ──────────────────────────────────────────────────────
 // validate(schema) parses req.body against a Zod schema. Zod strips unknown keys
@@ -635,10 +698,12 @@ const invalidateBranchCodeCache = () => { _branchCodeCache = { value: '', at: 0 
 app.get('/health', (req, res) => {
   const dbState = mongoose.connection.readyState; // 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
   const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
-  const healthy = dbState === 1;
+  // Healthy only once the startup migrations have finished too (M45).
+  const healthy = dbState === 1 && (startupState === 'ready' || NODE_ENV === 'test');
   res.status(healthy ? 200 : 503).json({
     status: healthy ? 'ok' : 'degraded',
     db: states[dbState] || 'unknown',
+    startup: startupState,
     // Exposed so the client can detect a build/server BUSINESS_TYPE mismatch
     // (the #1 mis-deployment: fb client pointed at a log server or vice-versa).
     businessType: BUSINESS_TYPE,
@@ -688,7 +753,7 @@ const rateLimitKey = (req) => {
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
     try {
-      const verified = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+      const verified = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET, { algorithms: ['HS256'] });
       if (verified?._id) return `u:${verified._id}`;
     } catch { /* unsigned, expired or forged - fall through to IP */ }
   }
@@ -699,6 +764,38 @@ const rateLimitKey = (req) => {
   // when a custom keyGenerator returns req.ip raw.
   return `ip:${ipKeyGenerator(req.ip)}`;
 };
+// The anonymous endpoints - a diner's QR session, feedback, a client opening
+// their onboarding link - each get a bucket of their own, per address, sized to
+// a full cafe on one wifi address, far below a flood (2026-11 audit, M113). In the shared general bucket
+// one anonymous caller could spend the allowance of everyone behind the same
+// address - a whole cafe's wifi - and a feedback form could be posted 300 times
+// a minute.
+const PUBLIC_BUCKETS = [
+  { re: /^\/api\/feedback$/, windowMs: 60_000, max: 30, what: 'feedback' },
+  // Reading the link counts too: guessing onboarding tokens is a GET.
+  { re: /^\/api\/client-onboard\//, windowMs: 15 * 60_000, max: 20, what: 'onboarding attempts', countReads: true },
+  { re: /^\/api\/sessions\/[^/]+\/heartbeat$/, windowMs: 60_000, max: 600, what: 'session checks' },
+  { re: /^\/api\/sessions\/[^/]+\/(claim|close)$/, windowMs: 60_000, max: 120, what: 'table sessions' },
+  { re: /^\/api\/qr-devices\/session$/, windowMs: 60_000, max: 60, what: 'device sessions' },
+  // Menu photos: one request per photo per device, then cached for a year. A
+  // room of diners opening a photographed menu at once would empty the general
+  // bucket in seconds (M112).
+  { re: /^\/api\/products\/[0-9a-f]{24}\/image$/i, windowMs: 60_000, max: 3000, what: 'photo requests', countReads: true },
+].map((b) => ({
+  ...b,
+  limiter: rateLimit({
+    windowMs: b.windowMs, max: b.max, standardHeaders: true, legacyHeaders: false,
+    keyGenerator: (req) => `ip:${ipKeyGenerator(req.ip)}`,
+    skip: (req) => req.method === 'GET' && !b.countReads,
+    message: { success: false, error: `Too many ${b.what} from this address. Wait a moment and try again.` },
+  }),
+}));
+const publicBucketFor = (req) => PUBLIC_BUCKETS.find((b) => b.re.test(req.originalUrl.split('?')[0]));
+app.use((req, res, next) => {
+  const bucket = publicBucketFor(req);
+  return bucket ? bucket.limiter(req, res, next) : next();
+});
+
 const generalApiLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   // Generous per user; no longer shared across a whole location. Overridable
@@ -708,6 +805,8 @@ const generalApiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: rateLimitKey,
+  // Public endpoints are counted in their own buckets above, not here.
+  skip: (req) => !!publicBucketFor(req),
   message: { success: false, error: 'Too many requests. Please slow down.' }
 });
 app.use('/api', generalApiLimiter);
@@ -1137,6 +1236,77 @@ const runStartupTasks = async () => {
       log.error({ err }, 'Floor-action permission migration failed');
     }
 
+    // Once: seal the sensitive fields written before they were encrypted
+    // (lib/fieldCrypt.js). Straight through the driver, value by value, so
+    // nothing else on the documents changes. Values already sealed are skipped.
+    try {
+      const done = await Settings.findOne({ key: 'sealSensitiveFieldsV1' }).lean();
+      if (!done) {
+        const sealAll = async (collection, fields) => {
+          const coll = mongoose.connection.db.collection(collection);
+          const or = fields.map((f) => ({ [f]: { $type: 'string', $not: /^v1\./, $ne: '' } }));
+          let n = 0;
+          for await (const d of coll.find({ $or: or }, { projection: Object.fromEntries(fields.map((f) => [f, 1])) })) {
+            const set = {};
+            for (const f of fields) if (typeof d[f] === 'string' && d[f] && !d[f].startsWith('v1.')) set[f] = encryptValue(d[f]);
+            if (Object.keys(set).length) { await coll.updateOne({ _id: d._id }, { $set: set }); n++; }
+          }
+          return n;
+        };
+        const users = await sealAll(User.collection.collectionName, ['sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin', 'totpSecret']);
+        const orders = await sealAll(mongoose.model('Order').collection.collectionName, ['scPwdIdNumber']);
+        await Settings.findOneAndUpdate({ key: 'sealSensitiveFieldsV1' }, { key: 'sealSensitiveFieldsV1', value: true }, { upsert: true });
+        log.info({ users, orders }, '✅ Sensitive personal fields sealed at rest');
+      }
+    } catch (err) {
+      log.error({ err }, 'Sealing sensitive fields failed - they stay readable as before; will retry next start');
+    }
+
+    // Once: the government numbers in payroll run snapshots, sealed like the
+    // staff profile they were copied from (2026-11 audit, M76).
+    try {
+      const done = await Settings.findOne({ key: 'sealPayrollSnapshotsV1' }).lean();
+      if (!done) {
+        const GOV = ['sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin'];
+        const coll = mongoose.model('PayrollRun').collection;
+        let runs = 0;
+        for await (const run of coll.find({}, { projection: { lines: 1 } })) {
+          let changed = false;
+          const lines = (run.lines || []).map((l) => {
+            const next = { ...l };
+            for (const f of GOV) if (typeof l[f] === 'string' && l[f] && !l[f].startsWith('v1.')) { next[f] = encryptValue(l[f]); changed = true; }
+            return next;
+          });
+          if (changed) { await coll.updateOne({ _id: run._id }, { $set: { lines } }); runs++; }
+        }
+        await Settings.findOneAndUpdate({ key: 'sealPayrollSnapshotsV1' }, { key: 'sealPayrollSnapshotsV1', value: true }, { upsert: true });
+        log.info({ runs }, '✅ Payroll run snapshots sealed at rest');
+      }
+    } catch (err) {
+      log.error({ err }, 'Sealing payroll snapshots failed - they stay readable as before; will retry next start');
+    }
+
+    // Once: orders.override (price changes, manual discounts and comps at the
+    // till) goes to every stored role and person who could already void or
+    // approve prices. Everyone else now needs an approver's PIN for those.
+    try {
+      const done = await Settings.findOne({ key: 'permsOrderOverrideV1' }).lean();
+      if (!done) {
+        for (const r of await Role.find().lean()) {
+          const next = withOrderOverride(r.permissions || []);
+          if (next.length !== (r.permissions || []).length) await Role.updateOne({ _id: r._id }, { $set: { permissions: next } });
+        }
+        for (const u of await User.find({ 'permissions.0': { $exists: true } }, { permissions: 1 }).lean()) {
+          const next = withOrderOverride(u.permissions);
+          if (next.length !== u.permissions.length) await User.updateOne({ _id: u._id }, { $set: { permissions: next } });
+        }
+        await Settings.findOneAndUpdate({ key: 'permsOrderOverrideV1' }, { key: 'permsOrderOverrideV1', value: true }, { upsert: true });
+        log.info('✅ orders.override given to existing roles and users who can void or approve prices');
+      }
+    } catch (err) {
+      log.error({ err }, 'orders.override permission migration failed');
+    }
+
     // Once: backdated sales "On Account" were booked to Accounts Payable - post
     // the correcting entries that move them to Accounts Receivable.
     try {
@@ -1321,7 +1491,9 @@ mongoose.connect(process.env.MONGO_URI, {
   // captureError() is a no-op until then, so early boot errors are simply not
   // recorded rather than crashing the process.
   .then(() => { initErrorLog(); return runStartupTasks(); })
+  .then(() => { startupState = 'ready'; log.info('Startup tasks complete - accepting requests'); })
   .catch(err => {
+    startupState = 'failed';
     console.error('❌ MongoDB Connection Error:', err);
     // Running on without a database only answers every request with an error
     // until someone notices. In production, exit and let Docker restart us.
@@ -1339,12 +1511,22 @@ mongoose.connect(process.env.MONGO_URI, {
     try {
       // Stage 1 - signature/expiry. A malformed/expired token throws here and never
       // reaches the audience/role logic below.
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
       // Stage 2 - audience. A client-audience token must never satisfy the staff gate,
       // even before role checks. This makes every verifyToken route client-hostile by
       // default (defense-in-depth alongside requireStaff). aud beats role.
       if (decoded.aud === 'client') {
         return res.status(403).json({ success: false, message: 'Forbidden: client token not permitted here.' });
+      }
+      // Only a staff session token. Tokens minted before `aud` existed have long
+      // expired (15 minutes), and anything else signed with this secret - an
+      // approval token, say - skipped the revocation check below entirely.
+      if (decoded.aud !== 'staff') {
+        return res.status(401).json({ success: false, message: 'Unauthorized: Invalid or expired token' });
+      }
+      // Signed out on this device (see /api/auth/logout).
+      if (accessTokenEnded(decoded)) {
+        return res.status(401).json({ success: false, message: 'Unauthorized: signed out' });
       }
       req.user = decoded; // Stage 3 (role allowlist) is enforced by requireStaff on staff routes.
       // Stage 4 - still current? A token minted before the user's last
@@ -1399,7 +1581,7 @@ mongoose.connect(process.env.MONGO_URI, {
     }
     let decoded;
     try {
-      decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+      decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET, { algorithms: ['HS256'] });
     } catch {
       return res.status(401).json({ success: false, error: 'Unauthorized: Invalid or expired token' });
     }
@@ -1440,7 +1622,7 @@ mongoose.connect(process.env.MONGO_URI, {
       const token = authHeader.split(' ')[1];
       let decoded;
       try {
-        decoded = jwt.verify(token, process.env.JWT_SECRET);
+        decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
       } catch {
         // 401 so the client refreshes + retries instead of failing an expired session.
         return res.status(401).json({ success: false, error: 'Invalid or expired token.' });
@@ -1462,6 +1644,10 @@ mongoose.connect(process.env.MONGO_URI, {
         return next();
       }
       if (!evaluateStaffAccess(decoded).ok) return res.status(403).json({ success: false, error: 'Forbidden: staff access required.' });
+      // The same staff-session rules as verifyToken: a staff audience, not
+      // signed out, and current (tokenVersion).
+      if (decoded.aud !== 'staff' || !decoded._id) return res.status(401).json({ success: false, error: 'Invalid or expired token.' });
+      if (accessTokenEnded(decoded)) return res.status(401).json({ success: false, error: 'Signed out.' });
       if (decoded._id) {
         try {
           const tv = await currentTokenVersion(decoded._id);
@@ -1862,7 +2048,15 @@ JournalEntrySchema.pre('save', function () {
   if (!this.isNew && !inLedgerMaintenance()) throw refuseLedgerRewrite('save');
 });
 
-JournalEntrySchema.pre('validate', function () {
+JournalEntrySchema.pre('validate', async function () {
+  // A closed month is closed to EVERY posting path, not only the routes that
+  // remembered to call periodLockFor() (depreciation, check clearing, PO
+  // prepayment and others did not). New entries only; a declared ledger
+  // maintenance (a superadmin restore) is the one exception.
+  if (this.isNew && !inLedgerMaintenance()) {
+    const lock = await periodLockFor(this.date || new Date());
+    if (lock) throw periodClosedError(lock, this.reference);
+  }
   if (!this.postedBy) {
     const actor = currentActor();
     if (actor) { this.postedBy = actor.name; this.postedById = actor.id; }
@@ -2308,14 +2502,26 @@ const ClosedPeriod = mongoose.model('ClosedPeriod', ClosedPeriodSchema);
 
 // Check if a given date falls in a closed period. Returns the period doc if
 // closed, else null. Use this to gate any back-dated write.
+// The month is read in the BUSINESS time zone (Settings > Time zone), the same
+// clock every report and day boundary uses. getFullYear()/getMonth() read the
+// server's own zone, so an entry made at 00:30 Manila on the 1st landed in the
+// previous month's lock check on a UTC host.
 async function periodLockFor(date) {
   if (!date) return null;
   const d = new Date(date);
   if (isNaN(d.getTime())) return null;
-  const lock = await ClosedPeriod.findOne({
-    year: d.getFullYear(), month: d.getMonth() + 1, isOpen: false,
-  }).lean();
+  const [year, month] = businessDateStr(d).split('-').map(Number);
+  const lock = await ClosedPeriod.findOne({ year, month, isOpen: false }).lean();
   return lock || null;
+}
+
+// Thrown by the JournalEntry hook when an entry is dated inside a closed month.
+// Routes that catch errors generically still answer 423 through errorStatus().
+function periodClosedError(lock, reference) {
+  return Object.assign(
+    new Error(`${lock.year}-${String(lock.month).padStart(2, '0')} is closed - nothing can be posted into it${reference ? ` (${reference})` : ''}. Reopen the period first.`),
+    { status: 423, httpStatus: 423, code: 'PERIOD_CLOSED' },
+  );
 }
 
 // --- CHART OF ACCOUNTS ---
@@ -2414,6 +2620,7 @@ const UserSchema = new mongoose.Schema({
   // unless a query asks for them by name, so no list of users can carry them.
   totpEnabled:     { type: Boolean, default: false },
   totpSecret:      { type: String, default: '', select: false },
+  totpLastStep:    { type: Number, default: 0, select: false },   // last code step accepted; older ones refused
   totpPending:     { type: String, default: '', select: false },     // set up but not yet confirmed with a code
   totpBackupCodes: { type: [String], default: [], select: false },   // sha256 of each unused code
   // Devices that passed the second step and need not again for a while. Only
@@ -2426,6 +2633,10 @@ const UserSchema = new mongoose.Schema({
   // Failed attempts on this PIN, so a short code cannot simply be guessed.
   pinFailedCount:  { type: Number, default: 0 },
   pinLockedUntil:  { type: Date, default: null },
+  // Wrong passwords against THIS account, from anywhere. The login limiter is
+  // per address, which a botnet or a rotated X-Forwarded-For walks around.
+  loginFailedCount: { type: Number, default: 0 },
+  loginLockedUntil: { type: Date, default: null },
   // On the payroll: Payroll offers this account by name when lines are added,
   // so the name - and the numbers below - match the account exactly.
   isEmployee:      { type: Boolean, default: false },
@@ -2444,6 +2655,8 @@ const UserSchema = new mongoose.Schema({
   // the access token so Phase 2b can scope every query by the caller's tenant.
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null }
 }, { timestamps: true });
+// Government ID numbers and the two-step secret are sealed at rest (lib/fieldCrypt.js).
+UserSchema.plugin(fieldCryptPlugin, { fields: ['sssNumber', 'philhealthNumber', 'pagibigNumber', 'tin', 'totpSecret'] });
 const User = mongoose.model('User', UserSchema);
 
 const {
@@ -2539,20 +2752,26 @@ const emitToMgr  = (evt, data) => io.to('manager').emit(evt, data);             
 // auth.token (preferred) or the Authorization header. Unauthenticated
 // connections are still allowed for public surfaces (customer menu, QR session)
 // but they don't get room membership for sensitive broadcasts.
-io.use((socket, next) => {
+io.use(async (socket, next) => {
+  socket.data.user = null;
   try {
     const raw =
       socket.handshake.auth?.token ||
       (socket.handshake.headers?.authorization || '').replace(/^Bearer /, '') ||
       '';
-    if (!raw) { socket.data.user = null; return next(); }
-    const decoded = jwt.verify(raw, process.env.JWT_SECRET);
+    if (!raw) return next();
+    const decoded = jwt.verify(raw, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+    // Only a current STAFF session joins staff rooms: an approval token, a
+    // client token or a token from before the user's last privilege change
+    // (tokenVersion) is treated as anonymous, exactly as verifyToken refuses it.
+    if (decoded?.aud !== 'staff' || !evaluateStaffAccess(decoded).ok || !decoded._id) return next();
+    const tv = await currentTokenVersion(decoded._id);
+    if ((decoded.tv || 0) < tv) return next();
     socket.data.user = decoded;        // { _id, name, role, ... }
     return next();
   } catch {
     // Invalid / expired token - treat as anonymous rather than refusing the
     // connection, so public surfaces keep working without auth.
-    socket.data.user = null;
     return next();
   }
 });
@@ -2573,6 +2792,16 @@ io.on('connection', (socket) => {
     socket.join('cashier'); // order flow for every staff member
     if (hasPermission(user, 'accounting.view')) socket.join('manager');
     if (role === 'kitchen') socket.join('kitchen');
+    // Addressable per user, so revoking their sessions can drop this socket.
+    socket.join(`user:${String(user._id)}`);
+    // And it ends when the access token it was opened with does: the client
+    // reconnects with its refreshed token, which is checked afresh.
+    const msLeft = (Number(user.exp) || 0) * 1000 - Date.now();
+    if (msLeft > 0) {
+      const t = setTimeout(() => socket.disconnect(true), Math.min(msLeft, 2 ** 31 - 1));
+      t.unref?.();
+      socket.on('disconnect', () => clearTimeout(t));
+    }
   }
 
   // Back-compat shim: ignore client-declared roles for room placement so an
@@ -3122,6 +3351,7 @@ const RequisitionSlipSchema = new mongoose.Schema({
 
   notes: { type: String, default: '' },
   preparedBy: { type: String, default: '' },               // requester's name - the slip's "Prepared By" line
+  preparedById: { type: String, default: '' },             // requester's user id - they may not approve their own slip
   approvedBy: { type: String, default: '' },                // the slip's "Approved By" line, once set
   approvedAt: { type: Date, default: null },
   rejectedBy: { type: String, default: '' },
@@ -3257,7 +3487,18 @@ const ProductionOrder = mongoose.model('ProductionOrder', ProductionOrderSchema)
 // Routes were moved verbatim into ./features/*. They close over nothing: every
 // model/helper/middleware they use is passed via this ctx object. Registration
 // order preserves the original in-file route order per feature.
+// Step-up for destructive actions (purge, restore): the signed-in person types
+// their password again. A session alone - hijacked, or left open - is not enough.
+const confirmPassword = async (req, password) => {
+  if (!password || !req.user?._id) return false;
+  const u = await User.findById(req.user._id).select('password').lean();
+  return !!u?.password && bcrypt.compare(String(password), u.password);
+};
+
 const ctx = {
+  currentTokenVersion,
+  confirmPassword,
+  endAccessToken,
   Budget,
   LeaveRequest,
   OvertimeRequest,
@@ -3526,6 +3767,58 @@ const ctx = {
   // live getter: refreshPaymentMap() reassigns this module-level variable
   get PAYMENT_MAP_CACHE() { return PAYMENT_MAP_CACHE; },
 };
+// ── Page permissions, enforced on the server ────────────────────────────────
+// Report endpoints guarded only by their tab's permission (reports.view) let a
+// role narrowed to one page - the Driver preset: "the delivery sheet, no other
+// report" - call the API directly and read the P&L, balance sheet and books
+// health. Each endpoint here also needs the page (or permission) that shows
+// it; holding any one of the listed keys is enough. Checked before the route's
+// own guards; a token that does not verify is left to the route (401).
+const ROUTE_PERMISSIONS = {
+  '/api/reports/pnl': ['screen.reports.pnlmonthly'],
+  '/api/reports/balance-sheet': ['screen.reports.bsmonthly'],
+  '/api/reports/books-health': ['screen.ledger.bookshealth'],
+  '/api/reports/inventory-turnover': ['analytics.view'],
+  '/api/reports/sales-trend': ['analytics.view'],
+  '/api/reports/purchase-order': ['procurement.view'],
+  '/api/insights/what-changed': ['owner.view'],
+  '/api/insights/product-profitability': ['owner.view'],
+};
+// Back-office reads that used to check only 'is staff' (2026-11 audit, M20):
+// a till or a driver could read linked branches' revenue, stock counts,
+// production, petty-cash funds and the setup checklist. Each needs one of the
+// permissions of the screen that shows it (navRegistry.js). Reads the till does
+// use - products, discounts, settings, the chart of accounts behind every
+// 'paid from' list, client accounts for on-account sales - stay open to staff,
+// and the change-request and requisition lists already narrow to the caller's own.
+const READ_PERMISSIONS = [
+  [/^\/api\/hub\/network-summary$/, ['owner.view', 'accounting.view', 'screen.hub.compare', 'screen.hub.books']],
+  [/^\/api\/hub\/(info|transfers|transfer-requests|catalog|catalog\/links)$/, ['inventory.view', 'products.manage', 'owner.view']],
+  [/^\/api\/inventory\/eod-(data|history)(\/.*)?$/, ['inventory.view', 'inventory.count']],
+  [/^\/api\/stock-transfers$/, ['inventory.view']],
+  [/^\/api\/production-orders(\/[^/]+)?$/, ['production.view', 'inventory.view']],
+  [/^\/api\/revolving-funds$/, ['funds.spend', 'accounting.view', 'requisitions.view', 'requisitions.approve']],
+  [/^\/api\/sales$/, ['products.view', 'analytics.view', 'reports.view']],
+  [/^\/api\/settings\/(readiness|document-series)$/, ['settings.manage']],
+  [/^\/api\/roles$/, ['users.manage', 'settings.manage']],
+];
+const readPermissionsFor = (req) => {
+  if (req.method !== 'GET') return null;
+  for (const [re, perms] of READ_PERMISSIONS) if (re.test(req.path)) return perms;
+  return null;
+};
+
+app.use((req, res, next) => {
+  const needed = ROUTE_PERMISSIONS[req.path] || readPermissionsFor(req);
+  if (!needed) return next();
+  const h = String(req.headers.authorization || '');
+  if (!h.startsWith('Bearer ')) return next();
+  let decoded;
+  try { decoded = jwt.verify(h.slice(7), process.env.JWT_SECRET, { algorithms: ['HS256'] }); } catch { return next(); }
+  if (needed.some((p) => hasPermission(decoded, p))) return next();
+  return res.status(403).json({ success: false, error: `Forbidden: needs one of ${needed.map((p) => `"${p}"`).join(', ')}.` });
+});
+
 registerTenants(ctx);
 registerAddons(ctx);
 registerUsers(ctx);
@@ -3600,7 +3893,8 @@ app.use((err, req, res, next) => {
   if (SENTRY_ON && status >= 500) Sentry.captureException(err);
   res.status(status).json({
     success: false,
-    error: IS_PROD ? 'An unexpected error occurred.' : (err.message || 'Internal error'),
+    // A 4xx is the caller's to fix and its message says how; only faults are hidden.
+    error: IS_PROD && status >= 500 ? 'An unexpected error occurred.' : (err.message || 'Internal error'),
   });
 });
 
@@ -3643,5 +3937,15 @@ const fatalExit = (kind) => (err) => {
 };
 if (!IS_TEST) {
   process.on('uncaughtException', fatalExit('uncaughtException'));
-  process.on('unhandledRejection', fatalExit('unhandledRejection'));
+  // A rejected promise nobody awaited - in a socket handler, a timer, a router
+  // that forwardAsyncErrors does not wrap - used to restart the whole API in the
+  // middle of a shift (2026-11 audit, M47). Unlike a thrown exception it leaves
+  // no half-run synchronous code behind, so it is logged and reported, and the
+  // process carries on. A genuine uncaught exception still restarts.
+  let rejectionCount = 0;
+  process.on('unhandledRejection', (reason) => {
+    rejectionCount += 1;
+    log.error({ err: reason, rejectionCount }, 'unhandledRejection (kept running)');
+    if (SENTRY_ON) { try { Sentry.captureException(reason); } catch { /* never throw from here */ } }
+  });
 }

@@ -40,9 +40,12 @@ Your information is not sold, and it is not used for advertising.
 
 ## 3. Where it is kept, and for how long
 
-The system's data is held by Semivra's hosting providers: the database on
-MongoDB Atlas ([region]) and the application server at Hostinger ([location]).
-It is encrypted in transit.
+The system's data is held on the server Semivra rents from [server host,
+e.g. Hostinger] ([location]), which runs both the application and its
+database. Encrypted backup copies are kept [with the offsite storage provider,
+region / only on that server]. Data is encrypted in transit, and your
+government ID numbers (SSS, PhilHealth, Pag-IBIG, TIN) are also encrypted where
+they are stored.
 
 - Payroll and time records: at least **three years** after the last entry
   (Labor Code rules on employment records), and as long as tax law requires

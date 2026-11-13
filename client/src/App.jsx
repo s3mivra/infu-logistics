@@ -2,7 +2,8 @@
 import { startRedNegatives } from './shared/redNegatives';
 import { startPhoneCards } from './shared/phoneCards';
 import { HAS_CLIENT_LOGIN } from './shared/businessType.js';
-import { lazy, Suspense, Component, useEffect, useState } from 'react';
+import { Suspense, Component, useEffect, useState } from 'react';
+import { lazyRetry } from './shared/lazyRetry';
 
 // Guards against the #1 mis-deployment: a client built for one BUSINESS_TYPE
 // pointed at a server running the other (fb ↔ log). Fetches the server's mode
@@ -30,15 +31,15 @@ function ModeMismatchBanner() {
 
 import UiProvider from './shared/ui/UiProvider';
 
-const CustomerMenu = lazy(() => import('./features/menu/CustomerMenu'));
-const CustomerDisplay = lazy(() => import('./features/orders/CustomerDisplay'));
-const AdminDashboard = lazy(() => import('./features/dashboard/AdminDashboard'));
-const SuperAdminPanel = lazy(() => import('./features/super-admin/SuperAdminPanel'));
-const QRCodeComponent = lazy(() => import('./features/qr/QRCode'));
-const ClientLogin = lazy(() => import('./features/client-portal/ClientLogin'));
-const ClientOrderPage = lazy(() => import('./features/client-portal/ClientOrderPage'));
-const ClientOnboarding = lazy(() => import('./features/client-portal/ClientOnboarding'));
-const LegalPage = lazy(() => import('./features/legal/LegalPage'));
+const CustomerMenu = lazyRetry(() => import('./features/menu/CustomerMenu'));
+const CustomerDisplay = lazyRetry(() => import('./features/orders/CustomerDisplay'));
+const AdminDashboard = lazyRetry(() => import('./features/dashboard/AdminDashboard'));
+const SuperAdminPanel = lazyRetry(() => import('./features/super-admin/SuperAdminPanel'));
+const QRCodeComponent = lazyRetry(() => import('./features/qr/QRCode'));
+const ClientLogin = lazyRetry(() => import('./features/client-portal/ClientLogin'));
+const ClientOrderPage = lazyRetry(() => import('./features/client-portal/ClientOrderPage'));
+const ClientOnboarding = lazyRetry(() => import('./features/client-portal/ClientOnboarding'));
+const LegalPage = lazyRetry(() => import('./features/legal/LegalPage'));
 //fix
 class ErrorBoundary extends Component {
   state = { error: null };

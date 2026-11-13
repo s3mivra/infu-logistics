@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { fieldCryptPlugin } from '../lib/fieldCrypt.js';
 import mongoose from 'mongoose';
 import { } from '../lib/normalize.js';
 
@@ -244,6 +245,13 @@ export default function defineCatalogModels({ BUSINESS_TYPE }) {
     // A repeated key is only answered with the order to the caller who placed
     // it; anyone else holding the key learns nothing about it.
     idempotencyOwner: { type: String, default: '', select: false },
+    // Handed to a QR diner with their order and needed (as ?key=) to look the
+    // order up without signing in. An order id alone used to be enough, and
+    // ids are sequential enough to walk.
+    viewKey: { type: String, default: '', select: false },
+    // The price tier the cashier picked for this sale, if any ('' = SRP and
+    // the client's own tiers). Shown on the order so a tier price is explained.
+    priceTier: { type: String, default: '' },
     customerName: { type: String, default: 'Guest' },
     paymentMethod: { type: String, default: 'Cash' },
 
@@ -610,6 +618,8 @@ export default function defineCatalogModels({ BUSINESS_TYPE }) {
   // the status and a date range together.
   OrderSchema.index({ clientId: 1, createdAt: -1 });
   OrderSchema.index({ businessType: 1, status: 1, createdAt: -1 });
+  // The SC/PWD card number is sensitive personal information (RA 10173): sealed at rest.
+  OrderSchema.plugin(fieldCryptPlugin, { fields: ['scPwdIdNumber'] });
   const Order = mongoose.model('Order', OrderSchema);
 
   const QRSessionSchema = new mongoose.Schema({

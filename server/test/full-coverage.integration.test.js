@@ -106,7 +106,7 @@ describe('catalog CRUD: categories, products, addons, modifier-groups, combos, d
 
   it('GET/POST/DELETE role', async () => {
     ran(await req('get', '/api/roles', T.staff));
-    const r = await req('post', '/api/roles', T.super).send({ name: 'Barista' });
+    const r = await req('post', '/api/roles', T.super).send({ name: 'Coverage Barista' });
     expect(r.status).toBe(200);
     const rid = r.body.role?._id || r.body._id;
     ran(await req('delete', `/api/roles/${rid}`, T.staff));
@@ -228,7 +228,9 @@ describe('shifts + bank deposits + clock', () => {
     const s = await req('post', '/api/shifts/start', T.cashier).send({ startingCash: 1000 });
     expect(s.status).toBe(200);
     const sid = s.body.shift._id;
-    const e = await req('post', '/api/shifts/end', T.cashier).send({ actualCash: 1500 });
+    // Counted exactly. A count beyond the variance threshold needs a manager's
+    // sign-off (2026-11 audit, M120) - covered in audit-money-controls.
+    const e = await req('post', '/api/shifts/end', T.cashier).send({ actualCash: 1000 });
     expect(e.status).toBe(200);
     ran(await req('post', '/api/bank-deposits', T.cashier).send({ shiftId: sid, amount: 100, sourceAccount: '111000', destAccount: '112000' }));
     ran(await req('get', `/api/bank-deposits?shiftId=${sid}`, T.staff));

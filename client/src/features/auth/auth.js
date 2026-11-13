@@ -81,17 +81,26 @@ let refreshing = null;
 // Returns the { token, user } payload on success, or null. Updates in-memory token.
 export function refreshSession(API_URL) {
   if (!refreshing) {
+    // Only a definite refusal (401/403) ends the session. A refresh that hit a
+    // rate limit, a server fault or a dropped connection used to null the token
+    // too, signing the till out over a blip (2026-11 audit, M116).
     refreshing = fetch(`${API_URL}/api/auth/refresh`, { method: 'POST', credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { accessToken = d?.token || null; if (d?.user) setUser(d.user); return d?.token ? d : null; })
-      .catch(() => { accessToken = null; return null; })
+      .then(async (r) => {
+        if (r.ok) return r.json();
+        if (r.status === 401 || r.status === 403) accessToken = null;
+        return null;
+      })
+      .then((d) => { if (d?.token) { accessToken = d.token; if (d.user) setUser(d.user); return d; } return null; })
+      .catch(() => null)
       .finally(() => { refreshing = null; });
   }
   return refreshing;
 }
 
 export async function logout(API_URL) {
-  try { await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' }); }
+  // The access token goes too, so the server ends it now rather than letting
+  // it run for the rest of its fifteen minutes.
+  try { await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include', headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} }); }
   catch { /* best-effort */ }
   finally { accessToken = null; setUser(null); }
 }
@@ -113,6 +122,34 @@ export async function freshToken(API_URL) {
   return accessToken;
 }
 
+// A 401 that rejects the token itself, as opposed to one a route answers for a
+// wrong password or code. Only those are worth a refresh and a retry: a
+// business 401 used to be retried and then treated as a lost session, signing
+// the person out instead of showing 'your password is incorrect' (M116).
+const TOKEN_REJECTED = /unauthorized|invalid or expired token|signed out|no token|sign in again/i;
+export const isTokenRejection = async (response) => {
+  try {
+    const d = await response.clone().json();
+    return TOKEN_REJECTED.test(String(d?.message || d?.error || ''));
+  } catch { return true; }   // no JSON body: an auth layer, not a route
+};
+
+// Staff-auth errors come back under `message`, but most screens read
+// `data.error` and showed an empty alert (2026-11 audit, M114). Error bodies are
+// small, so the field is copied across here once for every screen.
+const withErrorField = async (response) => {
+  if (response.ok) return response;
+  try {
+    const d = await response.clone().json();
+    if (d && typeof d === 'object' && !d.error && typeof d.message === 'string') {
+      return new Response(JSON.stringify({ ...d, error: d.message }), {
+        status: response.status, statusText: response.statusText, headers: response.headers,
+      });
+    }
+  } catch { /* not JSON: leave it */ }
+  return response;
+};
+
 // Drop-in replacement for the old per-page apiFetch. Attaches the in-memory token,
 // auto-injects JSON content-type, and silently refreshes + retries once on 401.
 // On a persistent 401 it returns the response so callers can run their logout flow.
@@ -130,9 +167,11 @@ export async function apiFetch(API_URL, endpoint, options = {}) {
   // The auth routes themselves must not wait on a refresh - one of them IS it.
   if (!/\/api\/(auth|users\/login)/.test(endpoint)) await freshToken(API_URL);
   let response = await build();
-  if (response.status === 401) {
+  if (response.status === 401 && await isTokenRejection(response)) {
+    // The token was refused before the route ran, so sending it again - a POST
+    // included - cannot do the work twice.
     const refreshed = await refreshSession(API_URL);
     if (refreshed) response = await build(); // retry once with the fresh token
   }
-  return response;
+  return withErrorField(response);
 }

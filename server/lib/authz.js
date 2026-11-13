@@ -24,6 +24,10 @@ export const PERMISSIONS = [
   { key: 'orders.manage',      group: 'Sales',       label: 'Manage orders (edit/status)' },
   { key: 'orders.delete',      group: 'Sales',       label: 'Void / delete orders' },
   { key: 'orders.comp',        group: 'Sales',       label: 'Make an order complimentary (with an approver named)' },
+  // Charging other than the catalogue price, a manual discount, or a comp. A
+  // cashier without it needs a holder's PIN approval at the till for each one;
+  // before this, any till account could sell at P0 or give 100% off.
+  { key: 'orders.override',    group: 'Sales',       label: 'Change prices, give manual discounts and approve comps at the till' },
   // Were "superadmin or the admin role" by name; now given like anything else.
   { key: 'orders.refund',      group: 'Sales',       label: 'Refund, partly refund or exchange a completed order' },
   // Were superadmin-only: entering past sales, and bringing an Orders export back.
@@ -210,7 +214,7 @@ export function withScreens(list) {
 export const ROLE_DEFAULT_PERMISSIONS = {
   // Shop administrator: runs operations & config and can VIEW the books, but
   // cannot post journal entries (that's finance/superadmin) or manage staff.
-  admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'orders.refund', 'clients.links', 'clients.invite', 'clients.create', 'clients.delete', 'clients.edit',
+  admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'orders.override', 'orders.refund', 'clients.links', 'clients.invite', 'clients.create', 'clients.delete', 'clients.edit',
             'inventory.setup', 'inventory.approve',
             'inventory.view', 'inventory.manage', 'inventory.delete', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
@@ -218,7 +222,7 @@ export const ROLE_DEFAULT_PERMISSIONS = {
             'accounting.view', 'funds.spend', 'payroll.view', 'assets.view', 'bankrec.view',
             'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'],
   // Operations lead: full ops (incl. building rosters), no books/settings/staff.
-  manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'clients.links', 'clients.invite', 'clients.create',
+  manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'orders.override', 'clients.links', 'clients.invite', 'clients.create',
             'inventory.view', 'inventory.manage', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage', 'funds.spend',
@@ -245,6 +249,7 @@ export const OWNER_ROLE_PERMISSIONS = [
   'orders.view', 'inventory.view', 'products.view', 'procurement.view', 'production.view',
   'accounting.view', 'payroll.view', 'assets.view', 'bankrec.view', 'requisitions.view',
   'requisitions.approve', 'production.approve', 'pricing.approve', 'journal.approve', 'credit.approve', 'inventory.approve',
+  'orders.override',
 ];
 
 // Ready-made roles for the common jobs, created once as ordinary roles (like
@@ -284,6 +289,15 @@ export function withSplitScreens(list = []) {
   const set = new Set(list);
   if (set.has('accounting.view')) { set.add('payroll.view'); set.add('assets.view'); set.add('bankrec.view'); }
   if (set.has('accounting.manage')) { set.add('payroll.manage'); set.add('assets.manage'); set.add('bankrec.manage'); }
+  return [...set];
+}
+
+// Applied once to stored roles and per-person lists when orders.override was
+// introduced: whoever could already void sales or approve prices (a manager-
+// level account) keeps changing prices at the till without asking.
+export function withOrderOverride(list = []) {
+  const set = new Set(list);
+  if (set.has('orders.delete') || set.has('pricing.approve')) set.add('orders.override');
   return [...set];
 }
 
@@ -432,8 +446,22 @@ export function requireUserAdmin(req, res, next) {
 //   3. No granting a permission the grantor does not hold, which is how a
 //      narrow delegate would otherwise widen themselves one account at a time
 //      (make a new user with accounting.manage, log in as them).
-export function guardStaffEscalation(actor, { targetUser = null, role, permissions } = {}) {
+// What an account is paid. Nobody but the owner sets their own.
+export const SELF_PAY_FIELDS = ['commissionRate', 'dailyRate', 'isEmployee'];
+
+export function guardStaffEscalation(actor, { targetUser = null, role, permissions, fields = [] } = {}) {
+  // "client" is the portal's audience, not a staff role: a staff account given
+  // it was read as a client by some routes and as staff by others.
+  if (role !== undefined && norm(role) === 'client') {
+    return 'A staff account cannot have the role "client" - client logins are made from the Clients screen.';
+  }
   if (norm(actor?.role) === 'superadmin') return null;
+  // Separation of duties: a users.manage delegate raised their own commission
+  // to 50% and their daily rate to P99,999.
+  if (targetUser && String(targetUser._id) === String(actor?.id || actor?._id)
+      && fields.some((f) => SELF_PAY_FIELDS.includes(f))) {
+    return 'You cannot change your own pay or commission. Ask the owner.';
+  }
 
   if (targetUser && norm(targetUser.role) === 'superadmin') {
     return 'Only a superadmin can modify a superadmin account.';

@@ -843,12 +843,15 @@ export default function ClientOrderPage() {
       });
       const d = await res.json();
       if (!d.success) { setSettingsMsg({ tone: 'bad', text: d.error || 'Could not change the password.' }); return; }
+      // Every other session ended with the change; this one continues on the
+      // fresh token the server sent back.
+      if (d.token) { saveSession(d.token, clientInfo); setToken(d.token); }
       setPwForm({ current: '', next: '', confirm: '', show: false });
-      setSettingsMsg({ tone: 'ok', text: 'Password changed. Your current session stays signed in.' });
+      setSettingsMsg({ tone: 'ok', text: 'Password changed. You stay signed in here; every other device has been signed out.' });
     } catch {
       setSettingsMsg({ tone: 'bad', text: 'Network error.' });
     } finally { setPwBusy(false); }
-  }, [pwForm, authHeaders]);
+  }, [pwForm, authHeaders, clientInfo]);
 
   // Some buyers are quoted before they buy. For them the cart asks for a price
   // rather than committing to one, and nothing is ordered or charged until the

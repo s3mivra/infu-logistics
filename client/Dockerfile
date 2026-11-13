@@ -1,4 +1,4 @@
-FROM node:20-alpine AS build
+FROM node:24.22.3-alpine3.24@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS build
 WORKDIR /app
 
 # Declare build args BEFORE COPY so Docker's layer cache sees them as a
@@ -45,7 +45,7 @@ COPY . .
 RUN test -n "$VITE_BUSINESS_TYPE" || (echo "ERROR: VITE_BUSINESS_TYPE build arg is required" && exit 1)
 RUN npm run build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.30.6-alpine@sha256:583b7f2fce1cdb8da5ad5c39ebd3c33b98b87d493190e548bdee1fa8c619c311
 # Which backend this nginx proxies to. Defaults to the compose service name for
 # single-tenant deploys; the control plane overrides it with "<slug>-api" so a
 # shared docker network can't resolve one tenant's nginx to another's backend.

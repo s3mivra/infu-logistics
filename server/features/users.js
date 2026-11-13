@@ -1,9 +1,9 @@
 ﻿// users routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { newSecret, verifyCode, otpauthUrl, newBackupCodes, hashBackupCode } from '../lib/totp.js';
+import { newSecret, verifyCode, verifyCodeStep, otpauthUrl, newBackupCodes, hashBackupCode } from '../lib/totp.js';
 import { randomBytes } from 'node:crypto';
-import { OWNER_ROLE_NAME } from '../lib/authz.js';
+import { OWNER_ROLE_NAME, STAFF_ROLES } from '../lib/authz.js';
 import { captureError } from '../lib/errorLog.js';
 import { signApproval } from '../lib/approval.js';
 import { hasPermission } from '../lib/authz.js';
@@ -216,8 +216,23 @@ app.get('/api/roles', verifyToken, requireStaff, async (req, res) => {
   }
 });
 
+// A custom role shares one namespace with the built-in roles and the client
+// audience, matched case-insensitively. A custom "Admin" silently replaced
+// every built-in Admin's permissions (they became orders.view), and a role
+// named "client" or "kitchen" changed how tokens and socket rooms are read.
+const RESERVED_ROLE_NAMES = new Set([...STAFF_ROLES, 'client', 'kitchen']);
+const roleNameProblem = async (name, exceptId = null) => {
+  const key = String(name || '').trim().toLowerCase();
+  if (!key) return 'A role needs a name.';
+  if (RESERVED_ROLE_NAMES.has(key)) return `"${String(name).trim()}" is a built-in role name - choose another.`;
+  const clash = await Role.findOne({ name: { $regex: `^${escapeRegex(String(name).trim())}$`, $options: 'i' }, ...(exceptId ? { _id: { $ne: exceptId } } : {}) }).lean();
+  return clash ? `A role named "${clash.name}" already exists.` : null;
+};
+
 app.post('/api/roles', verifyToken, requireSuperAdmin, validate(roleSchema), async (req, res) => {
   try {
+    const nameProblem = await roleNameProblem(req.body.name);
+    if (nameProblem) return res.status(400).json({ success: false, error: nameProblem });
     const permissions = Array.isArray(req.body.permissions)
       ? req.body.permissions.filter((k) => PERMISSION_KEYS.has(k)) : [];
     const newRole = await Role.create({ name: req.body.name, permissions });
@@ -233,7 +248,11 @@ app.post('/api/roles', verifyToken, requireSuperAdmin, validate(roleSchema), asy
 app.patch('/api/roles/:id', verifyToken, requireSuperAdmin, async (req, res) => {
   try {
     const updates = {};
-    if (req.body.name !== undefined) updates.name = String(req.body.name).trim();
+    if (req.body.name !== undefined) {
+      const nameProblem = await roleNameProblem(req.body.name, req.params.id);
+      if (nameProblem) return res.status(400).json({ success: false, error: nameProblem });
+      updates.name = String(req.body.name).trim();
+    }
     if (Array.isArray(req.body.permissions)) updates.permissions = req.body.permissions.filter((k) => PERMISSION_KEYS.has(k));
     const before = await Role.findById(req.params.id).lean();
     const role = await Role.findByIdAndUpdate(req.params.id, updates, { returnDocument: 'after' });
@@ -282,9 +301,38 @@ app.delete('/api/roles/:id', verifyToken, requireSuperAdmin, async (req, res) =>
 // still comes from their role, exactly as before. Switching issues a genuine
 // session for them, so every route downstream sees the right `req.user` with no
 // special handling anywhere.
+// Per-account password lockout (see the login route).
+const LOGIN_MAX_FAILS = 10;
+const LOGIN_LOCK_MINUTES = 15;
+const LOGIN_DUMMY_HASH = bcrypt.hashSync("not-a-real-password", 12);
+
 const PIN_RE = /^\d{4,6}$/;
 const PIN_MAX_ATTEMPTS = 5;
 const PIN_LOCK_MINUTES = 5;
+
+// Shop-wide brake on PIN guessing. The route limiter counts per caller, so
+// every staff account an attacker could use added another 20 guesses every
+// ten minutes, and a bare PIN is tried against every PIN holder at once - the
+// superadmin fell in 18 tries in the audit. Every wrong PIN, from anyone,
+// counts here; past the limit PIN entry pauses for the whole shop (people can
+// still sign in with a password).
+const PIN_SHOP_MAX_FAILS = 25;
+const PIN_SHOP_WINDOW_MS = 15 * 60 * 1000;
+const pinShop = { fails: [], lockedUntil: 0 };
+const pinShopLocked = () => Date.now() < pinShop.lockedUntil;
+const notePinFailure = () => {
+  const now = Date.now();
+  pinShop.fails = pinShop.fails.filter(t => now - t < PIN_SHOP_WINDOW_MS);
+  pinShop.fails.push(now);
+  if (pinShop.fails.length >= PIN_SHOP_MAX_FAILS) { pinShop.lockedUntil = now + PIN_SHOP_WINDOW_MS; pinShop.fails = []; }
+};
+const pinShopLockedResponse = (res) => res.status(429).json({ success: false, error: 'Too many wrong PINs on this shop\'s tills. PIN entry is paused for 15 minutes - sign in with a password meanwhile.' });
+
+// Accounts a PIN never opens: the owner, and anyone who can manage staff or
+// post to the books. A four-digit code typed at a shared counter is not a
+// credential for the whole business; those accounts sign in with a password.
+const pinSwitchRefused = (u) => String(u?.role || '').toLowerCase() === 'superadmin'
+  || ['users.manage', 'accounting.manage'].some(p => resolvePermissions(u).includes(p));
 
 // Who can be switched to: staff with a PIN set. Names only - enough to show a
 // row to tap, and nothing that would help someone guess a code.
@@ -308,6 +356,7 @@ app.post('/api/users/switch', pinLimiter, verifyToken, requireStaff, async (req,
     const pin = String(req.body?.pin || '').trim();
     const name = String(req.body?.name || '').trim();
     if (!PIN_RE.test(pin)) return res.status(400).json({ success: false, error: 'Enter your 4 to 6 digit PIN.' });
+    if (pinShopLocked()) return pinShopLockedResponse(res);
 
     // Named or not, the PIN is checked against a single account: PINs are
     // unique (enforced when one is set), so a bare PIN identifies exactly one
@@ -324,6 +373,7 @@ app.post('/api/users/switch', pinLimiter, verifyToken, requireStaff, async (req,
     }
 
     if (!matched) {
+      notePinFailure();
       // A wrong PIN counts against the named account when one was given. With
       // no name there is nobody to count it against, so the only defence is the
       // rate limiter on the route itself.
@@ -352,6 +402,9 @@ app.post('/api/users/switch', pinLimiter, verifyToken, requireStaff, async (req,
     if (matched.totpEnabled) {
       return res.status(403).json({ success: false, error: `${matched.name} uses two-step sign-in. Sign in with the password instead.` });
     }
+    if (pinSwitchRefused(matched)) {
+      return res.status(403).json({ success: false, error: `${matched.name}'s account is not opened with a PIN. Sign in with the password instead.` });
+    }
     matched.pinFailedCount = 0;
     matched.pinLockedUntil = null;
     await matched.save();
@@ -377,6 +430,7 @@ app.post('/api/users/authorize', pinLimiter, verifyToken, requireStaff, async (r
     const pin = String(req.body?.pin || '').trim();
     const permission = String(req.body?.permission || '').trim();
     if (!PIN_RE.test(pin)) return res.status(400).json({ success: false, error: 'Enter the manager PIN.' });
+    if (pinShopLocked()) return pinShopLockedResponse(res);
 
     const users = await User.find({ pinHash: { $ne: '' } });
     let approver = null;
@@ -386,7 +440,7 @@ app.post('/api/users/authorize', pinLimiter, verifyToken, requireStaff, async (r
     }
     // 403 for the same reason as the switch above: a wrong manager PIN must not
     // sign out the cashier who asked for approval.
-    if (!approver) return res.status(403).json({ success: false, error: 'That PIN was not recognised.' });
+    if (!approver) { notePinFailure(); return res.status(403).json({ success: false, error: 'That PIN was not recognised.' }); }
 
     // The PIN proves who they are; the role decides whether they may approve.
     const allowed = approver.role === 'superadmin'
@@ -426,8 +480,24 @@ app.post('/api/users/login', loginLimiter, validate(loginSchema), async (req, re
       targetReference: String(req.ip || '').slice(0, 60) || 'unknown',
       details: { device: String(req.headers['user-agent'] || '').slice(0, 200) },
     }).catch(() => {});
-    const user = await User.findOne({ name }).select('+totpSecret +totpBackupCodes +trustedDevices');
-    if (!user) { await noteSignIn(false); return res.status(401).json({ success: false, message: 'Invalid name or password' }); }
+    const user = await User.findOne({ name }).select('+totpSecret +totpBackupCodes +trustedDevices +totpLastStep');
+    // An unknown name pays the same bcrypt time as a wrong password: returning
+    // early told anyone timing the answer which staff names exist.
+    if (!user) { await bcrypt.compare(String(password), LOGIN_DUMMY_HASH); await noteSignIn(false); return res.status(401).json({ success: false, message: 'Invalid name or password' }); }
+    if (user.loginLockedUntil && user.loginLockedUntil > new Date()) {
+      await noteSignIn(false, user.name);
+      return res.status(429).json({ success: false, message: `Too many failed sign-ins for this account. Try again in ${LOGIN_LOCK_MINUTES} minutes.` });
+    }
+    // Wrong passwords (and wrong two-step codes) count against the ACCOUNT,
+    // wherever they come from; the address-based limiter alone was walked
+    // around by rotating X-Forwarded-For.
+    const noteFailure = async () => {
+      const fails = (user.loginFailedCount || 0) + 1;
+      const lock = fails >= LOGIN_MAX_FAILS;
+      await User.updateOne({ _id: user._id }, { $set: lock
+        ? { loginFailedCount: 0, loginLockedUntil: new Date(Date.now() + LOGIN_LOCK_MINUTES * 60_000) }
+        : { loginFailedCount: fails } });
+    };
     const isMatch = await bcrypt.compare(password, user.password);
     if (isMatch && user.totpEnabled && user.totpSecret) {
       // Two-step sign-in: the password was right, and that is only half of it.
@@ -449,7 +519,13 @@ app.post('/api/users/login', loginLimiter, validate(loginSchema), async (req, re
       // attempt, and the sign-in limiter counts every 4xx against the whole
       // shop's shared address. A WRONG code below is still a 401, and counted.
       if (!code) return res.json({ success: false, needsCode: true, message: 'Enter the 6-digit code from your authenticator app.' });
-      let ok = verifyCode(user.totpSecret, code);
+      // Each code is good once: its step must be newer than the last one used.
+      const step = verifyCodeStep(user.totpSecret, code);
+      let ok = false;
+      if (step !== null && step > (user.totpLastStep || 0)) {
+        const claimed = await User.updateOne({ _id: user._id, $or: [{ totpLastStep: { $lt: step } }, { totpLastStep: { $exists: false } }] }, { $set: { totpLastStep: step } });
+        ok = claimed.modifiedCount === 1;
+      }
       if (!ok) {
         // A backup code, for a lost phone: good once, then gone.
         const hash = hashBackupCode(code);
@@ -459,15 +535,17 @@ app.post('/api/users/login', loginLimiter, validate(loginSchema), async (req, re
           if (ok) await logAudit(req, { action: 'two-step-backup-code-used', entity: 'User', entityId: user._id, after: { left: user.totpBackupCodes.length - 1 } }).catch(() => {});
         }
       }
-      if (!ok) { await noteSignIn(false, user.name); return res.status(401).json({ success: false, needsCode: true, message: 'That code is not right. Check the app and try the newest code.' }); }
+      if (!ok) { await noteFailure(); await noteSignIn(false, user.name); return res.status(401).json({ success: false, needsCode: true, message: 'That code is not right. Check the app and try the newest code.' }); }
       // The code was right: this device need not be asked again for 30 days.
       await trustThisDevice(req, res, user);
     }
     if (isMatch) {
+      if (user.loginFailedCount) await User.updateOne({ _id: user._id }, { $set: { loginFailedCount: 0 } });
       const token = await issueSession(res, user, { userAgent: req.headers['user-agent'] });
       await noteSignIn(true, user.name);
       res.json({ success: true, token, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user) } });
     } else {
+      await noteFailure();
       await noteSignIn(false, user.name);
       res.status(401).json({ success: false, message: 'Invalid name or password' });
     }
@@ -484,11 +562,46 @@ app.post('/api/auth/refresh', requireTrustedOrigin, async (req, res) => {
     const raw = req.cookies?.[REFRESH_COOKIE];
     if (!raw) return res.status(401).json({ success: false, error: 'No refresh session.' });
 
-    const session = await RefreshSession.findOne({ tokenHash: hashToken(raw) });
-    if (!session || session.revoked || session.expiresAt < new Date()) {
+    // ROTATING refresh with reuse detection. Each use swaps the refresh token
+    // for a new one. The old one stays good for a few seconds only - rapid
+    // reloads fire concurrent refreshes from the same browser, and the winner's
+    // Set-Cookie replaces the cookie for all of them. A rotated token presented
+    // after that is a copy someone else holds: every session of the user ends.
+    // The chain lives at most REFRESH_TTL_MS from the first sign-in; it no
+    // longer slides forward forever.
+    const ROTATION_GRACE_MS = 30_000;
+    const expired = () => {
       res.clearCookie(REFRESH_COOKIE, { ...refreshCookieOptions(), maxAge: undefined });
       return res.status(401).json({ success: false, error: 'Session expired. Please log in again.' });
+    };
+    const now = new Date();
+    const oldHash = hashToken(raw);
+    const nextRaw = randomBytes(48).toString('hex');
+    const nextHash = hashToken(nextRaw);
+    const claimed = await RefreshSession.findOneAndUpdate(
+      { tokenHash: oldHash, revoked: false, expiresAt: { $gt: now } },
+      { $set: { revoked: true, replacedBy: nextHash, rotatedAt: now } },
+      { returnDocument: 'before' },
+    );
+    let session = claimed;
+    let rotated = !!claimed;
+    if (!claimed) {
+      const prior = await RefreshSession.findOne({ tokenHash: oldHash }).lean();
+      if (!prior) return expired();
+      const inGrace = prior.replacedBy && prior.rotatedAt && now - new Date(prior.rotatedAt) <= ROTATION_GRACE_MS;
+      if (!inGrace) {
+        if (prior.replacedBy) {
+          // Reuse of a token that was already swapped: treat it as stolen.
+          await revokeUserSessions(prior.userId);
+          logAudit(req, { action: 'refresh-token-reuse', entity: 'User', entityId: prior.userId, after: { userAgent: String(req.headers['user-agent'] || '').slice(0, 200) } }).catch(() => {});
+        }
+        return expired();
+      }
+      session = prior;          // a concurrent refresh: answer it, no new cookie
     }
+
+    const familyStart = session.familyStart || session.createdAt || now;
+    if (now - new Date(familyStart) > REFRESH_TTL_MS) return expired();
 
     const user = await User.findById(session.userId).select('-password');
     if (!user) {
@@ -496,14 +609,11 @@ app.post('/api/auth/refresh', requireTrustedOrigin, async (req, res) => {
       return res.status(401).json({ success: false, error: 'User no longer exists.' });
     }
 
-    // NON-ROTATING refresh: validate the existing session and mint a fresh access
-    // token, keeping the SAME refresh cookie. (We deliberately don't rotate on every
-    // refresh - rapid reloads fire concurrent refreshes and rotation would treat the
-    // in-flight duplicate as token reuse and log the user out.) Slide the expiry so
-    // active sessions stay alive; logout/password/role changes still revoke server-side.
-    session.expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
-    await session.save();
-    res.cookie(REFRESH_COOKIE, raw, refreshCookieOptions());
+    if (rotated) {
+      const expiresAt = new Date(new Date(familyStart).getTime() + REFRESH_TTL_MS);
+      await RefreshSession.create({ tokenHash: nextHash, userId: user._id, expiresAt, familyStart, userAgent: session.userAgent });
+      res.cookie(REFRESH_COOKIE, nextRaw, { ...refreshCookieOptions(), maxAge: Math.max(1000, expiresAt - now) });
+    }
 
     const newToken = signAccessToken(user);
     res.json({ success: true, token: newToken, user: { _id: user._id, name: user.name, userCode: user.userCode, role: user.role, permissions: resolvePermissions(user) } });
@@ -518,6 +628,12 @@ app.post('/api/auth/logout', requireTrustedOrigin, async (req, res) => {
   try {
     const raw = req.cookies?.[REFRESH_COOKIE];
     if (raw) await RefreshSession.updateOne({ tokenHash: hashToken(raw) }, { revoked: true });
+    // And the access token in hand: it stayed usable for up to 15 minutes after
+    // signing out. A token that does not verify has nothing left to end.
+    const bearer = String(req.headers.authorization || '');
+    if (bearer.startsWith('Bearer ') && typeof ctx.endAccessToken === 'function') {
+      try { ctx.endAccessToken(jwt.verify(bearer.slice(7), process.env.JWT_SECRET, { algorithms: ['HS256'] })); } catch { /* expired or foreign */ }
+    }
     res.clearCookie(REFRESH_COOKIE, { ...refreshCookieOptions(), maxAge: undefined });
     res.json({ success: true });
   } catch (err) {
@@ -600,7 +716,7 @@ app.patch('/api/users/:id', verifyToken, requireUserAdmin, async (req, res) => {
     const { name, password, role, permissions, commissionRate } = req.body;
     const target = await User.findById(req.params.id).select('role permissions').lean();
     if (!target) return res.status(404).json({ success: false, error: 'User not found.' });
-    const denied = guardStaffEscalation(req.user, { targetUser: target, role, permissions });
+    const denied = guardStaffEscalation(req.user, { targetUser: target, role, permissions, fields: Object.keys(req.body || {}) });
     if (denied) return res.status(403).json({ success: false, error: denied });
     const updates = {};
     // The statutory account numbers. Stored as typed - the agencies' formats
@@ -634,7 +750,7 @@ app.patch('/api/users/:id', verifyToken, requireUserAdmin, async (req, res) => {
         const others = await User.find({ _id: { $ne: req.params.id }, pinHash: { $ne: '' } }, { pinHash: 1, name: 1 });
         for (const o of others) {
           if (await bcrypt.compare(pin, o.pinHash)) {
-            return res.status(409).json({ success: false, error: `That PIN is already used by ${o.name}. Pick another.` });
+            return res.status(409).json({ success: false, error: 'That PIN is already taken. Pick another.' });
           }
         }
         updates.pinHash = await bcrypt.hash(pin, BCRYPT_ROUNDS);
@@ -668,11 +784,14 @@ app.delete('/api/users/:id', verifyToken, requireUserAdmin, async (req, res) => 
   try {
     // Delete stays idempotent (a missing id is not an error, as before); the
     // escalation guard only has something to check when the account exists.
-    const target = await User.findById(req.params.id).select('role permissions').lean();
+    const target = await User.findById(req.params.id).select('role permissions name userCode').lean();
     const denied = target ? guardStaffEscalation(req.user, { targetUser: target }) : null;
     if (denied) return res.status(403).json({ success: false, error: denied });
     await User.findByIdAndDelete(req.params.id);
     await revokeUserSessions(req.params.id); // kill any active sessions for the deleted account
+    // Who removed whom, and when - a staff delete left no trace at all (2026-11
+    // audit, M76). Only what identifies the account; none of its personal data.
+    if (target) await logAudit(req, { action: 'delete', entity: 'User', entityId: target._id, before: { name: target.name, userCode: target.userCode, role: target.role } });
     res.json({ success: true });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));

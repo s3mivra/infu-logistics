@@ -40,8 +40,8 @@ export function usePwa() {
     setRejectedOrders(getRejectedOrders());
   }, []);
 
-  const syncQueue = useCallback(async (sender) => {
-    const result = await flushQueue(sender);
+  const syncQueue = useCallback(async (sender, ownerId) => {
+    const result = await flushQueue(sender, ownerId);
     setQueuedCount(getQueuedOrders().length);
     setRejectedOrders(getRejectedOrders());
     return result;

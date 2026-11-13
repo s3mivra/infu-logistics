@@ -1,6 +1,7 @@
 ﻿// client-portal routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
+import { PRIVACY_NOTICE_VERSION } from '../lib/legal.js';
 import { title, partyName, lower } from '../lib/normalize.js';
 
 // A credit limit of 0 means "cash only" and must survive as 0, while '' / null
@@ -207,6 +208,17 @@ const clientLoginOnly = (req, res, next) => (BUSINESS_TYPE === 'log'
   : res.status(404).json({ success: false, error: 'Client sign-in is not part of this app.' }));
 
 // Client login - returns a short-lived JWT with role='client' and pre-set paymentMethod
+// aud:'client' - verified strictly by verifyClientToken on the client-portal
+// routes, and rejected by verifyToken/requireStaff on every staff route.
+const signClientToken = (client) => jwt.sign(
+  { _id: client._id, clientId: String(client._id), username: client.username, name: client.name, role: 'client', paymentMethod: client.paymentMethod, aud: 'client' },
+  process.env.JWT_SECRET,
+  { expiresIn: '8h', algorithm: 'HS256' },
+);
+// Compared against when no account matches, so an unknown username costs the
+// same bcrypt time as a wrong password - the timing no longer says which.
+const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', BCRYPT_ROUNDS);
+
 app.post('/api/client-auth/login', clientLoginOnly, loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -217,16 +229,11 @@ app.post('/api/client-auth/login', clientLoginOnly, loginLimiter, async (req, re
     const client = await ClientAccount.findOne({
       username: { $regex: `^${escapeRegex(lower(username))}$`, $options: 'i' },
     });
-    if (!client || !client.isActive) return res.status(401).json({ success: false, error: 'Invalid credentials or account is inactive.' });
-    const match = await bcrypt.compare(password, client.password);
-    if (!match) return res.status(401).json({ success: false, error: 'Invalid credentials.' });
-    const token = jwt.sign(
-      // aud:'client' - verified strictly by verifyClientToken on the two client-portal
-      // routes, and rejected by verifyToken/requireStaff on every staff route.
-      { _id: client._id, clientId: String(client._id), username: client.username, name: client.name, role: 'client', paymentMethod: client.paymentMethod, aud: 'client' },
-      process.env.JWT_SECRET,
-      { expiresIn: '8h' }
-    );
+    // One answer for every failure: a different message for an unknown or
+    // inactive account told anyone which usernames exist.
+    const match = await bcrypt.compare(String(password), client?.password || DUMMY_HASH);
+    if (!client || !client.isActive || !match) return res.status(401).json({ success: false, error: 'Invalid credentials or account is inactive.' });
+    const token = signClientToken(client);
     res.json({ success: true, token, client: { _id: String(client._id), clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, theme: client.theme || null } });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
@@ -404,8 +411,11 @@ app.post('/api/client/password', verifyClientToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'New password must be different.' });
     }
     me.password = await bcrypt.hash(next, BCRYPT_ROUNDS);
+    // Every other session ends: changing a password because someone else knows
+    // it has to lock that person out. This one carries on with a new token.
+    me.sessionsValidFrom = new Date();
     await me.save();
-    res.json({ success: true, message: 'Password changed.' });
+    res.json({ success: true, message: 'Password changed.', token: signClientToken(me) });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }
@@ -572,8 +582,14 @@ app.post('/api/client-accounts/import', verifyToken, requireStaff, requirePermis
         const password = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
         const token = crypto.randomBytes(24).toString('hex');
 
-        const segments = String(r.segments ?? r.Segments ?? '')
-          .split(',').map(x => x.trim()).filter(Boolean);
+        // The same rules as creating one client: a credit line or terms need
+        // pricing.approve, and a segment (which sets the price tier) needs
+        // pricing.tiers. The import used to let clients.create alone set a
+        // P5,000,000 limit on 365-day terms.
+        const mayCredit = hasPermission(req.user, 'pricing.approve');
+        const mayTier = hasPermission(req.user, 'pricing.tiers');
+        const segments = mayTier ? String(r.segments ?? r.Segments ?? '')
+          .split(',').map(x => x.trim()).filter(Boolean) : [];
 
         const client = await ClientAccount.create({
           clientCode,
@@ -582,8 +598,10 @@ app.post('/api/client-accounts/import', verifyToken, requireStaff, requirePermis
           username: `_pending_${clientCode.toLowerCase()}`,
           password, name: cleanName,
           paymentMethod: String(r.paymentMethod ?? r['Payment Method'] ?? 'Cash').trim() || 'Cash',
-          creditLimit: parseCreditLimit(r.creditLimit ?? r['Credit Limit']),
-          creditTermsDays: parseTermsDays(r.creditTermsDays ?? r['Credit Terms (days)']),
+          ...(mayCredit ? {
+            creditLimit: parseCreditLimit(r.creditLimit ?? r['Credit Limit']),
+            creditTermsDays: parseTermsDays(r.creditTermsDays ?? r['Credit Terms (days)']),
+          } : {}),
           segments: [...new Set(segments)],
           phone: cleanPhone(r.phone ?? r.Phone ?? ''),
           email: emailVal,
@@ -902,6 +920,9 @@ app.post('/api/client-onboard/:token', clientLoginOnly, async (req, res) => {
     client.sessionsValidFrom = new Date();   // a login issued again ends the sessions of the old one
     client.onboardingToken = null;
     client.onboardingTokenExpiresAt = null;
+    // Finishing setup is agreeing to the notice the page shows beside the button.
+    client.privacyNoticeAcceptedAt = new Date();
+    client.privacyNoticeVersion = PRIVACY_NOTICE_VERSION;
     await client.save();
 
     res.json({ success: true, client: { clientCode: client.clientCode, username: client.username, name: client.name } });

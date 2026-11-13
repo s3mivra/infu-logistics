@@ -47,7 +47,10 @@ export default function PayrollReport({ apiFetch, onClose }) {
   };
 
   const download = () => {
-    const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    // Numbers as numbers; text that a spreadsheet would read as a formula
+    // (= + - @ ...) is shown as text.
+    const q = (v) => (typeof v === 'number' ? String(v)
+      : `"${String(v ?? '').replace(/^([=+\-@\t\r])/, "'$1").replace(/"/g, '""')}"`);
     const lines = [['Employee', 'TIN', 'Runs', ...COLS.map(([, l]) => l)].map(q).join(',')];
     for (const r of data.rows) lines.push([r.employeeName, r.tin, r.runs, ...COLS.map(([k]) => r[k])].map(q).join(','));
     lines.push(['Total', '', '', ...COLS.map(([k]) => data.totals[k])].map(q).join(','));

@@ -18,7 +18,26 @@
 import { captureError } from '../lib/errorLog.js';
 import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 
-const EXCLUDED = new Set(['RefreshSession', 'QRSession']);
+// Live credentials, not records: a backup file leaves the server and sits on
+// someone's laptop. Sessions, QR sessions and hub invite codes are left out
+// entirely; the fields below are stripped from the documents that are kept.
+const EXCLUDED = new Set(['RefreshSession', 'QRSession', 'HubInvite']);
+const STRIP_FIELDS = {
+  ClientAccount: ['onboardingToken', 'onboardingTokenExpiresAt'],
+  LinkedBusiness: ['linkToken'],
+  User: ['trustedDevices'],
+};
+// Never written by a restore. The audit log is append-only evidence, and the
+// closed-period list is the control that stops a signed-off month changing: a
+// restore that replaced either erased the trail (2026-11 audit, M97).
+const NOT_RESTORABLE = new Set(['AuditLog', 'ClosedPeriod']);
+const stripDoc = (name, d) => {
+  const drop = STRIP_FIELDS[name];
+  if (!drop) return d;
+  const copy = { ...d };
+  for (const f of drop) delete copy[f];
+  return copy;
+};
 
 export default function registerBackup(ctx) {
   const {
@@ -84,7 +103,7 @@ export default function registerBackup(ctx) {
         ]);
         return res.json({
           success: true, businessType: BUSINESS_TYPE, format: 1,
-          collection: name, skip, limit, total, docs,
+          collection: name, skip, limit, total, docs: docs.map((d) => stripDoc(name, d)),
           done: skip + docs.length >= total,
         });
       }
@@ -102,7 +121,7 @@ export default function registerBackup(ctx) {
             error: `This database holds more than ${FULL_MAX.toLocaleString()} records - take the backup a collection at a time (?collection=&skip=&limit=).`,
           });
         }
-        collections.push({ name, count, docs: await Model.find(scope).sort({ _id: 1 }).lean() });
+        collections.push({ name, count, docs: (await Model.find(scope).sort({ _id: 1 }).lean()).map((d) => stripDoc(name, d)) });
       }
       await logAudit(req, { action: 'snapshot', entity: 'Backup', entityId: 'full', after: { collections: collections.length, documents } });
       res.json({
@@ -141,9 +160,29 @@ export default function registerBackup(ctx) {
         return res.status(400).json({ success: false, error: `"${collection}" is not part of a backup.` });
       }
       if (!Array.isArray(docs)) return res.status(400).json({ success: false, error: 'Nothing to restore for that collection.' });
+      if (NOT_RESTORABLE.has(collection)) {
+        return res.status(403).json({ success: false, error: `${collection} is never overwritten by a restore - it is the record of what happened here.` });
+      }
+      // Step-up: the owner types their password again. A stolen or hijacked
+      // session could otherwise replace the ledger in one request.
+      if (!(await ctx.confirmPassword?.(req, req.body?.password))) {
+        return res.status(403).json({ success: false, needsPassword: true, error: 'Enter your password to restore.' });
+      }
 
       const Model = mongoose.model(collection);
       const scope = scopeFor(Model, req);
+      // Sign-in secrets a backup does not carry (two-step secrets, PINs, the
+      // trusted-device list) are kept from the account as it is now. Restoring
+      // users used to switch two-step sign-in off for everyone (2026-11 audit,
+      // D5A-013), because the flag came back without its secret.
+      let keepSecrets = new Map();
+      if (collection === 'User') {
+        const current = await Model.find(scope).select('+totpSecret +totpBackupCodes +trustedDevices').lean();
+        keepSecrets = new Map(current.map(u => [String(u._id), {
+          totpEnabled: u.totpEnabled, totpSecret: u.totpSecret, totpBackupCodes: u.totpBackupCodes,
+          trustedDevices: u.trustedDevices, pinHash: u.pinHash,
+        }]));
+      }
       let cleared = 0;
       if (replace) {
         // A superadmin restore replacing the books is declared ledger
@@ -160,7 +199,16 @@ export default function registerBackup(ctx) {
       const failures = [];
       const BATCH = 500;
       for (let i = 0; i < docs.length; i += BATCH) {
-        const slice = docs.slice(i, i + BATCH).map(d => ({ ...d, ...scope }));
+        const slice = docs.slice(i, i + BATCH).map(d => {
+          const doc = { ...d, ...scope };
+          if (collection === 'User') {
+            const kept = keepSecrets.get(String(doc._id));
+            // A user with no secret to carry over cannot have two-step on.
+            if (kept) Object.assign(doc, kept);
+            else if (!doc.totpSecret) doc.totpEnabled = false;
+          }
+          return doc;
+        });
         try {
           const done = await Model.insertMany(slice, { ordered: false });
           restored += done.length;

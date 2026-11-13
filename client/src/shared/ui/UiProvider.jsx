@@ -91,16 +91,20 @@ function UndoToast({ req, onDone }) {
 
 function ConfirmDialog({ req, onResolve }) {
   const confirmRef = useRef(null);
+  const passwordRef = useRef(null);
+  const [password, setPassword] = useState('');
+  // With askPassword the dialog resolves to the typed password (or false).
+  const accept = () => onResolve(req.askPassword ? (password || false) : true);
 
   // Focus the confirm button on open so the dialog is keyboard-usable, and wire
   // Esc to cancel. Enter is intentionally NOT bound to confirm - every one of
   // these guards a destructive action, and a stray Enter shouldn't fire it.
   useEffect(() => {
-    confirmRef.current?.focus();
+    (req.askPassword ? passwordRef : confirmRef).current?.focus();
     const onKey = (e) => { if (e.key === 'Escape') onResolve(false); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onResolve]);
+  }, [onResolve, req.askPassword]);
 
   const danger = req.tone === 'danger';
 
@@ -127,6 +131,16 @@ function ConfirmDialog({ req, onResolve }) {
               {req.detail}
             </p>
           )}
+          {req.askPassword && (
+            <label className="block mt-4">
+              <span className="text-[10px] font-bold text-fg/70 uppercase tracking-widest">Your password</span>
+              <input
+                ref={passwordRef} type="password" autoComplete="current-password" value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="mt-1.5 w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 text-fg"
+              />
+            </label>
+          )}
         </div>
         <div className="flex gap-3 px-6 pb-6 pt-2">
           <button
@@ -137,7 +151,8 @@ function ConfirmDialog({ req, onResolve }) {
           </button>
           <button
             ref={confirmRef}
-            onClick={() => onResolve(true)}
+            onClick={accept}
+            disabled={req.askPassword && !password}
             className={`flex-1 py-3.5 font-black rounded-xl transition text-sm uppercase tracking-wider min-h-[48px] active-press ${
               danger
                 ? 'bg-red-600 text-white hover:bg-red-500'

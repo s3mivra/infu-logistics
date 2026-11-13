@@ -55,7 +55,12 @@ export function resolveEffectiveDiscountPercent(product, { buyerClientId = '', b
   }
 
   if (buyerSegments.length && (product.segmentDiscounts || []).length) {
-    const matches = product.segmentDiscounts.filter(d => buyerSegments.includes(d.segment));
+    // Case- and space-insensitive, the same as the tier match in loadTierContext:
+    // a client tagged "dealer" got the Dealer tier but not a product's "Dealer"
+    // override, and paid a price nobody set (2026-11 audit, M108).
+    const segKey = (v) => String(v || '').trim().toLowerCase();
+    const buyerKeys = new Set(buyerSegments.map(segKey));
+    const matches = product.segmentDiscounts.filter(d => buyerKeys.has(segKey(d.segment)));
     if (matches.length) return Math.max(0, Math.min(100, Math.max(...matches.map(d => Number(d.percent || 0)))));
   }
 

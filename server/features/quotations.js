@@ -15,6 +15,8 @@
 // revenue for something nobody had agreed to buy.
 import { captureError } from '../lib/errorLog.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
+import { hasPermission } from '../lib/authz.js';
+import { checkApproval } from '../lib/approval.js';
 
 export default function registerQuotations(ctx) {
   const {
@@ -252,6 +254,20 @@ export default function registerQuotations(ctx) {
       // to a client is a number they cannot act on.
       if (q.lines.some(l => l.quotedPrice == null)) {
         return res.status(400).json({ success: false, error: 'Price every line before sending the quote.' });
+      }
+
+      // A quote below the catalogue price is a price override, under the same
+      // rule as the till: orders.override, or a manager's approval for this
+      // quote. orders.manage alone let a cashier quote P1 for anything.
+      if (!hasPermission(req.user, 'orders.override')
+          && !checkApproval(req.body?.approval, { permission: 'orders.override', requestedBy: req.user?._id, target: String(q._id) })) {
+        const ids = q.lines.map(l => l.productId).filter(Boolean);
+        const Product = mongoose.model('Product');
+        const list = new Map((await Product.find({ _id: { $in: ids } }, { basePrice: 1 }).lean()).map(p => [String(p._id), Number(p.basePrice) || 0]));
+        const below = q.lines.find(l => l.productId && list.has(String(l.productId)) && l.quotedPrice < list.get(String(l.productId)) - 0.005);
+        if (below) {
+          return res.status(403).json({ success: false, needsApproval: 'orders.override', target: String(q._id), error: `Quoting ${below.name} below its catalogue price needs a manager's approval.` });
+        }
       }
 
       if (req.body?.validUntil) {

@@ -27,7 +27,7 @@ beforeAll(async () => {
   const bobId = String((await M('ClientAccount').findOne({ username: 'bob' }).lean())._id);
   const base = { status: 'Pending', paymentMethod: 'Cash', total: 500, subtotal: 500, items: [{ name: 'Rice', quantity: 1, price: 500 }] };
   bobOrder = await M('Order').create({ ...base, orderNumber: 'ORD-BOB-1', clientId: bobId, customerName: 'Bob',
-    customerPhone: '0917 000 0001', deliveryAddress: '12 Bob Street' });
+    customerPhone: '0917 000 0001', deliveryAddress: '12 Bob Street', viewKey: 'bob-qr-key' });
   aliceOrder = await M('Order').create({ ...base, orderNumber: 'ORD-ALICE-1', clientId: aliceId, customerName: 'Alice',
     customerPhone: '0917 000 0002', deliveryAddress: '34 Alice Avenue' });
 }, 120000);
@@ -36,9 +36,9 @@ afterAll(async () => { await ctx.stop(); });
 
 describe('a client reading an order', () => {
   it('cannot see another customer\'s phone or address', async () => {
+    // Without the order's view key it is not found at all (2026-11 audit, M21).
     const res = await get(bobOrder._id, aliceTok);
-    expect(res.status).toBe(200);
-    expect(res.body.orderNumber).toBe('ORD-BOB-1');     // the status projection still answers
+    expect(res.status).toBe(404);
     expect(res.body.customerPhone).toBeUndefined();
     expect(res.body.deliveryAddress).toBeUndefined();
   });
@@ -57,7 +57,8 @@ describe('everyone else, unchanged', () => {
   });
 
   it('an anonymous caller gets the status projection', async () => {
-    const res = await get(bobOrder._id);
+    expect((await get(bobOrder._id)).status).toBe(404);   // no view key
+    const res = await request(app).get(`/api/orders/${bobOrder._id}?key=bob-qr-key`);
     expect(res.body.status).toBe('Pending');
     expect(res.body.customerPhone).toBeUndefined();
   });

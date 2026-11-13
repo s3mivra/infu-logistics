@@ -25,7 +25,7 @@ export function signApproval({ approver, permission, requestedBy, target }) {
 export function checkApproval(token, { permission, requestedBy, target }) {
   if (typeof token !== 'string' || !token) return null;
   let claims;
-  try { claims = jwt.verify(token, process.env.JWT_SECRET); } catch { return null; }
+  try { claims = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] }); } catch { return null; }
   if (claims?.kind !== KIND) return null;
   if (claims.permission !== permission) return null;
   if (claims.requestedBy !== String(requestedBy || '')) return null;

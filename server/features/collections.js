@@ -5,6 +5,7 @@ import { ageingByClient, resolveClientKey, withArBalance, arBalance, isFullySett
 import { businessDateStr } from '../lib/businessTime.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
+import { requireAnyPermission, hasPermission as can } from '../lib/authz.js';
 import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 
 import { atomic } from '../lib/atomicRoute.js';
@@ -36,7 +37,10 @@ export default function registerCollections(ctx) {
   // clients.js uses) can log a follow-up. The amount snapshot is always
   // computed server-side, never trusted from the caller, so this doesn't leak
   // more financial detail than that.
-  const canLogContact = [requireStaff, requirePermission('orders.view')];
+  // ...but it is a collections task, not a viewing one: orders.view (every
+  // built-in role) let any cashier plant history rows against any client and
+  // read back the client's balance in the reply (2026-11 audit, M107).
+  const canLogContact = [requireStaff, requireAnyPermission('ar.collect', 'accounting.view', 'credit.approve')];
 
   // Shared with finance.js's ar-ageing route (server/lib/credit.js) - the same
   // grouping key both A/R views must agree on, or they'd disagree about who
@@ -165,7 +169,10 @@ export default function registerCollections(ctx) {
         nextFollowUpDate: nextFollowUpDate ? new Date(nextFollowUpDate) : null,
       });
 
-      res.json({ success: true, reminder });
+      // The balance snapshot is the collector's; it leaves only with accounting.view.
+      const out = reminder.toObject ? reminder.toObject() : { ...reminder };
+      if (!can(req.user, 'accounting.view')) delete out.amountOwedAtTime;
+      res.json({ success: true, reminder: out });
     } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
   });
   // ══ CHECK REGISTER ═══════════════════════════════════════════════════════

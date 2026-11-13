@@ -31,6 +31,9 @@ services:
       NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=768}
       NODE_ENV: production
       PORT: 5002
+      # Caddy -> this tenant's nginx -> api: two proxies, so the client address
+      # is the second-from-last X-Forwarded-For entry (see server.js).
+      TRUST_PROXY: "2"
       BUSINESS_TYPE: ${VITE_BUSINESS_TYPE}
       MONGO_URI: ${MONGO_URI}
       JWT_SECRET: ${JWT_SECRET}
@@ -49,7 +52,7 @@ services:
       test: ["CMD", "wget", "-qO-", "http://localhost:5002/health"]
       interval: 30s
       timeout: 5s
-      start_period: 20s
+      start_period: 120s   # startup migrations run before /health is ok
       retries: 3
     networks:
       semivra-net:

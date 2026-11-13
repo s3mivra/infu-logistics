@@ -219,6 +219,14 @@ export default function registerProduction(ctx) {
       const batchNumber = await mkSeqRef('PROD');
 
       const result = await withOptionalTransaction(mongoose, async (session) => {
+        // Claim the order first. The status check above ran outside the
+        // transaction, so six approvals at once all passed it and each took
+        // the materials (5,000 g consumed for a 1,000 g batch). Only one claim
+        // can move Pending -> Approved; the others stop here.
+        const claim = await ProductionOrder.updateOne(
+          { _id: order._id, status: 'Pending' }, { $set: { status: 'Approved' } }, { session },
+        );
+        if (!claim.modifiedCount) throw Object.assign(new Error('This order was approved by someone else just now.'), { httpStatus: 409 });
         let totalMaterialsCost = 0;
 
         for (const m of order.materials) {
@@ -290,6 +298,12 @@ export default function registerProduction(ctx) {
       const outputUnitCost = +(totalMaterialsCost / actualQty).toFixed(6);
 
       const result = await withOptionalTransaction(mongoose, async (session) => {
+        // Same claim as approve: only one reconcile may credit the output.
+        const claim = await ProductionOrder.updateOne(
+          { _id: order._id, status: 'Approved', fulfillmentStatus: 'Processing' },
+          { $set: { fulfillmentStatus: 'Reconciling' } }, { session },
+        );
+        if (!claim.modifiedCount) throw Object.assign(new Error('This batch was reconciled by someone else just now.'), { httpStatus: 409 });
         let outputItem;
         if (order.outputType === 'existing') {
           outputItem = await Inventory.findById(order.outputInvId).session(session ?? null);

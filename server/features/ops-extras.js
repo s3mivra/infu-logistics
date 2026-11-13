@@ -10,6 +10,7 @@
 //
 // None of them posts to the ledger or moves stock.
 import { captureError } from '../lib/errorLog.js';
+import { requireAnyPermission } from '../lib/authz.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { businessDateStr } from '../lib/businessTime.js';
 
@@ -70,7 +71,11 @@ export default function registerOpsExtras(ctx) {
 
   // Tick or untick one step. Only today's: a checklist filled in afterwards
   // says nothing about whether the step was done.
-  app.post('/api/store-checklist/tick', ...canSee, async (req, res) => {
+  // Ticking is doing, not viewing: the person running the till, or whoever
+  // manages the rota. shifts.view alone let anyone who can read shift history
+  // rewrite the record the owner reads (2026-11 audit, M107).
+  const canTick = [verifyToken, requireStaff, requireAnyPermission('pos.use', 'scheduling.manage')];
+  app.post('/api/store-checklist/tick', ...canTick, async (req, res) => {
     try {
       const kind = String(req.body?.kind || '');
       const item = text(req.body?.item, 120);

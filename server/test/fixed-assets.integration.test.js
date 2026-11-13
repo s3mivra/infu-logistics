@@ -98,9 +98,10 @@ describe('depreciating', () => {
   });
 
   it('never writes the asset below its salvage value', async () => {
-    // Far past the end of its life - the charge must stop at the floor.
-    const { body } = await acquire();
-    const res = await auth('post', `/api/fixed-assets/${body.asset._id}/depreciate`).send({ asOf: '2040-01-15' });
+    // Far past the end of its life - the charge must stop at the floor. Bought
+    // long ago, so the whole life lies in the past (future dates are refused).
+    const { body } = await acquire({ acquisitionDate: '2010-01-15' });
+    const res = await auth('post', `/api/fixed-assets/${body.asset._id}/depreciate`).send({ asOf: '2024-01-15' });
     expect(res.body.posted).toBe(54000);
     expect(res.body.capped).toBe(true);
     expect(res.body.asset.netBookValue).toBe(6000);
@@ -108,9 +109,9 @@ describe('depreciating', () => {
   });
 
   it('charges nothing more once fully depreciated', async () => {
-    const { body } = await acquire();
-    await auth('post', `/api/fixed-assets/${body.asset._id}/depreciate`).send({ asOf: '2040-01-15' });
-    const again = await auth('post', `/api/fixed-assets/${body.asset._id}/depreciate`).send({ asOf: '2041-01-15' });
+    const { body } = await acquire({ acquisitionDate: '2010-01-15' });
+    await auth('post', `/api/fixed-assets/${body.asset._id}/depreciate`).send({ asOf: '2024-01-15' });
+    const again = await auth('post', `/api/fixed-assets/${body.asset._id}/depreciate`).send({ asOf: '2025-01-15' });
     expect(again.status).toBe(409);
     // The symptom this prevents: a written-off machine quietly reducing profit forever.
     const fresh = await M('FixedAsset').findById(body.asset._id).lean();
@@ -139,8 +140,8 @@ describe('depreciating', () => {
 
 describe('disposing', () => {
   it('books a gain when it sells for more than it is carried at', async () => {
-    const { body } = await acquire();
-    await auth('post', `/api/fixed-assets/${body.asset._id}/depreciate`).send({ asOf: '2028-07-15' }); // 30 months
+    const { body } = await acquire({ acquisitionDate: '2020-01-15' });
+    await auth('post', `/api/fixed-assets/${body.asset._id}/depreciate`).send({ asOf: '2022-07-15' }); // 30 months
     const nbv = (await M('FixedAsset').findById(body.asset._id).lean());
     const carrying = nbv.acquisitionCost - nbv.accumulatedDepreciation;
 

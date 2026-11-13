@@ -60,3 +60,36 @@ export function forwardAsyncErrors(app) {
   }
   return app;
 }
+
+// ── Client errors thrown deep in a handler ───────────────────────────────────
+// An error carrying a 4xx `status` (a closed accounting period, a state
+// conflict) is the caller's to fix. Most route catch blocks answer every
+// caught error with a hard-coded 500 and, in production, "Internal server
+// error" - which hid the reason from the person who could act on it.
+// captureError() records the error on the request; this middleware turns that
+// 500 back into the error's own status and message.
+export const isClientError = (err) => {
+  const s = Number(err?.status);
+  return Number.isInteger(s) && s >= 400 && s < 500;
+};
+
+export function clientErrorStatus(req, res, next) {
+  const status = res.status.bind(res);
+  const json = res.json.bind(res);
+  let clientError = null;
+  res.status = (code) => {
+    if (code === 500 && isClientError(req.__lastError)) {
+      clientError = req.__lastError;
+      return status(clientError.status);
+    }
+    return status(code);
+  };
+  res.json = (body) => {
+    if (clientError && body && typeof body === 'object' && body.success === false) {
+      body = { ...body, error: clientError.message, ...(clientError.code ? { code: clientError.code } : {}) };
+      clientError = null;
+    }
+    return json(body);
+  };
+  next();
+}

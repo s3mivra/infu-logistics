@@ -14,9 +14,19 @@
 // the queue, so it has to say what the number MEANS, not what it is called in
 // the schema.
 export const GUARDED_FIELDS = {
+  // Every product field that changes what a sale is charged, not only the
+  // base price: a 90% product discount, a 100% client discount or a P1 size
+  // price used to go live at once while basePrice waited for sign-off.
   Product: {
-    basePrice:    'Selling price',
-    costOverride: 'Recipe cost override',
+    basePrice:        'Selling price',
+    costOverride:     'Recipe cost override',
+    discountPercent:  'Product discount (%)',
+    clientDiscounts:  'Per-client discounts',
+    segmentDiscounts: 'Per-segment discounts',
+    bulkBreaks:       'Bulk-quantity discounts',
+    clientBulkBreaks: 'Per-client bulk prices',
+    sizes:            'Size prices',
+    addOns:           'Add-on prices',
   },
   // Who we pay, and what their invoices can be claimed as: the name bills are
   // made out to, the TIN and registered name a 2307 and an input-VAT claim
@@ -56,7 +66,16 @@ export function labelFor(entity, field) {
 // the number 250, and float noise (250.00000000001) is not one either - both
 // would otherwise open a pointless approval request that an approver has to
 // clear. Non-numeric values fall back to a plain strict comparison.
+// Keys that would write to an object's prototype rather than to a field.
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function sameValue(a, b) {
+  // Lists and sub-documents (sizes, client discounts) compare by content.
+  const isObj = (v) => v && typeof v === 'object' && !(v instanceof Date);
+  if (isObj(a) || isObj(b)) {
+    const norm = (v) => JSON.stringify(v ?? null, (k, x) => (k === '_id' ? undefined : x));
+    return norm(a) === norm(b);
+  }
   // "Not set" is checked FIRST and never coerced. Number(null) is 0, so a
   // numeric comparison would read an unset credit limit ("no limit") and a
   // zero one ("cash only") as the same value - they are opposites, and
@@ -88,6 +107,7 @@ export function splitUpdate({ entity, existing = {}, update = {}, canApprove = f
   const pending = [];
 
   for (const [field, newValue] of Object.entries(update)) {
+    if (UNSAFE_KEYS.has(field)) continue;   // never a field; would pollute the target
     if (!canApprove && isGuarded(entity, field) && !sameValue(existing[field], newValue)) {
       pending.push({
         field,
