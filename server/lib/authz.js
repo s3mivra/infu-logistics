@@ -114,6 +114,9 @@ export const PERMISSIONS = [
   { key: 'scheduling.manage',  group: 'Admin',       label: 'Build & publish staff rosters' },
   { key: 'users.manage',       group: 'Admin',       label: 'Manage staff & permissions' },
   { key: 'settings.manage',    group: 'Admin',       label: 'Change system settings' },
+  // A person's data: look it up, export it, erase what the law does not keep
+  // (Data Privacy Act requests; features/privacy.js). Exporting also needs Export All.
+  { key: 'privacy.manage',     group: 'Admin',       label: "Look up, export and erase a person's data" },
 ];
 
 // ── SCREENS: one permission per page inside a tab ────────────────────────────
@@ -249,7 +252,7 @@ export const OWNER_ROLE_PERMISSIONS = [
   'orders.view', 'inventory.view', 'products.view', 'procurement.view', 'production.view',
   'accounting.view', 'payroll.view', 'assets.view', 'bankrec.view', 'requisitions.view',
   'requisitions.approve', 'production.approve', 'pricing.approve', 'journal.approve', 'credit.approve', 'inventory.approve',
-  'orders.override',
+  'orders.override', 'privacy.manage',
 ];
 
 // Ready-made roles for the common jobs, created once as ordinary roles (like

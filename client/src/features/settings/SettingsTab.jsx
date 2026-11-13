@@ -17,6 +17,7 @@ import SetupSheetCard from './SetupSheetCard';
 import { BUSINESS_TYPE } from '../../shared/businessType.js';
 import MailSettingsCard from './MailSettingsCard';
 import TwoStepCard from './TwoStepCard';
+import PrivacyCard from './PrivacyCard';
 
 // Reusable iOS-style toggle switch.
 function Toggle({ on, onChange, disabled }) {
@@ -362,6 +363,7 @@ export default function SettingsTab({ ctx }) {
         {(isSuperAdmin || ctx.can?.('settings.manage')) && <MailSettingsCard apiFetch={apiFetch} isSuperAdmin={isSuperAdmin} />}
         {/* Everyone can protect their own account. */}
         <TwoStepCard apiFetch={apiFetch} isSuperAdmin={isSuperAdmin} />
+        {(isSuperAdmin || ctx.can?.('privacy.manage')) && <PrivacyCard apiFetch={apiFetch} can={(p) => isSuperAdmin || !!ctx.can?.(p)} />}
 
         {/* Everything the business has to type in, kept in one linked sheet. */}
         {isSuperAdmin && (
