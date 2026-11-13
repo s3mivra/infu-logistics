@@ -40,6 +40,6 @@
     "mongodb-memory-server": "^11.2.0",
     "socket.io-client": "^4.8.3",
     "supertest": "^7.2.2",
-    "vitest": "^4.1.7"
+    "vitest": "^5.1.0"
   }
 }
