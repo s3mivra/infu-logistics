@@ -31,7 +31,7 @@ export const PERMISSIONS = [
   // Were "superadmin or the admin role" by name; now given like anything else.
   { key: 'orders.refund',      group: 'Sales',       label: 'Refund, partly refund or exchange a completed order' },
   // Were superadmin-only: entering past sales, and bringing an Orders export back.
-  { key: 'sales.backdate',     group: 'Sales',       label: 'Enter backdated sales and import past orders' },
+  { key: 'sales.backdate',     group: 'Sales',       label: 'Backdate sales and purchases, and import past ones' },
   // Copy only: the sign-in link, and an onboarding link an admin already
   // issued. Issuing one stays superadmin-only - it sets a client's login.
   { key: 'clients.links',      group: 'Sales',       label: 'Copy client links (portal sign-in and issued onboarding links)' },

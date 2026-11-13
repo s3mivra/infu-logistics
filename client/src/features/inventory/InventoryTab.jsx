@@ -10,6 +10,7 @@ import StockTransferPanel from './StockTransferPanel';
 import ReservationsPanel from './ReservationsPanel';
 import StockControlPanel from './StockControlPanel';
 import GoogleSheetModal, { SheetChangedBanner, useInventorySheet, usePull } from './GoogleSheetLink';
+import PurchasesImportModal from './PurchasesImportModal';
 
 import { PACK_UNIT } from '../../shared/packUnit.js';
 import { BUSINESS_TYPE } from '../../shared/businessType.js';
@@ -191,6 +192,7 @@ export default function InventoryTab({ ctx }) {
   const [sheet, setSheet, reloadSheet] = useInventorySheet(apiFetch, !!isSuperAdmin);
   const [pullSheet, pullingSheet] = usePull(apiFetch, parseImportFile, reloadSheet, sheet?.tabs);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [purchasesOpen, setPurchasesOpen] = useState(false);
 
   return (
         <div className="flex flex-col gap-6">
@@ -293,6 +295,16 @@ export default function InventoryTab({ ctx }) {
                       className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition">
                       Count sheet template
                     </button>
+                    {can?.('inventory.manage') && (<>
+                      <div className="border-t border-white/8 mx-2 my-1" />
+                      <p className="px-4 pt-1 pb-1 text-[9px] font-black uppercase tracking-widest text-fg/65">Purchases</p>
+                      {/* Purchases kept in Excel or a Google Sheet: previewed, then
+                          added to stock and/or the books (features/purchases.js). */}
+                      <button onClick={() => { setPurchasesOpen(true); setOpenActionMenu(null); }}
+                        className="w-full text-left px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition">
+                        Purchases from a sheet
+                      </button>
+                    </>)}
                     <div className="border-t border-white/8 mx-2 my-1" />
                     <p className="px-4 pt-1 pb-1 text-[9px] font-black uppercase tracking-widest text-fg/65">Linked sheet</p>
                     {isSuperAdmin && (
@@ -324,6 +336,10 @@ export default function InventoryTab({ ctx }) {
             </div>
 
             {isSuperAdmin && <SheetChangedBanner sheet={sheet} onPull={pullSheet} busy={pullingSheet} />}
+            {purchasesOpen && (
+              <PurchasesImportModal apiFetch={apiFetch} can={can} onClose={() => setPurchasesOpen(false)}
+                onDone={() => { fetchERPData?.(); fetchStockHistory?.(); }} />
+            )}
             {sheetOpen && (
               <GoogleSheetModal apiFetch={apiFetch} sheet={sheet} setSheet={setSheet}
                 onPull={() => { setSheetOpen(false); pullSheet(); }} pulling={pullingSheet} onClose={() => setSheetOpen(false)} />
