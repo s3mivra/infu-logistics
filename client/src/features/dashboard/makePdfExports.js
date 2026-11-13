@@ -3,6 +3,7 @@ import { } from 'lucide-react';
 import { } from '../../shared/receiptTemplate';
 import * as ui from '../../shared/ui';
 import { todayStr } from '../../shared/businessDay.js';
+import { tallyMovements, movementLines } from '../../shared/inventoryMovement.js';
 import { BUSINESS_TYPE, DEFAULT_DEPARTMENT, DELIVERY_METHODS } from '../../shared/businessType.js';
 
 // The PDF exports: the shared page furniture (logo, money format) and the reports printed with it.
@@ -55,7 +56,8 @@ export default function makePdfExports(deps) {
     } catch { /* unsupported image - skip */ }
   };
 
-  // 1. Inventory & Movement History PDF (Unchanged)
+  // 1. Daily Inventory & Movement Report: per item, with purchases and
+  // transfers in their own columns, then the day's purchase and transfer lines.
   const exportInventoryToPDF = async () => {
     if (inventory.length === 0) return ui.alert("No inventory to export.");
     try {
@@ -79,32 +81,73 @@ export default function makePdfExports(deps) {
       startOfDay.setHours(0, 0, 0, 0);
       const todayHistory = allHistory.filter(h => new Date(h.date) >= startOfDay);
       
+      // Show quantities in the item's DISPLAY unit (e.g. 1 L, not 1000 ml). LOG counts
+      // in packages (pcs); FB in kg/L/pcs - same conversion the inventory table uses.
+      const unitOf = (item) => (BUSINESS_TYPE === 'log'
+        ? { mult: itemDisplay(item).packBase || 1, unit: 'pcs' }
+        : effectiveDisplay(item));
+      const qtyText = (n, eff) => (n / eff.mult).toLocaleString(undefined, { maximumFractionDigits: 3 });
+      const signed = (n, eff) => (n > 0 ? '+' : '') + qtyText(n, eff);
+      const byId = new Map(inventory.map(i => [String(i._id), i]));
+
       const stockBody = inventory.map(item => {
-        const itemHistory = todayHistory.filter(h => h.inventoryId === item._id);
-        let purchases = 0, sales = 0, adjustments = 0;
-        itemHistory.forEach(h => {
-          if (h.type === 'Restock' || h.type === 'Initial') purchases += h.qtyChange;
-          else if (h.type === 'Sale') sales += Math.abs(h.qtyChange);
-          else if (h.type === 'Adjustment') adjustments += h.qtyChange;
-        });
-        const ending = item.stockQty;
-        const beginning = ending - purchases + sales - adjustments;
-        // Show quantities in the item's DISPLAY unit (e.g. 1 L, not 1000 ml). LOG counts
-        // in packages (pcs); FB in kg/L/pcs - same conversion the inventory table uses.
-        const eff = BUSINESS_TYPE === 'log'
-          ? { mult: itemDisplay(item).packBase || 1, unit: 'pcs' }
-          : effectiveDisplay(item);
-        const conv = (n) => (n / eff.mult).toLocaleString(undefined, { maximumFractionDigits: 3 });
+        const t = tallyMovements(todayHistory.filter(h => String(h.inventoryId) === String(item._id)), item.stockQty);
+        const eff = unitOf(item);
         return [
-          item.itemName, eff.unit, conv(beginning), conv(purchases),
-          conv(sales), (adjustments > 0 ? '+' : '') + conv(adjustments), conv(ending)
+          item.itemName, eff.unit, qtyText(t.beginning, eff), qtyText(t.purchases, eff),
+          qtyText(t.transfersIn, eff), qtyText(t.transfersOut, eff), qtyText(t.sales, eff),
+          signed(t.other, eff), qtyText(t.ending, eff),
         ];
       });
+      const headStyles = { fillColor: [30, 30, 30], textColor: [255, 255, 255] };
+      const right = (from, to) => Object.fromEntries(Array.from({ length: to - from + 1 }, (_, k) => [from + k, { halign: 'right' }]));
       autoTable(doc, {
         startY: 30,
-        head: [['Item Name', 'Unit', 'Beginning Bal.', 'Purchases (In)', 'Sales (Out)', 'Adjustments', 'Ending Bal.']],
-        body: stockBody, theme: 'grid', headStyles: { fillColor: [30, 30, 30], textColor: [255,255,255] }
+        head: [['Item Name', 'Unit', 'Beginning Bal.', 'Purchases (In)', 'Transfers In', 'Transfers Out', 'Sales (Out)', 'Adjustments & Other', 'Ending Bal.']],
+        body: stockBody, theme: 'grid', headStyles, styles: { fontSize: 8 }, columnStyles: right(2, 8),
       });
+
+      // What came in and what moved, line by line. "Adjustments & Other" covers
+      // spoilage, production, stock takes and manual corrections.
+      const lines = movementLines(todayHistory);
+      const timeOf = (h) => new Date(h.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const section = (title, head, body, emptyText, extra = {}) => {
+        let y = (doc.lastAutoTable?.finalY || 30) + 10;
+        if (y > doc.internal.pageSize.getHeight() - 30) { doc.addPage(); y = 20; }
+        doc.setFontSize(12); doc.text(title, 14, y);
+        if (!body.length) { doc.setFontSize(9); doc.text(emptyText, 14, y + 6); doc.lastAutoTable.finalY = y + 6; return; }
+        autoTable(doc, { startY: y + 3, head: [head], body, theme: 'grid', headStyles, styles: { fontSize: 8 }, ...extra });
+      };
+      let purchaseValue = 0;
+      section('Purchases',
+        ['Time', 'Item', 'Qty', 'Unit', 'Unit Cost', 'Value', 'Reference', 'Note'],
+        lines.purchases.map(h => {
+          const item = byId.get(String(h.inventoryId)) || {};
+          const eff = item._id ? unitOf(item) : { mult: 1, unit: '' };
+          const value = (Number(h.qtyChange) || 0) * (Number(h.unitCost) || 0);
+          purchaseValue += value;
+          return [timeOf(h), h.itemName, qtyText(h.qtyChange, eff), eff.unit,
+            pdfMoney((Number(h.unitCost) || 0) * eff.mult), pdfMoney(value), h.reference || '', h.remarks || ''];
+        }),
+        'No purchases received today.',
+        { columnStyles: { 2: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } } },
+      );
+      if (lines.purchases.length) {
+        doc.setFontSize(9);
+        doc.text(`Total purchases received: ${pdfMoney(purchaseValue)}`, 14, doc.lastAutoTable.finalY + 6);
+        doc.lastAutoTable.finalY += 6;
+      }
+      section('Transfers',
+        ['Time', 'Item', 'Direction', 'Qty', 'Unit', 'From / To', 'Reference'],
+        lines.transfers.map(h => {
+          const item = byId.get(String(h.inventoryId)) || {};
+          const eff = item._id ? unitOf(item) : { mult: 1, unit: '' };
+          return [timeOf(h), h.itemName, h.type === 'Transfer In' ? 'In' : 'Out',
+            qtyText(Math.abs(Number(h.qtyChange) || 0), eff), eff.unit, h.remarks || '', h.reference || ''];
+        }),
+        'No transfers today.',
+        { columnStyles: { 3: { halign: 'right' } } },
+      );
       doc.save(`Inventory_Movement_${todayStr()}.pdf`);
     } catch (err) { ui.alert("Failed to generate PDF: " + err.message); }
   };
