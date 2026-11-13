@@ -38,6 +38,7 @@ import { computePercentageTax, PERCENTAGE_TAX_RATE } from './lib/tax.js';
 import { computeOrderVat, extractVat, normaliseVatRate, DEFAULT_VAT_RATE } from './lib/vat.js';
 import { validateDateRange } from './lib/reportRange.js';
 import { initErrorLog, logSafeUrl } from './lib/errorLog.js';
+import { claimJob, runExclusive, waitForRelease } from './lib/jobLock.js';
 import { fieldCryptPlugin, encryptValue } from './lib/fieldCrypt.js';
 import registerTenants from './features/tenants.js';
 import registerAddons from './features/addons.js';
@@ -1478,6 +1479,20 @@ const runStartupTasks = async () => {
     await refreshCustomRolePerms();
 };
 
+// Copies of the API take turns at the startup tasks (2026-11 audit, M46): the
+// first runs the migrations; each later one waits, then runs the same tasks,
+// whose migrations are already marked done - so it only loads its own caches
+// (time zone, payment map, custom roles). Two copies never migrate at once.
+const STARTUP_LOCK_MS = 15 * 60 * 1000;
+const runStartupTasksInTurn = async () => {
+  for (;;) {
+    const r = await runExclusive('startup-tasks', STARTUP_LOCK_MS, runStartupTasks);
+    if (r.ran) return r.value;
+    log.info('Another copy is running the startup tasks - waiting for it');
+    await waitForRelease('startup-tasks', { timeoutMs: STARTUP_LOCK_MS });
+  }
+};
+
 // --- MONGODB CONNECTION (single connect) ---
 // Lets lib/atomicRoute.js run a whole handler in one transaction: every query
 // inside mongoose.connection.transaction() joins it without passing a session.
@@ -1491,7 +1506,7 @@ mongoose.connect(process.env.MONGO_URI, {
   // The capped error collection has to be registered once the connection is up;
   // captureError() is a no-op until then, so early boot errors are simply not
   // recorded rather than crashing the process.
-  .then(() => { initErrorLog(); return runStartupTasks(); })
+  .then(() => { initErrorLog(); return runStartupTasksInTurn(); })
   .then(() => { startupState = 'ready'; log.info('Startup tasks complete - accepting requests'); })
   .catch(err => {
     startupState = 'failed';
@@ -2885,6 +2900,15 @@ function scheduleMidnightArchive() {
       log.info('  Midnight reached (PH Time): auto-close is DISABLED - leaving the day open for manual close.');
       scheduleMidnightArchive();
       return;
+    }
+    // One copy closes the day (M46): the first to claim this business day.
+    // The claim is never released, so the others skip it and wait for tomorrow.
+    // If the claim itself cannot be read, close anyway - a single copy must not
+    // skip a day because of it.
+    {
+      const day = businessClosingDateStr();
+      const mine = await claimJob(`midnight-close:${day}`, 12 * 3600 * 1000).catch(() => true);
+      if (!mine) { log.info({ day }, '  Midnight reached: another copy is closing the day.'); scheduleMidnightArchive(); return; }
     }
     log.info('  Midnight reached (PH Time): Auto-closing the day...');
 

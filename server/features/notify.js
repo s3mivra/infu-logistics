@@ -23,6 +23,7 @@ import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 import { mailConfigured, sendMail, isEmail, mailFrom, mailSource, setStoredMailConfig } from '../lib/mailer.js';
 import { seal, open } from '../lib/secretBox.js';
 import { isInternalHost } from '../lib/netGuard.js';
+import { claimJob } from '../lib/jobLock.js';
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const peso = (n) => `PHP ${r2(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -441,7 +442,13 @@ export default function registerNotify(ctx) {
   // Looked at every half hour; sends once, after the hour set. Not in tests -
   // a timer must not outlive them.
   if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
-    const tick = () => { if (mongoose.connection.readyState === 1) runDailyMail().catch(err => log?.error?.({ err }, 'Daily email run failed')); };
+    // One copy of the API looks each half hour (lib/jobLock.js, M46), so the
+    // mail is never sent twice.
+    const tick = async () => {
+      if (mongoose.connection.readyState !== 1) return;
+      if (!(await claimJob('daily-mail', 25 * 60 * 1000).catch(() => false))) return;
+      runDailyMail().catch(err => log?.error?.({ err }, 'Daily email run failed'));
+    };
     setInterval(tick, 30 * 60 * 1000).unref?.();
   }
 

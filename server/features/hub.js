@@ -17,6 +17,7 @@ import { rollUpByLocation, parseBranchCode } from '../lib/branchCode.js';
 // requirePermission the context hands out, imported under a short name so
 // it reads the same in every file.
 import { requirePermission as permit } from '../lib/authz.js';
+import { claimJob } from '../lib/jobLock.js';
 
 const TENANT = (() => {
   const m = (process.env.MONGO_URI || '').match(/\/semivra_([^?/]+)/);
@@ -737,7 +738,11 @@ export default function registerHub(ctx) {
     });
   };
   // And periodically, for a partner that was offline at the time.
-  const releaseInterval = setInterval(() => scheduleReleaseSweep(0), 10 * 60 * 1000);
+  // One copy does the periodic sweep (lib/jobLock.js, M46).
+  const releaseInterval = setInterval(async () => {
+    if (!(await claimJob('hub-release-sweep', 9 * 60 * 1000).catch(() => false))) return;
+    scheduleReleaseSweep(0);
+  }, 10 * 60 * 1000);
   releaseInterval.unref?.();
 
   // Internal: sender decrements stock after receiver accepted + posts JE

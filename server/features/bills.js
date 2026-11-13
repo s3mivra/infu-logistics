@@ -11,6 +11,8 @@ import { loadVatConfig } from '../lib/vatSettings.js';
 import { atomic } from '../lib/atomicRoute.js';
 import { threeWayMatch, normalizeInvoiceNo } from '../lib/threeWayMatch.js';
 import { hasPermission } from '../lib/authz.js';
+import { claimJob } from '../lib/jobLock.js';
+import { businessDateStr as todayKey } from '../lib/businessTime.js';
 export default function registerBills(ctx) {
   const {
     app,
@@ -195,7 +197,11 @@ export default function registerBills(ctx) {
   // On its own, once a day: this month's repeating bills appear as Pending
   // without anyone having to remember. Not in tests - a timer must not outlive them.
   if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
-    const tick = () => raiseRecurringBills({}, 'Repeating bill').catch(() => {});
+    // Once a day across every copy of the API (lib/jobLock.js, M46).
+    const tick = async () => {
+      if (!(await claimJob(`recurring-bills:${todayKey()}`, 23 * 3600 * 1000).catch(() => true))) return;
+      await raiseRecurringBills({}, 'Repeating bill').catch(() => {});
+    };
     setTimeout(tick, 60 * 1000).unref?.();
     setInterval(tick, 24 * 60 * 60 * 1000).unref?.();
   }

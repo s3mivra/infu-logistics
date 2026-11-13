@@ -8,6 +8,7 @@ import { checkApproval } from '../lib/approval.js';
 import { MONEY_MAX } from '../lib/normalize.js';
 
 import { atomic } from '../lib/atomicRoute.js';
+import { claimJob } from '../lib/jobLock.js';
 export default function registerShifts(ctx) {
   const {
     app,
@@ -714,7 +715,11 @@ async function sweepAwayClocks() {
   return stale.length;
 }
 if (process.env.NODE_ENV !== 'test') {
-  const t = setInterval(() => { sweepAwayClocks().catch(() => {}); }, 60000);
+  // One copy sweeps each minute (lib/jobLock.js, M46).
+  const t = setInterval(async () => {
+    if (!(await claimJob('clock-sweep', 50 * 1000).catch(() => false))) return;
+    sweepAwayClocks().catch(() => {});
+  }, 60000);
   t.unref?.();
 }
 app.post('/api/clock/sweep', verifyToken, requireStaff, requirePermission('shifts.view'), async (req, res) => {
