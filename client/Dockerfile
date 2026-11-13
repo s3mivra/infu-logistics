@@ -45,7 +45,7 @@ COPY . .
 RUN test -n "$VITE_BUSINESS_TYPE" || (echo "ERROR: VITE_BUSINESS_TYPE build arg is required" && exit 1)
 RUN npm run build
 
-FROM nginx:1.30.6-alpine@sha256:583b7f2fce1cdb8da5ad5c39ebd3c33b98b87d493190e548bdee1fa8c619c311
+FROM nginx:1.31.8-alpine@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11
 # Which backend this nginx proxies to. Defaults to the compose service name for
 # single-tenant deploys; the control plane overrides it with "<slug>-api" so a
 # shared docker network can't resolve one tenant's nginx to another's backend.
