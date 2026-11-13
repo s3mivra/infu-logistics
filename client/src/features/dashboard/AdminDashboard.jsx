@@ -4,6 +4,7 @@ import { formatDate, formatDateTime } from '../../shared/dates.js';
 import { useState, useEffect, useRef, useMemo, useCallback, Suspense } from 'react';
 import { lazyRetry } from '../../shared/lazyRetry';
 import PanelBoundary from '../../shared/PanelBoundary';
+import { cartLineTotal, hasTargetPrice, targetAboveNormal } from '../../shared/cartDiscount';
 import { useNavigate } from 'react-router-dom';
 import { socket, reconnectSocket } from '../../shared/staffSocket.js';
 import { broadcastRefresh } from '../../shared/refreshBus';
@@ -2590,9 +2591,10 @@ export default function AdminDashboard() {
   };
 
   const posSubtotal = posCart.reduce((sum, item) => sum + ((item.price + item.selectedAddOns.reduce((s, a) => s + Number(a.price), 0)) * item.quantity), 0);
+  // A line's discount is a percent or a typed price (shared/cartDiscount.js).
   const posItemDiscountAmt = posCart.reduce((sum, item) => {
     const base = (item.price + item.selectedAddOns.reduce((s, a) => s + Number(a.price), 0)) * item.quantity;
-    return sum + base * ((item.discountPercent || 0) / 100);
+    return sum + (base - cartLineTotal(item));
   }, 0);
   const posDeliveryFeeNum = parseFloat(posDeliveryFee) || 0;
   const posDiscountAmt = posDiscountType === 'percent'
@@ -2604,6 +2606,8 @@ export default function AdminDashboard() {
     // Synchronous double-tap guard - blocks a second submit before React re-renders.
     if (posSubmittingRef.current) return;
     if (posCart.length === 0) return ui.alert("Cart is empty!");
+    const overPriced = posCart.find(targetAboveNormal);
+    if (overPriced) return ui.alert(`${overPriced.name}: the price typed is above its normal price. Lower it, or switch the line back to a percent.`);
     // A dine-in customer at a cafe usually has no name to give, and stopping
     // the sale to ask for one is friction nobody needs. It is filed as
     // "Walk-in", which the server treats as a stand-in rather than a person,
@@ -2701,13 +2705,21 @@ export default function AdminDashboard() {
         else data = { success: false, error: 'Not placed - the sale is over the client\'s credit limit.' };
       }
       if (data.success) {
-        // Apply any manually-set per-item discounts from the POS cart
-        const cartWithDisc = posCart.filter(item => (item.discountPercent || 0) > 0);
+        // Apply any manually-set per-item discounts from the POS cart: a
+        // percent, or a typed price the server turns into the exact percent.
+        const cartWithDisc = posCart.filter(item => hasTargetPrice(item) || (item.discountPercent || 0) > 0);
         if (cartWithDisc.length > 0 && data.order?._id) {
-          await apiFetch(`/api/orders/${data.order._id}`, {
+          const dr = await apiFetch(`/api/orders/${data.order._id}`, {
             method: 'PUT',
-            body: JSON.stringify({ items: posCart.map(item => ({ discountPercent: item.discountPercent || 0 })) }),
+            body: JSON.stringify({ items: posCart.map(item => (hasTargetPrice(item)
+              ? { targetPrice: Number(item.targetPrice) }
+              : { discountPercent: item.discountPercent || 0 })) }),
           });
+          // The order is placed either way; say so if its discounts were not
+          // taken (a manager declined, or a price above normal) rather than
+          // leaving the cashier to find out at the counter.
+          const dd = await dr.json().catch(() => ({}));
+          if (!dd.success) ui.alert(`The order was placed, but its item discounts were not applied${dd.error ? `: ${dd.error}` : ''}. You can add them on the order.`);
         }
         if (BUSINESS_TYPE === 'log') fetchERPData();
         resetPosForm();

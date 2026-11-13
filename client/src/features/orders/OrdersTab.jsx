@@ -4,6 +4,7 @@ import { statusTone } from '../../shared/statusTone';
 import SplitPayEditor, { newSplit, splitReady, splitPayload } from '../ledger/SplitPayEditor';
 import React from 'react';
 import QtyInput from '../../shared/ui/QtyInput';
+import { cartLineTotal, targetAboveNormal } from '../../shared/cartDiscount';
 import { Menu, X, Lock, Unlock, QrCode, Package, Users, ShoppingCart, ChefHat, FileText, Plus, Edit, Trash2, CheckCircle, Check, Clock, ChevronRight, ChevronLeft, ChevronDown, ChevronUp, Printer, Gift, Smartphone, Truck, Search, Tag, Footprints, Utensils, ShoppingBag, Bike, Car, UserX, UserCheck, Flame } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import ScanBox from '../../shared/ScanBox';
@@ -929,8 +930,11 @@ export default function OrdersTab({ ctx }) {
                     ) : posCart.map((item, idx) => {
                       const addOnTotal = item.selectedAddOns.reduce((s, a) => s + Number(a.price), 0);
                       const lineBase = (item.price + addOnTotal) * item.quantity;
-                      const lineDisc = lineBase * ((item.discountPercent || 0) / 100);
-                      const lineTotal = lineBase - lineDisc;
+                      const lineTotal = cartLineTotal(item);
+                      const lineDisc = lineBase - lineTotal;
+                      const priceMode = item.discountMode === 'price';
+                      const tooHigh = targetAboveNormal(item);
+                      const setLine = (patch) => setPosCart(posCart.map((c, i) => i === idx ? { ...c, ...patch } : c));
                       return (
                         <div key={idx} className="bg-page-bg/50 p-3 rounded-xl border border-white/10 flex justify-between items-start">
                           <div className="flex-1 pr-2 min-w-0">
@@ -952,18 +956,45 @@ export default function OrdersTab({ ctx }) {
                                 onChange={q => setPosCart(posCart.map((c, i) => i === idx ? {...c, quantity: q} : c))} />
                               <button onClick={() => setPosCart(posCart.map((c, i) => i === idx ? {...c, quantity: c.quantity + 1} : c))}
                                 className="w-8 h-8 bg-white/10 hover:bg-brand/30 rounded-lg text-fg font-black flex items-center justify-center transition text-base active:scale-90">+</button>
-                              <label className="relative ml-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-fg/65">
-                                Disc
-                                <input
-                                  aria-label="Line discount percent"
-                                  type="number" min="0" max="100" step="1"
-                                  placeholder="0"
-                                  value={item.discountPercent || ''}
-                                  onChange={e => setPosCart(posCart.map((c, i) => i === idx ? {...c, discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))} : c))}
-                                  className="w-14 bg-white/5 border border-white/10 rounded-lg pl-2 pr-5 py-1 text-fg text-xs font-bold outline-none focus:border-brand/60 placeholder-fg/70 tabular-nums"
-                                />
-                                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-fg/65 text-[10px] font-bold pointer-events-none">%</span>
-                              </label>
+                              {/* The line's discount, as a percent off or as the
+                                  price to charge for one (₱). Switching clears
+                                  the other mode's number; the server turns a
+                                  price into the exact percent when it saves. */}
+                              <div className="ml-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-fg/65">
+                                {priceMode ? 'Price' : 'Disc'}
+                                <div className="relative">
+                                  {priceMode ? (
+                                    <input
+                                      aria-label="Price to charge for one"
+                                      type="number" min="0" step="0.01" inputMode="decimal"
+                                      placeholder={(item.price + addOnTotal).toFixed(2)}
+                                      value={item.targetPrice ?? ''}
+                                      onChange={e => setLine({ targetPrice: e.target.value === '' ? null : Math.max(0, parseFloat(e.target.value) || 0) })}
+                                      title={tooHigh ? 'Above the normal price - this is not a discount' : 'Price to charge for one of this item'}
+                                      className={`w-20 bg-white/5 border rounded-lg pl-5 pr-1.5 py-1 text-fg text-xs font-bold outline-none focus:border-brand/60 placeholder-fg/70 tabular-nums ${tooHigh ? 'border-red-500/70' : 'border-white/10'}`}
+                                    />
+                                  ) : (
+                                    <input
+                                      aria-label="Line discount percent"
+                                      type="number" min="0" max="100" step="1"
+                                      placeholder="0"
+                                      value={item.discountPercent || ''}
+                                      onChange={e => setLine({ discountPercent: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) })}
+                                      className="w-14 bg-white/5 border border-white/10 rounded-lg pl-2 pr-5 py-1 text-fg text-xs font-bold outline-none focus:border-brand/60 placeholder-fg/70 tabular-nums"
+                                    />
+                                  )}
+                                  <span className={`absolute top-1/2 -translate-y-1/2 text-fg/65 text-[10px] font-bold pointer-events-none ${priceMode ? 'left-1.5' : 'right-1.5'}`}>{priceMode ? '₱' : '%'}</span>
+                                </div>
+                                <button type="button"
+                                  onClick={() => setLine(priceMode
+                                    ? { discountMode: 'percent', targetPrice: null }
+                                    : { discountMode: 'price', discountPercent: 0 })}
+                                  title={priceMode ? 'Type a percent off instead' : 'Type the price to charge instead'}
+                                  aria-label={priceMode ? 'Switch to percent discount' : 'Switch to price'}
+                                  className="h-7 px-1.5 rounded-lg border border-white/10 text-fg/70 hover:text-fg hover:border-brand/50 text-[10px] font-black transition">
+                                  {priceMode ? '%' : '₱'}
+                                </button>
+                              </div>
                             </div>
                           </div>
                           <div className="flex flex-col items-end gap-1 shrink-0">
