@@ -4,6 +4,7 @@
 import { resolveCreditLimit, checkCreditAvailable, arBalance, isFullySettled, isReceivableStatus } from '../lib/credit.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { title, partyName, MONEY_MAX, roundCentavo } from '../lib/normalize.js';
+import { roundMoney } from '../lib/money.js';
 import { withOptionalTransaction } from '../lib/txn.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { releaseCancelledOrderNumber, releaseCancelledOrderNumbers } from '../lib/orderNumbers.js';
@@ -1971,7 +1972,9 @@ const completeOrderOnce = async (req, res, mayRetry) => {
   const pendingAudits = [];
 
   try {
-    const { status, discountPercent, isVatExempt, paymentMethod, discountType, discountedIndices, items, amountTendered } = req.body;
+    const { status, isVatExempt, paymentMethod, discountType, discountedIndices, items, amountTendered } = req.body;
+    // `let`: a "price" discount (targetTotal, below) is turned into this percent.
+    let { discountPercent } = req.body;
     // Who the SC/PWD discount belongs to. Sent from the register beside the
     // discount itself; '' clears it when the discount is taken back off.
     const scPwd = {
@@ -2007,6 +2010,59 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       await session.abortTransaction();
       session.endSession();
       return res.status(409).json({ success: false, error: `This order is ${previousStatus.toLowerCase()} and can no longer be changed.` });
+    }
+
+    // "Price" discounts: instead of a percent, the cashier types what to charge
+    // - a line's unit price (items[i].targetPrice) or the order's total
+    // (targetTotal). The server turns each into the exact percent that lands on
+    // that price, so the till cannot drift from it, and from then on it is an
+    // ordinary manual discount: same approval rule, same books.
+    try {
+      const lineBase = (l) => ((Number(l.price) || 0) + (l.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0)) * (Number(l.quantity) || 1);
+      const refuse = (msg) => { const e = new Error(msg); e.status = 400; throw e; };
+      if (Array.isArray(items)) {
+        items.forEach((it, i) => {
+          const line = order.items[i];
+          if (!line || !it || it.targetPrice === undefined || it.targetPrice === null || it.targetPrice === '') return;
+          const unit = Number(it.targetPrice);
+          const base = lineBase(line);
+          const target = unit * (Number(line.quantity) || 1);
+          if (!Number.isFinite(unit) || unit < 0) refuse(`${line.name}: the price must be zero or more.`);
+          if (target > base + 0.005) refuse(`${line.name}: the price cannot be above its normal price (₱${roundMoney(base / (Number(line.quantity) || 1)).toFixed(2)}).`);
+          it.discountPercent = base > 0 ? Math.max(0, (1 - target / base) * 100) : 0;
+          delete it.targetPrice;
+        });
+      }
+      if (req.body.targetTotal !== undefined && req.body.targetTotal !== null && req.body.targetTotal !== '') {
+        const wanted = Number(req.body.targetTotal);
+        if (!Number.isFinite(wanted) || wanted < 0) refuse('The total must be zero or more.');
+        // The order-wide percent applies to the lines without their own discount
+        // that were ticked; with VAT added on top, or an SC/PWD sale, "the
+        // total" is not a plain percent of those lines - ask for a percent there.
+        if (order.isVatInclusive === false || order.isVatExempt || isVatExempt === true) {
+          refuse('Set this discount as a percent on this order (VAT is added on top, or it is an SC/PWD sale).');
+        }
+        const ticked = Array.isArray(discountedIndices) ? new Set(discountedIndices) : null;
+        let discountable = 0, fixedPart = 0;
+        order.items.forEach((l, i) => {
+          const base = lineBase(l);
+          const sent = Array.isArray(items) && items[i] && items[i].discountPercent !== undefined ? Number(items[i].discountPercent) || 0 : Number(l.discountPercent) || 0;
+          const pct = Math.max(Number(l.productDiscountPercent) || 0, sent);
+          const gets = ticked ? ticked.has(i) : l.hasDiscount !== false;
+          if (pct === 0 && gets) discountable += base;
+          else fixedPart += base - roundMoney(base * pct / 100);
+        });
+        const goods = wanted - (Number(order.deliveryFee) || 0);
+        if (goods > fixedPart + discountable + 0.005) refuse('The total cannot be above the order\'s normal total.');
+        if (discountable <= 0) refuse('No item on this order can take an order discount. Tick the items it applies to.');
+        if (goods < fixedPart - 0.005) refuse(`The lowest total this discount can reach is ₱${roundMoney(fixedPart + (Number(order.deliveryFee) || 0)).toFixed(2)} (the other items are already discounted or excluded).`);
+        discountPercent = Math.min(100, Math.max(0, ((discountable - (goods - fixedPart)) / discountable) * 100));
+      }
+    } catch (e) {
+      if (e?.status !== 400) throw e;
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ success: false, error: e.message });
     }
 
     // Money levers on an open order: a new manual discount (order or line) and

@@ -2885,8 +2885,21 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
   // (No per-order VAT handler. The rate is the business's registration and lives
   // in Settings; SC/PWD exemption is applied through the SC/PWD discount control,
   // which sets isVatExempt as a side effect of choosing that discount type.)
-  const applyDiscount = async (orderId, isRemoving = false) => {
+  // `targetTotal`: the order total to charge instead of a percent; the server
+  // works out the percent on the ticked items.
+  const applyDiscount = async (orderId, isRemoving = false, targetTotal = null) => {
     const order = orders.find(o => o._id === orderId);
+    if (targetTotal !== null && !isRemoving) {
+      const wanted = parseFloat(targetTotal);
+      if (!Number.isFinite(wanted) || wanted < 0) return ui.alert('Type the total to charge, e.g. 950.');
+      const res = await apiFetch(`/api/orders/${orderId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ targetTotal: wanted, isVatExempt: false, discountType: 'Promo', discountedIndices: getSelectedItems(order) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!data.success && data.error) ui.alert(data.error);
+      return;
+    }
     const percent = isRemoving ? 0 : parseFloat(discountInputs[orderId] || 0);
     if (!Number.isFinite(percent) || percent < 0 || percent > 100) return ui.alert('Discount must be between 0% and 100%');
     
@@ -2936,23 +2949,28 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
     } catch { ui.alert('Network error.'); }
   };
 
-  const applyItemDiscount = async (orderId, itemIndex, discountPercent) => {
+  // `mode` 'price': `value` is the unit price to charge for the line, not a
+  // percent - the server works out the exact percent (targetPrice).
+  const applyItemDiscount = async (orderId, itemIndex, value, mode = 'percent') => {
     try {
       // We send this to your existing order update route, specifically targeting the items array
       const order = orders.find(o => o._id === orderId);
       if (!order) return;
 
-      const updatedItems = [...order.items];
-      updatedItems[itemIndex].discountPercent = Number(discountPercent);
+      const updatedItems = order.items.map((it, i) => {
+        if (i !== itemIndex) return it;
+        return mode === 'price' ? { ...it, targetPrice: Number(value) } : { ...it, discountPercent: Number(value) };
+      });
 
       const res = await apiFetch(`/api/orders/${orderId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items: updatedItems })
       });
-      
+
       const data = await res.json();
       if (data.success) fetchOrders();
+      else if (data.error) ui.alert(data.error);
     } catch (err) {
       console.error(err);
     }
