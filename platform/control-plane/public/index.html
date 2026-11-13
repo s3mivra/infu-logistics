@@ -736,7 +736,7 @@ async function refresh() {
       <div class="row">
         <div>
           <div><strong>${esc(t.businessName || t.slug)}</strong> <span class="pill">${esc(t.businessType || '?')}</span>${t.testTenant ? ' <span class="pill ok">TEST</span>' : ''}</div>
-          <div class="muted"><a href="${esc(/^https?:///.test(t.url || '') ? t.url : '#')}" target="_blank" rel="noopener">${esc(t.url)}</a></div>
+          <div class="muted"><a href="${esc(/^https?:\/\//.test(t.url || '') ? t.url : '#')}" target="_blank" rel="noopener">${esc(t.url)}</a></div>
           <div class="muted">mem ${mem} of ${u.memLimitMb ?? t.memMb ?? 1024} MB
             · cpu ${u.cpuShares ?? t.cpuShares ?? 1024}
             · db ${fmtBytes(u.dbBytes)}
