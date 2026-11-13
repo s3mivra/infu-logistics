@@ -78,7 +78,7 @@ export default function OrdersTab({ ctx }) {
     paymentSelections, peso,
     posActiveAddOns, posActiveSize, posItemQty, setPosItemQty,
     posCart, posCategory, posCustomerName,
-    posClientId, setPosClientId, posSalesperson, setPosSalesperson, salesStaff = [], posBuyerDiscounts, clientAccounts, coaAccounts,
+    posClientId, setPosClientId, posPriceTier = '', setPosPriceTier, priceTiers = [], posSalesperson, setPosSalesperson, salesStaff = [], posBuyerDiscounts, clientAccounts, coaAccounts,
     posReserveOnly, setPosReserveOnly,
     posCustomerPhone, posDeliveryAddress, posDeliveryFee, posDeliveryFeeNum, posDiscountAmt,
     posItemDiscountAmt, posGrandTotal, posSubmitting, posPage, 
@@ -659,17 +659,32 @@ export default function OrdersTab({ ctx }) {
                       { value: 'Foodpanda', label: 'Foodpanda', Icon: Smartphone },
                     ]} />
                     </div>
+                    {/* Price tier for this sale. SRP (list price) is the default and
+                        what nearly every sale uses; a tier is there for the odd sale
+                        that should go at, say, the dealer price. The server prices the
+                        order at the tier and asks for a manager's PIN when the cashier
+                        may not set tier prices themselves. */}
+                    {(priceTiers || []).some(t => t.isActive !== false) && (
+                      <select value={posPriceTier} onChange={e => setPosPriceTier(e.target.value)} aria-label="Price tier"
+                        title="Which price to charge. SRP is the normal list price."
+                        className={`w-full rounded-xl px-3 py-2 text-xs font-bold outline-none transition border focus:border-brand/60 ${posPriceTier ? 'bg-accent/10 border-accent/40 text-brand-text' : 'bg-page-bg border-white/10 text-fg'}`}>
+                        <option value="">Price: SRP (list price){posClientId ? " + client's own tier" : ''}</option>
+                        {priceTiers.filter(t => t.isActive !== false).map(t => (
+                          <option key={t._id} value={t.name}>Price tier: {t.name}</option>
+                        ))}
+                      </select>
+                    )}
                     {/* Live pricing preview for the selected client - resolved via the
                         SAME server logic checkout uses, so this is the real price, not
                         a guess. Empty once the picker fetch lands = this client has no
                         discount on anything currently in view. */}
-                    {posClientId && (() => {
+                    {(posClientId || posPriceTier) && (() => {
                       const pcts = Object.values(posBuyerDiscounts || {});
                       const best = pcts.length ? Math.max(...pcts) : 0;
                       return best > 0 ? (
                         <div className="flex items-center gap-1.5 bg-accent/10 border border-accent/20 rounded-lg px-2.5 py-1.5">
                           <Tag size={11} className="text-brand-text flex-shrink-0" />
-                          <span className="text-[10px] text-brand-text font-bold">Pricing applied - up to {best}% off for this client</span>
+                          <span className="text-[10px] text-brand-text font-bold">Pricing applied - up to {best}% off {posPriceTier ? `at the ${posPriceTier} tier` : 'for this client'}</span>
                         </div>
                       ) : null;
                     })()}

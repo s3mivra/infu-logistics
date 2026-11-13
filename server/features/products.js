@@ -378,6 +378,12 @@ app.get('/api/products', async (req, res) => {
         buyerSegments = acct?.segments || [];
       } catch { /* invalid id - no segment/tier discount applies */ }
     }
+    // Manual Order's tier picker: preview THIS tier's prices for staff, the
+    // same substitution the order route makes when the sale is placed, so the
+    // cart shows exactly what will be charged. Ignored for anyone not staff.
+    if (isAdminCaller && String(req.query.priceTier || '').trim()) {
+      buyerSegments = [String(req.query.priceTier).trim()];
+    }
     const { tierDefaultPct, perProductTiers } = await loadTierContext({
       PriceTier, businessType: BUSINESS_TYPE, tenantScope, req, buyerSegments,
     });

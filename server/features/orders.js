@@ -1005,6 +1005,27 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       } catch { /* invalid id - ignore, fall back to default discount */ }
     }
 
+    // A price tier picked at the till (Manual Order's tier picker). None - the
+    // default - is SRP: list price, plus whatever tier the chosen client already
+    // has. A picked tier prices THIS sale instead of the client's own tags, the
+    // same way a client in that tier would be charged. It is a lower price than
+    // SRP, so it needs pricing.tiers or orders.override, or a manager's PIN.
+    let pickedTier = '';
+    if (!isClientOrder && String(req.body.priceTier || '').trim()) {
+      const wanted = String(req.body.priceTier).trim();
+      const tier = await PriceTier.findOne(
+        { businessType: BUSINESS_TYPE, ...tenantScope(req), isActive: true, name: { $regex: `^${escapeRegex(wanted)}$`, $options: 'i' } },
+        { name: 1 },
+      ).lean();
+      if (!tier) return res.status(400).json({ success: false, error: `There is no active price tier called "${wanted}".` });
+      const target = `tier:${tier.name}`;
+      if (!hasPermission(req.user, 'pricing.tiers') && !overrideOk(req, target)) {
+        return res.status(403).json({ success: false, needsApproval: 'orders.override', target, error: `Charging the ${tier.name} price tier needs a manager's approval.` });
+      }
+      pickedTier = tier.name;
+      onBehalfSegments = [tier.name];
+    }
+
     // SC/PWD is a property of the SALE, not of the business's VAT registration -
     // the cashier marks it per order and the POS already sends the flag. A non-VAT
     // business still labels the discount SC/PWD; it simply has no VAT to strip.
@@ -1423,6 +1444,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       ...(isComplimentary && overrideBy && { complimentaryApprovedBy: overrideBy.approverName }),
       placedByClient: isClientOrder,
       ...(onBehalfClientId ? { clientAccountId: onBehalfClientId } : {}),
+      ...(pickedTier ? { priceTier: pickedTier } : {}),
       // Reserve mode: items committed, no payment yet, status = Reserved.
       // Cashier later promotes Reserved → Pending (pay later) or Preparing (pay now)
       // via the existing PUT /api/orders/:id status transition.

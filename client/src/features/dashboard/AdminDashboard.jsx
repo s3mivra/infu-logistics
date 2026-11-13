@@ -647,6 +647,8 @@ export default function AdminDashboard() {
   // Optional client account link - when set, the order qualifies for that
   // client's per-product discount overrides on the server side.
   const [posClientId, setPosClientId] = useState('');
+  // Manual Order's price tier: '' is SRP (list price, plus the client's own tier).
+  const [posPriceTier, setPosPriceTier] = useState('');
   // Who the sale is credited to (Commissions). Blank = the client's assigned
   // salesperson, else whoever rings it up - decided on the server.
   const [posSalesperson, setPosSalesperson] = useState('');
@@ -2483,11 +2485,16 @@ export default function AdminDashboard() {
   // read by Products/Pricing Control too, and leaking one client's special
   // pricing into those unrelated, buyer-agnostic views would be wrong.
   useEffect(() => {
-    if (!posClientId) { setPosBuyerDiscounts({}); setPosBuyerPrices({}); return; }
+    if (!posClientId && !posPriceTier) { setPosBuyerDiscounts({}); setPosBuyerPrices({}); return; }
     let cancelled = false;
     (async () => {
       try {
-        const res = await apiFetch(`/api/products?onBehalfClientId=${posClientId}`);
+        // The picked tier (if any) is previewed by the same server resolver the
+        // order route charges with, so the cart shows the real price.
+        const qs = new URLSearchParams();
+        if (posClientId) qs.set('onBehalfClientId', posClientId);
+        if (posPriceTier) qs.set('priceTier', posPriceTier);
+        const res = await apiFetch(`/api/products?${qs}`);
         if (!res.ok) return;
         const data = await res.json();
         if (cancelled) return;
@@ -2502,7 +2509,7 @@ export default function AdminDashboard() {
       } catch { /* non-fatal - cart falls back to no live discount preview */ }
     })();
     return () => { cancelled = true; };
-  }, [apiFetch, posClientId]);
+  }, [apiFetch, posClientId, posPriceTier]);
 
   // Re-price whatever's already in the cart when the client changes (added
   // before picking a client, or picked a different one mid-order) - so
@@ -2626,6 +2633,7 @@ export default function AdminDashboard() {
       // discount overrides for this order. Optional - falls back to the
       // product's default discountPercent when blank.
       clientAccountId: posClientId || undefined,
+      priceTier: posPriceTier || undefined,
       salesperson: posSalesperson || undefined,
       reserveOnly: posReserveOnly || undefined,
       paymentMethod: DELIVERY_METHODS.includes(posTable) ? posTable : 'Cash',
@@ -2655,6 +2663,7 @@ export default function AdminDashboard() {
       setPosCart([]);
       setPosCustomerName('');
       setPosClientId('');
+      setPosPriceTier('');
       setPosSalesperson('');
       setPosReserveOnly(false);
       setPosDeliveryAddress('');
@@ -7167,7 +7176,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     orderSearch, setOrderSearch,
     collapsedOrders, setCollapsedOrders, updatingOrders, cashTendered, setCashTendered,
     isPosOpen, setIsPosOpen, posCart, setPosCart, posCategory, setPosCategory, posPage, setPosPage,
-    posSearch, setPosSearch, posCustomerName, setPosCustomerName, posClientId, setPosClientId, posSalesperson, setPosSalesperson, salesStaff, posBuyerDiscounts, posReserveOnly, setPosReserveOnly, posTable, setPosTable,
+    posSearch, setPosSearch, posCustomerName, setPosCustomerName, posClientId, setPosClientId, posPriceTier, setPosPriceTier, posSalesperson, setPosSalesperson, salesStaff, posBuyerDiscounts, posReserveOnly, setPosReserveOnly, posTable, setPosTable,
     posBranch, setPosBranch,
     posPayment, setPosPayment, posSelectedProduct, setPosSelectedProduct,
     posActiveSize, setPosActiveSize, posActiveAddOns, setPosActiveAddOns, posItemQty, setPosItemQty,

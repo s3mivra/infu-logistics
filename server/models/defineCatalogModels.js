@@ -249,6 +249,9 @@ export default function defineCatalogModels({ BUSINESS_TYPE }) {
     // order up without signing in. An order id alone used to be enough, and
     // ids are sequential enough to walk.
     viewKey: { type: String, default: '', select: false },
+    // The price tier the cashier picked for this sale, if any ('' = SRP and
+    // the client's own tiers). Shown on the order so a tier price is explained.
+    priceTier: { type: String, default: '' },
     customerName: { type: String, default: 'Guest' },
     paymentMethod: { type: String, default: 'Cash' },
 
