@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Package, Eye, EyeOff, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
+import { Eye, EyeOff, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
 import LegalLinks from '../../shared/LegalLinks';
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
 import { API_URL } from '../../shared/apiBase.js';
+import PortalBrandMark from './PortalBrandMark';
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Semivra').toUpperCase();
 
 // Self-service onboarding (#10) - reached via a one-time link the superadmin
@@ -74,9 +75,7 @@ export default function ClientOnboarding() {
     <div className="min-h-screen bg-page-bg flex flex-col items-center justify-center p-4">
       <div className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-8">
         <div className="flex flex-col items-center mb-6">
-          <div className="w-14 h-14 rounded-2xl bg-brand/20 flex items-center justify-center mb-4">
-            <Package size={26} className="text-brand-text" />
-          </div>
+          <PortalBrandMark name={BIZ_NAME} />
           <h2 className="text-xl font-black text-fg uppercase tracking-widest">{BIZ_NAME}</h2>
           <p className="text-fg/70 text-xs mt-1 text-center">Finish setting up your client account</p>
         </div>

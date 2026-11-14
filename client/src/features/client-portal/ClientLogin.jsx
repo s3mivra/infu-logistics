@@ -1,12 +1,13 @@
 ﻿import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Package, Eye, EyeOff, AlertCircle, Loader2, LogIn } from 'lucide-react';
+import { Eye, EyeOff, AlertCircle, Loader2, LogIn } from 'lucide-react';
 import { saveSession, loadSession, clientIdOf } from './clientSession';
 import LegalLinks from '../../shared/LegalLinks';
 
 // '' is meaningful: it means same-origin (nginx proxies /api), so use ?? not ||
 // - an UNSET var still falls back to the dev LAN box.
 import { API_URL } from '../../shared/apiBase.js';
+import PortalBrandMark from './PortalBrandMark';
 const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Semivra').toUpperCase();
 
 export default function ClientLogin() {
@@ -54,9 +55,7 @@ export default function ClientLogin() {
         className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm p-8"
       >
         <div className="flex flex-col items-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-brand/20 flex items-center justify-center mb-4">
-            <Package size={26} className="text-brand-text" />
-          </div>
+          <PortalBrandMark name={BIZ_NAME} />
           <h2 className="text-xl font-black text-fg uppercase tracking-widest">{BIZ_NAME}</h2>
           <p className="text-fg/70 text-xs mt-1">Client Portal - Sign in to order</p>
         </div>
