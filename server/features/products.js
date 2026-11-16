@@ -1,7 +1,8 @@
 ﻿// products routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { MONEY_MAX } from '../lib/normalize.js';
+import { MONEY_MAX } from '../lib/normalize.js';
+import { sameName } from '../lib/caps.js';
 import { resolveTierUnitPrice } from '../lib/priceTiers.js';
 import { captureError } from '../lib/errorLog.js';
 import { parseBulkRecipes, parseDrinkSheet, collectMaterials, buildProductDraft } from '../lib/recipeImport.js';
@@ -276,7 +277,7 @@ app.put('/api/categories/:id', verifyToken, requireStaff, permit('products.manag
     // its Kitchen/Bar/Logistics routing. They move with it, in the same
     // transaction.
     let productsMoved = 0;
-    if (name !== current.name) {
+    if (!sameName(name, current.name)) {
       const r = await Product.updateMany({ category: current.name }, { $set: { category: name } });
       productsMoved = r.modifiedCount || 0;
     }

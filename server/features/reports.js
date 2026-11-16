@@ -1,7 +1,8 @@
 // reports routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { atomic } from '../lib/atomicRoute.js';
+import { atomic } from '../lib/atomicRoute.js';
+import { sameName } from '../lib/caps.js';
 import { roundMoney } from '../lib/money.js';
 import { buildCashFlow } from '../lib/cashFlow.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
@@ -722,13 +723,13 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
           let product = products.find(p => p._id.toString() === (orderItem.productId || '').toString());
           if (!product) {
             const base = (orderItem.name || '').replace(/\s*\(.*?\)\s*/g, '').trim();
-            product = products.find(p => p.name === base);
+            product = products.find(p => sameName(p.name, base));
           }
           if (!product) return;
           let recipe = product.baseRecipe || [];
           const sm = (orderItem.name || '').match(/\(([^)]+)\)$/);
           if (sm) {
-            const sz = (product.sizes || []).find(s => s.name === sm[1]);
+            const sz = (product.sizes || []).find(s => sameName(s.name, sm[1]));
             if (sz?.recipe?.length) recipe = sz.recipe;
           }
           if (!recipe.some(r => r.invId)) {
@@ -1232,11 +1233,11 @@ app.get('/api/reports/purchase-order', verifyToken, ...canViewReports, async (re
     for (const o of orders) {
       for (const it of (o.items || [])) {
         const base = (it.name || '').replace(/\s*\(.*?\)\s*/g, '').trim();
-        const prod = prodMap[it.productId] || products.find(p => p.name === base);
+        const prod = prodMap[it.productId] || products.find(p => sameName(p.name, base));
         if (!prod) continue;
         let recipe = prod.baseRecipe || [];
         const sm = (it.name || '').match(/\(([^)]+)\)$/);
-        if (sm) { const sz = prod.sizes?.find(s => s.name === sm[1]); if (sz?.recipe?.length) recipe = sz.recipe; }
+        if (sm) { const sz = prod.sizes?.find(s => sameName(s.name, sm[1])); if (sz?.recipe?.length) recipe = sz.recipe; }
         if (recipe.some(r => r.invId)) {
           for (const ing of recipe) { if (ing.invId) usage[ing.invId] = (usage[ing.invId] || 0) + (ing.qty || 0) * (it.quantity || 0); }
         } else {
@@ -1780,7 +1781,7 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, require
         const addOnUnit = (it.selectedAddOns || []).reduce((sum, a) => sum + (Number(a.price) || 0), 0);
         const old = srpNow.get(String(it.productId || ''));
         const baseSrp = it.listPrice != null ? Number(it.listPrice)
-          : (old && old.name === it.name ? Number(old.basePrice) || 0 : Number(it.price) || 0);
+          : (old && sameName(old.name, it.name) ? Number(old.basePrice) || 0 : Number(it.price) || 0);
         rows.push({
           date: o.createdAt, orderNumber: o.orderNumber, paymentMethod: o.paymentMethod,
           customerId, customerName, ...docFields,

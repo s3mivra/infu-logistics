@@ -1,7 +1,8 @@
 ﻿// inventory routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { title, upper, positiveQty } from '../lib/normalize.js';
+import { title, upper, positiveQty } from '../lib/normalize.js';
+import { sameName } from '../lib/caps.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { INPUT_VAT } from '../lib/vatPosting.js';
 import { loadVatConfig } from '../lib/vatSettings.js';
@@ -478,11 +479,11 @@ async function computeUsage30d(bizScope) {
   for (const o of orders) {
     for (const it of (o.items || [])) {
       const base = (it.name || '').replace(/\s*\(.*?\)\s*/g, '').trim();
-      const prod = prodMap[it.productId] || products.find(p => p.name === base);
+      const prod = prodMap[it.productId] || products.find(p => sameName(p.name, base));
       if (!prod) continue;
       let recipe = prod.baseRecipe || [];
       const sm = (it.name || '').match(/\(([^)]+)\)$/);
-      if (sm) { const sz = prod.sizes?.find(s => s.name === sm[1]); if (sz?.recipe?.length) recipe = sz.recipe; }
+      if (sm) { const sz = prod.sizes?.find(s => sameName(s.name, sm[1])); if (sz?.recipe?.length) recipe = sz.recipe; }
       if (recipe.some(r => r.invId)) {
         for (const ing of recipe) { if (ing.invId) usage[ing.invId] = (usage[ing.invId] || 0) + (ing.qty || 0) * (it.quantity || 0); }
       } else {

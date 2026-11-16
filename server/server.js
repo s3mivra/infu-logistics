@@ -39,7 +39,7 @@ import { computeOrderVat, extractVat, normaliseVatRate, DEFAULT_VAT_RATE } from 
 import { validateDateRange } from './lib/reportRange.js';
 import { initErrorLog, logSafeUrl } from './lib/errorLog.js';
 import { claimJob, runExclusive, waitForRelease } from './lib/jobLock.js';
-import { applyCaps, capsExisting } from './lib/caps.js';
+import { applyCaps, capsExisting, sameName } from './lib/caps.js';
 const CAPS_TEXT_ON = process.env.CAPS_TEXT === 'on';   // names in capitals: off for now (see applyCaps below)
 import { nameGuard, transactionGuard, findDuplicateBackdatedSale, findDuplicateBill, findDuplicateExpense, findDuplicateRestock } from './lib/dupes.js';
 import { fieldCryptPlugin, encryptValue } from './lib/fieldCrypt.js';
@@ -3161,10 +3161,10 @@ function reportLinesForItem(item, prods, prodMap, invMap, addOnMap) {
 
   if (item.isCombo && (item.comboItems || []).length) {
     const comps = item.comboItems.map(c => {
-      const p = prodMap[c.productId] || prods.find(pr => pr.name === c.name);
+      const p = prodMap[c.productId] || prods.find(pr => sameName(pr.name, c.name));
       let stand = p?.basePrice || 0;
       let recipe = p?.baseRecipe || [];
-      if (c.sizeName && p?.sizes) { const sz = p.sizes.find(s => s.name === c.sizeName); if (sz) { stand = sz.price || stand; if (sz.recipe?.length) recipe = sz.recipe; } }
+      if (c.sizeName && p?.sizes) { const sz = p.sizes.find(s => sameName(s.name, c.sizeName)); if (sz) { stand = sz.price || stand; if (sz.recipe?.length) recipe = sz.recipe; } }
       return { product: p, name: c.name, cqty: (c.quantity || 1), stand, recipe };
     });
     const weightTotal = comps.reduce((s, c) => s + c.stand * c.cqty, 0);
@@ -3179,7 +3179,7 @@ function reportLinesForItem(item, prods, prodMap, invMap, addOnMap) {
   }
 
   const base = (item.name || '').replace(/\s*\(.*?\)\s*/g, '').trim();
-  const prod = prodMap[item.productId] || prods.find(p => p.name === base);
+  const prod = prodMap[item.productId] || prods.find(p => sameName(p.name, base));
   const aoT = (item.selectedAddOns || []).reduce((s, a) => s + Number(a.price || 0), 0);
   // An add-on's recipe is resolved exactly the way the stock deduction resolves
   // it (see features/orders.js): a product add-on first, else a modifier-group
@@ -3192,12 +3192,12 @@ function reportLinesForItem(item, prods, prodMap, invMap, addOnMap) {
   // reports exist to judge. `addOnMap` is name -> recipe, or absent, in which
   // case this behaves as it did before.
   const addOnRecipe = (product, addOnName) => {
-    const direct = product?.addOns?.find(a => a.name === addOnName)?.recipe;
+    const direct = product?.addOns?.find(a => sameName(a.name, addOnName))?.recipe;
     if (direct?.length) return direct;
     if (typeof addOnName === 'string' && addOnName.includes(': ')) {
       const [grpName, optName] = addOnName.split(': ');
-      const grp = (product?.modifierGroups || []).find(g => g && g.name === grpName);
-      return grp?.options?.find(o => o.name === optName)?.recipe || [];
+      const grp = (product?.modifierGroups || []).find(g => g && sameName(g.name, grpName));
+      return grp?.options?.find(o => sameName(o.name, optName))?.recipe || [];
     }
     return addOnMap?.[addOnName] || [];
   };
@@ -3206,7 +3206,7 @@ function reportLinesForItem(item, prods, prodMap, invMap, addOnMap) {
     .reduce((s, a) => s + recipeCost(addOnRecipe(prod, a.name)), 0);
   let recipe = prod?.baseRecipe || [];
   const sm = (item.name || '').match(/\(([^)]+)\)$/);
-  if (sm && prod?.sizes) { const sz = prod.sizes.find(s => s.name === sm[1]); if (sz?.recipe?.length) recipe = sz.recipe; }
+  if (sm && prod?.sizes) { const sz = prod.sizes.find(s => sameName(s.name, sm[1])); if (sz?.recipe?.length) recipe = sz.recipe; }
   return [{
     name: base || 'Unknown', category: prod?.category || 'Uncategorized',
     qty, revenue: ((item.price || 0) + aoT) * qty, cogs: (lineCost(recipe, prod) + addOnCost) * qty,

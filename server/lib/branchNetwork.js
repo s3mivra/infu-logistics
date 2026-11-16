@@ -10,7 +10,8 @@
 // runs against this branch's database in the app and against a second
 // database in the tests.
 import { withOptionalTransaction } from './txn.js';
-
+
+import { sameName } from './caps.js';
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const str = (v, max = 200) => String(v ?? '').trim().slice(0, max);
 export const httpError = (status, message) => Object.assign(new Error(message), { httpStatus: status });
@@ -90,7 +91,7 @@ export async function applyCatalog(env, sourceSlug, items) {
       if (!product) {
         [product] = await Product.create([{ ...q, productCode: sku, name: str(it.name), category: str(it.category, 80), basePrice: effective }], { session });
         out.created++;
-      } else if (product.name !== str(it.name) || (product.category || '') !== str(it.category, 80) || product.basePrice !== effective) {
+      } else if (!sameName(product.name, str(it.name)) || !sameName(product.category || '', str(it.category, 80)) || product.basePrice !== effective) {
         product.name = str(it.name);
         product.category = str(it.category, 80);
         product.basePrice = effective;

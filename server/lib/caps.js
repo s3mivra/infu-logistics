@@ -42,12 +42,44 @@ export const CAPS_FIELDS = {
   Reservation: { fields: ['clientName', 'note', 'closeReason'], arrays: { items: ['itemName'] } },
   StockCard: { fields: ['itemName', 'remarks'] },
   Advance: { fields: ['payeeName', 'purpose', 'cancelReason'], arrays: { liquidations: ['note'] } },
+  // The other side of a name match: an add-on or option is matched to the copy
+  // a product carries by name, sales counts are kept by product name, and
+  // movements, transfers and production carry the stock item's name.
+  AddOn: { fields: ['name', 'category'], arrays: { recipe: ['name'] } },
+  ModifierGroup: { fields: ['name'], arrays: { options: ['name'] } },
+  ProductStats: { fields: ['productName'] },
+  InventoryMovement: { fields: ['itemName'] },
+  ProductionOrder: { fields: ['outputName'], arrays: { materials: ['itemName'] } },
+  StockTransfer: { fields: ['itemName'] },
+  CrossTransfer: { fields: ['itemName'] },
+  TransferRequest: { arrays: { lines: ['itemName'], originalLines: ['itemName'] } },
+  BackdateQueueItem: { fields: ['client'], arrays: { items: ['name'] } },
+  RecurringBill: { fields: ['supplierName', 'description'] },
+  CheckVoucher: { fields: ['payeeName'] },
+  CostingSheet: { fields: ['name', 'notes'], arrays: { lines: ['name'] } },
+};
+
+// Kept by name under a unique key: rows that differ only by case are merged
+// (their counts added) rather than upper-cased into a clash.
+export const CAPS_MERGE = {
+  ProductStats: { key: ['businessType', 'productName', 'shard'], sum: ['cumulativeQty', 'cumulativeRevenue'], name: 'productName' },
 };
 
 // Existing records the one-time migration leaves alone (see above).
 export const CAPS_MIGRATION_SKIP = new Set(['JournalEntry']);
 
 export const toCaps = (v) => (typeof v === 'string' ? v.toUpperCase() : v);
+
+// Two names are the same name whatever their case or outer spaces: one may be
+// stored in capitals and the other come from a till, a sheet or an older
+// record. Use it wherever a stored name is compared with another name.
+// The key for a map of records by name, matching sameName.
+export const nameKeyOf = (s) => String(s ?? '').trim().toUpperCase();
+
+export const sameName = (a, b) => {
+  if (a == null || b == null) return false;
+  return String(a).trim().toUpperCase() === String(b).trim().toUpperCase();
+};
 
 // Adds the setter to every listed field of every model already compiled.
 // Returns how many fields it reached (missing ones are skipped quietly: a
@@ -104,8 +136,32 @@ export async function capsExisting(mongoose) {
     if (CAPS_MIGRATION_SKIP.has(modelName)) continue;
     let model;
     try { model = mongoose.model(modelName); } catch { continue; }
+    if (CAPS_MERGE[modelName]) { changed[modelName] = await mergeByCapsName(model.collection, CAPS_MERGE[modelName]); continue; }
     const r = await model.collection.updateMany({}, capsPipeline(spec));
     changed[modelName] = r.modifiedCount || 0;
   }
   return changed;
+}
+
+// Rows whose name differs only by case become one row under the capitals,
+// with their counts added. A row already alone keeps its _id and is renamed.
+async function mergeByCapsName(col, { key, sum, name }) {
+  let touched = 0;
+  const groups = await col.aggregate([
+    { $match: { [name]: { $type: 'string' } } },
+    { $group: {
+      _id: Object.fromEntries(key.map((k) => [k, k === name ? { $toUpper: `$${k}` } : `$${k}`])),
+      ids: { $push: '$_id' }, names: { $push: `$${name}` },
+      ...Object.fromEntries(sum.map((s) => [s, { $sum: `$${s}` }])),
+    } },
+  ]).toArray();
+  for (const g of groups) {
+    const upper = g._id[name];
+    if (g.ids.length === 1 && g.names[0] === upper) continue;
+    const [keep, ...drop] = g.ids;
+    if (drop.length) await col.deleteMany({ _id: { $in: drop } });
+    await col.updateOne({ _id: keep }, { $set: { [name]: upper, ...Object.fromEntries(sum.map((s) => [s, g[s]])) } });
+    touched += g.ids.length;
+  }
+  return touched;
 }

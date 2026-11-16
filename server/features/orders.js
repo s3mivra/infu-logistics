@@ -1,7 +1,8 @@
 ﻿// orders routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { resolveCreditLimit, checkCreditAvailable, arBalance, isFullySettled, isReceivableStatus } from '../lib/credit.js';
+import { resolveCreditLimit, checkCreditAvailable, arBalance, isFullySettled, isReceivableStatus } from '../lib/credit.js';
+import { sameName, nameKeyOf } from '../lib/caps.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { title, partyName, MONEY_MAX, roundCentavo } from '../lib/normalize.js';
 import { roundMoney } from '../lib/money.js';
@@ -403,12 +404,12 @@ async function applyStatsDelta(order, sign, session) {
 //      this an extra shot never took any coffee.
 async function resolveAddOnRecipe(product, addOnName, session) {
   const name = String(addOnName || '');
-  const own = product?.addOns?.find(a => a.name === name)?.recipe;
+  const own = product?.addOns?.find(a => sameName(a.name, name))?.recipe;
   if (own?.length) return own;
   if (name.includes(': ')) {
     const [grpName, optName] = name.split(': ');
-    const grp = (product?.modifierGroups || []).find(g => g && g.name === grpName);
-    return grp?.options?.find(o => o.name === optName)?.recipe || [];
+    const grp = (product?.modifierGroups || []).find(g => g && sameName(g.name, grpName));
+    return grp?.options?.find(o => sameName(o.name, optName))?.recipe || [];
   }
   const addOn = await AddOn.findOne({ name }, { recipe: 1 }).session(session ?? null).lean();
   return addOn?.recipe || [];
@@ -650,7 +651,7 @@ const buildLinePricing = async (req, items, { buyerClientId = '', buyerSegments 
     { _id: 1, name: 1, basePrice: 1, discountPercent: 1, clientDiscounts: 1, segmentDiscounts: 1, bulkBreaks: 1, clientBulkBreaks: 1, vatExempt: 1 }
   ).lean();
   const _discById = new Map(_discProds.map(p => [String(p._id), p]));
-  const _discByName = new Map(_discProds.map(p => [p.name, p]));
+  const _discByName = new Map(_discProds.map(p => [nameKeyOf(p.name), p]));
   // The buyer's price-tier context, and the per-product discount decision
   // itself, both come from the shared resolver (lib/discounts.js) - the
   // SAME function the pre-checkout price display (products.js) uses, so a
@@ -659,7 +660,7 @@ const buildLinePricing = async (req, items, { buyerClientId = '', buyerSegments 
     PriceTier, businessType: BUSINESS_TYPE, tenantScope, req, buyerSegments: buyerSegments,
   });
   const productDiscPct = (item) => {
-    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(nameKeyOf(item.name));
     return resolveEffectiveDiscountPercent(p, {
       buyerClientId: buyerClientId, buyerSegments: buyerSegments,
       tierDefaultPct: _tierDefaultPct, perProductTiers: _perProductTiers,
@@ -668,7 +669,7 @@ const buildLinePricing = async (req, items, { buyerClientId = '', buyerSegments 
   // Quantity-break bulk pricing, independent of clientDiscounts/segmentDiscounts
   // above - combined via Math.max where it's applied, never stacked.
   const bulkQtyDiscPct = (item) => {
-    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(nameKeyOf(item.name));
     const breaks = p?.bulkBreaks || [];
     if (!breaks.length) return 0;
     const qty = Number(item.quantity || 0);
@@ -684,7 +685,7 @@ const buildLinePricing = async (req, items, { buyerClientId = '', buyerSegments 
   // as every other discount. A buyer who isn't this named client never sees it.
   const clientBulkQtyDiscPct = (item) => {
     if (!buyerClientId) return 0;
-    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(nameKeyOf(item.name));
     const breaks = (p?.clientBulkBreaks || []).filter(b => String(b.clientId) === String(buyerClientId));
     if (!breaks.length) return 0;
     const qty = Number(item.quantity || 0);
@@ -706,7 +707,7 @@ const buildLinePricing = async (req, items, { buyerClientId = '', buyerSegments 
   // quantity it needs, which the static pricing table never has.
   const tierBulkQtyDiscPct = (item) => {
     if (!_perProductTiers.length) return 0;
-    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(nameKeyOf(item.name));
     if (!p) return 0;
     const qty = Number(item.quantity || 0);
     const pcts = _perProductTiers.map(t => resolveTierPercent(p, t, qty)).filter(v => v !== null);
@@ -716,19 +717,19 @@ const buildLinePricing = async (req, items, { buyerClientId = '', buyerSegments 
   // Server-authoritative VAT classification, same rule as the discount lookup:
   // never trust a client-supplied flag, resolve it from the product record.
   const productIsExempt = (item) => {
-    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(nameKeyOf(item.name));
     return p?.vatExempt === true;
   };
   const linePercent = (item) => Math.max(productDiscPct(item), bulkQtyDiscPct(item), clientBulkQtyDiscPct(item), tierBulkQtyDiscPct(item));
   // The buyer's exact tier price for a line sold at the product's own price
   // (not a size) - see resolveTierUnitPrice. Used when an order is amended.
   const tierUnitPrice = (item) => {
-    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
-    if (!p || item.name !== p.name) return null;
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(nameKeyOf(item.name));
+    if (!p || !sameName(item.name, p.name)) return null;
     return resolveTierUnitPrice(p, _perProductTiers, { buyerClientId, qty: Number(item.quantity || 0) });
   };
   const listPriceOf = (item) => {
-    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(item.name);
+    const p = item.productId ? _discById.get(String(item.productId)) : _discByName.get(nameKeyOf(item.name));
     return p ? Number(p.basePrice) || 0 : null;
   };
   return { linePercent, productIsExempt, tierUnitPrice, listPriceOf };
@@ -788,7 +789,7 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
       : [],
   ]);
   const prodById = new Map(prods.map(p => [String(p._id), p]));
-  const prodByName = new Map(prods.map(p => [p.name, p]));
+  const prodByName = new Map(prods.map(p => [nameKeyOf(p.name), p]));
   const comboById = new Map(combos.map(c => [String(c._id), c]));
   const { map: saleMap } = buildSalePriceMap(sales);
 
@@ -823,14 +824,14 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
   };
 
   const addOnPrice = (product, addOnName) => {
-    const own = (product?.addOns || []).find(a => a.name === addOnName);
+    const own = (product?.addOns || []).find(a => sameName(a.name, addOnName));
     if (own) return Number(own.price) || 0;
-    const global = globalAddOns.find(a => a.name === addOnName);
+    const global = globalAddOns.find(a => sameName(a.name, addOnName));
     if (global) return Number(global.price) || 0;
     for (const g of groups) {
       const prefix = `${g.name}: `;
       if (addOnName.startsWith(prefix)) {
-        const opt = (g.options || []).find(o => o.name === addOnName.slice(prefix.length));
+        const opt = (g.options || []).find(o => sameName(o.name, addOnName.slice(prefix.length)));
         if (opt) return Number(opt.price) || 0;
       }
     }
@@ -874,7 +875,7 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
       if (err) return { error: err };
       continue;
     }
-    const product = item.productId ? prodById.get(String(item.productId)) : prodByName.get(item.name);
+    const product = item.productId ? prodById.get(String(item.productId)) : prodByName.get(nameKeyOf(item.name));
     if (!product) {
       if (selfService) return { error: `"${item.name}" is not on the menu.` };
       // Staff open item - keeps its entered price, which must be a real amount.
@@ -887,10 +888,10 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
     // A size is identified by sizeName, or by the "Name (Size)" label the POS builds.
     const sizeName = item.sizeName
       || ((item.name || '').startsWith(`${product.name} (`) && item.name.endsWith(')') ? item.name.slice(product.name.length + 2, -1) : '');
-    const size = sizeName ? (product.sizes || []).find(s => s.name === sizeName) : null;
+    const size = sizeName ? (product.sizes || []).find(s => sameName(s.name, sizeName)) : null;
     // The menu offers the base size as its own choice ("Regular", or the
     // product's baseSize) - that is the base price, not an extra size.
-    const isBaseSize = sizeName && !size && (sizeName === (product.baseSize || 'Regular') || sizeName === 'Regular');
+    const isBaseSize = sizeName && !size && (sameName(sizeName, (product.baseSize || 'Regular')) || sameName(sizeName, 'Regular'));
     if (sizeName && !size && !isBaseSize && selfService) return { error: `${product.name} does not come in ${sizeName}.` };
     const sale = saleUnitPrice(product, saleMap[String(product._id)]);
     // A tier's set price is this buyer's exact price for the product itself
@@ -2422,7 +2423,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
             if (!compProduct) continue;
             let compRecipe = compProduct.baseRecipe || [];
             if (comp.sizeName) {
-              const sz = compProduct.sizes?.find(s => s.name === comp.sizeName);
+              const sz = compProduct.sizes?.find(s => sameName(s.name, comp.sizeName));
               if (sz?.recipe?.length) compRecipe = sz.recipe;
             }
             // LOGISTICS 1:1 FALLBACK for combo components: a component product with
@@ -2497,7 +2498,7 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         let recipeToUse = product.baseRecipe || [];
         const sizeMatch = item.name.match(/\(([^)]+)\)$/);
         if (sizeMatch) {
-          const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
+          const sizeObj = product.sizes?.find(s => sameName(s.name, sizeMatch[1]));
           if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
         }
 
@@ -3142,7 +3143,7 @@ const voidOrderOnce = async (req, res, mayRetry) => {
         let recipeToUse = product.baseRecipe || [];
         const sizeMatch = item.name.match(/\(([^)]+)\)$/);
         if (sizeMatch) {
-          const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
+          const sizeObj = product.sizes?.find(s => sameName(s.name, sizeMatch[1]));
           if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
         }
 
@@ -3826,7 +3827,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
           const compProduct = await Product.findById(comp.productId).session(session);
           if (!compProduct) continue;
           let compRecipe = compProduct.baseRecipe || [];
-          if (comp.sizeName) { const sz = compProduct.sizes?.find(s => s.name === comp.sizeName); if (sz?.recipe?.length) compRecipe = sz.recipe; }
+          if (comp.sizeName) { const sz = compProduct.sizes?.find(s => sameName(s.name, comp.sizeName)); if (sz?.recipe?.length) compRecipe = sz.recipe; }
           if (!compRecipe.some(r => r.invId)) {
             const linkInv = await resolveLinkedInventory(compProduct, compProduct.productCode, session);
             if (linkInv) {
@@ -3856,7 +3857,7 @@ const partialFulfillOnce = async (req, res, mayRetry) => {
       let recipeToUse = product.baseRecipe || [];
       const sizeMatch = it.name.match(/\(([^)]+)\)$/);
       if (sizeMatch) {
-        const sizeObj = product.sizes?.find(sz => sz.name === sizeMatch[1]);
+        const sizeObj = product.sizes?.find(sz => sameName(sz.name, sizeMatch[1]));
         if (sizeObj?.recipe?.length) recipeToUse = sizeObj.recipe;
       }
       if (!recipeToUse.some(r => r.invId)) {
@@ -4157,7 +4158,7 @@ const refundOnce = async (req, res, mayRetry) => {
           let recipeToUse = product.baseRecipe || [];
           const sizeMatch = item.name.match(/\(([^)]+)\)$/);
           if (sizeMatch) {
-            const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
+            const sizeObj = product.sizes?.find(s => sameName(s.name, sizeMatch[1]));
             if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
           }
 
@@ -4361,7 +4362,7 @@ const partialRefundOnce = async (req, res, mayRetry) => {
       let recipeToUse = product.baseRecipe || [];
       const sizeMatch = item.name.match(/\(([^)]+)\)$/);
       if (sizeMatch) {
-        const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
+        const sizeObj = product.sizes?.find(s => sameName(s.name, sizeMatch[1]));
         if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
       }
 
@@ -4614,7 +4615,7 @@ app.post('/api/orders/:id/exchange', verifyToken, requireStaff, requirePermissio
       let recipeToUse = product.baseRecipe || [];
       const sizeMatch = item.name.match(/\(([^)]+)\)$/);
       if (sizeMatch) {
-        const sizeObj = product.sizes?.find(s => s.name === sizeMatch[1]);
+        const sizeObj = product.sizes?.find(s => sameName(s.name, sizeMatch[1]));
         if (sizeObj && sizeObj.recipe?.length > 0) recipeToUse = sizeObj.recipe;
       }
       if (!recipeToUse.some(r => r.invId)) {
@@ -4676,7 +4677,7 @@ app.post('/api/orders/:id/exchange', verifyToken, requireStaff, requirePermissio
     // Department resolution mirrors order-creation's category → department lookup.
     const defaultDept = BUSINESS_TYPE === 'log' ? 'Logistics' : 'Kitchen';
     const cats = await Category.find({ businessType: BUSINESS_TYPE, ...tenantScope(req) }, { name: 1, department: 1 }).session(session);
-    const deptOf = (categoryName) => cats.find(c => c.name === categoryName)?.department || defaultDept;
+    const deptOf = (categoryName) => cats.find(c => sameName(c.name, categoryName))?.department || defaultDept;
     for (const { product, qty } of validatedNew) {
       let recipeToUse = product.baseRecipe || [];
       if (!recipeToUse.some(r => r.invId)) {

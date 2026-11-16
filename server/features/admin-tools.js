@@ -2,6 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { sheetDay, SHEET_DATE_HELP } from '../lib/sheetDate.js';
+import { sameName } from '../lib/caps.js';
 import { reopenOrdersClosedByPendingBills } from '../lib/billPoLink.js';
 import { roundMoney } from '../lib/money.js';
 import { businessDateStr, businessDayStart } from '../lib/businessTime.js';
@@ -748,7 +749,7 @@ async function createBackdatedSale(payload, actorName) {
         let recipe = product.baseRecipe || [];
         const sizeMatch = String(item.name || '').match(/\(([^)]+)\)$/);
         if (sizeMatch) {
-          const sz = product.sizes?.find(x => x.name === sizeMatch[1]);
+          const sz = product.sizes?.find(x => sameName(x.name, sizeMatch[1]));
           if (sz?.recipe?.length) recipe = sz.recipe;
         }
         let plan = recipe
@@ -977,7 +978,7 @@ const costOfOrderFromStock = async (order) => {
     //    stock was imported again and the id no longer exists - by its name.
     let recipe = product?.baseRecipe || [];
     const sizeMatch = String(item.name || '').match(/\(([^)]+)\)$/);
-    if (sizeMatch) { const sz = product?.sizes?.find(x => x.name === sizeMatch[1]); if (sz?.recipe?.length) recipe = sz.recipe; }
+    if (sizeMatch) { const sz = product?.sizes?.find(x => sameName(x.name, sizeMatch[1])); if (sz?.recipe?.length) recipe = sz.recipe; }
     const stockLines = recipe.filter(r => !r.nonStock && (r.invId || r.name));
     const ownItemOnly = stockLines.length <= 1;           // a product that is just its own stock item
 

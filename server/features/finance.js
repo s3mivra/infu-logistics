@@ -1,7 +1,8 @@
 ﻿// finance routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { sheetDay, SHEET_DATE_HELP } from '../lib/sheetDate.js';
+import { sheetDay, SHEET_DATE_HELP } from '../lib/sheetDate.js';
+import { sameName } from '../lib/caps.js';
 import { positiveMoney } from '../lib/normalize.js';
 import { buildOpeningEntry } from '../lib/setupBooks.js';
 import { ageingBuckets, ageingByClient, resolveCreditLimit, resolveClientKey, arBalance, withArBalance, DEFAULT_CREDIT_MODE, RECEIVABLE_STATUSES } from '../lib/credit.js';
@@ -1015,7 +1016,7 @@ app.get('/api/finance/ar-ageing', verifyToken, ...canViewAcct, async (req, res) 
     const seen = new Set();
     const perClient = ageingByClient(rows, keyOf).map((row) => {
       seen.add(row.client);
-      const match = clients.find(c => c.name === row.client);
+      const match = clients.find(c => sameName(c.name, row.client));
       const limit = resolveCreditLimit({ mode, globalLimit, clientLimit: match?.creditLimit });
       const exposure = Math.round((exposureByClient.get(row.client) || 0) * 100) / 100;
       return {
@@ -1031,7 +1032,7 @@ app.get('/api/finance/ar-ageing', verifyToken, ...canViewAcct, async (req, res) 
     // invisible here - exactly the ones consuming credit right now.
     for (const [client, exposure] of exposureByClient) {
       if (seen.has(client)) continue;
-      const match = clients.find(c => c.name === client);
+      const match = clients.find(c => sameName(c.name, client));
       const limit = resolveCreditLimit({ mode, globalLimit, clientLimit: match?.creditLimit });
       perClient.push({
         client, current: 0, d31_60: 0, d61_90: 0, d90_plus: 0, total: 0, count: 0,
