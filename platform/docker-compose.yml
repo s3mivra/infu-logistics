@@ -36,7 +36,7 @@ services:
     networks: [semivra-net]
 
   mongo:
-    image: mongo:7.0.48@sha256:9896df581dfd0718b7abe112f4c37598d0986c54060e4ec1384997e6503c8c71
+    image: mongo:9.0.4@sha256:452bdaf2127b8ff851e31410a267809b9829eded219979f2210e7c7efb85a058
     restart: unless-stopped
     # Replica set is mandatory: the app's money paths use multi-document
     # transactions, which MongoDB only allows on a replica set.
@@ -68,7 +68,7 @@ services:
   # read back with a dry-run restore before it is kept; see backup-loop.sh.
   # Prove a full restore periodically with: bash platform/restore-drill.sh
   backup:
-    image: mongo:7.0.48@sha256:9896df581dfd0718b7abe112f4c37598d0986c54060e4ec1384997e6503c8c71
+    image: mongo:9.0.4@sha256:452bdaf2127b8ff851e31410a267809b9829eded219979f2210e7c7efb85a058
     restart: unless-stopped
     entrypoint: ["/bin/bash", "/backup-loop.sh"]
     environment:
