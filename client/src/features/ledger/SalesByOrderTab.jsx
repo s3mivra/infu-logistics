@@ -83,6 +83,51 @@ export default function SalesByOrderTab({
             </table>
           </div>
         )}
+        {/* A/R collected in the same range, whatever day the sale was made:
+            a sale on account shows above on its own day, the money for it here
+            on the day it came in. */}
+        {salesSummary?.collections && (
+          <div className="mt-6">
+            <div className="flex items-baseline justify-between gap-2 mb-2">
+              <h4 className="text-sm font-black text-fg uppercase tracking-wider">Collected on account (A/R) in this range</h4>
+              <span className="text-[11px] text-fg/60">{salesSummary.collections.length} payment(s)</span>
+            </div>
+            {salesSummary.collections.length === 0 ? (
+              <p className="text-xs text-fg/60">No A/R payments were collected in this range.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-[10px] uppercase tracking-wider text-fg/60 border-b border-white/10">
+                      <th className="py-2">Collected</th><th className="py-2">Order</th><th className="py-2">Sale date</th><th className="py-2">Customer</th>
+                      <th className="py-2">Paid by</th><th className="py-2">Reference</th><th className="py-2 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {salesSummary.collections.map((c, i) => (
+                      <tr key={`${c.orderNumber}-${i}`} className="border-b border-white/5">
+                        <td className="py-1.5">{formatDate(c.date)}</td>
+                        <td className="py-1.5 font-mono text-xs">{c.orderNumber}</td>
+                        <td className="py-1.5 text-fg/70">{formatDate(c.saleDate)}</td>
+                        <td className="py-1.5">{c.customerName}</td>
+                        <td className="py-1.5">{c.method}</td>
+                        <td className="py-1.5 text-fg/70">{c.reference}</td>
+                        <td className="py-1.5 text-right font-mono">{money2(c.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="font-black text-fg border-t-2 border-white/20">
+                      <td className="py-2" colSpan={6}>Total collected{Object.keys(salesSummary.collectionTotals?.methods || {}).length > 1
+                        ? <span className="ml-2 font-normal text-[11px] text-fg/60">{Object.entries(salesSummary.collectionTotals.methods).map(([m, a]) => `${m} ${money2(a)}`).join(' · ')}</span> : null}</td>
+                      <td className="py-2 text-right font-mono text-brand-text">{money2(salesSummary.collectionTotals?.total || 0)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     )}
     </>

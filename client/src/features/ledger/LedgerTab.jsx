@@ -427,6 +427,13 @@ export default function LedgerTab({ ctx }) {
     const t = salesSummary.totals || {};
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body, [], ['TOTAL', ...(day ? [''] : ['', '', '']), t.cash || 0, t.ewallet || 0, t.bank || 0, t.delivery || 0, t.subtotal || 0, t.total || 0]]), day ? 'Sales per day' : 'Sales per order');
+    // A/R collected in the same range, whatever day the sale was made.
+    const col = salesSummary.collections || [];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      ['Collected', 'Order', 'Sale date', 'Customer', 'Paid by', 'Reference', 'Amount'],
+      ...col.map(c => [dateStr(c.date), c.orderNumber, dateStr(c.saleDate), c.customerName, c.method, c.reference || '', c.amount]),
+      [], ['TOTAL COLLECTED', '', '', '', '', '', salesSummary.collectionTotals?.total || 0],
+    ]), 'AR collected');
     XLSX.writeFile(wb, `Sales-${day ? 'Daily' : 'Summary'}_${sssRange.start}_to_${sssRange.end}.xlsx`);
   };
   const exportSliSummaryPDF = async () => {

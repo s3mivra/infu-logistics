@@ -5924,6 +5924,23 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       foot: [[ 'TOTALS', '', '', '', ...COLS.map(([, ms]) => pdfMoney(ms.reduce((s, m) => s + (tm[m] || 0), 0))), pdfMoney(t.subtotal || 0), pdfMoney(t.total) ]],
       styles: { fontSize: 7 }, headStyles: { fillColor: [30,30,30] }, footStyles: { fillColor: [70,70,70], textColor: 255 },
     });
+    // A/R collected in the same range, whatever day the sale was made.
+    const col = salesSummary.collections || [];
+    let y = (doc.lastAutoTable?.finalY || 24) + 8;
+    if (y > doc.internal.pageSize.getHeight() - 30) { doc.addPage(); y = 20; }
+    doc.setFontSize(11); doc.text('Collected on account (A/R) in this range', 14, y);
+    if (!col.length) {
+      doc.setFontSize(9); doc.text('No A/R payments were collected in this range.', 14, y + 6);
+    } else {
+      autoTable(doc, {
+        startY: y + 3,
+        head: [['Collected', 'Order', 'Sale date', 'Customer', 'Paid by', 'Reference', 'Amount']],
+        body: col.map(c => [formatDate(c.date), c.orderNumber, formatDate(c.saleDate), c.customerName, c.method, c.reference || '', pdfMoney(c.amount)]),
+        foot: [[{ content: 'TOTAL COLLECTED', colSpan: 6 }, pdfMoney(salesSummary.collectionTotals?.total || 0)]],
+        styles: { fontSize: 7 }, headStyles: { fillColor: [30,30,30] }, footStyles: { fillColor: [70,70,70], textColor: 255 },
+        columnStyles: { 6: { halign: 'right' } },
+      });
+    }
     doc.save(`Sales-Summary_${sssRange.start}_to_${sssRange.end}.pdf`);
   };
 

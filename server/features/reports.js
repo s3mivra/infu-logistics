@@ -1663,7 +1663,41 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePer
     }, { cash: 0, ewallet: 0, bank: 0, delivery: 0, subtotal: 0, total: 0, methods: {} });
     totals.subtotal = roundMoney(totals.subtotal);
 
-    res.json({ success: true, rows, totals });
+    // A/R collected in this same range, whenever the sale itself was made: a
+    // sale on account appears above on its own day, and the money for it on
+    // the day it came in - so "what came in today" includes yesterday's (or
+    // last month's) credit sales settled today. A bounced check never was
+    // money and is left out. Dated by when it was collected (the record's own
+    // time for a collection saved before that date was kept).
+    const when = { $ifNull: ['$arPayments.collectionDate', '$arPayments.createdAt'] };
+    const inRange = [];
+    if (start) inRange.push({ $gte: [when, dayStart(start)] });
+    if (end) inRange.push({ $lte: [when, dayEnd(end)] });
+    const paid = await Order.aggregate([
+      { $match: { businessType: BUSINESS_TYPE, ...tenantScope(req), 'arPayments.0': { $exists: true } } },
+      { $unwind: '$arPayments' },
+      { $match: { 'arPayments.checkStatus': { $ne: 'Bounced' }, ...(inRange.length ? { $expr: { $and: inRange } } : {}) } },
+      { $project: {
+        _id: 0, when, orderNumber: 1, saleDate: '$createdAt', customerName: 1, clientId: 1, clientAccountId: 1,
+        method: '$arPayments.paymentMethod', reference: { $ifNull: ['$arPayments.referenceNumber', ''] },
+        checkNumber: { $ifNull: ['$arPayments.checkNumber', ''] },
+        amount: '$arPayments.amount', collectedBy: { $ifNull: ['$arPayments.collectedBy', ''] },
+      } },
+      { $sort: { when: 1 } },
+    ]);
+    const collections = paid.map((p) => ({
+      date: p.when, orderNumber: p.orderNumber, saleDate: p.saleDate,
+      customerName: (p.customerName || 'WALK-IN').toUpperCase(),
+      method: p.method || 'Cash', reference: p.checkNumber ? `Check ${p.checkNumber}` : p.reference,
+      amount: roundMoney(Number(p.amount) || 0), collectedBy: p.collectedBy,
+    }));
+    const collectionTotals = collections.reduce((t, c) => {
+      t.total = roundMoney(t.total + c.amount);
+      t.methods[c.method] = roundMoney((t.methods[c.method] || 0) + c.amount);
+      return t;
+    }, { total: 0, methods: {} });
+
+    res.json({ success: true, rows, totals, collections, collectionTotals });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
