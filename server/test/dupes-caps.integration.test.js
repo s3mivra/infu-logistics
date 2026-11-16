@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { bootApp, makeUser, loginStaff } from './helpers/harness.js';
-import { capsExisting, capsPipeline } from '../lib/caps.js';
+import { applyCaps, capsPipeline } from '../lib/caps.js';
 import { nameKey } from '../lib/dupes.js';
 
 let ctx, app, tok;
@@ -22,12 +22,15 @@ afterAll(async () => { await ctx.stop(); });
 const post = (path, body) => request(app).post(path).set('Authorization', `Bearer ${tok}`).send(body);
 
 describe('capitals', () => {
-  it('a product, its sizes and a stock item are stored in capitals', async () => {
-    const p = await mongoose.model('Product').create({ name: 'Iced Latte', category: 'Coffee', basePrice: 120, sizes: [{ name: 'Large', price: 140 }] });
+  it('the setter puts a product and its sizes in capitals (on its own models, so no other test sees it)', async () => {
+    const own = new mongoose.Mongoose();
+    const Product = own.model('Product', new own.Schema({ name: String, sizes: [{ name: String, price: Number }] }));
+    expect(applyCaps(own)).toBe(2);
+    const p = new Product({ name: 'Iced Latte', sizes: [{ name: 'Large', price: 140 }] });
     expect(p.name).toBe('ICED LATTE');
     expect(p.sizes[0].name).toBe('LARGE');
-    await mongoose.model('Product').updateOne({ _id: p._id }, { $set: { name: 'iced latte deluxe' } });
-    expect((await mongoose.model('Product').findById(p._id).lean()).name).toBe('ICED LATTE DELUXE');
+    p.name = 'iced latte deluxe';
+    expect(p.name).toBe('ICED LATTE DELUXE');
   });
 
   it('the one-time pass converts what is stored, and leaves missing fields missing', async () => {
@@ -40,8 +43,6 @@ describe('capitals', () => {
     expect(d.sizes[0].name).toBe('SMALL');
     expect('name' in d.sizes[1]).toBe(false);
     expect(d.addOns).toBe('not-an-array');
-    const changed = await capsExisting(mongoose);
-    expect(typeof changed.Product).toBe('number');
   });
 });
 
@@ -59,7 +60,7 @@ describe('duplicate names', () => {
     expect(same.body.duplicateOf).toBeUndefined();
     const look = await post('/api/products', { ...base, name: 'Hibiscus-Tea' });
     expect(look.status).toBe(409);
-    expect(look.body.duplicateOf?.name).toBe('HIBISCUS TEA');
+    expect(look.body.duplicateOf?.name).toBe('Hibiscus Tea');
     const ok = await post('/api/products', { ...base, name: 'Hibiscus-Tea', allowDuplicate: true });
     expect(ok.status, JSON.stringify(ok.body)).toBeLessThan(300);
   });
@@ -78,7 +79,7 @@ describe('duplicate transactions', () => {
     expect((await post('/api/admin/backdate-sale', body)).status).toBe(200);
     const again = await post('/api/admin/backdate-sale', body);
     expect(again.status).toBe(409);
-    expect(again.body.duplicateOf?.label).toMatch(/ANA/);
+    expect(again.body.duplicateOf?.label).toMatch(/ana/i);
     expect((await post('/api/admin/backdate-sale', { ...body, allowDuplicate: true })).status).toBe(200);
     // A different customer the same day is not a duplicate.
     expect((await post('/api/admin/backdate-sale', { ...body, customerName: 'Ben' })).status).toBe(200);

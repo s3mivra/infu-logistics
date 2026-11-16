@@ -37,7 +37,7 @@ describe('backdated sale fee', () => {
   });
 
   it('without a name it is a delivery fee, as before', async () => {
-    const r = await sale({ deliveryFee: 50, allowDuplicate: true });   // the same sale again that day
+    const r = await sale({ deliveryFee: 50 });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const order = await mongoose.model('Order').findById(r.body.order._id).lean();
     expect(order.deliveryFee).toBe(50);

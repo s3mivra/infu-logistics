@@ -40,6 +40,7 @@ import { validateDateRange } from './lib/reportRange.js';
 import { initErrorLog, logSafeUrl } from './lib/errorLog.js';
 import { claimJob, runExclusive, waitForRelease } from './lib/jobLock.js';
 import { applyCaps, capsExisting } from './lib/caps.js';
+const CAPS_TEXT_ON = process.env.CAPS_TEXT === 'on';   // names in capitals: off for now (see applyCaps below)
 import { nameGuard, transactionGuard, findDuplicateBackdatedSale, findDuplicateBill, findDuplicateExpense, findDuplicateRestock } from './lib/dupes.js';
 import { fieldCryptPlugin, encryptValue } from './lib/fieldCrypt.js';
 import registerTenants from './features/tenants.js';
@@ -1271,7 +1272,8 @@ const runStartupTasks = async () => {
     // Straight through the driver with an update pipeline - no document is
     // loaded, nothing else on it changes. Journal entries are left as written.
     try {
-      const done = await Settings.findOne({ key: 'capsTextV1' }).lean();
+      // Off until every name match is checked against capitals (CAPS_TEXT=on).
+      const done = CAPS_TEXT_ON ? await Settings.findOne({ key: 'capsTextV1' }).lean() : true;
       if (!done) {
         const changed = await capsExisting(mongoose);
         await Settings.findOneAndUpdate({ key: 'capsTextV1' }, { key: 'capsTextV1', value: true }, { upsert: true });
@@ -3901,8 +3903,10 @@ registerCosting(ctx);
 registerPurchases(ctx);
 registerPrivacy(ctx);
 // Every model is defined by now: names and typed text are stored in capitals
-// from here on (lib/caps.js).
-applyCaps(mongoose);
+// from here on (lib/caps.js) - once switched on. It is off for now: names are
+// matched to each other in places (add-ons to their products, for one) that
+// must all agree on capitals first.
+if (CAPS_TEXT_ON) applyCaps(mongoose);
 registerStockControl(ctx);
 registerTimeOff(ctx);
 registerReports(ctx);

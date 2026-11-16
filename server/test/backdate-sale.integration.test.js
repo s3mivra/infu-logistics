@@ -147,13 +147,14 @@ describe('backdated sale', () => {
 
   it('blank importRef never dedupes - two manual entries with no reference both post', async () => {
     const a = await auth('post', '/api/admin/backdate-sale', superTok).send({
-      date: LAST_MONTH, paymentMethod: 'Cash',
+      date: LAST_MONTH, paymentMethod: 'Cash', allowDuplicate: true,   // an earlier test rang up the same
       items: [{ name: 'Widget', price: 100, quantity: 1, productId: String(prod._id) }],
     });
-    const b = await auth('post', '/api/admin/backdate-sale', superTok).send({
-      date: LAST_MONTH, paymentMethod: 'Cash',
-      items: [{ name: 'Widget', price: 100, quantity: 1, productId: String(prod._id) }],
-    });
+    const again = { date: LAST_MONTH, paymentMethod: 'Cash', items: [{ name: 'Widget', price: 100, quantity: 1, productId: String(prod._id) }] };
+    // The second is the same sale on the same day: the app asks first (409),
+    // then posts it when the user says save anyway.
+    expect((await auth('post', '/api/admin/backdate-sale', superTok).send(again)).status).toBe(409);
+    const b = await auth('post', '/api/admin/backdate-sale', superTok).send({ ...again, allowDuplicate: true });
     expect(a.status).toBe(200);
     expect(b.status).toBe(200);
   });

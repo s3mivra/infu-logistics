@@ -35,16 +35,16 @@ describe('client links', () => {
     const r = await as(tok.office, 'get', '/api/client-accounts/links');
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.signInPath).toBe('/client-login');
-    const row = r.body.clients.find(c => c.name === 'REYES HARDWARE');
+    const row = r.body.clients.find(c => c.name === 'Reyes Hardware');
     expect(row.onboardingPath).toBe(`/client-onboard/${issued.body.token}`);
     expect(row.hasLogin).toBe(false);
   });
 
   it('a setup link never expires: an old one still shows and still opens; a client with a login is marked', async () => {
     const r = await as(tok.office, 'get', '/api/client-accounts/links');
-    expect(r.body.clients.find(c => c.name === 'OLD LINK CO').onboardingPath).toBe('/client-onboard/expired-token');
+    expect(r.body.clients.find(c => c.name === 'Old Link Co').onboardingPath).toBe('/client-onboard/expired-token');
     expect((await request(app).get('/api/client-onboard/expired-token')).status).toBe(200);
-    expect(r.body.clients.find(c => c.name === 'KASA LOKAL')).toMatchObject({ hasLogin: true, onboardingPath: null });
+    expect(r.body.clients.find(c => c.name === 'Kasa Lokal')).toMatchObject({ hasLogin: true, onboardingPath: null });
   });
 
   it('reading the links changes nothing', async () => {
@@ -206,7 +206,7 @@ describe('client list at the till', () => {
   it('a cashier sees the clients to pick, without their private details', async () => {
     const r = await as(tok.cashier, 'get', '/api/client-accounts');
     expect(r.status, JSON.stringify(r.body)).toBe(200);
-    const row = r.body.clients.find(c => c.name === 'KASA LOKAL');
+    const row = r.body.clients.find(c => c.name === 'Kasa Lokal');
     expect(row).toBeTruthy();
     expect(row.clientCode).toBeTruthy();
     for (const hidden of ['username', 'password', 'phone', 'email', 'creditLimit', 'onboardingToken']) expect(row[hidden]).toBeUndefined();
@@ -214,7 +214,7 @@ describe('client list at the till', () => {
 
   it('the owner still gets the full records', async () => {
     const r = await as(tok.owner, 'get', '/api/client-accounts');
-    expect(r.body.clients.find(c => c.name === 'KASA LOKAL').username).toBe('kasalokal');
+    expect(r.body.clients.find(c => c.name === 'Kasa Lokal').username).toBe('kasalokal');
   });
 
   it('someone with neither the till nor orders gets nothing', async () => {

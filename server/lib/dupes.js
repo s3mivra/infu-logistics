@@ -82,10 +82,14 @@ export async function findDuplicateBackdatedSale(req) {
   const { from, to } = dayRange(b.date);
   const candidates = await mongoose.model('Order').find(
     { isBackdated: true, status: { $nin: ['Voided', 'Refunded', 'Cancelled'] }, createdAt: { $gte: from, $lt: to } },
-    { orderNumber: 1, customerName: 1, subtotal: 1, total: 1, items: 1 },
+    { orderNumber: 1, customerName: 1, subtotal: 1, total: 1, items: 1, isComplimentary: 1, deliveryFee: 1, paymentMethod: 1 },
   ).lean();
   const who = nameKey(b.customerName || 'WALK-IN (BACKDATED)');
-  const hit = candidates.find((o) => nameKey(o.customerName) === who && near(o.subtotal, gross) && (o.items || []).length === b.items.length);
+  const comp = !!b.isComplimentary, fee = money(b.deliveryFee);
+  const hit = candidates.find((o) => nameKey(o.customerName) === who && near(o.subtotal, gross)
+    && (o.items || []).length === b.items.length
+    && !!o.isComplimentary === comp && near(o.deliveryFee, fee)
+    && (comp || !b.paymentMethod || !o.paymentMethod || o.paymentMethod === b.paymentMethod));
   return hit ? { id: String(hit._id), label: `${hit.orderNumber}, ${hit.customerName}, ₱${money(hit.total).toFixed(2)} on the same day` } : null;
 }
 
@@ -94,6 +98,8 @@ export async function findDuplicateBackdatedSale(req) {
 export async function findDuplicateBill(req) {
   const b = req.body || {};
   if (!b.supplierId || !mongoose.Types.ObjectId.isValid(b.supplierId) || !(Number(b.amount) > 0)) return null;
+  // With the supplier's invoice number it is told apart by that number.
+  if (String(b.supplierInvoiceNo || '').trim()) return null;
   const { from, to } = dayRange();
   const hit = await mongoose.model('Bill').findOne(
     { supplierId: b.supplierId, status: { $ne: 'Rejected' }, amount: money(b.amount), createdAt: { $gte: from, $lt: to } },

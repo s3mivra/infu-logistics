@@ -39,7 +39,7 @@ const enable = (on = true) =>
 const payRent = (over = {}) => auth('post', '/api/expenses').send({
   amount: 10000, categoryCode: '630000', paymentMethod: 'Cash on Hand',
   description: 'March rent', vendor: 'Landlord',
-  withholdingRate: 5, ...over,
+  withholdingRate: 5, allowDuplicate: true, ...over,   // the same rent more than once here, on purpose
 });
 
 beforeEach(async () => {

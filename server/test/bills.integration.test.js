@@ -180,7 +180,7 @@ describe('PO receipt auto-creates a Bill', () => {
 describe('a PO number on a payable that did not come from a PO here', () => {
   // A bill as the workbook's Bills sheet brings it in: pending, marked carried in.
   const carriedIn = async (body) => {
-    const made = await auth('post', '/api/bills', tok).send({ supplierId, ...body });
+    const made = await auth('post', '/api/bills', tok).send({ supplierId, allowDuplicate: true, ...body });   // several alike on purpose
     await mongoose.model('Bill').updateOne({ _id: made.body.bill._id }, { $set: { imported: true } });
     return made;
   };
