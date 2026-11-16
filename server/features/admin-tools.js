@@ -600,7 +600,7 @@ async function reverseBackdatedSale(old, session, actorName, freeNumber = false)
 }
 
 async function createBackdatedSale(payload, actorName) {
-  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, discountAmount = 0, isComplimentary = false, importRef = '', deliveryFee = 0, feeLabel = '', paymentReference = '', paymentCheckDate = null, orderNumber: wantedNumber = '', clientId = '', payments: paymentsIn = null, replaceExisting = false } = payload;
+  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, discountAmount = 0, isComplimentary = false, importRef = '', deliveryFee = 0, feeLabel = '', charges: chargesIn = null, paymentReference = '', paymentCheckDate = null, orderNumber: wantedNumber = '', clientId = '', payments: paymentsIn = null, replaceExisting = false } = payload;
   const comp = !!isComplimentary;
   const fail = (httpStatus, message) => Object.assign(new Error(message), { httpStatus });
 
@@ -682,7 +682,14 @@ async function createBackdatedSale(payload, actorName) {
     // (see LedgerTab.jsx's backdate importer) carry this from the sheet's own
     // total, which already includes it - computing gross from item lines
     // alone and calling that the total is exactly what didn't tally.
-    const delivery = comp ? 0 : Math.max(0, Number(deliveryFee) || 0);
+    // Charges on top of the items, each named: a delivery fee, a packaging fee,
+    // or both. They add up to the one fee the totals and the books carry.
+    const charges = comp || !Array.isArray(chargesIn) ? [] : chargesIn
+      .map(c => ({ label: String(c?.label || '').trim().slice(0, 40), amount: roundMoney(Math.max(0, Number(c?.amount) || 0)) }))
+      .filter(c => c.label && c.amount > 0)
+      .slice(0, 5);
+    const delivery = comp ? 0 : (charges.length ? roundMoney(charges.reduce((s, c) => s + c.amount, 0)) : Math.max(0, Number(deliveryFee) || 0));
+    const chargeLabel = charges.length > 1 ? charges.map(c => c.label.replace(/ fee$/i, '')).join(' & ') + ' fee' : (charges[0]?.label || feeLabel);
     const total = comp ? 0 : +(gross - discount + delivery).toFixed(2);
 
     // Period-lock guard.
@@ -820,7 +827,8 @@ async function createBackdatedSale(payload, actorName) {
       total,
       deliveryFee: delivery,
       // Delivery fee or packaging fee: booked alike, printed by its own name.
-      ...(delivery > 0 && String(feeLabel || '').trim() ? { feeLabel: String(feeLabel).trim().slice(0, 40) } : {}),
+      ...(delivery > 0 && String(chargeLabel || '').trim() ? { feeLabel: String(chargeLabel).trim().slice(0, 40) } : {}),
+      ...(charges.length > 1 ? { charges } : {}),
       isVatExempt: backdateVat === 0,
       isComplimentary: comp,
       discountType: comp ? 'Complimentary' : (pct > 0 || lineDiscount > 0 || flat > 0 ? 'Promo' : 'None'),

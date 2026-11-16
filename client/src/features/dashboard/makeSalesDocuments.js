@@ -86,7 +86,10 @@ export default function makeSalesDocuments(deps) {
       totals: [
         { label: 'Subtotal', value: order.subtotal || order.total || 0 },
         { label: 'Discount', value: order.discount || 0 },
-        { label: order.feeLabel || 'Delivery Fee', value: order.deliveryFee || 0 },
+        // Each charge by its own name when there are several (delivery and packaging).
+        ...((order.charges || []).length > 1
+          ? order.charges.map(c => ({ label: c.label, value: Number(c.amount) || 0 }))
+          : [{ label: order.feeLabel || 'Delivery Fee', value: order.deliveryFee || 0 }]),
         // The VAT split, from the order's own stamped figures - a VAT invoice
         // has to show what part of the total is tax.
         ...((order.vatAmount || 0) > 0 ? [

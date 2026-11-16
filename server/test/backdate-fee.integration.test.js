@@ -43,4 +43,18 @@ describe('backdated sale fee', () => {
     expect(order.deliveryFee).toBe(50);
     expect(order.feeLabel || '').toBe('');
   });
+
+  it('takes a delivery fee and a packaging fee together, each kept by name', async () => {
+    const r = await sale({ customerName: 'Both Fees', deliveryFee: 80, feeLabel: 'Delivery fee',
+      charges: [{ label: 'Delivery fee', amount: 50 }, { label: 'Packaging fee', amount: 30 }] });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.order.total).toBe(840 + 80);
+    const order = await mongoose.model('Order').findById(r.body.order._id).lean();
+    expect(order.deliveryFee).toBe(80);
+    expect(order.feeLabel).toBe('Delivery & Packaging fee');
+    expect(order.charges).toEqual([{ label: 'Delivery fee', amount: 50 }, { label: 'Packaging fee', amount: 30 }]);
+    const je = await mongoose.model('JournalEntry').findOne({ reference: r.body.journalReference }).lean();
+    expect(je.lines.find((l) => l.accountCode === '420000')?.credit).toBe(80);
+    expect(je.totalDebit).toBeCloseTo(je.totalCredit, 6);
+  });
 });
