@@ -2124,11 +2124,19 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       // all, so a staff token could set "Voided" and skip all of it. Status has
       // no schema enum, which is why the list lives here. (Cancelling a PAID
       // order is handled just below, with manager approval.)
-      const PUT_STATUSES = new Set(['Pending', 'Preparing', 'Ready', 'Completed', 'Cancelled']);
+      const PUT_STATUSES = new Set(['Pending', 'Preparing', 'Ready', 'Completed', 'Cancelled', 'Reserved']);
       if (!PUT_STATUSES.has(status)) {
         await session.abortTransaction();
         session.endSession();
         return res.status(400).json({ success: false, error: `An order cannot be set to "${status}" here. Use the void or refund action.` });
+      }
+      // An order already placed can be turned into a reservation for a later
+      // day - only while it is waiting and nothing has been paid on it.
+      if (status === 'Reserved' && previousStatus !== 'Reserved'
+        && (previousStatus !== 'Pending' || order.isComplimentary || (order.payments || []).length || (Number(order.amountPaid) || 0) > 0 || order.arSettled)) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ success: false, error: 'Only an unpaid order that has not been started can be reserved for later.' });
       }
     }
 
@@ -2155,6 +2163,16 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       }
     }
 
+    // The day and time a reservation is for: set when it is reserved, and
+    // changeable while it waits.
+    if (req.body.reservedFor !== undefined && (status === 'Reserved' || (!status && previousStatus === 'Reserved'))) {
+      const at = req.body.reservedFor ? new Date(req.body.reservedFor) : null;
+      if (at && Number.isNaN(at.getTime())) {
+        await session.abortTransaction(); session.endSession();
+        return res.status(400).json({ success: false, error: 'Invalid reservation date.' });
+      }
+      order.reservedFor = at;
+    }
     if (status) {
       order.status = status;
       // Attribution: when an order moves to Cancelled, stamp who did it from

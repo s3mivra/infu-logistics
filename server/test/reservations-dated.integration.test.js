@@ -81,3 +81,29 @@ describe('an order reserved for a later day', () => {
     expect(je.totalDebit).toBeCloseTo(je.totalCredit, 6);
   });
 });
+
+describe('an order already placed, reserved for later', () => {
+  const place = () => as('post', '/api/orders').send({
+    items: [{ name: 'Ube Cake', price: 900, quantity: 1, productDiscountPercent: 0 }], table: 'Pickup', customerName: 'Nomi Coffee',
+  });
+
+  it('an unpaid order becomes a reservation for the day given, and the day can be changed', async () => {
+    const o = (await place()).body.order;
+    expect(o.status).toBe('Pending');
+    const r = await as('put', `/api/orders/${o._id}`).send({ status: 'Reserved', reservedFor: '2026-11-29T02:00:00.000Z' });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    let saved = await M('Order').findById(o._id).lean();
+    expect(saved.status).toBe('Reserved');
+    expect(new Date(saved.reservedFor).toISOString()).toBe('2026-11-29T02:00:00.000Z');
+    expect((await as('put', `/api/orders/${o._id}`).send({ reservedFor: '2026-11-30T02:00:00.000Z' })).status).toBe(200);
+    saved = await M('Order').findById(o._id).lean();
+    expect(new Date(saved.reservedFor).toISOString()).toBe('2026-11-30T02:00:00.000Z');
+  });
+
+  it('an order already being made cannot be turned back into a reservation', async () => {
+    const o = (await place()).body.order;
+    await as('put', `/api/orders/${o._id}`).send({ status: 'Preparing' });
+    const r = await as('put', `/api/orders/${o._id}`).send({ status: 'Reserved', reservedFor: '2026-11-29T02:00:00.000Z' });
+    expect(r.status).toBe(400);
+  });
+});

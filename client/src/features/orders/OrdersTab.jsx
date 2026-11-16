@@ -2090,6 +2090,9 @@ export default function OrdersTab({ ctx }) {
                                   const splitNotReady = isSplitPay && !splitReady(dueTotal, splitNow);
                                   return (
                                     <div className="flex flex-col w-full gap-2">
+                                      {!(order.payments || []).length && !(Number(order.amountPaid) > 0) && (
+                                        <ReserveLater order={order} apiFetch={apiFetch} fetchOrders={fetchOrders} paymentMethodGroups={paymentMethodGroups} />
+                                      )}
                                       {dueTotal !== displayTotal && (
                                         <div className="flex items-center justify-between rounded-lg bg-purple-500/10 border border-purple-500/30 px-3 py-2 text-xs" data-testid="reservation-balance">
                                           <span className="text-fg/70">Reservation deposit ₱{(displayTotal - dueTotal).toFixed(2)} paid</span>
@@ -2585,6 +2588,68 @@ function ReservationInfo({ order, apiFetch, fetchOrders, paymentMethodGroups }) 
           Take deposit
         </button>
       ))}
+    </div>
+  );
+}
+
+// Turning an order already placed into a reservation for a later day, with
+// an optional deposit taken now.
+function ReserveLater({ order, apiFetch, fetchOrders, paymentMethodGroups }) {
+  const [open, setOpen] = React.useState(false);
+  const [when, setWhen] = React.useState('');
+  const [deposit, setDeposit] = React.useState('');
+  const [method, setMethod] = React.useState('Cash');
+  const [busy, setBusy] = React.useState(false);
+  const methods = [...new Set(['Cash', 'GCash', 'Maya', 'Bank Transfer', 'Card',
+    ...['In-Store', 'E-Wallets'].flatMap(g => (paymentMethodGroups?.[g] || []).filter(m => m.kind === 'custom').map(m => m.name))])];
+  const total = Number(order.total) || 0;
+  const save = async () => {
+    if (!when) return ui.alert('Pick the date and time it is for.');
+    const dep = Math.round((Number(deposit) || 0) * 100) / 100;
+    if (dep > total + 0.005) return ui.alert('The deposit is more than the order total.');
+    setBusy(true);
+    try {
+      const d = await (await apiFetch(`/api/orders/${order._id}`, { method: 'PUT', body: JSON.stringify({ status: 'Reserved', reservedFor: new Date(when).toISOString() }) })).json();
+      if (!d.success) return ui.alert(d.error || 'The order was not reserved.');
+      if (dep > 0) {
+        const dd = await (await apiFetch(`/api/orders/${order._id}/reservation-deposit`, { method: 'POST', body: JSON.stringify({ amount: dep, paymentMethod: method }) })).json();
+        if (!dd.success) ui.alert(`Reserved, but the deposit was not taken${dd.error ? `: ${dd.error}` : ''}. Take it on the order.`);
+      }
+      ui.toast(`${order.orderNumber} reserved${dep > 0 ? ` with a ₱${dep.toFixed(2)} deposit` : ''}.`, { tone: 'success' });
+      setOpen(false);
+      fetchOrders?.();
+    } finally { setBusy(false); }
+  };
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} data-testid="reserve-later"
+        className="self-end text-[10px] font-black uppercase tracking-wider text-special hover:underline">
+        Reserve for a later date
+      </button>
+    );
+  }
+  const field = 'mt-1 w-full bg-page-bg border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-brand/60 normal-case tracking-normal';
+  return (
+    <div className="grid grid-cols-2 gap-2 p-3 rounded-lg bg-purple-500/5 border border-purple-500/20" data-testid="reserve-later-form">
+      <label className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-fg/70">
+        Reserve for (date and time)
+        <input type="datetime-local" value={when} onChange={e => setWhen(e.target.value)} className={field} />
+      </label>
+      <label className="text-[10px] font-bold uppercase tracking-widest text-fg/70">
+        Deposit now (₱)
+        <input type="number" min="0" step="0.01" inputMode="decimal" placeholder="0" value={deposit} onChange={e => setDeposit(e.target.value)} className={`${field} tabular-nums`} />
+      </label>
+      <label className="text-[10px] font-bold uppercase tracking-widest text-fg/70">
+        Paid by
+        <select value={method} onChange={e => setMethod(e.target.value)} className={field}>
+          {methods.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+      </label>
+      <div className="col-span-2 flex gap-2">
+        <button type="button" onClick={save} disabled={busy}
+          className="flex-1 bg-purple-500 text-fg py-2 rounded-lg font-black text-xs uppercase tracking-widest disabled:opacity-50">Reserve</button>
+        <button type="button" onClick={() => setOpen(false)} className="px-3 text-xs font-bold text-fg/70 underline">Cancel</button>
+      </div>
     </div>
   );
 }
