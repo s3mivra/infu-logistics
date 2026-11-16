@@ -48,6 +48,9 @@ services:
       MAIL_FROM: ${MAIL_FROM:-}
       # The name emails are signed with.
       BUSINESS_NAME: ${VITE_BUSINESS_NAME:-}
+      # Names and typed text stored in CAPITALS (server/lib/caps.js). Off until a
+      # business turns it on: the first start with it on converts what is stored.
+      CAPS_TEXT: ${CAPS_TEXT:-off}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:5002/health"]
       interval: 30s
