@@ -101,13 +101,7 @@ describe('receiving a check', () => {
     expect(p.checkBank).toBe('BPI');
   });
 
-  it('asks before the same check number goes in again, and records it on "save anyway"', async () => {
-    const id = await receivable(500);
-    const dupe = await settle(id, { amount: 500, paymentMethod: 'Check', checkNumber: 'CHK-001', checkBank: 'BPI' });
-    expect(dupe.status).toBe(409);
-    expect(dupe.body.error).toMatch(/already recorded/i);
-    expect(dupe.body.duplicateOf).toBeTruthy();   // the app asks "save anyway?"
-  });
+
 
   it('a check still settles the receivable it was collected against', async () => {
     const o = await Order().findOne({ 'arPayments.checkNumber': 'CHK-001' }).lean();
@@ -281,10 +275,6 @@ describe('one check paying several sales', () => {
     expect(r).toHaveLength(2);
     expect(r.every(c => c.groupSize === 2 && c.status === 'On Hand')).toBe(true);
 
-    // The same number outside that check is still a double entry.
-    const c = await receivable(100);
-    const dupe = await settle(c, { amount: 100, paymentMethod: 'Check', checkNumber: 'CHK-MANY-1', checkBank: 'BPI' });
-    expect(dupe.status).toBe(409);
   });
 
   it('counts as one check in the register totals', async () => {
@@ -328,10 +318,10 @@ describe('one check paying several sales', () => {
 });
 
 // Last, so the extra check does not change the register totals above.
-describe('the same check number on purpose', () => {
-  it('is recorded once the user says save anyway', async () => {
+describe('the same check number again', () => {
+  it('is simply recorded: different checks can carry the same number', async () => {
     const id = await receivable(500);
-    const again = await settle(id, { amount: 500, paymentMethod: 'Check', checkNumber: 'CHK-001', checkBank: 'BPI', allowDuplicate: true });
+    const again = await settle(id, { amount: 500, paymentMethod: 'Check', checkNumber: 'CHK-001', checkBank: 'BPI' });
     expect(again.status, JSON.stringify(again.body)).toBe(200);
     const o = await Order().findById(id).lean();
     expect(o.arPayments.some((p) => p.checkNumber === 'CHK-001')).toBe(true);

@@ -3402,21 +3402,9 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireStaff, requirePermissi
         chequeOn = new Date(checkDate);
         if (Number.isNaN(chequeOn.getTime())) return res.status(400).json({ success: false, error: 'Invalid check date.' });
       }
-      // The same check number from the same bank again is usually a double
-      // entry, which would credit a client for money that arrived once - so it
-      // is asked about ("save anyway?"), not refused: banks and clients do
-      // reuse numbers, and one check can be recorded more than once on purpose.
-      const dupe = req.body?.allowDuplicate === true ? null : await Order.findOne({
-        businessType: BUSINESS_TYPE, ...tenantScope(req),
-        arPayments: { $elemMatch: {
-          checkNumber: chequeNo,
-          checkStatus: { $nin: ['Bounced'] },
-          // The other parts of this same check are not a double entry.
-          ...(checkGroup ? { checkGroup: { $ne: checkGroup } } : {}),
-          ...(checkBank ? { checkBank: String(checkBank).trim() } : {}),
-        } },
-      }, { orderNumber: 1 }).lean();
-      if (dupe) return res.status(409).json({ success: false, duplicateOf: { id: String(dupe._id), label: dupe.orderNumber }, error: `Check #${chequeNo} is already recorded against ${dupe.orderNumber}.` });
+      // The same check number may be recorded any number of times: the business
+      // receives different checks that carry the same number, so a number
+      // already on another sale is never refused or questioned.
     }
 
     const collectedOn = collectionDate ? new Date(collectionDate) : new Date();
