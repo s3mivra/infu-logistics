@@ -960,7 +960,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     // 1. IDEMPOTENCY CHECK
     if (idempotencyKey && await replayDuplicate()) return undefined;
 
-    let { items, discountPercent = 0, discountFlat = 0, table, customerName, sessionId, isComplimentary = false, employeeName = '', orderNotes = '', guestCount = 1, payments: paymentsInput, paymentMethod: bodyPaymentMethod, termsOfPayment, reserveOnly = false, location = '' } = req.body;
+    let { items, discountPercent = 0, discountFlat = 0, table, customerName, sessionId, isComplimentary = false, employeeName = '', orderNotes = '', guestCount = 1, payments: paymentsInput, paymentMethod: bodyPaymentMethod, termsOfPayment, reserveOnly = false, location = '', reservedFor = null } = req.body;
     // Delivery fields (logistics/delivery orders). These were previously never
     // read here at all - the client has always sent deliveryFee on every POS
     // order, but it was silently dropped: never saved on the Order, never
@@ -1451,6 +1451,8 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       // Cashier later promotes Reserved → Pending (pay later) or Preparing (pay now)
       // via the existing PUT /api/orders/:id status transition.
       ...(reserveOnly && !isComplimentary ? { status: 'Reserved' } : {}),
+      // Booked for a later day and time (a cake for Saturday, 3pm).
+      ...(reserveOnly && !isComplimentary && reservedFor && !Number.isNaN(new Date(reservedFor).getTime()) ? { reservedFor: new Date(reservedFor) } : {}),
       transactionType: isComplimentary ? 'COMPLIMENTARY' : 'NORMAL',
       orderNotes: (orderNotes || '').trim().slice(0, 300),
       guestCount: Math.max(1, parseInt(guestCount) || 1),
@@ -2159,6 +2161,27 @@ const completeOrderOnce = async (req, res, mayRetry) => {
       // the verified JWT so reports don't blame the original cashier (which
       // for a client-portal order is the client's username).
       if (status === 'Cancelled' && previousStatus !== 'Cancelled') {
+        // A reservation called off gives its deposit back: out of Customer
+        // Advances / Deposits, back to the way each part was paid.
+        if ((order.reservationDeposits || []).length && (order.depositRemaining || 0) > 0.005) {
+          const depAcct = order.depositAccount || '260200';
+          let left = +order.depositRemaining.toFixed(2);
+          const lines = [{ accountCode: depAcct, accountName: depAcct === '260200' ? 'Customer Advances / Deposits' : 'Customer Deposits', debit: left, credit: 0 }];
+          for (const d of [...order.reservationDeposits].reverse()) {
+            if (left <= 0.005) break;
+            const part = +Math.min(left, Number(d.amount) || 0).toFixed(2);
+            const acct = debitAccountFor(d.method || 'Cash');
+            lines.push({ accountCode: acct.code, accountName: acct.name, debit: 0, credit: part });
+            left = +(left - part).toFixed(2);
+          }
+          if (left > 0.005) { const acct = debitAccountFor('Cash'); lines.push({ accountCode: acct.code, accountName: acct.name, debit: 0, credit: left }); }
+          const refunded = +order.depositRemaining.toFixed(2);
+          const reference = mkRef('RSV-REFUND', order.orderNumber);
+          await JournalEntry.create([{ reference, description: `Reservation deposit refunded: ${order.orderNumber}`, lines, totalDebit: refunded, totalCredit: refunded }], { session });
+          order.depositRemaining = 0;
+          order.amountPaid = +Math.max(0, (order.amountPaid || 0) - refunded).toFixed(2);
+          order.depositRefunded = refunded;
+        }
         order.cancelledBy = req.user?.name || 'system';
         order.cancelledAt = new Date();
         if (cancelApprovedBy) order.cancelApprovedBy = cancelApprovedBy;
@@ -2661,16 +2684,26 @@ const completeOrderOnce = async (req, res, mayRetry) => {
         }
         order.complimentaryCost = totalCogs;
       } else {
+        // A reservation's deposit is used first: released from Customer
+        // Advances / Deposits, and only the balance is taken now.
+        const usedDeposit = (order.reservationDeposits || []).length && (order.depositRemaining || 0) > 0.005
+          ? +Math.min(order.depositRemaining, order.total || 0).toFixed(2) : 0;
+        const dueNow = +((order.total || 0) - usedDeposit).toFixed(2);
+        if (usedDeposit > 0) {
+          const depAcct = order.depositAccount || '260200';
+          lines.push({ accountCode: depAcct, accountName: depAcct === '260200' ? 'Customer Advances / Deposits' : 'Customer Deposits', debit: usedDeposit, credit: 0 });
+          order.depositRemaining = +((order.depositRemaining || 0) - usedDeposit).toFixed(2);
+        }
         // Split-payment: one debit line per payment; single-payment: one line as before
         const payRows = (order.payments?.length > 0)
           ? order.payments
-          : [{ method: order.paymentMethod || 'Cash', amount: order.total }];
+          : (dueNow > 0.005 ? [{ method: order.paymentMethod || 'Cash', amount: dueNow }] : []);
         // A discount or an item change after the split was taken leaves parts
         // that no longer add up to the order - say so, rather than fail to post.
         const partsSum = Math.round(payRows.reduce((sum, p) => sum + (Number(p.amount) || 0), 0) * 100) / 100;
-        if (order.payments?.length > 0 && Math.abs(partsSum - order.total) > 0.011) {
+        if (order.payments?.length > 0 && Math.abs(partsSum - dueNow) > 0.011) {
           await session.abortTransaction(); session.endSession();
-          return res.status(409).json({ success: false, error: `The order is now ₱${Number(order.total).toFixed(2)} but its split payment adds up to ₱${partsSum.toFixed(2)}. Take the payment again.` });
+          return res.status(409).json({ success: false, error: `The order is now ₱${Number(dueNow).toFixed(2)}${usedDeposit > 0 ? ` after its ₱${usedDeposit.toFixed(2)} deposit` : ''} but its split payment adds up to ₱${partsSum.toFixed(2)}. Take the payment again.` });
         }
         for (const p of payRows) {
           const acct = debitAccountFor(p.method);
@@ -3333,6 +3366,44 @@ app.post('/api/orders/archive', verifyToken, requireStaff, permit('orders.delete
 // The journal entry is dated on the deposit date, because that is when the
 // asset account actually moved.
 // ============================================================
+// ── RESERVATION DEPOSIT ─────────────────────────────────────────────────────
+// Money taken now for an order booked for a later day. It is not a sale yet:
+// DR cash (or bank, e-wallet...) / CR 260200 Customer Advances / Deposits.
+// When the reservation is rung up the deposit is used first; if it is called
+// off the deposit is given back (PUT /api/orders/:id, status Cancelled).
+app.post('/api/orders/:id/reservation-deposit', verifyToken, requireStaff, requirePermission('pos.use'), atomic(mongoose, async (req, res) => {
+  const session = req.mongoSession;
+  try {
+    const order = await Order.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) }).session(session);
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+    if (order.status !== 'Reserved') return res.status(400).json({ success: false, error: 'A deposit is taken on a reserved order only.' });
+    const amount = Math.round((Number(req.body?.amount) || 0) * 100) / 100;
+    if (!(amount > 0)) return res.status(400).json({ success: false, error: 'Enter the deposit amount.' });
+    const left = Math.round(((order.total || 0) - (order.depositRemaining || 0)) * 100) / 100;
+    if (amount - left > 0.005) return res.status(400).json({ success: false, error: `That is more than is left to pay on this reservation (₱${left.toFixed(2)}).` });
+    const method = String(req.body?.paymentMethod || 'Cash').trim().slice(0, 40) || 'Cash';
+    const reference = String(req.body?.reference || '').trim().slice(0, 80);
+    const acct = debitAccountFor(method);
+    const journalRef = await mkSeqRef('RSV');
+    const lines = [
+      { accountCode: acct.code, accountName: acct.name, debit: amount, credit: 0 },
+      { accountCode: '260200', accountName: 'Customer Advances / Deposits', debit: 0, credit: amount },
+    ];
+    await JournalEntry.create([{ reference: journalRef, date: new Date(), description: `Reservation deposit: ${order.orderNumber}${order.customerName ? ` - ${order.customerName}` : ''}${reference ? ` (Ref: ${reference})` : ''}`, lines, totalDebit: amount, totalCredit: amount }], { session });
+    order.depositAccount = order.depositAccount || '260200';
+    order.depositRemaining = Math.round(((order.depositRemaining || 0) + amount) * 100) / 100;
+    order.amountPaid = Math.round(((order.amountPaid || 0) + amount) * 100) / 100;
+    order.reservationDeposits = [...(order.reservationDeposits || []), { amount, method, reference, at: new Date(), by: req.user?.name || '', journalRef }];
+    await order.save({ session });
+    await logAudit(req, { action: 'reservation_deposit', entity: 'Order', entityId: order._id, after: { orderNumber: order.orderNumber, amount, method, journalRef } });
+    emitToOps('orderUpdated', order);
+    res.json({ success: true, order, journalReference: journalRef });
+  } catch (err) {
+    captureError(req, err);
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+}));
+
 app.post('/api/orders/:id/settle-ar', verifyToken, requireStaff, requirePermission('ar.collect'), atomic(mongoose, async (req, res) => {
   try {
     const {

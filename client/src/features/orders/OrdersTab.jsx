@@ -120,7 +120,7 @@ export default function OrdersTab({ ctx }) {
     posActiveAddOns, posActiveSize, posItemQty, setPosItemQty,
     posCart, posCategory, posCustomerName,
     posClientId, setPosClientId, posPriceTier = '', setPosPriceTier, priceTiers = [], posSalesperson, setPosSalesperson, salesStaff = [], posBuyerDiscounts, clientAccounts, coaAccounts,
-    posReserveOnly, setPosReserveOnly,
+    posReserveOnly, setPosReserveOnly, posReservedFor, setPosReservedFor, posDeposit, setPosDeposit, posDepositMethod, setPosDepositMethod,
     posCustomerPhone, posDeliveryAddress, posDeliveryFee, posDeliveryFeeNum, posDiscountAmt,
     posItemDiscountAmt, posGrandTotal, posSubmitting, posPage, 
     posScheduledTime, posSearch, posSelectedProduct, posSubtotal, posTable, saleThresholds,
@@ -1061,6 +1061,33 @@ export default function OrdersTab({ ctx }) {
                       <span className="text-[11px] font-bold text-fg/70">Reserve only (pay later)</span>
                       <span className="ml-auto text-[9px] uppercase tracking-widest font-black text-fg/65">Status: {posReserveOnly ? 'Reserved' : 'Pending'}</span>
                     </label>
+                    {/* A reservation for a later day: when it is for, and a
+                        deposit taken now (held for the customer, used first
+                        when it is rung up, given back if it is called off). */}
+                    {posReserveOnly && (
+                      <div className="grid grid-cols-2 gap-2 mb-2 p-3 rounded-lg bg-purple-500/5 border border-purple-500/20" data-testid="reserve-details">
+                        <label className="col-span-2 text-[10px] font-bold uppercase tracking-widest text-fg/70">
+                          For (date and time)
+                          <input type="datetime-local" value={posReservedFor || ''} onChange={e => setPosReservedFor(e.target.value)}
+                            className="mt-1 w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg normal-case tracking-normal font-bold outline-none focus:border-brand/60" />
+                        </label>
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-fg/70">
+                          Deposit now (₱)
+                          <input type="number" min="0" step="0.01" inputMode="decimal" placeholder="0" value={posDeposit || ''} onChange={e => setPosDeposit(e.target.value)}
+                            className="mt-1 w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg font-bold tabular-nums outline-none focus:border-brand/60" />
+                        </label>
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-fg/70">
+                          Paid by
+                          <select value={posDepositMethod || 'Cash'} onChange={e => setPosDepositMethod(e.target.value)}
+                            className="mt-1 w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-fg font-bold outline-none focus:border-brand/60">
+                            {[...new Set(['Cash', 'GCash', 'Maya', 'Bank Transfer', 'Card', ...['In-Store', 'E-Wallets'].flatMap(g => (paymentMethodGroups?.[g] || []).filter(m => m.kind === 'custom').map(m => m.name))])].map(m => <option key={m} value={m}>{m}</option>)}
+                          </select>
+                        </label>
+                        {Number(posDeposit) > posGrandTotal + 0.005 && (
+                          <p className="col-span-2 text-[11px] text-danger font-bold">The deposit is more than the order total.</p>
+                        )}
+                      </div>
+                    )}
                     <div className="flex gap-2">
                       <button
                         onClick={parkCurrentOrder}
@@ -1295,7 +1322,10 @@ export default function OrdersTab({ ctx }) {
                         <Plus size={15} /> Start a Manual Order
                       </button>
                     </div>
-                  ) : displayOrders.map(order => {
+                  ) : (orderFilter === 'Reserved'
+                    // Reservations by the day they are for, soonest first; undated last.
+                    ? [...displayOrders].sort((a, b) => (a.reservedFor ? new Date(a.reservedFor).getTime() : Infinity) - (b.reservedFor ? new Date(b.reservedFor).getTime() : Infinity))
+                    : displayOrders).map(order => {
                     // Items scoped to current department view (or all items when in All view)
                     const viewItems      = departmentFilter !== 'All'
                       ? order.items.filter(i => (i.department || SEND_TARGET) === departmentFilter)
@@ -2002,6 +2032,7 @@ export default function OrdersTab({ ctx }) {
                                     <Lock size={12} className="text-special" />
                                     <span className="text-special text-[10px] font-black uppercase tracking-widest">Reserved - Payment Locked</span>
                                   </div>
+                                  <ReservationInfo order={order} apiFetch={apiFetch} fetchOrders={fetchOrders} paymentMethodGroups={paymentMethodGroups} />
                                   <div className="flex gap-2">
                                     <button
                                       onClick={() => updateStatus(order._id, 'Pending')}
@@ -2047,16 +2078,24 @@ export default function OrdersTab({ ctx }) {
                                   const ref = (paymentRefs[order._id] || '').trim();
                                   const needsRef = isCheck || isQr;
                                   const missingRef = needsRef && !ref;
+                                  // A reservation's deposit is already paid: only the balance is taken now.
+                                  const dueTotal = (order.reservationDeposits || []).length ? Math.max(0, Math.round((displayTotal - (Number(order.depositRemaining) || 0)) * 100) / 100) : displayTotal;
                                   const tendered = parseFloat(cashTendered[order._id] || '0') || 0;
-                                  const changeDue = isCash && tendered > 0 ? tendered - displayTotal : null;
-                                  const isUnderpaid = isCash && tendered > 0 && tendered < displayTotal;
+                                  const changeDue = isCash && tendered > 0 ? tendered - dueTotal : null;
+                                  const isUnderpaid = isCash && tendered > 0 && tendered < dueTotal;
                                   // Paid in parts: the parts typed here, else the ones the order already has.
                                   const isSplitPay = displayPayment === 'Split';
                                   const splitNow = splitParts[order._id]
-                                    || ((order.payments || []).length >= 2 ? order.payments.map(p => ({ method: p.method, amount: p.amount, reference: p.reference || '', checkDate: p.checkDate ? String(p.checkDate).slice(0, 10) : '' })) : newSplit(displayTotal));
-                                  const splitNotReady = isSplitPay && !splitReady(displayTotal, splitNow);
+                                    || ((order.payments || []).length >= 2 ? order.payments.map(p => ({ method: p.method, amount: p.amount, reference: p.reference || '', checkDate: p.checkDate ? String(p.checkDate).slice(0, 10) : '' })) : newSplit(dueTotal));
+                                  const splitNotReady = isSplitPay && !splitReady(dueTotal, splitNow);
                                   return (
                                     <div className="flex flex-col w-full gap-2">
+                                      {dueTotal !== displayTotal && (
+                                        <div className="flex items-center justify-between rounded-lg bg-purple-500/10 border border-purple-500/30 px-3 py-2 text-xs" data-testid="reservation-balance">
+                                          <span className="text-fg/70">Reservation deposit ₱{(displayTotal - dueTotal).toFixed(2)} paid</span>
+                                          <span className="font-black text-fg">Balance ₱{dueTotal.toFixed(2)}</span>
+                                        </div>
+                                      )}
                                       <select
                                         value={displayPayment}
                                         onChange={(e) => setPaymentSelections(prev => ({ ...prev, [order._id]: e.target.value }))}
@@ -2138,7 +2177,7 @@ export default function OrdersTab({ ctx }) {
                                           customer scans, and the confirmation number goes in the
                                           box directly below. */}
                                       {isSplitPay && (
-                                        <SplitPayEditor compact total={displayTotal} parts={splitNow}
+                                        <SplitPayEditor compact total={dueTotal} parts={splitNow}
                                           onChange={parts => setSplitParts(prev => ({ ...prev, [order._id]: parts }))} />
                                       )}
                                       {payQrImage && ['QR', 'GCash', 'Maya', 'Maribank', 'Other E-Wallet'].includes(displayPayment) && (
@@ -2189,7 +2228,7 @@ export default function OrdersTab({ ctx }) {
                                               type="number"
                                               min="0"
                                               step="0.01"
-                                              placeholder={`≥ ₱${displayTotal.toFixed(2)}`}
+                                              placeholder={`≥ ₱${dueTotal.toFixed(2)}`}
                                               value={cashTendered[order._id] || ''}
                                               onChange={(e) => setCashTendered(prev => ({ ...prev, [order._id]: e.target.value }))}
                                               className="flex-1 bg-white/5 border border-white/10 focus:border-accent/50 rounded-lg px-2 py-1.5 text-sm font-mono text-fg outline-none"
@@ -2226,7 +2265,7 @@ export default function OrdersTab({ ctx }) {
                                         {splitNotReady ? 'Finish the split payment' : missingRef ? `${isCheck ? 'Check No.' : 'Ref No.'} Required` : `Pay & send to ${SEND_TARGET}`}
                                       </button>
                                       {BUSINESS_TYPE === 'log' && (
-                                        <button onClick={() => sendUnpaid(order, displayTotal)}
+                                        <button onClick={() => sendUnpaid(order, dueTotal)}
                                           title="Deliver now and collect the payment later - booked as a receivable"
                                           className="w-full py-2 rounded-lg border border-white/15 text-fg/80 hover:text-fg hover:bg-white/5 font-bold text-xs uppercase tracking-wider transition">
                                           Not paid yet - send &amp; collect later
@@ -2475,5 +2514,77 @@ export default function OrdersTab({ ctx }) {
               </div>
             )}
           </div>
+  );
+}
+
+// When a reservation is for, what has been paid on it, and taking a deposit.
+function reservationWhen(d) {
+  if (!d) return null;
+  const at = new Date(d);
+  if (Number.isNaN(at.getTime())) return null;
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(at) - day(new Date())) / 86400000);
+  const label = diff === 0 ? 'Today' : diff === 1 ? 'Tomorrow' : diff === -1 ? 'Yesterday'
+    : at.toLocaleDateString('en-PH', { weekday: 'short', day: 'numeric', month: 'short' });
+  return { label, time: at.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }), overdue: diff < 0, soon: diff >= 0 && diff <= 1 };
+}
+
+function ReservationInfo({ order, apiFetch, fetchOrders, paymentMethodGroups }) {
+  const [open, setOpen] = React.useState(false);
+  const [amount, setAmount] = React.useState('');
+  const [method, setMethod] = React.useState('Cash');
+  const [busy, setBusy] = React.useState(false);
+  const when = reservationWhen(order.reservedFor);
+  const paid = Number(order.depositRemaining) || 0;
+  const balance = Math.max(0, Math.round(((Number(order.total) || 0) - paid) * 100) / 100);
+  const methods = [...new Set(['Cash', 'GCash', 'Maya', 'Bank Transfer', 'Card',
+    ...['In-Store', 'E-Wallets'].flatMap(g => (paymentMethodGroups?.[g] || []).filter(m => m.kind === 'custom').map(m => m.name))])];
+  const save = async () => {
+    const amt = Math.round((Number(amount) || 0) * 100) / 100;
+    if (!(amt > 0)) return ui.alert('Enter the deposit amount.');
+    setBusy(true);
+    try {
+      const d = await (await apiFetch(`/api/orders/${order._id}/reservation-deposit`, { method: 'POST', body: JSON.stringify({ amount: amt, paymentMethod: method }) })).json();
+      if (!d.success) return ui.alert(d.error || 'The deposit was not saved.');
+      ui.toast(`Deposit of ₱${amt.toFixed(2)} taken.`, { tone: 'success' });
+      setOpen(false); setAmount('');
+      fetchOrders?.();
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs space-y-1.5" data-testid="reservation-info">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-fg/65 font-bold uppercase tracking-wider text-[10px]">For</span>
+        {when
+          ? <span className={`font-black ${when.overdue ? 'text-danger' : when.soon ? 'text-warning' : 'text-fg'}`}>{when.label} · {when.time}</span>
+          : <span className="text-fg/60">No date set</span>}
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-fg/65">Deposit paid</span>
+        <span className="font-bold tabular-nums text-success">₱{paid.toFixed(2)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-fg/65">Balance on the day</span>
+        <span className="font-black tabular-nums text-fg">₱{balance.toFixed(2)}</span>
+      </div>
+      {balance > 0.005 && (open ? (
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          <input type="number" min="0" step="0.01" inputMode="decimal" placeholder={`up to ${balance.toFixed(2)}`} value={amount} onChange={e => setAmount(e.target.value)}
+            className="flex-1 min-w-[90px] bg-surface border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold tabular-nums outline-none focus:border-brand/60" />
+          <select value={method} onChange={e => setMethod(e.target.value)}
+            className="bg-surface border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-brand/60">
+            {methods.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <button type="button" onClick={save} disabled={busy}
+            className="bg-brand text-on-brand px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider disabled:opacity-50">Save</button>
+          <button type="button" onClick={() => setOpen(false)} className="text-fg/65 px-1 text-[10px] font-bold underline">Cancel</button>
+        </div>
+      ) : (
+        <button type="button" onClick={() => setOpen(true)}
+          className="w-full mt-1 bg-purple-500/15 text-special border border-purple-500/30 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-purple-500/25 transition">
+          Take deposit
+        </button>
+      ))}
+    </div>
   );
 }

@@ -680,6 +680,10 @@ export default function AdminDashboard() {
   // Reserve-only mode: place order with status 'Reserved' (no payment yet).
   // Cashier later promotes Reserved → Pending (pay later) or Preparing (pay now).
   const [posReserveOnly, setPosReserveOnly] = useState(false);
+  // A reservation for a later day: when it is for, and a deposit taken now.
+  const [posReservedFor, setPosReservedFor] = useState('');      // datetime-local value
+  const [posDeposit, setPosDeposit] = useState('');
+  const [posDepositMethod, setPosDepositMethod] = useState('Cash');
   const [posTable, setPosTable] = useSessionState('pos.table', BUSINESS_TYPE === 'log' ? 'Walk In' : 'Dine-In');
   // Which branch/location THIS DEVICE rings sales up as - a StorageLocation
   // name, persisted per-device (not per-user) since a POS tablet physically
@@ -2671,6 +2675,7 @@ export default function AdminDashboard() {
       priceTier: posPriceTier || undefined,
       salesperson: posSalesperson || undefined,
       reserveOnly: posReserveOnly || undefined,
+      ...(posReserveOnly && posReservedFor ? { reservedFor: new Date(posReservedFor).toISOString() } : {}),
       paymentMethod: DELIVERY_METHODS.includes(posTable) ? posTable : 'Cash',
       isComplimentary: false,
       sessionId: null,
@@ -2701,6 +2706,7 @@ export default function AdminDashboard() {
       setPosPriceTier('');
       setPosSalesperson('');
       setPosReserveOnly(false);
+      setPosReservedFor(''); setPosDeposit(''); setPosDepositMethod('Cash');
       setPosDeliveryAddress('');
       setPosCustomerPhone('');
       setPosDeliveryFee('');
@@ -2751,6 +2757,14 @@ export default function AdminDashboard() {
           // leaving the cashier to find out at the counter.
           const dd = await dr.json().catch(() => ({}));
           if (!dd.success) ui.alert(`The order was placed, but its item discounts were not applied${dd.error ? `: ${dd.error}` : ''}. You can add them on the order.`);
+        }
+        // A deposit taken with the reservation goes in now, held for the customer.
+        const deposit = posReserveOnly ? Math.round((Number(posDeposit) || 0) * 100) / 100 : 0;
+        if (deposit > 0 && data.order?._id) {
+          const dep = await (await apiFetch(`/api/orders/${data.order._id}/reservation-deposit`, {
+            method: 'POST', body: JSON.stringify({ amount: deposit, paymentMethod: posDepositMethod || 'Cash' }),
+          })).json().catch(() => ({}));
+          if (!dep.success) ui.alert(`The reservation was saved, but its deposit was not${dep.error ? `: ${dep.error}` : ''}. Take it on the order.`);
         }
         if (BUSINESS_TYPE === 'log') fetchERPData();
         resetPosForm();
@@ -7313,7 +7327,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     orderSearch, setOrderSearch,
     collapsedOrders, setCollapsedOrders, updatingOrders, cashTendered, setCashTendered,
     isPosOpen, setIsPosOpen, posCart, setPosCart, posCategory, setPosCategory, posPage, setPosPage,
-    posSearch, setPosSearch, posCustomerName, setPosCustomerName, posClientId, setPosClientId, posPriceTier, setPosPriceTier, posSalesperson, setPosSalesperson, salesStaff, posBuyerDiscounts, posReserveOnly, setPosReserveOnly, posTable, setPosTable,
+    posSearch, setPosSearch, posCustomerName, setPosCustomerName, posClientId, setPosClientId, posPriceTier, setPosPriceTier, posSalesperson, setPosSalesperson, salesStaff, posBuyerDiscounts, posReserveOnly, setPosReserveOnly, posReservedFor, setPosReservedFor, posDeposit, setPosDeposit, posDepositMethod, setPosDepositMethod, posTable, setPosTable,
     posBranch, setPosBranch,
     posPayment, setPosPayment, posSelectedProduct, setPosSelectedProduct,
     posActiveSize, setPosActiveSize, posActiveAddOns, setPosActiveAddOns, posItemQty, setPosItemQty,

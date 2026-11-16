@@ -366,6 +366,12 @@ export default function defineCatalogModels({ BUSINESS_TYPE }) {
     // Which liability account holds that deposit (260200 for new deposits; legacy
     // orders were booked to 260000). Released from the same account it went into.
     depositAccount: { type: String, default: '' },        // prepaid-but-unfulfilled value held as Customer Deposits
+    // A reservation: an order booked for a later day and time. It waits as
+    // 'Reserved' and is rung up on the day; deposits taken on it are held in
+    // Customer Advances / Deposits (260200) and used first when it is paid.
+    reservedFor:         { type: Date, default: null, index: true },
+    reservationDeposits: { type: [{ _id: false, amount: Number, method: String, reference: String, at: Date, by: String, journalRef: String }], default: undefined },
+    depositRefunded:     { type: Number, default: undefined },   // a reservation's deposit given back when it was called off
     // When the remaining units of a partially-fulfilled order are dropped, the
     // order finalizes as Completed at the fulfilled quantity and the dropped units
     // are recorded here (they carry no ledger entries - they were never fulfilled).
