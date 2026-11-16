@@ -531,7 +531,7 @@ app.post('/api/client-accounts', verifyToken, requireStaff, requirePermission('c
     if (emailVal === null) return res.status(400).json({ success: false, error: 'Email is not a valid address.' });
     if (!withLogin) cleanUsername = `_pending_${clientCode.toLowerCase()}`;
     const client = await ClientAccount.create({ clientCode, username: cleanUsername, password: hashed,
-      ...(token ? { onboardingToken: token, onboardingTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) } : {}), name: cleanName, paymentMethod: paymentMethod || 'Cash', creditLimit: parseCreditLimit(creditLimit), creditTermsDays: parseTermsDays(creditTermsDays), segments: cleanSegments, phone: cleanPhone(phone), email: emailVal, contactNotes: String(contactNotes ?? '').trim().slice(0, 1000), requiresQuote: requiresQuote === true, isVatRegistered: isVatRegistered === true, tin: String(tin ?? '').trim().slice(0, 30), registeredName: String(registeredName ?? '').trim().slice(0, 200), registeredAddress: String(registeredAddress ?? '').trim().slice(0, 300) });
+      ...(token ? { onboardingToken: token, onboardingTokenExpiresAt: null } : {}), name: cleanName, paymentMethod: paymentMethod || 'Cash', creditLimit: parseCreditLimit(creditLimit), creditTermsDays: parseTermsDays(creditTermsDays), segments: cleanSegments, phone: cleanPhone(phone), email: emailVal, contactNotes: String(contactNotes ?? '').trim().slice(0, 1000), requiresQuote: requiresQuote === true, isVatRegistered: isVatRegistered === true, tin: String(tin ?? '').trim().slice(0, 30), registeredName: String(registeredName ?? '').trim().slice(0, 200), registeredAddress: String(registeredAddress ?? '').trim().slice(0, 300) });
     await logAudit(req, { action: 'create', entity: 'ClientAccount', entityId: client._id, after: { clientCode, name: cleanName } });
     res.json({ success: true, ...(token ? { onboardingPath: `/client-onboard/${token}` } : {}), client: { _id: client._id, clientCode: client.clientCode, username: client.username, name: client.name, paymentMethod: client.paymentMethod, isActive: client.isActive, creditLimit: client.creditLimit, creditTermsDays: client.creditTermsDays, segments: client.segments, phone: client.phone, email: client.email, contactNotes: client.contactNotes } });
   } catch (err) {
@@ -607,7 +607,7 @@ app.post('/api/client-accounts/import', verifyToken, requireStaff, requirePermis
           email: emailVal,
           contactNotes: String(r.contactNotes ?? r.Notes ?? '').trim().slice(0, 1000),
           // A sign-in link only where clients sign in (see clientLoginOnly).
-          ...(BUSINESS_TYPE === 'log' ? { onboardingToken: token, onboardingTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) } : {}),
+          ...(BUSINESS_TYPE === 'log' ? { onboardingToken: token, onboardingTokenExpiresAt: null } : {}),
         });
 
         created.push({
@@ -789,20 +789,19 @@ app.post('/api/client-accounts/:id/reset-password', clientLoginOnly, verifyToken
 // password, so issuing one stays with the superadmin (onboard-link above).
 app.get('/api/client-accounts/links', clientLoginOnly, verifyToken, requireStaff, requirePermission('clients.links'), async (req, res) => {
   try {
-    const now = new Date();
     const clients = await ClientAccount.find({}, { name: 1, clientCode: 1, username: 1, isActive: 1, onboardingToken: 1, onboardingTokenExpiresAt: 1 })
       .sort({ name: 1 }).lean();
     res.json({
       success: true,
       signInPath: '/client-login',
       clients: clients.map(c => {
-        const live = c.onboardingToken && c.onboardingTokenExpiresAt && c.onboardingTokenExpiresAt > now;
+        const live = !!c.onboardingToken;   // a setup link stays good until it is used
         return {
           _id: c._id, name: c.name, clientCode: c.clientCode || '',
           // A placeholder (_pos_…, _pending_…) cannot be typed at a login box.
           hasLogin: !!c.username && !String(c.username).startsWith('_'), isActive: c.isActive !== false,
           onboardingPath: live ? `/client-onboard/${c.onboardingToken}` : null,
-          onboardingExpiresAt: live ? c.onboardingTokenExpiresAt : null,
+          onboardingExpiresAt: null,
         };
       }),
     });
@@ -813,7 +812,7 @@ app.get('/api/client-accounts/links', clientLoginOnly, verifyToken, requireStaff
 
 // ── New client from a name only ───────────────────────────────────────────────
 // Needs clients.invite: creates the client with just a name and
-// returns its 7-day onboarding link. The client sets their own username and
+// returns its onboarding link (good until used). The client sets their own username and
 // password when they redeem it, so the office never chooses a login. Nothing
 // else (credit line, terms, payment method) can be set here.
 app.post('/api/client-accounts/invite', clientLoginOnly, verifyToken, requireStaff, requirePermission('clients.invite'), async (req, res) => {
@@ -832,7 +831,7 @@ app.post('/api/client-accounts/invite', clientLoginOnly, verifyToken, requireSta
       clientCode, username: `_pending_${clientCode.toLowerCase()}`, password, name: cleanName,
       namePending: !typedName,
       onboardingToken: token,
-      onboardingTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      onboardingTokenExpiresAt: null,   // good until used (or replaced)
     });
     await logAudit(req, { action: 'onboard_link_created', entity: 'ClientAccount', entityId: client._id, after: { clientCode, name: cleanName, namePending: !typedName } });
     res.json({ success: true, client: { _id: client._id, clientCode, name: cleanName, namePending: !typedName, onboardingPath: `/client-onboard/${token}` } });
@@ -858,7 +857,7 @@ app.post('/api/client-accounts/:id/onboard-link', clientLoginOnly, verifyToken, 
     if (!isOwner && hasLogin) return res.status(403).json({ success: false, error: 'This client already has a login - only the owner can issue a new setup link.' });
     const token = crypto.randomBytes(24).toString('hex');
     client.onboardingToken = token;
-    client.onboardingTokenExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    client.onboardingTokenExpiresAt = null;   // good until used or replaced by a new one
     await client.save();
     await logAudit(req, { action: 'onboard_link_created', entity: 'ClientAccount', entityId: client._id, after: { clientCode: client.clientCode } });
     res.json({ success: true, token, expiresAt: client.onboardingTokenExpiresAt });
@@ -872,8 +871,8 @@ app.post('/api/client-accounts/:id/onboard-link', clientLoginOnly, verifyToken, 
 app.get('/api/client-onboard/:token', clientLoginOnly, async (req, res) => {
   try {
     const client = await ClientAccount.findOne({ onboardingToken: req.params.token }, { name: 1, namePending: 1, clientCode: 1, phone: 1, email: 1, onboardingTokenExpiresAt: 1 });
-    if (!client || !client.onboardingTokenExpiresAt || client.onboardingTokenExpiresAt < new Date()) {
-      return res.status(404).json({ success: false, error: 'This link is invalid or has expired. Ask the shop to send you a new one.' });
+    if (!client) {   // no expiry: the link works until the client finishes setup or a new link replaces it
+      return res.status(404).json({ success: false, error: 'This link is invalid or was already used. Ask the shop to send you a new one.' });
     }
     // A placeholder name is not shown: the client is asked for their own.
     res.json({ success: true, client: { name: client.namePending ? '' : client.name, nameRequired: !!client.namePending, clientCode: client.clientCode, phone: client.phone, email: client.email } });
@@ -885,8 +884,8 @@ app.get('/api/client-onboard/:token', clientLoginOnly, async (req, res) => {
 app.post('/api/client-onboard/:token', clientLoginOnly, async (req, res) => {
   try {
     const client = await ClientAccount.findOne({ onboardingToken: req.params.token });
-    if (!client || !client.onboardingTokenExpiresAt || client.onboardingTokenExpiresAt < new Date()) {
-      return res.status(404).json({ success: false, error: 'This link is invalid or has expired. Ask the shop to send you a new one.' });
+    if (!client) {   // no expiry: the link works until the client finishes setup or a new link replaces it
+      return res.status(404).json({ success: false, error: 'This link is invalid or was already used. Ask the shop to send you a new one.' });
     }
     const { name, phone, email, username, password } = req.body || {};
     const cleanUsername = lower(username);

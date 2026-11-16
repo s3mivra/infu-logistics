@@ -901,7 +901,7 @@ export default function SuperAdminPanel() {
       if (!d.success) return showToast(d.error || 'Failed to create link.', 'error');
       const url = `${window.location.origin}/client-onboard/${d.token}`;
       await navigator.clipboard.writeText(url);
-      showToast('Onboarding link copied - valid for 7 days.');
+      showToast('Onboarding link copied - it works until the client finishes setup.');
     } catch { showToast('Failed to create/copy link.', 'error'); }
   };
 

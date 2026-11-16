@@ -400,7 +400,7 @@ export default function ClientsTab() {
       if (rows.length === 0) { ui.alert('That sheet has no rows.'); return; }
       const ok = await ui.confirm(
         `Import ${rows.length} client(s)?` + '\n\n' +
-        (HAS_CLIENT_LOGIN ? 'No passwords are set. Each one gets a 7-day link and picks their own username and password.' : 'They are added as customers to bill.'),
+        (HAS_CLIENT_LOGIN ? 'No passwords are set. Each one gets a setup link and picks their own username and password.' : 'They are added as customers to bill.'),
       );
       if (!ok) return;
 
@@ -488,7 +488,7 @@ export default function ClientsTab() {
       {showAdd && can('clients.create') && (
         <form onSubmit={addClient} className="bg-surface border border-white/10 rounded-2xl p-4 space-y-3">
           <p className="text-xs text-fg/70 font-bold">
-            {HAS_CLIENT_LOGIN ? 'New client. They get a link (good for 7 days) to choose their own username and password.' : 'New customer to bill.'}
+            {HAS_CLIENT_LOGIN ? 'New client. They get a setup link to choose their own username and password.' : 'New customer to bill.'}
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
             <input required value={addForm.name} onChange={e => setAddForm({ ...addForm, name: e.target.value })} placeholder="Client name *" aria-label="Client name" className="bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-fg text-sm placeholder-fg/70 outline-none focus:border-brand/60" />
@@ -528,7 +528,7 @@ export default function ClientsTab() {
       {showInvite && canInvite && (
         <form onSubmit={createInvite} className="bg-surface border border-white/10 rounded-2xl p-4 space-y-3">
           <p className="text-xs text-fg/70 font-bold">
-            Type the client's name, or leave it blank and they will fill it in themselves. They open the link (good for 7 days) and enter their phone, email, username and password.
+            Type the client's name, or leave it blank and they will fill it in themselves. They open the link (it works until they finish setup) and enter their phone, email, username and password.
           </p>
           <div className="flex flex-wrap gap-2">
             <input value={inviteName} onChange={e => setInviteName(e.target.value)} autoFocus
@@ -664,7 +664,7 @@ export default function ClientsTab() {
                             {/* Their link */}
                             {canLinks && links && (
                               setupUrl ? (
-                                <button onClick={() => copyText(setupUrl)} title={`Setup link - good until ${new Date(link.onboardingExpiresAt).toLocaleDateString('en-PH')}`}
+                                <button onClick={() => copyText(setupUrl)} title="Setup link - works until the client finishes setup"
                                   className={`${chip} bg-brand/10 hover:bg-brand/20 text-brand-text`}>
                                   <Link2 size={13} /> Copy setup link
                                 </button>
@@ -677,7 +677,7 @@ export default function ClientsTab() {
                                   <Link2 size={13} /> New setup link
                                 </button>
                               ) : (
-                                <span className="text-[10px] font-bold text-fg/65">Setup link expired - ask the owner for a new one</span>
+                                <span className="text-[10px] font-bold text-fg/65">No setup link - ask the owner for one</span>
                               )
                             )}
                             {can('clients.edit') && (

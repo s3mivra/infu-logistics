@@ -35,15 +35,16 @@ describe('client links', () => {
     const r = await as(tok.office, 'get', '/api/client-accounts/links');
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.signInPath).toBe('/client-login');
-    const row = r.body.clients.find(c => c.name === 'Reyes Hardware');
+    const row = r.body.clients.find(c => c.name === 'REYES HARDWARE');
     expect(row.onboardingPath).toBe(`/client-onboard/${issued.body.token}`);
     expect(row.hasLogin).toBe(false);
   });
 
-  it('never shows an expired link, and marks a client who already has a login', async () => {
+  it('a setup link never expires: an old one still shows and still opens; a client with a login is marked', async () => {
     const r = await as(tok.office, 'get', '/api/client-accounts/links');
-    expect(r.body.clients.find(c => c.name === 'Old Link Co').onboardingPath).toBeNull();
-    expect(r.body.clients.find(c => c.name === 'Kasa Lokal')).toMatchObject({ hasLogin: true, onboardingPath: null });
+    expect(r.body.clients.find(c => c.name === 'OLD LINK CO').onboardingPath).toBe('/client-onboard/expired-token');
+    expect((await request(app).get('/api/client-onboard/expired-token')).status).toBe(200);
+    expect(r.body.clients.find(c => c.name === 'KASA LOKAL')).toMatchObject({ hasLogin: true, onboardingPath: null });
   });
 
   it('reading the links changes nothing', async () => {
@@ -60,7 +61,7 @@ describe('client links', () => {
     expect((await M('ClientAccount').findById(onboarded._id).lean()).onboardingToken).toBeFalsy();
   });
 
-  it('staff with Create client links renew an expired link, but never for a client with a login', async () => {
+  it('staff with Create client links issue a new link, but never for a client with a login', async () => {
     const r = await as(tok.inviter, 'post', `/api/client-accounts/${_lapsed._id}/onboard-link`);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect((await M('ClientAccount').findById(_lapsed._id).lean()).onboardingToken).toBe(r.body.token);
@@ -205,7 +206,7 @@ describe('client list at the till', () => {
   it('a cashier sees the clients to pick, without their private details', async () => {
     const r = await as(tok.cashier, 'get', '/api/client-accounts');
     expect(r.status, JSON.stringify(r.body)).toBe(200);
-    const row = r.body.clients.find(c => c.name === 'Kasa Lokal');
+    const row = r.body.clients.find(c => c.name === 'KASA LOKAL');
     expect(row).toBeTruthy();
     expect(row.clientCode).toBeTruthy();
     for (const hidden of ['username', 'password', 'phone', 'email', 'creditLimit', 'onboardingToken']) expect(row[hidden]).toBeUndefined();
@@ -213,7 +214,7 @@ describe('client list at the till', () => {
 
   it('the owner still gets the full records', async () => {
     const r = await as(tok.owner, 'get', '/api/client-accounts');
-    expect(r.body.clients.find(c => c.name === 'Kasa Lokal').username).toBe('kasalokal');
+    expect(r.body.clients.find(c => c.name === 'KASA LOKAL').username).toBe('kasalokal');
   });
 
   it('someone with neither the till nor orders gets nothing', async () => {

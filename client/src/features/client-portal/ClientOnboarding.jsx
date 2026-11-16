@@ -30,7 +30,7 @@ export default function ClientOnboarding() {
       try {
         const res = await fetch(`${API_URL}/api/client-onboard/${token}`);
         const data = await res.json();
-        if (!data.success) { setLoadError(data.error || 'This link is invalid or has expired.'); return; }
+        if (!data.success) { setLoadError(data.error || 'This link is invalid or was already used.'); return; }
         setForm(f => ({ ...f, name: data.client.name || '', phone: data.client.phone || '', email: data.client.email || '' }));
         setNameRequired(!!data.client.nameRequired);
       } catch {
