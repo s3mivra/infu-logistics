@@ -1403,7 +1403,7 @@ export default function OrdersTab({ ctx }) {
                           <dl className="mx-4 mb-3 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-[11px]">
                             {order.customerPhone && <><dt className="text-fg/65">Phone</dt><dd className="text-fg/85 tabular-nums">{order.customerPhone}</dd></>}
                             {order.deliveryAddress && <><dt className="text-fg/65">Address</dt><dd className="text-fg/85">{order.deliveryAddress}</dd></>}
-                            {order.deliveryFee > 0 && <><dt className="text-fg/65">Delivery fee</dt><dd className="text-fg/85 tabular-nums">₱{order.deliveryFee.toFixed(2)}</dd></>}
+                            {order.deliveryFee > 0 && <><dt className="text-fg/65">{order.feeLabel || 'Delivery fee'}</dt><dd className="text-fg/85 tabular-nums">₱{order.deliveryFee.toFixed(2)}</dd></>}
                             {order.scheduledTime && <><dt className="text-fg/65">Scheduled</dt><dd className="text-fg/85">{order.scheduledTime}</dd></>}
                             {/* DISPATCH PIPELINE */}
                             {order.dispatchStatus && (

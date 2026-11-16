@@ -599,7 +599,7 @@ async function reverseBackdatedSale(old, session, actorName, freeNumber = false)
 }
 
 async function createBackdatedSale(payload, actorName) {
-  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, discountAmount = 0, isComplimentary = false, importRef = '', deliveryFee = 0, paymentReference = '', paymentCheckDate = null, orderNumber: wantedNumber = '', clientId = '', payments: paymentsIn = null, replaceExisting = false } = payload;
+  const { date, customerName, amount, paymentMethod, notes, items, affectInventory = false, discountPercent = 0, discountAmount = 0, isComplimentary = false, importRef = '', deliveryFee = 0, feeLabel = '', paymentReference = '', paymentCheckDate = null, orderNumber: wantedNumber = '', clientId = '', payments: paymentsIn = null, replaceExisting = false } = payload;
   const comp = !!isComplimentary;
   const fail = (httpStatus, message) => Object.assign(new Error(message), { httpStatus });
 
@@ -818,6 +818,8 @@ async function createBackdatedSale(payload, actorName) {
       vatableSales: backdateVat > 0 ? +(total - delivery - backdateVat).toFixed(2) : 0,
       total,
       deliveryFee: delivery,
+      // Delivery fee or packaging fee: booked alike, printed by its own name.
+      ...(delivery > 0 && String(feeLabel || '').trim() ? { feeLabel: String(feeLabel).trim().slice(0, 40) } : {}),
       isVatExempt: backdateVat === 0,
       isComplimentary: comp,
       discountType: comp ? 'Complimentary' : (pct > 0 || lineDiscount > 0 || flat > 0 ? 'Promo' : 'None'),

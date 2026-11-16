@@ -3865,7 +3865,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
       const P = n => '&#x20B1;' + Number(n).toFixed(2);
 
       const summaryRows = [{ label: 'Subtotal', value: P(subTotal) }];
-      if ((order.deliveryFee || 0) > 0) summaryRows.push({ label: 'Delivery Fee', value: P(order.deliveryFee) });
+      if ((order.deliveryFee || 0) > 0) summaryRows.push({ label: order.feeLabel || 'Delivery Fee', value: P(order.deliveryFee) });
       if (discAmt > 0 && !order.isComplimentary) summaryRows.push({ label: `Discount (${order.discountType || ''})`, value: '-' + P(discAmt), cls: 'disc' });
       // VAT breakdown - only for orders actually rung up under VAT. Read from
       // the order's own stamped fields so a receipt reprinted after the setting

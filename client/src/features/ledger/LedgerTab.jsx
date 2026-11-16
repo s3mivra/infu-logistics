@@ -248,6 +248,8 @@ export default function LedgerTab({ ctx }) {
     date: todayStr(),
     customerName: '', paymentMethod: mostUsedMethod(['Cash', 'Bank Transfer', 'GCash', 'Maya', 'Check', 'On Account']), notes: '', checkNumber: '', checkBank: '', checkDate: '', reference: '',
     discountPercent: 0, affectInventory: false, isComplimentary: false,
+    // A delivery or packaging charge on top: not discounted, booked as Service Sales.
+    fee: '', feeLabel: 'Delivery fee',
   });
   const [bdCart, setBdCart] = useState([]); // [{ productId, productCode, name, price, quantity }]
   // Tenancy Health scans every businessType-carrying collection (~two dozen),
@@ -489,7 +491,9 @@ export default function LedgerTab({ ctx }) {
   // order-wide percent on what is left.
   const bdLineDiscount = bd.isComplimentary ? 0 : r2(bdCart.reduce((s, x) => s + r2(x.price * x.quantity * bdLinePct(x) / 100), 0));
   const bdDiscount = r2(bdLineDiscount + (bdGross - bdLineDiscount) * bdPct / 100);
-  const bdTotal = bd.isComplimentary ? 0 : r2(bdGross - bdDiscount);
+  // The fee goes on after the discounts (it is never discounted), as the server adds it.
+  const bdFee = bd.isComplimentary ? 0 : Math.max(0, r2(Number(bd.fee) || 0));
+  const bdTotal = bd.isComplimentary ? 0 : r2(bdGross - bdDiscount + bdFee);
 
   const submitBackdateCart = async () => {
     if (!bd.date) return ui.alert('Pick the sale date.');
@@ -506,6 +510,7 @@ export default function LedgerTab({ ctx }) {
         ...(bd.isComplimentary ? {} : paymentDetailsPayload(bd.paymentMethod, bd)),
         ...(bd.paymentMethod === 'Split' && !bd.isComplimentary ? { payments: splitPayload(bd.payments) } : {}),
         discountPercent: bdPct, affectInventory: bd.affectInventory, isComplimentary: bd.isComplimentary,
+        ...(bdFee > 0 ? { deliveryFee: bdFee, feeLabel: bd.feeLabel } : {}),
         items: bdCart.map(x => ({ name: x.name, price: x.price, quantity: x.quantity, discountPercent: bdLinePct(x), productId: x.productId, productCode: x.productCode })),
       }) });
       const d = await r.json();
@@ -513,7 +518,7 @@ export default function LedgerTab({ ctx }) {
         ui.alert(`Backdated sale recorded: ${d.order.orderNumber}\nJournal ref: ${d.journalReference}`);
         setBdCart([]);
         notePaymentMethodUsed(bd.paymentMethod);
-        setBd(b => ({ ...b, customerName: '', notes: '', discountPercent: 0, isComplimentary: false, checkNumber: '', checkBank: '', checkDate: '', reference: '' }));
+        setBd(b => ({ ...b, customerName: '', notes: '', discountPercent: 0, isComplimentary: false, checkNumber: '', checkBank: '', checkDate: '', reference: '', fee: '' }));
         fetchERPData();
         fetchBdHistory(1);
       } else ui.alert(d.error || 'Failed to record backdated sale.');
@@ -3172,6 +3177,24 @@ It posts only what is not already accrued for that month.`)) return;
                           className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold tabular-nums outline-none focus:border-brand/60 disabled:opacity-40" />
                       </div>
                     </div>
+                    {/* A charge on top of the items: delivery or packaging. Not
+                        discounted; printed under its own name on the receipt. */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Extra charge</label>
+                        <select value={bd.feeLabel} onChange={e => setBd({ ...bd, feeLabel: e.target.value })} disabled={bd.isComplimentary}
+                          className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg outline-none focus:border-brand/60 disabled:opacity-40">
+                          <option value="Delivery fee">Delivery fee</option>
+                          <option value="Packaging fee">Packaging fee</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">{bd.feeLabel} (₱)</label>
+                        <input type="number" min="0" step="0.01" inputMode="decimal" placeholder="0" value={bd.fee} disabled={bd.isComplimentary}
+                          onChange={e => setBd({ ...bd, fee: e.target.value })}
+                          className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg font-bold tabular-nums outline-none focus:border-brand/60 disabled:opacity-40" />
+                      </div>
+                    </div>
                     <div>
                       <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Notes</label>
                       <input type="text" placeholder="e.g. Paper receipt #4521, 2024 carry-over" value={bd.notes}
@@ -3184,6 +3207,7 @@ It posts only what is not already accrued for that month.`)) return;
                       <div className="flex justify-between text-fg/65"><span>Gross</span><span className="tabular-nums">{peso(bdGross)}</span></div>
                       {bdLineDiscount > 0 && <div className="flex justify-between text-fg/65"><span>Item discounts</span><span className="tabular-nums">−{peso(bdLineDiscount)}</span></div>}
                       {bdDiscount - bdLineDiscount > 0.004 && <div className="flex justify-between text-fg/65"><span>Discount ({bdPct}%)</span><span className="tabular-nums">−{peso(r2(bdDiscount - bdLineDiscount))}</span></div>}
+                      {bdFee > 0 && <div className="flex justify-between text-fg/65"><span>{bd.feeLabel}</span><span className="tabular-nums">+{peso(bdFee)}</span></div>}
                       <div className="flex justify-between text-base font-black text-fg border-t border-white/10 pt-1 mt-1"><span>{bd.isComplimentary ? 'Complimentary' : 'Total'}</span><span className="tabular-nums text-brand-text">{peso(bdTotal)}</span></div>
                     </div>
 

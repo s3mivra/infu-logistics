@@ -469,6 +469,9 @@ export default function defineCatalogModels({ BUSINESS_TYPE }) {
     deliveryAddress: { type: String, default: '' },
     customerPhone:   { type: String, default: '' },
     deliveryFee:     { type: Number, default: 0 },
+    // What that fee was for, as printed ('' reads as "Delivery fee"): a
+    // packaging charge is booked the same way but must not print as delivery.
+    feeLabel:        { type: String, default: '' },
     scheduledTime:   { type: String, default: '' },
     dispatchStatus:  { type: String, enum: ['', 'Preparing', 'Out for Delivery', 'Awaiting Pickup', 'Delivered', 'Picked Up'], default: '' },
     // Customer / cashier special instructions (e.g. "no sugar", "extra shot")
