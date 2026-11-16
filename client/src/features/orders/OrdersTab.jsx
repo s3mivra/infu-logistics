@@ -9,7 +9,7 @@ import { Menu, X, Lock, Unlock, QrCode, Package, Users, ShoppingCart, ChefHat, F
 import * as ui from '../../shared/ui';
 import ScanBox from '../../shared/ScanBox';
 import { socket as staffSocket } from '../../shared/staffSocket';
-import { publishCart, displayState, getDisplayCode } from '../../shared/customerDisplay';
+import { publishCart, displayState, queueState, getDisplayCode } from '../../shared/customerDisplay';
 import { lookupBarcode, needsChoice, scannedLine, addScanned } from './barcodeCart';
 
 // Icon-based replacement for a native <select> - browsers can't render custom
@@ -147,7 +147,7 @@ export default function OrdersTab({ ctx }) {
     setPosScheduledTime, setPosSearch, setPosSelectedProduct, setPosTable, 
     setScpwdOpen,
     submitManualOrder, 
-    updateItemStatus, updateStatus, updatingOrders,
+    updateItemStatus, startPrepAll, updateStatus, updatingOrders,
     users, 
     systemSettings = {},
     can,
@@ -176,10 +176,23 @@ export default function OrdersTab({ ctx }) {
       discount: Number(posDiscountAmt || 0) + Number(posItemDiscountAmt || 0),
     }), staffSocket);
   }, [posCart, posSubtotal, posGrandTotal, posDiscountAmt, posItemDiscountAmt, BIZ_NAME]);
-  const openCustomerDisplay = () => {
+  // And the open orders to the Now Serving board (/display?view=queue), on
+  // every change and every 10 seconds, so a board opened later fills in.
+  const queueJson = React.useMemo(() => JSON.stringify(queueState(orders || [], BIZ_NAME)), [orders, BIZ_NAME]);
+  React.useEffect(() => {
+    if (BUSINESS_TYPE === 'log') return undefined;
+    const send = () => publishCart({ ...JSON.parse(queueJson), at: Date.now() }, staffSocket);
+    send();
+    const t = setInterval(send, 10000);
+    return () => clearInterval(t);
+  }, [queueJson]);
+  // view: 'cart' (what the customer is ordering) or 'queue' (Now Serving).
+  const openCustomerDisplay = (view = 'cart') => {
     const code = getDisplayCode();
-    window.open('/display', 'semivra-customer-display', 'popup');
-    ui.alert(`Customer display opened. On another device, open ${window.location.origin}/display?code=${code}`);
+    const q = view === 'queue' ? '?view=queue' : '';
+    window.open(`/display${q}`, view === 'queue' ? 'semivra-queue-display' : 'semivra-customer-display', 'popup');
+    const sep = q ? '&' : '?';
+    ui.alert(`${view === 'queue' ? 'Now Serving board' : 'Customer display'} opened. On another device, open ${window.location.origin}/display${q}${sep}code=${code}`);
   };
 
   // A barcode scan rings the item straight up. Several products sharing the
@@ -509,7 +522,10 @@ export default function OrdersTab({ ctx }) {
                   <div className="px-4 pt-3 pb-2 shrink-0 space-y-2">
                     <div className="flex items-center gap-2 flex-wrap">
                       <ScanBox onScan={onBarcodeScan} placeholder="Scan barcode" className="pos-scan" />
-                      <button type="button" onClick={openCustomerDisplay} className="ml-auto px-3 py-2 rounded-lg text-xs font-bold bg-white/5 border border-white/10 text-fg/80 hover:text-fg">Customer display</button>
+                      <button type="button" onClick={() => openCustomerDisplay('cart')} title="A screen facing the customer showing what they ordered" className="ml-auto px-3 py-2 rounded-lg text-xs font-bold bg-white/5 border border-white/10 text-fg/80 hover:text-fg">Customer display</button>
+                      {BUSINESS_TYPE !== 'log' && (
+                        <button type="button" onClick={() => openCustomerDisplay('queue')} title="A screen showing which orders are preparing and which are ready" className="px-3 py-2 rounded-lg text-xs font-bold bg-white/5 border border-white/10 text-fg/80 hover:text-fg">Now serving board</button>
+                      )}
                     </div>
                     <div className="relative">
                       <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg/65" />
@@ -1427,6 +1443,20 @@ export default function OrdersTab({ ctx }) {
 
                         {!collapsedOrders[order._id] && (
                           <div className="px-4 pb-4 flex flex-col gap-3 border-t border-white/5 pt-3">
+                            {/* Start prep is for the whole order (the lines in this
+                                view); each line is then marked ready on its own. */}
+                            {(order.status === 'Preparing' || order.status === 'Ready') && (() => {
+                              const waiting = order.items
+                                .map((item, idx) => ({ item, idx }))
+                                .filter(({ item }) => item.itemStatus === 'Received' && (departmentFilter === 'All' || (item.department || SEND_TARGET) === departmentFilter));
+                              if (waiting.length === 0) return null;
+                              return (
+                                <button type="button" data-testid="start-prep-all" onClick={() => startPrepAll(order, waiting.map(w => w.idx))}
+                                  className="w-full bg-yellow-500/15 text-warning hover:bg-yellow-500/25 px-3 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition">
+                                  Start prep ({waiting.length} {waiting.length === 1 ? 'item' : 'items'})
+                                </button>
+                              );
+                            })()}
                             <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar pr-1">
                               {DEPARTMENTS.map(dept => {
                                 const deptItems = order.items
@@ -1459,7 +1489,7 @@ export default function OrdersTab({ ctx }) {
                                             {(order.status === 'Preparing' || order.status === 'Ready') ? (
                                               <>
                                                 {item.itemStatus === 'Received' && (
-                                                  <button onClick={() => updateItemStatus(order, item.originalIdx, 'Preparing')} className="bg-yellow-500/15 text-warning hover:bg-yellow-500/25 px-2.5 py-0.5 rounded-full text-[10px] font-bold transition">Start prep</button>
+                                                  <span className="text-fg/60 text-[10px] font-bold uppercase">Waiting</span>
                                                 )}
                                                 {item.itemStatus === 'Preparing' && (
                                                   <button onClick={() => updateItemStatus(order, item.originalIdx, 'Finished')} className="bg-brand/15 text-brand-text hover:bg-brand/25 px-2.5 py-0.5 rounded-full text-[10px] font-bold transition">Mark ready</button>

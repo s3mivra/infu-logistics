@@ -59,8 +59,8 @@ export function staffGuide({ role, businessType, can = () => false }) {
       title: log ? 'Prepare and deliver' : 'Prepare and serve',
       steps: [
         log
-          ? 'In Logistics View or Warehouse View each line goes Start prep → Mark ready.'
-          : 'In Kitchen View and Bar View each item goes Start prep → Mark ready.',
+          ? 'In Logistics View or Warehouse View, Start prep starts the whole order; then Mark ready each line as it is done.'
+          : 'In Kitchen View and Bar View, Start prep starts the whole order; then Mark ready each item as it is done.',
         log
           ? 'Only part of it can go today? Use Partial fulfill, and deliver the rest later.'
           : 'At the counter, give each item as it is handed over.',

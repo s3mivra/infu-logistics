@@ -995,6 +995,20 @@ export default function AdminDashboard() {
         }
       }
     }
+    // The duplicate checker: a name that reads the same as one on file, or a
+    // transaction matching one already recorded that day, comes back 409 with
+    // `duplicateOf`. Ask, and on "save anyway" send it again with
+    // allowDuplicate. Declining returns the 409, so the form shows why.
+    if (response.status === 409 && typeof options.body === 'string') {
+      const dup = await response.clone().json().catch(() => null);
+      if (dup?.duplicateOf && typeof dup.duplicateOf === 'object') {
+        let body;
+        try { body = { ...JSON.parse(options.body), allowDuplicate: true }; } catch { body = null; }
+        if (body && await ui.confirm({ title: 'Possible duplicate', message: `${dup.error} Save it anyway?`, confirmLabel: 'Save anyway' })) {
+          response = await auth.apiFetch(API_URL, endpoint, { ...options, body: JSON.stringify(body) });
+        }
+      }
+    }
     // Signed out only when the session itself was refused - a wrong password
     // in a form is a 401 too, and is the form's to show (2026-11 audit, M116).
     if (response.status === 401 && await auth.isTokenRejection(response)) {
@@ -2833,6 +2847,16 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
       method: 'PUT',
       body: JSON.stringify({ items: newItems })
     });
+  };
+
+  // Start prep on the whole order at once: every listed line still waiting
+  // ('Received') goes to 'Preparing' in one save. Each line is then marked
+  // ready on its own as it is done.
+  const startPrepAll = async (order, itemIndexes) => {
+    const want = new Set(itemIndexes);
+    const newItems = order.items.map((it, i) => (want.has(i) && it.itemStatus === 'Received' ? { ...it, itemStatus: 'Preparing' } : it));
+    setOrders(prev => prev.map(o => o._id === order._id ? { ...o, items: newItems } : o));
+    await apiFetch(`/api/orders/${order._id}`, { method: 'PUT', body: JSON.stringify({ items: newItems }) });
   };
 
   const removeAddOnFromOrder = async (order, itemIndex, addOnIndex) => {
@@ -7390,7 +7414,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     updateSize, removeSize, addSize, addMaterialToRecipe, addNonStockToRecipe, updateMaterialQty, removeMaterial,
     calcRecipeCost, getEstimatedStock, handleImageUpload,
     // ── Orders interactive handlers ──────────────────────────────────────────
-    updateItemStatus, removeAddOnFromOrder,
+    updateItemStatus, startPrepAll, removeAddOnFromOrder,
     applyComplimentary, removeComplimentary,
     applyDiscount, applyItemDiscount,
     discountInputs, setDiscountInputs,

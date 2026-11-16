@@ -34,6 +34,7 @@ export function getDisplayCode() {
 // Only what the customer should see - names, quantities, amounts.
 export function displayState({ cart = [], subtotal = 0, discount = 0, total = 0, business = '' } = {}) {
   return {
+    kind: 'cart',
     business,
     items: cart.map(it => ({
       name: it.name,
@@ -46,7 +47,30 @@ export function displayState({ cart = [], subtotal = 0, discount = 0, total = 0,
   };
 }
 
-// Send the cart to every display. `socket` is the till's signed-in socket.
+// The Now Serving board (/display?view=queue): which open orders are being
+// prepared and which are ready to collect. Only the order number and the
+// customer's first name go out - this screen faces the room.
+const firstName = (s) => {
+  const n = String(s || '').trim();
+  return /^walk[- ]?in/i.test(n) ? '' : n.split(/\s+/)[0].slice(0, 16);
+};
+export function queueState(orders = [], business = '') {
+  const preparing = [], ready = [];
+  for (const o of orders) {
+    if (!['Pending', 'Preparing', 'Ready'].includes(o.status) || o.isParked) continue;
+    const items = (o.items || []).filter(i => i.itemStatus !== 'Cancelled');
+    if (items.length && items.every(i => i.itemStatus === 'Delivered')) continue;
+    const allDone = items.length > 0 && items.every(i => i.itemStatus === 'Finished' || i.itemStatus === 'Delivered');
+    const started = o.status !== 'Pending' || items.some(i => i.itemStatus && i.itemStatus !== 'Received');
+    const entry = { number: String(o.orderNumber || '').split('-').pop(), name: firstName(o.customerName), at: o.createdAt };
+    if (o.status === 'Ready' || allDone) ready.push(entry);
+    else if (started) preparing.push(entry);
+  }
+  const byTime = (a, b) => new Date(a.at) - new Date(b.at);
+  return { kind: 'queue', business, preparing: preparing.sort(byTime).slice(0, 30), ready: ready.sort(byTime).slice(0, 30), at: Date.now() };
+}
+
+// Send the cart (or the queue board) to every display. `socket` is the till's signed-in socket.
 export function publishCart(state, socket) {
   try { getChannel()?.postMessage(state); } catch { /* channel closed */ }
   try {

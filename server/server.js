@@ -39,6 +39,8 @@ import { computeOrderVat, extractVat, normaliseVatRate, DEFAULT_VAT_RATE } from 
 import { validateDateRange } from './lib/reportRange.js';
 import { initErrorLog, logSafeUrl } from './lib/errorLog.js';
 import { claimJob, runExclusive, waitForRelease } from './lib/jobLock.js';
+import { applyCaps, capsExisting } from './lib/caps.js';
+import { nameGuard, transactionGuard, findDuplicateBackdatedSale, findDuplicateBill, findDuplicateExpense, findDuplicateRestock } from './lib/dupes.js';
 import { fieldCryptPlugin, encryptValue } from './lib/fieldCrypt.js';
 import registerTenants from './features/tenants.js';
 import registerAddons from './features/addons.js';
@@ -1263,6 +1265,20 @@ const runStartupTasks = async () => {
       }
     } catch (err) {
       log.error({ err }, 'Sealing sensitive fields failed - they stay readable as before; will retry next start');
+    }
+
+    // Once: names and typed text already stored, into capitals (lib/caps.js).
+    // Straight through the driver with an update pipeline - no document is
+    // loaded, nothing else on it changes. Journal entries are left as written.
+    try {
+      const done = await Settings.findOne({ key: 'capsTextV1' }).lean();
+      if (!done) {
+        const changed = await capsExisting(mongoose);
+        await Settings.findOneAndUpdate({ key: 'capsTextV1' }, { key: 'capsTextV1', value: true }, { upsert: true });
+        log.info({ changed }, '✅ Names and typed text converted to capitals');
+      }
+    } catch (err) {
+      log.error({ err }, 'Converting names to capitals failed - they stay as they were; will retry next start');
     }
 
     // Once: the government numbers in payroll run snapshots, sealed like the
@@ -3845,6 +3861,22 @@ app.use((req, res, next) => {
   return res.status(403).json({ success: false, error: `Forbidden: needs one of ${needed.map((p) => `"${p}"`).join(', ')}.` });
 });
 
+// The duplicate checker (lib/dupes.js) runs ahead of each create route: a
+// name that reads the same as one on file, or a transaction matching one
+// already recorded that day, is answered 409 and the app asks "save anyway?".
+{
+  const g = [verifyToken, requireStaff];
+  app.post('/api/products', ...g, nameGuard({ model: 'Product', field: 'name', label: 'Product' }));
+  app.post('/api/categories', ...g, nameGuard({ model: 'Category', field: 'name', label: 'Category', ownCheck: true }));
+  app.post('/api/inventory', ...g, nameGuard({ model: 'Inventory', field: 'itemName', label: 'Stock item', ownCheck: true }));
+  app.post('/api/suppliers', ...g, nameGuard({ model: 'Supplier', field: 'name', label: 'Supplier', ownCheck: true }));
+  app.post('/api/client-accounts', ...g, nameGuard({ model: 'ClientAccount', field: 'name', label: 'Client', ownCheck: true }));
+  app.post('/api/admin/backdate-sale', ...g, transactionGuard(findDuplicateBackdatedSale));
+  app.post('/api/bills', ...g, transactionGuard(findDuplicateBill));
+  app.post('/api/expenses', ...g, transactionGuard(findDuplicateExpense));
+  app.post('/api/inventory/restock/:id', ...g, transactionGuard(findDuplicateRestock));
+}
+
 registerTenants(ctx);
 registerAddons(ctx);
 registerUsers(ctx);
@@ -3868,6 +3900,9 @@ registerStockMovement(ctx);
 registerCosting(ctx);
 registerPurchases(ctx);
 registerPrivacy(ctx);
+// Every model is defined by now: names and typed text are stored in capitals
+// from here on (lib/caps.js).
+applyCaps(mongoose);
 registerStockControl(ctx);
 registerTimeOff(ctx);
 registerReports(ctx);
