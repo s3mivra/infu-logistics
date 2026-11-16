@@ -246,21 +246,32 @@ const corsOriginCheck = (origin, callback) => {
   callback(new Error(`CORS blocked: ${origin}`));
 };
 
-app.use(cors({
-  origin: corsOriginCheck,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-  credentials: true
-}));
-
-// Update Socket.io CORS to match
-// ✅ KEEP THIS NEW ONE
-const io = new Server(server, {
-  cors: {
-    origin: corsOriginCheck,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-    credentials: true
-  }
+// The app's own address is always allowed: the page and the API are served
+// on one host (nginx passes the public Host through), so a page whose origin
+// IS the address the request came in on is the app itself, not another site.
+// Without this, a client reached on a host missing from ALLOWED_ORIGINS - a
+// domain changed after the client was created, a renamed subdomain - could
+// not even sign in ("CORS blocked").
+export const sameHostOrigin = (origin, req) => {
+  if (!origin || !req) return false;
+  let o;
+  try { o = new URL(origin); } catch { return false; }
+  // Host only: nginx sets it from the address the browser asked for, and a
+  // page cannot set it. (X-Forwarded-Host is an ordinary header anyone can send.)
+  const host = String(req.headers?.host || '').trim().toLowerCase();
+  return !!host && host === o.host.toLowerCase();
+};
+const CORS_BASE = { methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], credentials: true };
+// Express and Socket.io both hand their `cors` option to the `cors` package,
+// which accepts this per-request form - so one rule covers both.
+const corsForRequest = (req, cb) => cb(null, {
+  ...CORS_BASE,
+  origin: (origin, done) => (sameHostOrigin(origin, req) ? done(null, true) : corsOriginCheck(origin, done)),
 });
+
+app.use(cors(corsForRequest));
+
+const io = new Server(server, { cors: corsForRequest });
 
 // Structured request logging (skips noisy health checks)
 app.use(pinoHttp({
