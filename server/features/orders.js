@@ -1,7 +1,7 @@
 ﻿// orders routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { resolveCreditLimit, checkCreditAvailable, arBalance, isFullySettled, isReceivableStatus } from '../lib/credit.js';
+import { resolveCreditLimit, checkCreditAvailable, arBalance, isFullySettled, isReceivableStatus } from '../lib/credit.js';
 import { sameName, nameKeyOf } from '../lib/caps.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { title, partyName, MONEY_MAX, roundCentavo } from '../lib/normalize.js';
@@ -3402,10 +3402,11 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireStaff, requirePermissi
         chequeOn = new Date(checkDate);
         if (Number.isNaN(chequeOn.getTime())) return res.status(400).json({ success: false, error: 'Invalid check date.' });
       }
-      // The same check number from the same bank must not be banked twice -
-      // almost always a double-entry, and it would credit a client for money
-      // that only ever arrived once.
-      const dupe = await Order.findOne({
+      // The same check number from the same bank again is usually a double
+      // entry, which would credit a client for money that arrived once - so it
+      // is asked about ("save anyway?"), not refused: banks and clients do
+      // reuse numbers, and one check can be recorded more than once on purpose.
+      const dupe = req.body?.allowDuplicate === true ? null : await Order.findOne({
         businessType: BUSINESS_TYPE, ...tenantScope(req),
         arPayments: { $elemMatch: {
           checkNumber: chequeNo,
@@ -3415,7 +3416,7 @@ app.post('/api/orders/:id/settle-ar', verifyToken, requireStaff, requirePermissi
           ...(checkBank ? { checkBank: String(checkBank).trim() } : {}),
         } },
       }, { orderNumber: 1 }).lean();
-      if (dupe) return res.status(409).json({ success: false, error: `Check #${chequeNo} is already recorded against ${dupe.orderNumber}. A bounced check must be re-recorded with its replacement number.` });
+      if (dupe) return res.status(409).json({ success: false, duplicateOf: { id: String(dupe._id), label: dupe.orderNumber }, error: `Check #${chequeNo} is already recorded against ${dupe.orderNumber}.` });
     }
 
     const collectedOn = collectionDate ? new Date(collectionDate) : new Date();

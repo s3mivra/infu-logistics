@@ -101,11 +101,12 @@ describe('receiving a check', () => {
     expect(p.checkBank).toBe('BPI');
   });
 
-  it('refuses the same check number twice - almost always a double entry', async () => {
+  it('asks before the same check number goes in again, and records it on "save anyway"', async () => {
     const id = await receivable(500);
     const dupe = await settle(id, { amount: 500, paymentMethod: 'Check', checkNumber: 'CHK-001', checkBank: 'BPI' });
     expect(dupe.status).toBe(409);
     expect(dupe.body.error).toMatch(/already recorded/i);
+    expect(dupe.body.duplicateOf).toBeTruthy();   // the app asks "save anyway?"
   });
 
   it('a check still settles the receivable it was collected against', async () => {
@@ -323,5 +324,16 @@ describe('one check paying several sales', () => {
       expect(o.arSettled).toBe(false);
       expect(o.arPayments[0].checkStatus).toBe('Bounced');
     }
+  });
+});
+
+// Last, so the extra check does not change the register totals above.
+describe('the same check number on purpose', () => {
+  it('is recorded once the user says save anyway', async () => {
+    const id = await receivable(500);
+    const again = await settle(id, { amount: 500, paymentMethod: 'Check', checkNumber: 'CHK-001', checkBank: 'BPI', allowDuplicate: true });
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    const o = await Order().findById(id).lean();
+    expect(o.arPayments.some((p) => p.checkNumber === 'CHK-001')).toBe(true);
   });
 });
