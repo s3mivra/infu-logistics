@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
 import LegalLinks from '../../shared/LegalLinks';
 
@@ -16,6 +16,7 @@ const BIZ_NAME = (import.meta.env.VITE_BUSINESS_NAME || 'Semivra').toUpperCase()
 // email link.
 export default function ClientOnboarding() {
   const { token } = useParams();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [form, setForm] = useState({ name: '', phone: '', email: '', username: '', password: '', confirm: '', showPassword: false });
@@ -30,6 +31,8 @@ export default function ClientOnboarding() {
       try {
         const res = await fetch(`${API_URL}/api/client-onboard/${token}`);
         const data = await res.json();
+        // Setup already finished with this link: straight to sign in.
+        if (data.used) { navigate(data.signInPath || '/client-login', { replace: true }); return; }
         if (!data.success) { setLoadError(data.error || 'This link is invalid or was already used.'); return; }
         setForm(f => ({ ...f, name: data.client.name || '', phone: data.client.phone || '', email: data.client.email || '' }));
         setNameRequired(!!data.client.nameRequired);
@@ -39,7 +42,7 @@ export default function ClientOnboarding() {
         setLoading(false);
       }
     })();
-  }, [token]);
+  }, [token, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();

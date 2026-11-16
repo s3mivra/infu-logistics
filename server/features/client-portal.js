@@ -23,6 +23,10 @@ import { releaseCancelledOrderNumber } from '../lib/orderNumbers.js';
 import { captureError } from '../lib/errorLog.js';
 import { splitUpdate } from '../lib/changeApproval.js';
 import { hasPermission, requirePermission } from '../lib/authz.js';
+import { createHash } from 'node:crypto';
+
+// A used setup link is remembered by its hash only - never the link itself.
+const usedTokenHash = (t) => createHash('sha256').update(String(t)).digest('hex');
 
 export default function registerClientPortal(ctx) {
   const {
@@ -872,6 +876,10 @@ app.get('/api/client-onboard/:token', clientLoginOnly, async (req, res) => {
   try {
     const client = await ClientAccount.findOne({ onboardingToken: req.params.token }, { name: 1, namePending: 1, clientCode: 1, phone: 1, email: 1, onboardingTokenExpiresAt: 1 });
     if (!client) {   // no expiry: the link works until the client finishes setup or a new link replaces it
+      // Setup already finished with this link: send them to sign in.
+      if (await ClientAccount.exists({ onboardingTokensUsed: usedTokenHash(req.params.token) })) {
+        return res.status(410).json({ success: false, used: true, signInPath: '/client-login', error: 'This account is already set up. Sign in with your username and password.' });
+      }
       return res.status(404).json({ success: false, error: 'This link is invalid or was already used. Ask the shop to send you a new one.' });
     }
     // A placeholder name is not shown: the client is asked for their own.
@@ -885,6 +893,10 @@ app.post('/api/client-onboard/:token', clientLoginOnly, async (req, res) => {
   try {
     const client = await ClientAccount.findOne({ onboardingToken: req.params.token });
     if (!client) {   // no expiry: the link works until the client finishes setup or a new link replaces it
+      // Setup already finished with this link: send them to sign in.
+      if (await ClientAccount.exists({ onboardingTokensUsed: usedTokenHash(req.params.token) })) {
+        return res.status(410).json({ success: false, used: true, signInPath: '/client-login', error: 'This account is already set up. Sign in with your username and password.' });
+      }
       return res.status(404).json({ success: false, error: 'This link is invalid or was already used. Ask the shop to send you a new one.' });
     }
     const { name, phone, email, username, password } = req.body || {};
@@ -917,6 +929,7 @@ app.post('/api/client-onboard/:token', clientLoginOnly, async (req, res) => {
     client.password = await bcrypt.hash(String(password), BCRYPT_ROUNDS);
     client.source = 'portal'; // now has a real, usable login
     client.sessionsValidFrom = new Date();   // a login issued again ends the sessions of the old one
+    client.onboardingTokensUsed = [...(client.onboardingTokensUsed || []), usedTokenHash(req.params.token)].slice(-5);
     client.onboardingToken = null;
     client.onboardingTokenExpiresAt = null;
     // Finishing setup is agreeing to the notice the page shows beside the button.

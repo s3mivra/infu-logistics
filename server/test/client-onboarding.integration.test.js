@@ -74,7 +74,9 @@ describe('client self-service onboarding', () => {
     expect(first.body.success).toBe(true);
 
     const second = await request(app).post(`/api/client-onboard/${token}`).send({ username: 'seconduser', password: 'password123' });
-    expect(second.status).toBe(404); // token already cleared
+    expect(second.status).toBe(410); // already used: refused, and told to sign in
+    expect(second.body.used).toBe(true);
+    expect((await ClientAccount.findById(client._id).lean()).username).toBe('firstuser');
   });
 
   it('rejects a duplicate username', async () => {

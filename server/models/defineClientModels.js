@@ -85,6 +85,9 @@ export default function defineClientModels({ BUSINESS_TYPE, log }) {
     privacyNoticeAcceptedAt: { type: Date, default: null },
     privacyNoticeVersion: { type: String, default: '' },
     onboardingTokenExpiresAt: { type: Date, default: null },
+    // Setup links already used (a hash of each, the last few), so opening one
+    // again sends the client to sign in instead of an error.
+    onboardingTokensUsed: { type: [String], default: undefined },
     // A link made with no name: the account carries a placeholder until the
     // client types their own name on the sign-up page.
     namePending: { type: Boolean, default: false },

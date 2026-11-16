@@ -157,7 +157,7 @@ export default function registerOpsExtras(ctx) {
     try {
       const id = String(req.params.id);
       if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).json({ success: false, error: 'Client account not found.' });
-      const c = await ClientAccount.findOne({ _id: id, ...tenantScope(req) }, { password: 0, onboardingToken: 0, onboardingTokenExpiresAt: 0 }).lean();
+      const c = await ClientAccount.findOne({ _id: id, ...tenantScope(req) }, { password: 0, onboardingToken: 0, onboardingTokenExpiresAt: 0, onboardingTokensUsed: 0 }).lean();
       if (!c) return res.status(404).json({ success: false, error: 'Client account not found.' });
       const [orders, deposits] = await Promise.all([
         Order.find({ businessType: BUSINESS_TYPE, $or: [{ clientId: id }, { clientAccountId: id }] },

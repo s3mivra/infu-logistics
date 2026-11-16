@@ -89,6 +89,13 @@ describe('new client link from a name', () => {
     expect((await request(app).get(`/api/client-onboard/${token}`)).body.client.name).toBe('BAGONG KAPE');
     const done = await request(app).post(`/api/client-onboard/${token}`).send({ name: 'BAGONG KAPE', phone: '09171234567', username: 'bagongkape', password: 'secret123' });
     expect(done.body.success).toBe(true);
+    // Opened again after setup: sent to sign in, not shown an error.
+    const again = await request(app).get(`/api/client-onboard/${token}`);
+    expect(again.status).toBe(410);
+    expect(again.body).toMatchObject({ used: true, signInPath: '/client-login' });
+    const stored = await M('ClientAccount').findOne({ username: 'bagongkape' }).lean();
+    expect(stored.onboardingTokensUsed).toHaveLength(1);
+    expect(stored.onboardingTokensUsed[0]).not.toBe(token);   // only its hash is kept
   });
 
   it('refuses a name that already exists, whatever the case', async () => {

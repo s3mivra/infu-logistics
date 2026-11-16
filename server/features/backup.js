@@ -23,7 +23,7 @@ import { withLedgerMaintenance } from '../lib/ledgerGuard.js';
 // entirely; the fields below are stripped from the documents that are kept.
 const EXCLUDED = new Set(['RefreshSession', 'QRSession', 'HubInvite']);
 const STRIP_FIELDS = {
-  ClientAccount: ['onboardingToken', 'onboardingTokenExpiresAt'],
+  ClientAccount: ['onboardingToken', 'onboardingTokenExpiresAt', 'onboardingTokensUsed'],
   LinkedBusiness: ['linkToken'],
   User: ['trustedDevices'],
 };
