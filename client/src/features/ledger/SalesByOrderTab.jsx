@@ -1,3 +1,4 @@
+import React from 'react';
 import { formatDate } from '../../shared/dates.js';
 import { Download, RefreshCw } from 'lucide-react';
 import RangePresets from '../../shared/RangePresets';
@@ -99,29 +100,54 @@ export default function SalesByOrderTab({
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-[10px] uppercase tracking-wider text-fg/60 border-b border-white/10">
-                      <th className="py-2">Collected</th><th className="py-2">Order</th><th className="py-2">Sale date</th><th className="py-2">Customer</th>
-                      <th className="py-2">Paid by</th><th className="py-2">Reference</th><th className="py-2 text-right">Amount</th>
+                      <th className="py-2">Collected</th><th className="py-2">Customer</th><th className="py-2">Order</th><th className="py-2">Sale date</th>
+                      <th className="py-2 text-right">Took</th><th className="py-2 pl-3">Paid by</th><th className="py-2">Check / reference</th><th className="py-2">Status</th><th className="py-2 text-right">Amount</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {salesSummary.collections.map((c, i) => (
-                      <tr key={`${c.orderNumber}-${i}`} className="border-b border-white/5">
-                        <td className="py-1.5">{formatDate(c.date)}</td>
-                        <td className="py-1.5 font-mono text-xs">{c.orderNumber}</td>
-                        <td className="py-1.5 text-fg/70">{formatDate(c.saleDate)}</td>
-                        <td className="py-1.5">{c.customerName}</td>
-                        <td className="py-1.5">{c.method}</td>
-                        <td className="py-1.5 text-fg/70">{c.reference}</td>
-                        <td className="py-1.5 text-right font-mono">{money2(c.amount)}</td>
-                      </tr>
-                    ))}
+                    {salesSummary.collections.map((c, i, all) => {
+                      const sub = salesSummary.collectionTotals?.customers?.[c.customerName];
+                      const lastOfCustomer = !all[i + 1] || all[i + 1].customerName !== c.customerName;
+                      const ref = c.checkNumber
+                        ? [`#${c.checkNumber}`, c.checkBank, c.checkDate ? `dated ${formatDate(c.checkDate)}` : ''].filter(Boolean).join(' · ')
+                        : (c.reference || '-');
+                      return (
+                        <React.Fragment key={`${c.orderNumber}-${i}`}>
+                          <tr className="border-b border-white/5">
+                            <td className="py-1.5 whitespace-nowrap">{formatDate(c.date)}</td>
+                            <td className="py-1.5 font-bold">{c.customerName}</td>
+                            <td className="py-1.5 font-mono text-xs">{c.orderNumber}</td>
+                            <td className="py-1.5 text-fg/70 whitespace-nowrap">{formatDate(c.saleDate)}</td>
+                            <td className="py-1.5 text-right text-fg/70 tabular-nums">{c.daysToPay == null ? '-' : `${c.daysToPay} d`}</td>
+                            <td className="py-1.5 pl-3">{c.method}</td>
+                            <td className="py-1.5 text-fg/70">{ref}</td>
+                            <td className="py-1.5">{c.status && (
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${c.undeposited ? 'bg-amber-500/15 text-warning' : 'bg-green-500/15 text-success'}`}>{c.status}</span>
+                            )}</td>
+                            <td className="py-1.5 text-right font-mono font-bold">{money2(c.amount)}</td>
+                          </tr>
+                          {lastOfCustomer && sub && sub.count > 1 && (
+                            <tr className="border-b border-white/10 bg-white/[0.03]">
+                              <td className="py-1.5 font-black text-fg/80" colSpan={8}>{c.customerName} - {sub.count} sales</td>
+                              <td className="py-1.5 text-right font-mono font-black">{money2(sub.amount)}</td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                   </tbody>
                   <tfoot>
                     <tr className="font-black text-fg border-t-2 border-white/20">
-                      <td className="py-2" colSpan={6}>Total collected{Object.keys(salesSummary.collectionTotals?.methods || {}).length > 1
+                      <td className="py-2" colSpan={8}>Total collected{Object.keys(salesSummary.collectionTotals?.methods || {}).length > 1
                         ? <span className="ml-2 font-normal text-[11px] text-fg/60">{Object.entries(salesSummary.collectionTotals.methods).map(([m, a]) => `${m} ${money2(a)}`).join(' · ')}</span> : null}</td>
                       <td className="py-2 text-right font-mono text-brand-text">{money2(salesSummary.collectionTotals?.total || 0)}</td>
                     </tr>
+                    {(salesSummary.collectionTotals?.undeposited || 0) > 0 && (
+                      <tr className="text-warning text-xs">
+                        <td className="pb-2" colSpan={8}>Checks still on hand (not yet deposited)</td>
+                        <td className="pb-2 text-right font-mono font-bold">{money2(salesSummary.collectionTotals.undeposited)}</td>
+                      </tr>
+                    )}
                   </tfoot>
                 </table>
               </div>

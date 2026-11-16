@@ -5968,17 +5968,64 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     const col = salesSummary.collections || [];
     let y = (doc.lastAutoTable?.finalY || 24) + 8;
     if (y > doc.internal.pageSize.getHeight() - 30) { doc.addPage(); y = 20; }
-    doc.setFontSize(11); doc.text('Collected on account (A/R) in this range', 14, y);
+    const ct = salesSummary.collectionTotals || {};
+    const rangeLabel = sssRange.start === sssRange.end ? formatDate(sssRange.start) : `${formatDate(sssRange.start)} to ${formatDate(sssRange.end)}`;
+    doc.setFontSize(12); doc.setFont(undefined, 'bold');
+    doc.text('Collected on account (A/R)', 14, y);
+    doc.setFont(undefined, 'normal'); doc.setFontSize(8.5); doc.setTextColor(110);
+    doc.text(`${rangeLabel}  ·  ${col.length} payment${col.length === 1 ? '' : 's'}  ·  money received for credit sales, whenever the sale was made`, 14, y + 5);
+    doc.setTextColor(0);
     if (!col.length) {
-      doc.setFontSize(9); doc.text('No A/R payments were collected in this range.', 14, y + 6);
+      doc.setFontSize(9); doc.text('No A/R payments were collected in this range.', 14, y + 12);
     } else {
+      // One block per customer; a subtotal line under any customer who paid
+      // more than one sale (one check often covers several).
+      const body = [];
+      const custTotals = ct.customers || {};
+      col.forEach((c, i) => {
+        const checkLine = c.checkNumber
+          ? [`#${c.checkNumber}`, c.checkBank, c.checkDate ? `dated ${formatDate(c.checkDate)}` : ''].filter(Boolean).join(' · ')
+          : (c.reference || '-');
+        body.push([
+          formatDate(c.date), c.customerName, c.orderNumber, formatDate(c.saleDate),
+          c.daysToPay == null ? '-' : `${c.daysToPay} d`,
+          c.method, checkLine, c.status || '', pdfMoney(c.amount),
+        ]);
+        const next = col[i + 1];
+        const sub = custTotals[c.customerName];
+        if ((!next || next.customerName !== c.customerName) && sub && sub.count > 1) {
+          body.push([{ content: `${c.customerName} - ${sub.count} sales`, colSpan: 8, styles: { fontStyle: 'bold', fillColor: [236, 240, 236] } },
+            { content: pdfMoney(sub.amount), styles: { fontStyle: 'bold', halign: 'right', fillColor: [236, 240, 236] } }]);
+        }
+      });
       autoTable(doc, {
-        startY: y + 3,
-        head: [['Collected', 'Order', 'Sale date', 'Customer', 'Paid by', 'Reference', 'Amount']],
-        body: col.map(c => [formatDate(c.date), c.orderNumber, formatDate(c.saleDate), c.customerName, c.method, c.reference || '', pdfMoney(c.amount)]),
-        foot: [[{ content: 'TOTAL COLLECTED', colSpan: 6 }, pdfMoney(salesSummary.collectionTotals?.total || 0)]],
-        styles: { fontSize: 7 }, headStyles: { fillColor: [30,30,30] }, footStyles: { fillColor: [70,70,70], textColor: 255 },
-        columnStyles: { 6: { halign: 'right' } },
+        startY: y + 8,
+        head: [['Collected', 'Customer', 'Order', 'Sale date', 'Took', 'Paid by', 'Check / reference', 'Status', 'Amount']],
+        body,
+        foot: [[{ content: 'TOTAL COLLECTED', colSpan: 8 }, { content: pdfMoney(ct.total || 0), styles: { halign: 'right' } }]],
+        styles: { fontSize: 7.5, cellPadding: 2.2, valign: 'middle' },
+        headStyles: { fillColor: [30, 30, 30], fontStyle: 'bold' },
+        footStyles: { fillColor: [45, 45, 45], textColor: 255, fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [248, 248, 248] },
+        columnStyles: { 0: { cellWidth: 22 }, 2: { cellWidth: 30 }, 3: { cellWidth: 22 }, 4: { cellWidth: 13, halign: 'right' },
+          5: { cellWidth: 27 }, 7: { cellWidth: 20 }, 8: { halign: 'right', cellWidth: 28, fontStyle: 'bold' } },
+        // Money and day counts read right-aligned, headings with them.
+        didParseCell: (d) => { if (d.section !== 'body' && (d.column.index === 4 || d.column.index === 8)) d.cell.styles.halign = 'right'; },
+      });
+      // The summary: by payment type, and what has not reached the bank yet.
+      const methods = Object.entries(ct.methods || {}).sort((a, b) => b[1] - a[1]);
+      const summary = [
+        ...methods.map(([m, a]) => [m, pdfMoney(a)]),
+        ...(ct.undeposited > 0 ? [[{ content: 'Checks still on hand (not yet deposited)', styles: { textColor: [160, 90, 0] } }, { content: pdfMoney(ct.undeposited), styles: { textColor: [160, 90, 0] } }]] : []),
+        [{ content: 'Total collected', styles: { fontStyle: 'bold' } }, { content: pdfMoney(ct.total || 0), styles: { fontStyle: 'bold' } }],
+      ];
+      let sy = (doc.lastAutoTable?.finalY || y) + 5;
+      if (sy > doc.internal.pageSize.getHeight() - 40) { doc.addPage(); sy = 20; }
+      const pageW = doc.internal.pageSize.getWidth();
+      autoTable(doc, {
+        startY: sy, body: summary, theme: 'plain', tableWidth: 95, margin: { left: pageW - 14 - 95 },
+        styles: { fontSize: 8.5, cellPadding: 1.6 }, columnStyles: { 1: { halign: 'right' } },
+        didParseCell: (d) => { if (d.row.index === summary.length - 1) d.cell.styles.lineWidth = { top: 0.3 }; },
       });
     }
     doc.save(`Sales-Summary_${sssRange.start}_to_${sssRange.end}.pdf`);

@@ -1682,21 +1682,44 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePer
         _id: 0, when, orderNumber: 1, saleDate: '$createdAt', customerName: 1, clientId: 1, clientAccountId: 1,
         method: '$arPayments.paymentMethod', reference: { $ifNull: ['$arPayments.referenceNumber', ''] },
         checkNumber: { $ifNull: ['$arPayments.checkNumber', ''] },
+        checkBank: { $ifNull: ['$arPayments.checkBank', ''] },
+        checkDate: '$arPayments.checkDate', checkStatus: { $ifNull: ['$arPayments.checkStatus', ''] },
+        depositDate: '$arPayments.depositDate',
         amount: '$arPayments.amount', collectedBy: { $ifNull: ['$arPayments.collectedBy', ''] },
+        recordedBy: { $ifNull: ['$arPayments.recordedBy', ''] },
       } },
-      { $sort: { when: 1 } },
+      { $sort: { customerName: 1, when: 1 } },
     ]);
-    const collections = paid.map((p) => ({
-      date: p.when, orderNumber: p.orderNumber, saleDate: p.saleDate,
-      customerName: (p.customerName || 'WALK-IN').toUpperCase(),
-      method: p.method || 'Cash', reference: p.checkNumber ? `Check ${p.checkNumber}` : p.reference,
-      amount: roundMoney(Number(p.amount) || 0), collectedBy: p.collectedBy,
-    }));
+    const DAY = 86400000;
+    const collections = paid.map((p) => {
+      // Where the money is now: a check on hand or deposited is not in the
+      // bank yet; anything else was taken as paid on the day.
+      const held = p.checkNumber && (p.checkStatus === 'On Hand' || (!p.checkStatus && !p.depositDate));
+      const status = p.checkNumber
+        ? (p.checkStatus || (p.depositDate ? 'Deposited' : 'On Hand'))
+        : (p.depositDate ? 'Deposited' : 'Received');
+      return {
+        date: p.when, orderNumber: p.orderNumber, saleDate: p.saleDate,
+        customerName: (p.customerName || 'WALK-IN').toUpperCase(),
+        method: p.method || 'Cash',
+        reference: p.checkNumber ? `Check ${p.checkNumber}` : p.reference,
+        checkNumber: p.checkNumber || '', checkBank: p.checkBank || '',
+        checkDate: p.checkDate || null, depositDate: p.depositDate || null,
+        status, undeposited: !!held,
+        // How long the customer took to pay this sale.
+        daysToPay: p.saleDate && p.when ? Math.max(0, Math.round((new Date(p.when) - new Date(p.saleDate)) / DAY)) : null,
+        amount: roundMoney(Number(p.amount) || 0), collectedBy: p.collectedBy || p.recordedBy || '',
+      };
+    });
     const collectionTotals = collections.reduce((t, c) => {
       t.total = roundMoney(t.total + c.amount);
+      t.count += 1;
       t.methods[c.method] = roundMoney((t.methods[c.method] || 0) + c.amount);
+      if (c.undeposited) t.undeposited = roundMoney(t.undeposited + c.amount);
+      const k = c.customerName;
+      t.customers[k] = { count: (t.customers[k]?.count || 0) + 1, amount: roundMoney((t.customers[k]?.amount || 0) + c.amount) };
       return t;
-    }, { total: 0, methods: {} });
+    }, { total: 0, count: 0, undeposited: 0, methods: {}, customers: {} });
 
     res.json({ success: true, rows, totals, collections, collectionTotals });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }

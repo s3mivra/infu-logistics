@@ -38,7 +38,8 @@ describe('Sales Summary with A/R collected', () => {
     expect(r.body.collections).toHaveLength(1);
     expect(r.body.collections[0]).toMatchObject({ orderNumber: 'SS-AR-1', customerName: 'ALBI COFFEE', method: 'Bank Transfer', reference: 'BT-77', amount: 1000 });
     expect(new Date(r.body.collections[0].saleDate).toISOString().slice(0, 10)).toBe('2026-11-13');
-    expect(r.body.collectionTotals).toEqual({ total: 1000, methods: { 'Bank Transfer': 1000 } });
+    expect(r.body.collections[0].daysToPay).toBe(2);   // sold the 13th, paid the 15th
+    expect(r.body.collectionTotals).toEqual({ total: 1000, count: 1, undeposited: 0, methods: { 'Bank Transfer': 1000 }, customers: { 'ALBI COFFEE': { count: 1, amount: 1000 } } });
   });
 
   it('the day of the credit sale shows the sale and no collection', async () => {
