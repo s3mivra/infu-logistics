@@ -1,4 +1,7 @@
+import { useMemo } from 'react';
 import LoadingRows from '../../shared/LoadingRows';
+import { useSessionState } from '../../shared/useSessionState';
+import { usePagination } from '../../shared/usePagination';
 import { X, FileText, AlertTriangle, Download, CreditCard, Truck } from 'lucide-react';
 import Pager from '../../shared/Pager';
 import SearchSelect from '../../shared/ui/SearchSelect';
@@ -8,8 +11,22 @@ import PagedRows from '../../shared/PagedRows';
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
 export default function PayablesTab({
   ledgerSubTab, apData, exportApPDF, setApPayModal, apPayModal, apPayForm, setApPayForm, cashAndBankAccounts,
-  suppliers, submitApPayment, apPaySubmitting, apCreditEntries, agingBuckets, apPage,
+  suppliers, submitApPayment, apPaySubmitting, apCreditEntries, agingBuckets,
 }) {
+  // Find a supplier: what is still owed to them, and their entries below.
+  const [apQuery, setApQuery] = useSessionState('ap.query', '');
+  const [apUnpaidOnly, setApUnpaidOnly] = useSessionState('ap.unpaidOnly', true);
+  const q = String(apQuery || '').trim().toUpperCase();
+  const matches = (...vals) => !q || vals.some(v => String(v || '').toUpperCase().includes(q));
+  const suppliersShown = useMemo(() => (apData?.bySupplier || [])
+    .filter(s => (!apUnpaidOnly || s.balance > 0.004) && matches(s.supplier)),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [apData, apUnpaidOnly, q]);
+  const historyShown = useMemo(() => (apData?.recent || []).filter(e => matches(e.supplierName, e.reference, e.description)),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [apData, q]);
+  const historyPage = usePagination(historyShown, 10);
+  const owedShown = suppliersShown.reduce((t, s) => t + (s.balance > 0 ? s.balance : 0), 0);
   return (
     <>
     {(ledgerSubTab === 'ap' || ledgerSubTab === 'araap') && (
@@ -191,7 +208,20 @@ export default function PayablesTab({
             <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
               <Truck size={14} className="text-fg/75"/>
               <h3 className="text-sm font-black text-fg uppercase tracking-wider">Payables by Supplier</h3>
-              <span className="ml-auto text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">{apData.bySupplier.length}</span>
+              <span className="ml-auto text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">{suppliersShown.length} of {apData.bySupplier.length}</span>
+            </div>
+            <div className="px-5 py-3 border-b border-white/10 flex flex-wrap items-center gap-2">
+              <input type="search" value={apQuery} onChange={e => setApQuery(e.target.value)} data-testid="ap-search"
+                placeholder="Search supplier, reference or description" aria-label="Search supplier"
+                className="flex-1 min-w-[180px] bg-page-bg border border-white/10 rounded-lg px-3 py-2 text-xs text-fg outline-none focus:border-brand/60" />
+              <label className="flex items-center gap-1.5 text-xs text-fg/80 font-bold cursor-pointer select-none">
+                <input type="checkbox" checked={!!apUnpaidOnly} onChange={e => setApUnpaidOnly(e.target.checked)} data-testid="ap-unpaid-only" />
+                Unpaid only
+              </label>
+              <span className="text-[11px] text-fg/65" data-testid="ap-shown">
+                ₱{owedShown.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} owed
+                {(q || !apUnpaidOnly) && <button onClick={() => { setApQuery(''); setApUnpaidOnly(true); }} className="ml-2 underline hover:text-fg">clear</button>}
+              </span>
             </div>
             <table className="w-full text-sm">
               <thead>
@@ -204,7 +234,10 @@ export default function PayablesTab({
                 </tr>
               </thead>
               <tbody>
-                <PagedRows items={apData.bySupplier} label="suppliers" render={s => (
+                {suppliersShown.length === 0 && (
+                  <tr><td colSpan={5} className="py-6 text-center text-fg/65 text-sm">No {apUnpaidOnly ? 'unpaid ' : ''}supplier matches{q ? ` "${String(apQuery).trim()}"` : ''}.</td></tr>
+                )}
+                <PagedRows items={suppliersShown} label="suppliers" render={s => (
                   <tr key={s.supplierId || 'unattributed'} className="border-b border-white/5">
                     <td className="py-2.5 px-4 font-bold text-fg">
                       {s.supplier}
@@ -238,7 +271,7 @@ export default function PayablesTab({
           <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
             <FileText size={14} className="text-fg/75"/>
             <h3 className="text-sm font-black text-fg uppercase tracking-wider">A/P Journal History</h3>
-            <span className="ml-auto text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">{(apData?.recent || []).length} entries</span>
+            <span className="ml-auto text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">{q ? `${historyShown.length} of ` : ''}{(apData?.recent || []).length} entries</span>
           </div>
           {!apData ? (
             <LoadingRows />
@@ -258,7 +291,7 @@ export default function PayablesTab({
                   </tr>
                 </thead>
                 <tbody>
-                  {apPage.pageItems.map((e, i) => (
+                  {historyPage.pageItems.map((e, i) => (
                     <tr key={e._id || i} className={`border-b border-white/5 hover:bg-white/3 ${i % 2 === 0 ? '' : 'bg-white/[0.015]'}`}>
                       <td className="px-5 py-2.5 text-fg/70 whitespace-nowrap">{new Date(e.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: '2-digit' })}</td>
                       <td className="px-5 py-2.5 font-mono text-fg/65 whitespace-nowrap">{e.reference}</td>
@@ -270,7 +303,7 @@ export default function PayablesTab({
                   ))}
                 </tbody>
               </table>
-              <Pager {...apPage} label="entries" />
+              <Pager {...historyPage} label="entries" />
             </div>
           )}
         </div>

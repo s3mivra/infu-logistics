@@ -14,6 +14,7 @@ export default function ReceivablesTab({
   fetchArAgeing, fetchERPData, arPage, openArHistory, setSettleModal, setSettleForm, todayLocal, openClientCredit,
   clientCreditModal, setClientCreditModal, peso, submitClientCredit,
   arSort = 'oldest', setArSort, arMethod = '', setArMethod, arMethods = [], arShownCount, arShownDue = 0,
+  arQuery = '', setArQuery, arCustomer = '', setArCustomer, arCustomers = [],
 }) {
   return (
     <>
@@ -124,6 +125,22 @@ export default function ReceivablesTab({
             {/* Order and narrow the list: oldest first by default (overdue longest). */}
             {setArSort && (
               <div className="flex flex-wrap items-center gap-2 mb-3">
+                {setArQuery && (
+                  <input type="search" value={arQuery} onChange={e => setArQuery(e.target.value)} data-testid="ar-search"
+                    placeholder="Search customer or sale no." aria-label="Search customer or sale number"
+                    className="flex-1 min-w-[180px] bg-surface border border-white/10 rounded-lg px-3 py-2 text-xs text-fg outline-none focus:border-brand/60" />
+                )}
+                {setArCustomer && (
+                  <select value={arCustomer} onChange={e => setArCustomer(e.target.value)} aria-label="Customer" data-testid="ar-customer"
+                    className="max-w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-xs text-fg font-bold outline-none focus:border-brand/60">
+                    <option value="">All customers ({arCustomers.length})</option>
+                    {arCustomers.map(c => (
+                      <option key={c.key} value={c.key}>
+                        {c.name} · {c.count} unpaid · ₱{c.due.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <select value={arSort} onChange={e => setArSort(e.target.value)} aria-label="Sort"
                   className="bg-surface border border-white/10 rounded-lg px-3 py-2 text-xs text-fg font-bold outline-none focus:border-brand/60">
                   <option value="oldest">Oldest to newest</option>
@@ -136,15 +153,15 @@ export default function ReceivablesTab({
                   <option value="">All payment types</option>
                   {arMethods.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
-                {arMethod && (
-                  <span className="text-[11px] text-fg/65">
+                {(arMethod || arCustomer || String(arQuery || '').trim()) && (
+                  <span className="text-[11px] text-fg/65" data-testid="ar-shown">
                     {arShownCount} of {arOutstanding.orders.length} · ₱{Number(arShownDue).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} due
-                    <button onClick={() => setArMethod('')} className="ml-2 underline hover:text-fg">clear</button>
+                    <button onClick={() => { setArMethod(''); setArCustomer?.(''); setArQuery?.(''); }} className="ml-2 underline hover:text-fg">clear</button>
                   </span>
                 )}
               </div>
             )}
-            {arShownCount === 0 && <p className="py-8 text-center text-fg/65 text-sm">Nothing outstanding paid by {arMethod}.</p>}
+            {arShownCount === 0 && <p className="py-8 text-center text-fg/65 text-sm">No unpaid sales match{String(arQuery || '').trim() ? ` "${String(arQuery).trim()}"` : ''}{arMethod ? ` paid by ${arMethod}` : ''}.</p>}
             <table className="w-full text-sm block">
 
               <tbody className="block">

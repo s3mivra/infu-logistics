@@ -1562,16 +1562,33 @@ It posts only what is not already accrued for that month.`)) return;
   // narrowed to one payment type, before it is paged, so every page follows it.
   const [arSort, setArSort] = useState('oldest');      // oldest | newest | largest | smallest
   const [arMethod, setArMethod] = useState('');        // '' = every payment type
+  // Find one customer's unpaid sales: type part of a name or a sale number,
+  // or pick the customer from the list of everyone who still owes.
+  const [arQuery, setArQuery] = useSessionState('ar.query', '');
+  const [arCustomer, setArCustomer] = useState('');   // '' = every customer
+  const arCustomers = useMemo(() => {
+    const m = new Map();
+    for (const o of arOutstanding?.orders || []) {
+      const name = (o.customerName || 'Walk-in').trim();
+      const key = name.toUpperCase();
+      const row = m.get(key) || { key, name, count: 0, due: 0 };
+      row.count += 1; row.due += Number(o.balance ?? o.total) || 0;
+      m.set(key, row);
+    }
+    return [...m.values()].sort((a, b) => b.due - a.due);
+  }, [arOutstanding]);
   const arMethods = useMemo(() => [...new Set((arOutstanding?.orders || []).map(o => o.paymentMethod || 'On Account'))].sort(), [arOutstanding]);
   const arShown = useMemo(() => {
     const due = (o) => Number(o.balance ?? o.total) || 0;
     const when = (o) => new Date(o.createdAt).getTime() || 0;
-    const list = (arOutstanding?.orders || []).filter(o => !arMethod || (o.paymentMethod || 'On Account') === arMethod);
+    const q = String(arQuery || '').trim().toUpperCase();
+    const list = (arOutstanding?.orders || []).filter(o => (!arMethod || (o.paymentMethod || 'On Account') === arMethod)
+      && (!arCustomer || (o.customerName || 'Walk-in').trim().toUpperCase() === arCustomer)
+      && (!q || [o.customerName, o.orderNumber, o.clientCode, o.customerNumber].some(v => String(v || '').toUpperCase().includes(q))));
     const by = { oldest: (a, b) => when(a) - when(b), newest: (a, b) => when(b) - when(a), largest: (a, b) => due(b) - due(a), smallest: (a, b) => due(a) - due(b) }[arSort];
     return [...list].sort(by);
-  }, [arOutstanding, arSort, arMethod]);
+  }, [arOutstanding, arSort, arMethod, arQuery, arCustomer]);
   const arPage   = usePagination(arShown, 10);
-  const apPage   = usePagination(apData?.recent, 10);
   const sbpPage  = usePagination(salesByPayment?.breakdown, 10);
   const sliPage  = usePagination(salesLineItems?.rows, 15);
   const pbcPage  = usePagination(profitByCategory?.categories, 10);
@@ -2342,7 +2359,7 @@ It posts only what is not already accrued for that month.`)) return;
           <ReceivablesTab
             ledgerSubTab={ledgerSubTab} arOutstanding={arOutstanding} exportArPDF={exportArPDF} agingBuckets={agingBuckets} arAgeing={arAgeing} can={can}
             apiFetch={apiFetch} fetchArOutstanding={fetchArOutstanding} fetchArAgeing={fetchArAgeing} fetchERPData={fetchERPData} arPage={arPage} openArHistory={openArHistory}
-            arSort={arSort} setArSort={setArSort} arMethod={arMethod} setArMethod={setArMethod} arMethods={arMethods} arShownCount={arShown.length} arShownDue={arShown.reduce((t, o) => t + (Number(o.balance ?? o.total) || 0), 0)}
+            arSort={arSort} setArSort={setArSort} arMethod={arMethod} setArMethod={setArMethod} arQuery={arQuery} setArQuery={setArQuery} arCustomer={arCustomer} setArCustomer={setArCustomer} arCustomers={arCustomers} arMethods={arMethods} arShownCount={arShown.length} arShownDue={arShown.reduce((t, o) => t + (Number(o.balance ?? o.total) || 0), 0)}
             setSettleModal={setSettleModal} setSettleForm={setSettleForm} todayLocal={todayLocal} openClientCredit={openClientCredit} clientCreditModal={clientCreditModal} setClientCreditModal={setClientCreditModal}
             peso={peso} submitClientCredit={submitClientCredit} />
 
@@ -2350,7 +2367,7 @@ It posts only what is not already accrued for that month.`)) return;
           <PayablesTab
             ledgerSubTab={ledgerSubTab} apData={apData} exportApPDF={exportApPDF} setApPayModal={setApPayModal} apPayModal={apPayModal} apPayForm={apPayForm}
             setApPayForm={setApPayForm} cashAndBankAccounts={cashAndBankAccounts} suppliers={suppliers} submitApPayment={submitApPayment} apPaySubmitting={apPaySubmitting} apCreditEntries={apCreditEntries}
-            agingBuckets={agingBuckets} apPage={apPage} />
+            agingBuckets={agingBuckets} />
 
           {/* ===== SALES BY PAYMENT METHOD ===== */}
           {ledgerSubTab === 'payments' && (
