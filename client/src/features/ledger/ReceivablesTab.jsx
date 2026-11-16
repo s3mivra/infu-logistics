@@ -13,6 +13,7 @@ export default function ReceivablesTab({
   ledgerSubTab, arOutstanding, exportArPDF, agingBuckets, arAgeing, can, apiFetch, fetchArOutstanding,
   fetchArAgeing, fetchERPData, arPage, openArHistory, setSettleModal, setSettleForm, todayLocal, openClientCredit,
   clientCreditModal, setClientCreditModal, peso, submitClientCredit,
+  arSort = 'oldest', setArSort, arMethod = '', setArMethod, arMethods = [], arShownCount, arShownDue = 0,
 }) {
   return (
     <>
@@ -120,6 +121,30 @@ export default function ReceivablesTab({
           <div className="py-16 text-center text-fg/65 font-bold uppercase tracking-widest text-sm">No outstanding A/R </div>
         ) : (
           <div>
+            {/* Order and narrow the list: oldest first by default (overdue longest). */}
+            {setArSort && (
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                <select value={arSort} onChange={e => setArSort(e.target.value)} aria-label="Sort"
+                  className="bg-surface border border-white/10 rounded-lg px-3 py-2 text-xs text-fg font-bold outline-none focus:border-brand/60">
+                  <option value="oldest">Oldest to newest</option>
+                  <option value="newest">Newest to oldest</option>
+                  <option value="largest">Largest balance first</option>
+                  <option value="smallest">Smallest balance first</option>
+                </select>
+                <select value={arMethod} onChange={e => setArMethod(e.target.value)} aria-label="Payment type"
+                  className="bg-surface border border-white/10 rounded-lg px-3 py-2 text-xs text-fg font-bold outline-none focus:border-brand/60">
+                  <option value="">All payment types</option>
+                  {arMethods.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+                {arMethod && (
+                  <span className="text-[11px] text-fg/65">
+                    {arShownCount} of {arOutstanding.orders.length} · ₱{Number(arShownDue).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} due
+                    <button onClick={() => setArMethod('')} className="ml-2 underline hover:text-fg">clear</button>
+                  </span>
+                )}
+              </div>
+            )}
+            {arShownCount === 0 && <p className="py-8 text-center text-fg/65 text-sm">Nothing outstanding paid by {arMethod}.</p>}
             <table className="w-full text-sm block">
 
               <tbody className="block">

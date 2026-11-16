@@ -2,7 +2,7 @@
 import LoadingRows from '../../shared/LoadingRows';
 import { useSessionState } from '../../shared/useSessionState';
 import { formatDate, formatDateTime } from '../../shared/dates.js';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { roundMoney, formatPeso } from '../../shared/money.js';
 import SplitPayEditor, { newSplit, splitReady, splitPayload } from './SplitPayEditor';
 import { X, Lock, Unlock, FileText, AlertTriangle, Plus, Trash2, Download, Upload, RefreshCw, Clock, ChevronRight, ChevronLeft, ShieldCheck, Search, History } from 'lucide-react';
@@ -1554,7 +1554,19 @@ It posts only what is not already accrued for that month.`)) return;
   })();
 
   // ── Report-table pagination (client-side, 10 rows/page) ──
-  const arPage   = usePagination(arOutstanding?.orders, 10);
+  // A/R list: sorted (oldest first by default - the ones overdue longest) and
+  // narrowed to one payment type, before it is paged, so every page follows it.
+  const [arSort, setArSort] = useState('oldest');      // oldest | newest | largest | smallest
+  const [arMethod, setArMethod] = useState('');        // '' = every payment type
+  const arMethods = useMemo(() => [...new Set((arOutstanding?.orders || []).map(o => o.paymentMethod || 'On Account'))].sort(), [arOutstanding]);
+  const arShown = useMemo(() => {
+    const due = (o) => Number(o.balance ?? o.total) || 0;
+    const when = (o) => new Date(o.createdAt).getTime() || 0;
+    const list = (arOutstanding?.orders || []).filter(o => !arMethod || (o.paymentMethod || 'On Account') === arMethod);
+    const by = { oldest: (a, b) => when(a) - when(b), newest: (a, b) => when(b) - when(a), largest: (a, b) => due(b) - due(a), smallest: (a, b) => due(a) - due(b) }[arSort];
+    return [...list].sort(by);
+  }, [arOutstanding, arSort, arMethod]);
+  const arPage   = usePagination(arShown, 10);
   const apPage   = usePagination(apData?.recent, 10);
   const sbpPage  = usePagination(salesByPayment?.breakdown, 10);
   const sliPage  = usePagination(salesLineItems?.rows, 15);
@@ -2326,6 +2338,7 @@ It posts only what is not already accrued for that month.`)) return;
           <ReceivablesTab
             ledgerSubTab={ledgerSubTab} arOutstanding={arOutstanding} exportArPDF={exportArPDF} agingBuckets={agingBuckets} arAgeing={arAgeing} can={can}
             apiFetch={apiFetch} fetchArOutstanding={fetchArOutstanding} fetchArAgeing={fetchArAgeing} fetchERPData={fetchERPData} arPage={arPage} openArHistory={openArHistory}
+            arSort={arSort} setArSort={setArSort} arMethod={arMethod} setArMethod={setArMethod} arMethods={arMethods} arShownCount={arShown.length} arShownDue={arShown.reduce((t, o) => t + (Number(o.balance ?? o.total) || 0), 0)}
             setSettleModal={setSettleModal} setSettleForm={setSettleForm} todayLocal={todayLocal} openClientCredit={openClientCredit} clientCreditModal={clientCreditModal} setClientCreditModal={setClientCreditModal}
             peso={peso} submitClientCredit={submitClientCredit} />
 
