@@ -339,6 +339,7 @@
           <p>Each row on the Clients page has:</p>
           <ul>
             <li><strong>Resources</strong> - raise or lower how much memory/CPU priority that client gets, if they're growing or you're consolidating.</li>
+            <li><strong>Capitals</strong> - store that client's names and typed text in CAPITALS. Turning it on converts what is already saved and cannot be undone: download a backup first.</li>
             <li><strong>Stop / Start</strong> - temporarily take a client offline (e.g. non-paying, or maintenance) without deleting anything.</li>
             <li><strong>Logs</strong> - a live technical readout of what that client's app has been doing. Mostly useful when troubleshooting with support.</li>
             <li><strong>Download backup</strong> - all of that client's data as one file, checked to read back before it downloads. Keep it somewhere other than this server (your computer, Google Drive): if the server is ever lost, this is what brings the client back.</li>
@@ -746,6 +747,7 @@ async function refresh() {
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="ghost" data-act="password" data-slug="${esc(t.slug)}" title="Show / copy this client's superadmin login password">Password</button>
           <button class="ghost" data-act="resources" data-slug="${esc(t.slug)}">Resources</button>
+          <button class="ghost" data-act="capitals" data-slug="${esc(t.slug)}" title="Store names and typed text in CAPITALS for this client">Capitals: ${t.capsText ? 'ON' : 'off'}</button>
           <button class="ghost" data-act="rebuild" data-slug="${esc(t.slug)}" title="Rebuilds this tenant's web (branding/theme) image only. To update the server, use &quot;Update all apps&quot; above.">Rebuild web</button>
           <button class="ghost" data-act="stop" data-slug="${esc(t.slug)}">Stop</button>
           <button class="ghost" data-act="start" data-slug="${esc(t.slug)}">Start</button>
@@ -792,6 +794,36 @@ async function act(slug, action, btn) {
         body: JSON.stringify({ memMb: Number(memMb), cpuShares: Number(cpuShares) }),
       });
       showLog(`Applied: ${d.memMb} MB, cpu weight ${d.cpuShares}.\n\n${d.log || ''}`);
+    }
+    else if (action === 'capitals') {
+      const t = LAST_TENANTS.find((x) => x.slug === slug);
+      if (!t?.capsText) {
+        const ok = confirm(`Turn CAPITALS on for "${slug}"?
+
+Every product, stock, supplier and client name, and the text typed on sales and other records, is converted to capitals when the app restarts, and saved in capitals from then on. Staff names and journal entries stay as typed.
+
+This cannot be undone. Download a backup of this client first.
+
+The app restarts - about a minute of "Update in progress" for this client only.`);
+        if (!ok) return;
+        const confirmSlug = prompt(`Type the client name to confirm:`);
+        if (confirmSlug !== slug) return;
+        const pw = askDanger(); if (!pw) return;
+        const d = await api(`/api/tenants/${slug}/capitals`, { method: 'PATCH', headers: { 'x-danger-password': pw }, body: JSON.stringify({ on: true, confirmSlug }) });
+        showLog(`Capitals ON for ${slug}. Names are converted as the app starts.
+
+${d.log || ''}`);
+      } else {
+        if (!confirm(`Turn CAPITALS off for "${slug}"?
+
+What is already in capitals stays in capitals; only new entries are saved as typed. The app restarts for about a minute.`)) return;
+        const pw = askDanger(); if (!pw) return;
+        const d = await api(`/api/tenants/${slug}/capitals`, { method: 'PATCH', headers: { 'x-danger-password': pw }, body: JSON.stringify({ on: false }) });
+        showLog(`Capitals off for ${slug}.
+
+${d.log || ''}`);
+      }
+      refresh();
     }
     else if (action === 'wipe') {
       const confirmSlug = prompt(`Wipe ALL data for "${slug}"?\n\nThe database is dropped and the superadmin re-seeded. Business config in .env is kept.\n\nType the client name to confirm:`);

@@ -845,6 +845,32 @@ app.patch('/api/tenants/:slug/resources', requireAuth, async (req, res) => {
   }
 });
 
+// Names and typed text in CAPITALS (server/lib/caps.js), per client. Writes
+// CAPS_TEXT into the tenant's .env and recreates its api. Turning it ON
+// converts every stored name on that start and cannot be undone, so it needs
+// the second password and the client's name typed out, like a wipe. Turning
+// it off only stops new entries being put in capitals; it takes the second
+// password too, since it changes how the books read from then on.
+app.patch('/api/tenants/:slug/capitals', requireAuth, requireDangerPassword, async (req, res) => {
+  const slug = req.params.slug;
+  if (!(await listSlugs()).includes(slug)) return res.status(404).json({ error: 'No such tenant.' });
+  const on = req.body?.on === true;
+  if (on && req.body?.confirmSlug !== slug) return res.status(400).json({ error: `Type "${slug}" to confirm.` });
+  try {
+    const current = parseEnvFile(await fs.readFile(tenantEnvPath(slug), 'utf8'));
+    await fs.writeFile(tenantEnvPath(slug), toEnvFile({ ...current, CAPS_TEXT: on ? 'on' : 'off' }), { mode: 0o600 });
+    const meta = (await readMeta(slug)) || {};
+    await fs.writeFile(tenantMetaPath(slug), JSON.stringify({
+      ...meta, capsText: on, capsTextChangedAt: new Date().toISOString(),
+    }, null, 2));
+    // `up -d` recreates the api with the new setting; no rebuild needed.
+    const log = await docker([...composeArgs(slug), 'up', '-d'], { timeout: 5 * 60_000 });
+    res.json({ ok: true, on, log: log.slice(-2000) });
+  } catch (err) {
+    res.status(500).json({ error: String(err.stderr || err.message).slice(-4000) });
+  }
+});
+
 // ── Billing ──────────────────────────────────────────────────────────────────
 // Manual, operator-marked payment tracking. This platform deliberately has no
 // payment gateway integration — "paid" here means the operator confirmed
