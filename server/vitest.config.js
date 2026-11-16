@@ -24,7 +24,9 @@ export default defineConfig({
     maxWorkers: 2,
     minWorkers: 1,
     fileParallelism: true,
-    env: { TZ: 'Asia/Manila' },
+    // Names in capitals (lib/caps.js) are tested switched on: that is how the
+    // app runs once a business turns it on, and every test expects it.
+    env: { TZ: 'Asia/Manila', CAPS_TEXT: 'on' },
     coverage: {
       provider: 'v8',
       reporter: ['text-summary', 'text'],

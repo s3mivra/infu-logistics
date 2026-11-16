@@ -32,7 +32,7 @@ describe('delivery fee is persisted and folded into total', () => {
     expect(res.body.success).toBe(true);
     const order = res.body.order;
     expect(order.deliveryFee).toBe(75);
-    expect(order.deliveryAddress).toBe('123 Test St');
+    expect(order.deliveryAddress).toBe('123 TEST ST');
     expect(order.customerPhone).toBe('09171234567');
     // subtotal 200, no discount/vat by default in this business config - total
     // must be subtotal + deliveryFee, not just subtotal.

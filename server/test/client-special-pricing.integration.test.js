@@ -59,7 +59,7 @@ describe('GET /api/client-accounts/:id/pricing', () => {
 
     const res = await auth('get', `/api/client-accounts/${client._id}/pricing`, superTok);
     expect(res.status).toBe(200);
-    const row = res.body.products.find(p => p.name === 'CSP Product');
+    const row = res.body.products.find(p => p.name === 'CSP PRODUCT');
     expect(row).toBeTruthy();
     expect(row.basePrice).toBe(590);
     expect(row.flatPercent).toBe(10);
@@ -77,7 +77,7 @@ describe('GET /api/client-accounts/:id/pricing', () => {
       clientBulkBreaks: [{ clientId: String(client._id), minQty: 10, price: 270 }],
     });
     const res = await auth('get', `/api/client-accounts/${client._id}/pricing`, superTok);
-    const row = res.body.products.find(p => p.name === 'CSP Volume Only');
+    const row = res.body.products.find(p => p.name === 'CSP VOLUME ONLY');
     expect(row.flatPercent).toBeNull();
     expect(row.flatPrice).toBeNull();
     expect(row.breaks).toEqual([{ minQty: 10, price: 270 }]);
@@ -92,6 +92,6 @@ describe('GET /api/client-accounts/:id/pricing', () => {
       clientDiscounts: [{ clientId: String(other._id), percent: 50 }],
     });
     const res = await auth('get', `/api/client-accounts/${client._id}/pricing`, superTok);
-    expect(res.body.products.some(p => p.name === 'CSP Not Mine')).toBe(false);
+    expect(res.body.products.some(p => p.name === 'CSP NOT MINE')).toBe(false);
   });
 });

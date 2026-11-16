@@ -35,7 +35,7 @@ describe('default tenant seed + backfill', () => {
     await Product.collection.insertOne({ name: 'Legacy', basePrice: 1, businessType: 'fb' });
     const { runStartupTasks } = await import('../server.js');
     await runStartupTasks();
-    const p = await Product.findOne({ name: 'Legacy' });
+    const p = await Product.collection.findOne({ name: 'Legacy' });   // inserted raw, after the one-time capitals pass
     expect(String(p.tenantId)).toBe(String(def._id));
   });
 });

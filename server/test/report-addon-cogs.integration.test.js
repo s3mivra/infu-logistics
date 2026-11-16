@@ -57,7 +57,7 @@ const range = () => {
 // product in "Coffee" and clears orders between runs, so the category row is
 // exactly that one product's line.
 const lineFor = (body) => {
-  const c = (body.categories || []).find(x => x.category === 'Coffee');
+  const c = (body.categories || []).find(x => x.category === 'COFFEE');
   return c && { revenue: c.revenue, cogs: c.estimatedCOGS };
 };
 

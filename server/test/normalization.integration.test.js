@@ -141,7 +141,7 @@ describe('money fields accept what people actually type', () => {
       .send({ name: 'comma priced item', category: 'Dry Goods', basePrice: '1,500.50' });
     expect(res.status).toBeLessThan(300);
     expect(res.body.product.basePrice).toBe(1500.5);
-    expect(res.body.product.name).toBe('Comma Priced Item');
+    expect(res.body.product.name).toBe('COMMA PRICED ITEM');
   });
 
   it('rejects junk in a money field with a 422', async () => {

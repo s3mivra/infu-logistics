@@ -15,7 +15,7 @@ let app, stop, superToken, cashierToken, clientA, clientB;
 const auth = (t) => ({ Authorization: `Bearer ${t}` });
 const daysAgo = (n) => new Date(Date.now() - n * 86400000);
 const summary = async (tok) => (await request(app).get('/api/clients/summary').set(auth(tok))).body;
-const rowFor = (b, name) => b.clients.find(c => c.name === name);
+const rowFor = (b, name) => b.clients.find(c => String(c.name).toUpperCase() === String(name).toUpperCase());
 
 const mkClient = async (username, name) => {
   const c = await mongoose.model('ClientAccount').create({
@@ -61,17 +61,17 @@ afterAll(async () => { await stop(); });
 describe('client attribution', () => {
   it('counts orders placed through the portal (clientId)', async () => {
     const b = await summary(superToken);
-    expect(rowFor(b, 'Portal Client').orderCount).toBe(4);
+    expect(rowFor(b, 'PORTAL CLIENT').orderCount).toBe(4);
   });
 
   it('counts orders placed on the client\'s behalf (clientAccountId)', async () => {
     const b = await summary(superToken);
-    expect(rowFor(b, 'Behalf Client').orderCount).toBe(1);
+    expect(rowFor(b, 'BEHALF CLIENT').orderCount).toBe(1);
   });
 
   it('does not mix one client\'s orders into another', async () => {
     const b = await summary(superToken);
-    expect(rowFor(b, 'Behalf Client').exposure).toBe(250);
+    expect(rowFor(b, 'BEHALF CLIENT').exposure).toBe(250);
   });
 
   it('lists clients with no orders at all', async () => {
@@ -113,8 +113,8 @@ describe('money columns', () => {
   it('flags a client over their limit', async () => {
     await request(app).patch('/api/settings/globalCreditLimit').set(auth(superToken)).send({ value: 500 });
     const b = await summary(superToken);
-    expect(rowFor(b, 'Portal Client').overLimit).toBe(true);
-    expect(rowFor(b, 'Portal Client').available).toBe(0);
+    expect(rowFor(b, 'PORTAL CLIENT').overLimit).toBe(true);
+    expect(rowFor(b, 'PORTAL CLIENT').available).toBe(0);
   });
 });
 

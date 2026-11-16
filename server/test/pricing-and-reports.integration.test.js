@@ -40,7 +40,7 @@ describe('reorder suggestions carry per-line supplier attribution', () => {
 
     const res = await auth('get', '/api/reports/purchase-order?days=7', superTok);
     expect(res.status).toBe(200);
-    const line = res.body.lines.find(l => l.itemName === 'PR Reorder Item');
+    const line = res.body.lines.find(l => l.itemName === 'PR REORDER ITEM');
     expect(line).toBeTruthy();
     expect(String(line.invId)).toBe(String(inv._id));
     expect(line.supplierId).toBe(String(cheap.body.supplier._id));
@@ -53,7 +53,7 @@ describe('reorder suggestions carry per-line supplier attribution', () => {
       unitCost: 3, lowStockThreshold: 100,
     });
     const res = await auth('get', '/api/reports/purchase-order?days=7', superTok);
-    const line = res.body.lines.find(l => l.itemName === 'PR Unmatched Item');
+    const line = res.body.lines.find(l => l.itemName === 'PR UNMATCHED ITEM');
     expect(line).toBeTruthy();
     expect(line.supplierId).toBeNull();
   });

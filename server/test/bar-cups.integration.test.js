@@ -256,7 +256,7 @@ describe('an item not on the menu', () => {
     });
     expect(r.body.success, JSON.stringify(r.body)).toBe(true);
     const line = r.body.order.items[0];
-    expect([line.name, line.price, line.isOpenItem]).toEqual(['Affogato (special)', 165, true]);
+    expect([line.name, line.price, line.isOpenItem]).toEqual(['AFFOGATO (SPECIAL)', 165, true]);
     expect(r.body.order.total).toBe(330);
     expect((await complete(r.body.order)).status).toBe(200);
     expect([await stock(beans), await stock(cup)]).toEqual(before);

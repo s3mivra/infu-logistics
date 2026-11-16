@@ -59,14 +59,14 @@ describe('low stock signals', () => {
   it('flags low and out-of-stock items', async () => {
     const b = await get(superToken);
     const names = kinds(b, 'low_stock').map(i => i.title);
-    expect(names.some(n => /Low Item/.test(n))).toBe(true);
-    expect(names.some(n => /Out Item/.test(n))).toBe(true);
+    expect(names.some(n => /Low Item/i.test(n))).toBe(true);
+    expect(names.some(n => /Out Item/i.test(n))).toBe(true);
   });
 
   it('marks out-of-stock as critical and merely-low as warn', async () => {
     const b = await get(superToken);
-    const out = kinds(b, 'low_stock').find(i => /Out Item/.test(i.title));
-    const low = kinds(b, 'low_stock').find(i => /Low Item/.test(i.title));
+    const out = kinds(b, 'low_stock').find(i => /Out Item/i.test(i.title));
+    const low = kinds(b, 'low_stock').find(i => /Low Item/i.test(i.title));
     expect(out.severity).toBe('critical');
     expect(low.severity).toBe('warn');
   });
@@ -82,7 +82,7 @@ describe('low stock signals', () => {
 describe('expiry signals', () => {
   it('flags expired stock as critical', async () => {
     const b = await get(superToken);
-    expect(kinds(b, 'expired').some(i => /Expired Item/.test(i.title))).toBe(true);
+    expect(kinds(b, 'expired').some(i => /Expired Item/i.test(i.title))).toBe(true);
   });
 
   it('ignores expired items with no stock left', async () => {
@@ -93,7 +93,7 @@ describe('expiry signals', () => {
 
   it('warns inside the item\'s warn window but not outside it', async () => {
     const b = await get(superToken);
-    expect(kinds(b, 'expiring').some(i => /Soon Item/.test(i.title))).toBe(true);
+    expect(kinds(b, 'expiring').some(i => /Soon Item/i.test(i.title))).toBe(true);
     expect(b.items.map(i => i.title).join(' ')).not.toMatch(/Far Item/);
   });
 });
@@ -108,7 +108,7 @@ describe('quantities are reported in DISPLAY units, not base units', () => {
       unit: 'g', displayUnit: 'kg', unitMultiplier: 1000, packSize: 1, unitCost: 1, businessType: 'log',
     });
     const b = await get(superToken);
-    const row = b.items.find(i => /Unit Beans/.test(i.title));
+    const row = b.items.find(i => /Unit Beans/i.test(i.title));
     expect(row).toBeTruthy();
     // 200 g / (packSize 1 × multiplier 1000) = 0.2 pcs - NOT the raw 200.
     expect(row.detail).toMatch(/0\.2 pcs left/);
@@ -125,7 +125,7 @@ describe('quantities are reported in DISPLAY units, not base units', () => {
       expiryDate: daysAgo(4), businessType: 'log',
     });
     const b = await get(superToken);
-    const row = b.items.find(i => /Unit Syrup/.test(i.title));
+    const row = b.items.find(i => /Unit Syrup/i.test(i.title));
     expect(row.detail).toMatch(/3 pcs in stock/);
     expect(row.detail).not.toMatch(/3000/);
   });

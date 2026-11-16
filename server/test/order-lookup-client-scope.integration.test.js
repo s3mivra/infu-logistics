@@ -46,14 +46,14 @@ describe('a client reading an order', () => {
   it('sees their own order in full', async () => {
     const res = await get(aliceOrder._id, aliceTok);
     expect(res.body.customerPhone).toBe('0917 000 0002');
-    expect(res.body.deliveryAddress).toBe('34 Alice Avenue');
+    expect(res.body.deliveryAddress).toBe('34 ALICE AVENUE');
   });
 });
 
 describe('everyone else, unchanged', () => {
   it('staff see any order in full', async () => {
     const res = await get(bobOrder._id, staffTok);
-    expect(res.body.deliveryAddress).toBe('12 Bob Street');
+    expect(res.body.deliveryAddress).toBe('12 BOB STREET');
   });
 
   it('an anonymous caller gets the status projection', async () => {

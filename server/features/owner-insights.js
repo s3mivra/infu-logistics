@@ -8,7 +8,8 @@
 //                      collections and the payroll that keeps coming round
 //
 // Read-only: none of them posts to the ledger or changes a record.
-import { captureError } from '../lib/errorLog.js';
+import { captureError } from '../lib/errorLog.js';
+import { nameKeyOf } from '../lib/caps.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { businessDateStr } from '../lib/businessTime.js';
 import { roundMoney } from '../lib/money.js';
@@ -81,7 +82,7 @@ export default function registerOwnerInsights(ctx) {
       Inventory.find(scope, { _id: 1, itemCode: 1, itemName: 1, unitCost: 1, unitMultiplier: 1 }).lean(),
       AddOn.find({}, { name: 1, recipe: 1 }).lean(),
     ]);
-    const addOnMap = Object.fromEntries(addOns.map(a => [a.name, a.recipe || []]));
+    const addOnMap = Object.fromEntries(addOns.map(a => [nameKeyOf(a.name), a.recipe || []]));
     const prodMap = Object.fromEntries(prods.map(p => [String(p._id), p]));
     const invMap = {};
     inv.forEach(i => { invMap[String(i._id)] = i; if (i.itemCode) invMap[i.itemCode] = i; if (i.itemName) invMap[i.itemName] = i; });

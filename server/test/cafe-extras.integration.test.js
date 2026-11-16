@@ -133,9 +133,9 @@ describe('the prep list', () => {
     const res = await as('get', `/api/reports/prep-list?date=${ymd(target)}&weeks=4`);
     expect(res.status).toBe(200);
     expect(res.body.days).toHaveLength(4);
-    const latte = res.body.products.find(p => p.name === 'Latte');
+    const latte = res.body.products.find(p => p.name === 'LATTE');
     expect(latte).toMatchObject({ average: 9.8, prepare: 10, most: 13, least: 6, soldOn: 4 });   // (12+13+8+6)/4
-    const croissant = res.body.products.find(p => p.name === 'Croissant');
+    const croissant = res.body.products.find(p => p.name === 'CROISSANT');
     expect(croissant).toMatchObject({ average: 1.3, prepare: 2, most: 4, least: 0, soldOn: 2 });  // (4+0+1+0)/4
   });
 });

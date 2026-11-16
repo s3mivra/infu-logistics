@@ -36,7 +36,7 @@ describe('editing a client with clients.edit', () => {
   it('changes everyday details', async () => {
     const res = await as('patch', `/api/client-accounts/${client._id}`, editorTok).send({ phone: '0917 000 0000', contactNotes: 'Ask for Ana' });
     expect(res.status).toBe(200);
-    expect(res.body.client.contactNotes).toBe('Ask for Ana');
+    expect(res.body.client.contactNotes).toBe('ASK FOR ANA');
   });
 
   it('cannot set the password or the username - that would be signing in as the client', async () => {
@@ -117,11 +117,11 @@ describe('choosing a login from an onboarding link', () => {
 
   it('needs a password of 8, and a username the login box can take', async () => {
     const token = await invite('Onboard Rules Co');
-    expect((await redeem(token, { username: 'rulesco', password: 'short1' })).status).toBe(400);
+    expect((await redeem(token, { username: 'RULESCO', password: 'short1' })).status).toBe(400);
     for (const username of ['ab', '_pending_x', 'has space', 'a'.repeat(41)]) {
       expect((await redeem(token, { username, password: 'longenough1' })).status, username).toBe(400);
     }
-    expect((await redeem(token, { username: 'Rules.Co-1', password: 'longenough1' })).status).toBe(200);
+    expect((await redeem(token, { username: 'RULES.CO-1', password: 'longenough1' })).status).toBe(200);
   });
 
   it('refuses a username already taken, whatever its case', async () => {

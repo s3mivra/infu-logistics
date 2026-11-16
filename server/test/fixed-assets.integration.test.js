@@ -242,7 +242,7 @@ describe('export and template', () => {
     const res = await auth('get', '/api/export/fixedAssets');
     expect(res.status).toBe(200);
     expect(res.body.rows).toHaveLength(1);
-    expect(res.body.rows[0]).toContain('Espresso Machine');
+    expect(res.body.rows[0]).toContain('ESPRESSO MACHINE');
     expect(res.body.rows[0]).toContain(60000);
   });
 
@@ -322,7 +322,7 @@ describe('what the screen reads off these responses', () => {
 
     const byClass = await auth('get', '/api/fixed-assets?accountCode=140400');
     expect(byClass.body.assets).toHaveLength(1);
-    expect(byClass.body.assets[0].name).toBe('Delivery Van');
+    expect(byClass.body.assets[0].name).toBe('DELIVERY VAN');
 
     const byStatus = await auth('get', '/api/fixed-assets?status=Disposed');
     expect(byStatus.body.assets).toHaveLength(0);

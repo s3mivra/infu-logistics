@@ -39,7 +39,7 @@ import { computeOrderVat, extractVat, normaliseVatRate, DEFAULT_VAT_RATE } from 
 import { validateDateRange } from './lib/reportRange.js';
 import { initErrorLog, logSafeUrl } from './lib/errorLog.js';
 import { claimJob, runExclusive, waitForRelease } from './lib/jobLock.js';
-import { applyCaps, capsExisting, sameName } from './lib/caps.js';
+import { applyCaps, capsExisting, sameName, nameKeyOf } from './lib/caps.js';
 const CAPS_TEXT_ON = process.env.CAPS_TEXT === 'on';   // names in capitals: off for now (see applyCaps below)
 import { nameGuard, transactionGuard, findDuplicateBackdatedSale, findDuplicateBill, findDuplicateExpense, findDuplicateRestock } from './lib/dupes.js';
 import { fieldCryptPlugin, encryptValue } from './lib/fieldCrypt.js';
@@ -3199,7 +3199,7 @@ function reportLinesForItem(item, prods, prodMap, invMap, addOnMap) {
       const grp = (product?.modifierGroups || []).find(g => g && sameName(g.name, grpName));
       return grp?.options?.find(o => sameName(o.name, optName))?.recipe || [];
     }
-    return addOnMap?.[addOnName] || [];
+    return addOnMap?.[nameKeyOf(addOnName)] || addOnMap?.[addOnName] || [];
   };
   // Per unit, matching how add-on revenue is counted above.
   const addOnCost = (item.selectedAddOns || [])

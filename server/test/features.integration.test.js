@@ -49,15 +49,15 @@ describe('low-stock analytics excludes stock tied only to removed products', () 
     const res = await request(app).get('/api/analytics/dashboard').set('Authorization', `Bearer ${superTok}`);
     expect(res.status).toBe(200);
     const names = res.body.lowestStock.map(i => i.itemName);
-    expect(names).toContain('Active Stock');
-    expect(names).not.toContain('Removed Stock');
+    expect(names).toContain('ACTIVE STOCK');
+    expect(names).not.toContain('REMOVED STOCK');
   });
 
   it('also excludes stock tied only to an ACTUALLY DELETED product (isArchived, not isAvailable)', async () => {
     const res = await request(app).get('/api/analytics/dashboard').set('Authorization', `Bearer ${superTok}`);
     expect(res.status).toBe(200);
     const names = res.body.lowestStock.map(i => i.itemName);
-    expect(names).not.toContain('Deleted Stock');
+    expect(names).not.toContain('DELETED STOCK');
   });
 });
 

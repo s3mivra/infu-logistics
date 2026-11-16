@@ -51,7 +51,7 @@ describe('the shared catalog', () => {
     expect(s.status, JSON.stringify(s.body)).toBe(200);
     expect(s.body.created).toBe(2);
     const latte = await A('Product').findOne({ productCode: 'LAT-12' }).lean();
-    expect(latte).toMatchObject({ name: 'Latte 12oz', basePrice: 150 });
+    expect(latte).toMatchObject({ name: 'LATTE 12OZ', basePrice: 150 });
   });
 
   it('lets a branch set its own price, which a re-sync keeps', async () => {

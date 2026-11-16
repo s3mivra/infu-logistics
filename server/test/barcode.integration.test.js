@@ -31,7 +31,7 @@ describe('barcode lookup', () => {
   it('resolves a scanned barcode to the product', async () => {
     const res = await auth('get', '/api/products/by-barcode/4800001234567', staffTok);
     expect(res.status).toBe(200);
-    expect(res.body.product.name).toBe('Scannable Widget');
+    expect(res.body.product.name).toBe('SCANNABLE WIDGET');
     expect(res.body.ambiguous).toBe(false);
   });
 

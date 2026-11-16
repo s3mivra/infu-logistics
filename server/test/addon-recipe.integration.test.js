@@ -100,7 +100,7 @@ describe('reversing a sale with an extra in it', () => {
 describe('who can see an extra\'s recipe', () => {
   it('is staff only: the public menu gets names and prices', async () => {
     const pub = await request(app).get('/api/addons');
-    expect(pub.body.addons[0].name).toBe('Extra Shot');
+    expect(pub.body.addons[0].name).toBe('EXTRA SHOT');
     expect(pub.body.addons[0].price).toBe(30);
     expect(pub.body.addons[0].recipe).toBeUndefined();
 

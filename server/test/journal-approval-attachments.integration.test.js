@@ -66,7 +66,7 @@ describe('manual journal approval', () => {
     const before = await M('JournalEntry').countDocuments();
     expect((await as(tok.jaDir, 'post', `/api/journal/drafts/${d.body.draft._id}/reject`).send({})).status).toBe(400);
     const r = await as(tok.jaDir, 'post', `/api/journal/drafts/${d.body.draft._id}/reject`).send({ reason: 'Use account 640000' });
-    expect(r.body.draft).toMatchObject({ status: 'Rejected', rejectionReason: 'Use account 640000' });
+    expect(r.body.draft).toMatchObject({ status: 'Rejected', rejectionReason: 'USE ACCOUNT 640000' });
     expect(await M('JournalEntry').countDocuments()).toBe(before);
     expect((await as(tok.jaDir, 'post', `/api/journal/drafts/${d.body.draft._id}/approve`)).status).toBe(409);
   });

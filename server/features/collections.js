@@ -1,7 +1,8 @@
 ﻿// collections routes - AR collection reminders (contact log + follow-up
 // worklist over the existing aging data). See the CollectionReminderSchema
 // comment in server.js: this logs manual contact, it never sends anything.
-import { ageingByClient, resolveClientKey, withArBalance, arBalance, isFullySettled, RECEIVABLE_STATUSES } from '../lib/credit.js';
+import { ageingByClient, resolveClientKey, withArBalance, arBalance, isFullySettled, RECEIVABLE_STATUSES } from '../lib/credit.js';
+import { sameName } from '../lib/caps.js';
 import { businessDateStr } from '../lib/businessTime.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
 import { captureError } from '../lib/errorLog.js';
@@ -154,7 +155,7 @@ export default function registerCollections(ctx) {
       // Snapshot what's actually owed right now - never trust a client-sent amount.
       const rows = await overdueRows(req);
       const { byName, keyOf } = await resolveClientKeys();
-      const matchRow = ageingByClient(rows, keyOf).find(r => r.client === clientKey);
+      const matchRow = ageingByClient(rows, keyOf).find(r => sameName(r.client, clientKey));
       const amountOwedAtTime = matchRow?.total || 0;
 
       const reminder = await CollectionReminder.create({

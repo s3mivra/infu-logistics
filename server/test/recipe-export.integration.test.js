@@ -64,7 +64,7 @@ describe('products export', () => {
     // Water is not stock and costs nothing.
     expect(latte[col('Recipe Cost')]).toBe(38.95);
     expect(latte[col('Margin %')]).toBe(74);
-    expect(latte[col('Size Prices')]).toContain('16oz 170');
+    expect(latte[col('Size Prices')]).toContain('16OZ 170');
     expect(res.body.columns.slice(0, 3)).toEqual(['Product Code', 'Name', 'Category']);
     expect(latte[col('Recipe Lines')]).toBe(4);
   });
@@ -85,7 +85,7 @@ describe('recipes export', () => {
 
   it('lists every line with its quantity in storage units and in packs', async () => {
     const { rows, col } = await sheet();
-    const beans = rows.find(r => r[col('Product')] === 'Latte' && r[col('Ingredient')] === 'BEANS PROFILE(2)' && r[col('Recipe')] === 'Base');
+    const beans = rows.find(r => r[col('Product')] === 'LATTE' && r[col('Ingredient')] === 'BEANS PROFILE(2)' && r[col('Recipe')] === 'Base');
     expect(beans[col('SRP')]).toBe(150);
     expect(beans[col('Size')]).toBe('');
     expect(beans[col('Qty')]).toBe(18);
@@ -99,7 +99,7 @@ describe('recipes export', () => {
 
   it('counts an imported line against the bag, not against its own unit', async () => {
     const { rows, col } = await sheet();
-    const line = rows.find(r => r[col('Product')] === 'Imported Latte');
+    const line = rows.find(r => r[col('Product')] === 'IMPORTED LATTE');
     expect(line[col('Qty')]).toBe(18);
     expect(line[col('Unit')]).toBe('g');
     // The column beside it names a 1kg bag, so this has to be a fraction of
@@ -110,7 +110,7 @@ describe('recipes export', () => {
 
   it('puts size lines under their size, at the size price', async () => {
     const { rows, col } = await sheet();
-    const sizeLine = rows.find(r => r[col('Size')] === '16oz');
+    const sizeLine = rows.find(r => r[col('Size')] === '16OZ');
     expect(sizeLine[col('SRP')]).toBe(170);
     expect(sizeLine[col('Qty')]).toBe(200);
     expect(sizeLine[col('Qty (packs)')]).toBe(0.2);
@@ -129,20 +129,20 @@ describe('recipes export', () => {
 
   it('labels add-on lines so the importer can skip them', async () => {
     const { rows, col } = await sheet();
-    const addOn = rows.find(r => r[col('Recipe')] === 'Add-on: Extra Shot');
+    const addOn = rows.find(r => r[col('Recipe')] === 'Add-on: EXTRA SHOT');
     expect(addOn).toBeTruthy();
     expect(addOn[col('Size')]).toBe('');
   });
 
   it('still writes a row for a drink with no recipe, so its price comes back', async () => {
     const { rows, col } = await sheet();
-    const plain = rows.find(r => r[col('Product')] === 'Plain Espresso');
+    const plain = rows.find(r => r[col('Product')] === 'PLAIN ESPRESSO');
     expect(plain[col('SRP')]).toBe(90);
     expect(plain[col('Ingredient')]).toBe('');
   });
 
   it('leaves archived products out', async () => {
     const { rows, col } = await sheet();
-    expect(rows.some(r => r[col('Product')] === 'Retired Drink')).toBe(false);
+    expect(rows.some(r => r[col('Product')] === 'RETIRED DRINK')).toBe(false);
   });
 });

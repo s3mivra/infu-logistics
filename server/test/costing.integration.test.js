@@ -32,7 +32,7 @@ describe('costing sheets', () => {
     const created = await as('post', '/api/costing/sheets').send({ name: 'Iced Latte 16oz', method: 'markup', rate: 60, lines: [{ kind: 'amount', name: 'Cup', amount: 6 }], lastCost: 6, lastSrp: 10 });
     expect(created.status, JSON.stringify(created.body)).toBe(200);
     const id = created.body.sheet._id;
-    expect((await as('get', '/api/costing/sheets')).body.sheets.map(s => s.name)).toContain('Iced Latte 16oz');
+    expect((await as('get', '/api/costing/sheets')).body.sheets.map(s => s.name)).toContain('ICED LATTE 16OZ');
     const changed = await as('put', `/api/costing/sheets/${id}`).send({ name: 'Iced Latte 16oz', rate: 70, lines: [], appliedPrice: 120 });
     expect(changed.body.sheet).toMatchObject({ rate: 70, appliedPrice: 120 });
     expect(changed.body.sheet.appliedAt).toBeTruthy();

@@ -76,7 +76,7 @@ describe('the delivery sheet', () => {
     const sheet = res.body;
     // Still to go first (by address, no address last), delivered at the end.
     expect(sheet.stops.map(s => s.orderNumber)).toEqual(['DS-A', 'DS-B', 'DS-OLD', 'DS-DONE']);
-    expect(sheet.stops.find(s => s.orderNumber === 'DS-B')).toMatchObject({ collect: 400, pieces: 5, note: 'gate 3', items: ['3 x Box of Cups', '2 x Lids'] });
+    expect(sheet.stops.find(s => s.orderNumber === 'DS-B')).toMatchObject({ collect: 400, pieces: 5, note: 'GATE 3', items: ['3 x BOX OF CUPS', '2 x LIDS'] });
     expect(sheet.stops.find(s => s.orderNumber === 'DS-A').collect).toBe(0);            // on account: nothing at the door
     expect(sheet.stops.find(s => s.orderNumber === 'DS-OLD').carriedOver).toBe(true);
     expect(sheet.stops.find(s => s.orderNumber === 'DS-DONE')).toMatchObject({ done: true, collect: 0 });

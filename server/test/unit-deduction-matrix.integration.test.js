@@ -137,7 +137,7 @@ describe('the recipe, as the coded sheet writes it', () => {
   });
 
   it('keeps water and ice as measured lines that are not stock', () => {
-    expect(product.baseRecipe.find(l => l.name === 'Water')).toMatchObject({ qty: 35, unit: 'ml', nonStock: true });
+    expect(product.baseRecipe.find(l => l.name === 'WATER')).toMatchObject({ qty: 35, unit: 'ml', nonStock: true });
     expect(product.sizes[0].recipe.find(l => l.name === 'Ice')).toMatchObject({ qty: 100, unit: 'g', nonStock: true });
   });
 });

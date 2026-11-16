@@ -40,7 +40,7 @@ const forecast = async () => {
 describe('reorder forecast', () => {
   it('lists what sells, at the pace of the days actually traded, and leaves out what does not', async () => {
     const d = await forecast();
-    const row = d.reorderForecast.find(x => x.itemName === 'Fast Syrup');
+    const row = d.reorderForecast.find(x => x.itemName === 'FAST SYRUP');
     expect(row, JSON.stringify(d.reorderForecast)).toBeTruthy();
     expect(row.stockQty).toBe(20);
     expect(row.dailyUse).toBeCloseTo(20, 5);          // one day of history, not 20 / 30
@@ -48,7 +48,7 @@ describe('reorder forecast', () => {
     expect(row.status).toBe('now');
     // 14 days + 7 delivery + 3 spare = 24 days x 20, less the 20 on hand.
     expect(row.buy14).toBe(460);
-    expect(d.reorderForecast.find(x => x.itemName === 'Idle Syrup')).toBeUndefined();
+    expect(d.reorderForecast.find(x => x.itemName === 'IDLE SYRUP')).toBeUndefined();
     expect(d.forecastSettings).toMatchObject({ leadTimeDays: 7, safetyDays: 3, historyDays: 1 });
   });
 
@@ -57,7 +57,7 @@ describe('reorder forecast', () => {
       poNumber: 'PO-FC-1', supplier: 'Any', status: 'Ordered',
       lines: [{ invId: fast._id, itemName: 'Fast Syrup', orderedQty: 300, receivedQty: 0, unitCost: 10 }],
     });
-    const row = (await forecast()).reorderForecast.find(x => x.itemName === 'Fast Syrup');
+    const row = (await forecast()).reorderForecast.find(x => x.itemName === 'FAST SYRUP');
     expect(row.onOrder).toBe(300);
     expect(row.buy14).toBe(160);
     expect(row.status).toBe('soon');                  // 320 covered at 20 a day = 16 days: past delivery + spare, inside the week after
@@ -71,16 +71,16 @@ describe('suggested purchase order', () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     // 320 covers the 24 days asked for, but not Stock movement's 30 + 7 + 3:
     // the draft asks for what Analytics says to buy, less what is on order.
-    const mv = async () => (await auth('get', '/api/analytics/stock-movement')).body.rows.find(x => x.itemName === 'FAST SYRUP' || x.itemName === 'Fast Syrup');
-    const covered = r.body.lines.find(l => l.itemName === 'Fast Syrup');
+    const mv = async () => (await auth('get', '/api/analytics/stock-movement')).body.rows.find(x => x.itemName === 'FAST SYRUP' || x.itemName === 'FAST SYRUP');
+    const covered = r.body.lines.find(l => l.itemName === 'FAST SYRUP');
     expect(covered.suggestedOrder).toBe(Math.ceil((await mv()).recommend));
     await mongoose.model('PurchaseOrder').updateOne({ poNumber: 'PO-FC-1' }, { $set: { status: 'Cancelled' } });
     const again = await auth('get', '/api/reports/purchase-order?days=14');
-    const line = again.body.lines.find(l => l.itemName === 'Fast Syrup');
+    const line = again.body.lines.find(l => l.itemName === 'FAST SYRUP');
     expect(line, JSON.stringify(again.body.lines)).toBeTruthy();
     // Nothing on order now: at least the 460 the 24-day rule needs, and 300 more than before.
     expect(line.suggestedOrder).toBeGreaterThanOrEqual(460);
     expect(line.suggestedOrder - covered.suggestedOrder).toBe(300);
-    expect(again.body.lines.find(l => l.itemName === 'Idle Syrup')).toBeUndefined();
+    expect(again.body.lines.find(l => l.itemName === 'IDLE SYRUP')).toBeUndefined();
   });
 });

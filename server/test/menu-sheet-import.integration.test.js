@@ -24,10 +24,10 @@ const CATEGORY = (n) => [n, ...Array(14).fill('')];
 
 const SHEET = [
   HEADER,
-  CATEGORY('Specialty Black & White'),
+  CATEGORY('SPECIALTY BLACK & WHITE'),
   // "1/1" for the cup and lid, as Excel mangled it into a date.
-  row('Long Black', '8oz Hot', [['G60004/G60008', 46023], ['G10002/Water', '20g/35ml']], 100),
-  row('', '12oz Iced', [['G60004/G60008', 46023], ['G10002/Water', '20g/35ml'], ['Ice', '100g']], 120),
+  row('Long Black', '8OZ HOT', [['G60004/G60008', 46023], ['G10002/Water', '20g/35ml']], 100),
+  row('', '12OZ ICED', [['G60004/G60008', 46023], ['G10002/Water', '20g/35ml'], ['Ice', '100g']], 120),
 ];
 
 beforeAll(async () => {
@@ -82,12 +82,12 @@ describe('importing it', () => {
     expect(res.body.success).toBe(true);
 
     const p = await M('Product').findOne({ name: 'Long Black' }).lean();
-    expect(p.category).toBe('Specialty Black & White');
+    expect(p.category).toBe('SPECIALTY BLACK & WHITE');
     // The register lists the base size and then the extras. Repeating the first
     // row in both would show "8oz Hot" on the menu twice.
-    expect(p.baseSize).toBe('8oz Hot');
+    expect(p.baseSize).toBe('8OZ HOT');
     expect(p.basePrice).toBe(100);
-    expect(p.sizes.map(s => s.name)).toEqual(['12oz Iced']);
+    expect(p.sizes.map(s => s.name)).toEqual(['12OZ ICED']);
     expect(p.sizes.map(s => s.price)).toEqual([120]);
   });
 
@@ -101,12 +101,12 @@ describe('importing it', () => {
     await commit();
     const p = await M('Product').findOne({ name: 'Long Black' }).lean();
 
-    const beans = p.baseRecipe.find(r => r.name === 'Espresso Beans');
+    const beans = p.baseRecipe.find(r => r.name === 'ESPRESSO BEANS');
     expect(beans.qty).toBe(20);
     expect(beans.unit).toBe('g');      // not 'kg', which is only how stock is shown
     expect(beans.packBase).toBe(1);    // one base unit per unit: no pack to divide by
 
-    const cup = p.baseRecipe.find(r => r.name === '8oz Hot Cup');
+    const cup = p.baseRecipe.find(r => r.name === '8OZ HOT CUP');
     expect(cup.qty).toBe(1);
     expect(cup.unit).toBe('pcs');
     expect(cup.packBase).toBe(1);
@@ -115,7 +115,7 @@ describe('importing it', () => {
   it('links an ingredient by its stock code, in base units', async () => {
     await commit();
     const p = await M('Product').findOne({ name: 'Long Black' }).lean();
-    const beans = p.baseRecipe.find(r => r.name === 'Espresso Beans');
+    const beans = p.baseRecipe.find(r => r.name === 'ESPRESSO BEANS');
 
     expect(beans.invId).toBeTruthy();         // matched on G10002, not by name
     expect(beans.qty).toBe(20);               // 20 g, stored in base units
@@ -125,7 +125,7 @@ describe('importing it', () => {
   it('counts a unitless quantity as one piece', async () => {
     await commit();
     const p = await M('Product').findOne({ name: 'Long Black' }).lean();
-    const cup = p.baseRecipe.find(r => r.name === '8oz Hot Cup');
+    const cup = p.baseRecipe.find(r => r.name === '8OZ HOT CUP');
     // "1/1" survived Excel turning it into a date.
     expect(cup.qty).toBe(1);
   });
@@ -133,7 +133,7 @@ describe('importing it', () => {
   it('records what is not stock without deducting or costing it', async () => {
     await commit();
     const p = await M('Product').findOne({ name: 'Long Black' }).lean();
-    const water = p.baseRecipe.find(r => r.name === 'Water');
+    const water = p.baseRecipe.find(r => r.name === 'WATER');
 
     expect(water.nonStock).toBe(true);
     expect(water.qty).toBe(35);
@@ -154,7 +154,7 @@ describe('importing it', () => {
 describe('a sheet the reader cannot make sense of', () => {
   it('reports the row instead of guessing which quantity belongs to what', async () => {
     const res = await auth('post', '/api/products/menu-sheet/parse').send({
-      rows: [HEADER, CATEGORY('Matcha'), row('Seasalt Einspanner', '12oz Iced', [['Water', '40ml/40ml']], 180)],
+      rows: [HEADER, CATEGORY('Matcha'), row('Seasalt Einspanner', '12OZ ICED', [['Water', '40ml/40ml']], 180)],
     });
     expect(res.body.counts.needingReview).toBe(1);
     expect(res.body.problems[0].problems[0].kind).toBe('count-mismatch');
@@ -174,8 +174,8 @@ describe('a sheet the reader cannot make sense of', () => {
 describe('re-importing a drink that lost a size', () => {
   const HOT_ONLY = [
     HEADER,
-    CATEGORY('Specialty Black & White'),
-    row('Long Black', '8oz Hot', [['G10002/Water', '20g/35ml']], 100),
+    CATEGORY('SPECIALTY BLACK & WHITE'),
+    row('Long Black', '8OZ HOT', [['G10002/Water', '20g/35ml']], 100),
   ];
 
   const commit = async (sheet, opts = {}) => {
@@ -189,13 +189,13 @@ describe('re-importing a drink that lost a size', () => {
 
   it('takes the dropped size off the product', async () => {
     await commit(SHEET, { replaceSizes: true });
-    expect((await M('Product').findOne({ name: 'Long Black' }).lean()).sizes.map(s => s.name)).toEqual(['12oz Iced']);
+    expect((await M('Product').findOne({ name: 'LONG BLACK' }).lean()).sizes.map(s => s.name)).toEqual(['12OZ ICED']);
 
     await commit(HOT_ONLY, { replaceSizes: true });
     const p = await M('Product').findOne({ name: 'Long Black' }).lean();
     // One row in the sheet, one size on the menu. The iced cup is gone.
     expect(p.sizes).toEqual([]);
-    expect(p.baseSize).toBe('8oz Hot');
+    expect(p.baseSize).toBe('8OZ HOT');
     expect(p.baseRecipe.length).toBeGreaterThan(0);
   });
 
@@ -205,7 +205,7 @@ describe('re-importing a drink that lost a size', () => {
     // what an operator set up by hand would be destructive rather than tidy.
     await commit(HOT_ONLY);
     const p = await M('Product').findOne({ name: 'Long Black' }).lean();
-    expect(p.sizes.map(s => s.name)).toEqual(['12oz Iced']);
+    expect(p.sizes.map(s => s.name)).toEqual(['12OZ ICED']);
   });
 });
 
@@ -225,7 +225,7 @@ describe('the base recipe after import', () => {
     const p = await M('Product').findOne({ name: 'Long Black' }).lean();
     expect(p.baseRecipe.length).toBeGreaterThan(0);
 
-    const beans = p.baseRecipe.find(r => r.name === 'Espresso Beans');
+    const beans = p.baseRecipe.find(r => r.name === 'ESPRESSO BEANS');
     expect(beans.qty).toBe(20);
     // The 8oz hot row is first, so the base is the hot recipe - no ice.
     expect(p.baseRecipe.some(r => r.name === 'Ice')).toBe(false);

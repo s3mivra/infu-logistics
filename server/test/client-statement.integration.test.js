@@ -129,9 +129,9 @@ describe('a statement of account', () => {
 
   it('carries the client details a printed statement has to show', async () => {
     const res = await statement(iso(daysAgo(10)), iso(new Date()));
-    expect(res.body.client.name).toBe('Northwind Trading');
+    expect(res.body.client.name).toBe('NORTHWIND TRADING');
     expect(res.body.client.tin).toBe('123-456-789-000');
-    expect(res.body.client.registeredName).toBe('Northwind Trading Corp.');
+    expect(res.body.client.registeredName).toBe('NORTHWIND TRADING CORP.');
   });
 });
 

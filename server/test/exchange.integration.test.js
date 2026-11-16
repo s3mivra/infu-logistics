@@ -75,7 +75,7 @@ describe('exchange - upgrade (replacement costs more)', () => {
     expect(updated.items[0].refundedQty).toBe(1); // the returned unit tracked on the original line
     const newLine = updated.items.find(i => i.addedViaExchange);
     expect(newLine).toBeTruthy();
-    expect(newLine.name).toBe('Widget Pricier');
+    expect(newLine.name).toBe('WIDGET PRICIER');
     expect(newLine.quantity).toBe(1);
     expect(updated.total).toBeCloseTo(200 + 50, 2); // original total + net delta
 

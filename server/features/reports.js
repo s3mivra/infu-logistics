@@ -2,7 +2,7 @@
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
 import { atomic } from '../lib/atomicRoute.js';
-import { sameName } from '../lib/caps.js';
+import { sameName, nameKeyOf } from '../lib/caps.js';
 import { roundMoney } from '../lib/money.js';
 import { buildCashFlow } from '../lib/cashFlow.js';
 import { dayStart, dayEnd } from '../lib/reportRange.js';
@@ -994,7 +994,7 @@ app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, require
       // An add-on's own recipe, for the ones a product does not carry a copy of.
       AddOn.find({}, { name: 1, recipe: 1 }).lean(),
     ]);
-    const addOnMap = Object.fromEntries(globalAddOns.map(a => [a.name, a.recipe || []]));
+    const addOnMap = Object.fromEntries(globalAddOns.map(a => [nameKeyOf(a.name), a.recipe || []]));
     const prodMap = Object.fromEntries(prods.map(p => [p._id.toString(), p]));
     const invMap = {};
     invItems.forEach(i => { invMap[i._id.toString()] = i; if (i.itemCode) invMap[i.itemCode] = i; if (i.itemName) invMap[i.itemName] = i; });
@@ -1344,7 +1344,7 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, requi
       // An add-on's own recipe, for the ones a product does not carry a copy of.
       AddOn.find({}, { name: 1, recipe: 1 }).lean(),
     ]);
-    const addOnMap = Object.fromEntries(globalAddOns.map(a => [a.name, a.recipe || []]));
+    const addOnMap = Object.fromEntries(globalAddOns.map(a => [nameKeyOf(a.name), a.recipe || []]));
     const prodMap  = Object.fromEntries(prods.map(p => [p._id.toString(), p]));
     const invMap   = {};
     invItems.forEach(i => { invMap[i._id.toString()] = i; if (i.itemCode) invMap[i.itemCode] = i; if (i.itemName) invMap[i.itemName] = i; });

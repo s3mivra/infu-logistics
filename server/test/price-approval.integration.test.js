@@ -60,7 +60,7 @@ describe('a price edit without approval rights', () => {
     expect(res.status).toBe(200);
 
     const after = await Product().findById(prod._id).lean();
-    expect(after.name).toBe('Renamed Widget');   // applied
+    expect(after.name).toBe('RENAMED WIDGET');   // applied
     expect(after.basePrice).toBe(250);           // held
   });
 

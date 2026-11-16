@@ -59,7 +59,7 @@ describe('paying staff', () => {
     expect(cv.purpose).toBe('payroll');
     expect(cv.amount).toBeCloseTo(16900, 2);        // gross less the deductions held back
     expect(cv.sourceAccount).toBe('112000');
-    expect(cv.payeeName).toMatch(/Payroll/);
+    expect(cv.payeeName).toMatch(/Payroll/i);
     expect(cv.journalEntryRef).toBe(res.body.reference);
     expect(cv.status).toBe('Issued');
   });
@@ -80,7 +80,7 @@ describe('paying staff', () => {
 describe('paying an expense', () => {
   const expense = (paymentMethod) => auth('post', '/api/expenses').send({
     amount: 3500, categoryCode: '630000', description: 'March electricity',
-    vendor: 'Meralco', refNo: 'OR-99120', paymentMethod,
+    vendor: 'MERALCO', refNo: 'OR-99120', paymentMethod,
   });
 
   it('issues a voucher when it is actually paid out', async () => {
@@ -89,7 +89,7 @@ describe('paying an expense', () => {
 
     const [cv] = await vouchers();
     expect(cv.purpose).toBe('expense');
-    expect(cv.payeeName).toBe('Meralco');
+    expect(cv.payeeName).toBe('MERALCO');
     expect(cv.amount).toBeCloseTo(3500, 2);
     expect(cv.referenceNumber).toBe('OR-99120');
   });
@@ -114,7 +114,7 @@ describe('opening a petty-cash float', () => {
     expect(cv.purpose).toBe('petty-cash');
     expect(cv.amount).toBeCloseTo(5000, 2);
     expect(cv.sourceAccount).toBe('112000');
-    expect(cv.payeeName).toMatch(/Front desk float/);
+    expect(cv.payeeName).toMatch(/Front desk float/i);
   });
 });
 
@@ -122,14 +122,14 @@ describe('the voucher itself', () => {
   it('carries everything the printed document needs', async () => {
     await auth('post', '/api/expenses').send({
       amount: 1200, categoryCode: '630000', description: 'Water delivery',
-      vendor: 'Aqua Co', paymentMethod: 'Cash',
+      vendor: 'AQUA CO', paymentMethod: 'Cash',
     });
     const [cv] = await vouchers();
 
     // Who, how much, out of what, under whose authority, and against which
     // entry - a voucher missing any of these cannot be filed.
     expect(cv.voucherNumber).toMatch(/^CV-\d{4}-\d{6}$/);
-    expect(cv.payeeName).toBe('Aqua Co');
+    expect(cv.payeeName).toBe('AQUA CO');
     expect(cv.amount).toBeCloseTo(1200, 2);
     expect(cv.sourceAccountName).toBeTruthy();
     expect(cv.issuedBy).toBe('CvSuper');
@@ -223,7 +223,7 @@ describe('petty cash', () => {
     expect(cv.purpose).toBe('petty-cash');
     expect(cv.sourceAccount).toBe('114000');       // it left the float
     expect(cv.amount).toBeCloseTo(350, 2);
-    expect(cv.payeeName).toBe('Taxi for a delivery');
+    expect(cv.payeeName).toBe('TAXI FOR A DELIVERY');
   });
 });
 
@@ -263,7 +263,7 @@ describe('a voucher written by hand', () => {
     const before = await M('JournalEntry').countDocuments({});
     const r = await auth('post', '/api/check-vouchers').send(body);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
-    expect(r.body.voucher).toMatchObject({ payeeName: 'Juan Dela Cruz', amount: 1500, sourceAccount: '112000', referenceNumber: 'CHK-0091', status: 'Issued' });
+    expect(r.body.voucher).toMatchObject({ payeeName: 'JUAN DELA CRUZ', amount: 1500, sourceAccount: '112000', referenceNumber: 'CHK-0091', status: 'Issued' });
     const je = await M('JournalEntry').findOne({ reference: r.body.journalReference }).lean();
     expect(je.lines.map(l => [l.accountCode, l.debit, l.credit])).toEqual([['760000', 1500, 0], ['112000', 0, 1500]]);
     expect(await M('JournalEntry').countDocuments({})).toBe(before + 1);

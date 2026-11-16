@@ -36,7 +36,7 @@ describe('an item a recipe takes from', () => {
   it('cannot change what it is counted in', async () => {
     const res = await auth('put', `/api/inventory/${beans._id}`).send({ displayUnit: 'L', unit: 'ml', unitMultiplier: 1000 });
     expect(res.status).toBe(409);
-    expect(res.body.usedIn).toContain('Latte');
+    expect(res.body.usedIn).toContain('LATTE');
     expect((await M('Inventory').findById(beans._id).lean()).unit).toBe('g');
   });
 
@@ -50,7 +50,7 @@ describe('an item a recipe takes from', () => {
     await M('AddOn').create({ name: 'Vanilla', price: 20, recipe: [{ invId: String(syrup._id), name: 'VANILLA SYRUP', qty: 15, unit: 'g' }] });
     const res = await auth('put', `/api/inventory/${syrup._id}`).send({ displayUnit: 'ml', unit: 'ml' });
     expect(res.status).toBe(409);
-    expect(res.body.usedIn).toContain('add-on Vanilla');
+    expect(res.body.usedIn).toContain('add-on VANILLA');
   });
 });
 

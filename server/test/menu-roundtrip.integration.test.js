@@ -69,7 +69,7 @@ describe('menu export -> import round trip', () => {
 
     const back = await Product.findOne({ name: 'Latte' }).lean();
     expect(back.basePrice).toBe(150);
-    expect(back.category).toBe('Coffee');
+    expect(back.category).toBe('COFFEE');
 
     const base = Object.fromEntries(back.baseRecipe.map(l => [l.name, l]));
     // Exactly the three base lines - the add-on's 9g of beans must NOT be here.
@@ -81,7 +81,7 @@ describe('menu export -> import round trip', () => {
     expect(base['FILTERED WATER'].qty).toBe(200);
 
     expect(back.sizes).toHaveLength(1);
-    expect(back.sizes[0].name).toBe('16oz');
+    expect(back.sizes[0].name).toBe('16OZ');
     expect(back.sizes[0].price).toBe(170);
     const sz = Object.fromEntries(back.sizes[0].recipe.map(l => [l.name, l]));
     expect(sz['ALASKA BARISTA MILK'].qty).toBeCloseTo(200, 9);

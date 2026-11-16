@@ -60,10 +60,10 @@ describe('manual order price tier', () => {
 
   it('the catalogue previews the tier for staff, and ignores it for anyone else', async () => {
     const staff = await auth('get', '/api/products?priceTier=Dealer', cashierTok);
-    const row = staff.body.products.find((p) => p.name === 'Tier Picker Item');
+    const row = staff.body.products.find((p) => p.name === 'TIER PICKER ITEM');
     expect(row.buyerUnitPrice).toBe(800);
     const anon = await request(app).get('/api/products?priceTier=Dealer');
-    const anonRow = (anon.body.products || anon.body).find((p) => p.name === 'Tier Picker Item');
+    const anonRow = (anon.body.products || anon.body).find((p) => p.name === 'TIER PICKER ITEM');
     expect(anonRow.buyerUnitPrice).toBeUndefined();
   });
 });

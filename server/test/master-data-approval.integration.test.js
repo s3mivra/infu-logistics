@@ -44,7 +44,7 @@ describe('supplier master data', () => {
   it("an approver's own change applies directly", async () => {
     const r = await as(tok.mdBoss, 'patch', `/api/suppliers/${supplierId}`).send({ registeredName: 'Metro Packaging Corp.' });
     expect(r.body.changeRequest).toBeUndefined();
-    expect((await M('Supplier').findById(supplierId).lean()).registeredName).toBe('Metro Packaging Corp.');
+    expect((await M('Supplier').findById(supplierId).lean()).registeredName).toBe('METRO PACKAGING CORP.');
   });
 });
 

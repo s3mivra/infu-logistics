@@ -82,7 +82,7 @@ describe('paying a purchase order up front', () => {
     const cv = await M('CheckVoucher').findOne({}).lean();
     expect(cv).toBeTruthy();
     expect(cv.amount).toBe(5000);
-    expect(cv.payeeName).toBe('Metro Beans');
+    expect(cv.payeeName).toBe('METRO BEANS');
   }, 30000);
 
   it('creates a supplier-type advance tied to the PO', async () => {

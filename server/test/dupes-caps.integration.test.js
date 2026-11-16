@@ -60,7 +60,7 @@ describe('duplicate names', () => {
     expect(same.body.duplicateOf).toBeUndefined();
     const look = await post('/api/products', { ...base, name: 'Hibiscus-Tea' });
     expect(look.status).toBe(409);
-    expect(look.body.duplicateOf?.name).toBe('Hibiscus Tea');
+    expect(look.body.duplicateOf?.name).toBe('HIBISCUS TEA');
     const ok = await post('/api/products', { ...base, name: 'Hibiscus-Tea', allowDuplicate: true });
     expect(ok.status, JSON.stringify(ok.body)).toBeLessThan(300);
   });
@@ -68,7 +68,7 @@ describe('duplicate names', () => {
   it('a stock item written the same way keeps its own refusal', async () => {
     const a = await post('/api/inventory', { itemName: 'Milk', unit: 'ml', stockQty: 0 });
     expect(a.status, JSON.stringify(a.body)).toBeLessThan(300);
-    expect((await post('/api/inventory', { itemName: 'milk', unit: 'ml' })).body.error).toBe('Item already exists.');
+    expect((await post('/api/inventory', { itemName: 'MILK', unit: 'ml' })).body.error).toBe('Item already exists.');
     expect((await post('/api/inventory', { itemName: 'M.I.L.K', unit: 'ml' })).body.duplicateOf).toBeTruthy();
   });
 });
@@ -82,6 +82,6 @@ describe('duplicate transactions', () => {
     expect(again.body.duplicateOf?.label).toMatch(/ana/i);
     expect((await post('/api/admin/backdate-sale', { ...body, allowDuplicate: true })).status).toBe(200);
     // A different customer the same day is not a duplicate.
-    expect((await post('/api/admin/backdate-sale', { ...body, customerName: 'Ben' })).status).toBe(200);
+    expect((await post('/api/admin/backdate-sale', { ...body, customerName: 'BEN' })).status).toBe(200);
   });
 });

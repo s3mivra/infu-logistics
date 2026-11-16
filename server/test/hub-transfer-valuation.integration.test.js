@@ -59,7 +59,7 @@ describe('receiving a hub transfer', () => {
 
   it('posts the inbound journal entry at real value, not zero', async () => {
     const je = await mongoose.model('JournalEntry')
-      .findOne({ description: /Hub transfer in.*Imported Widget/ }).lean();
+      .findOne({ description: /Hub transfer in.*Imported Widget/i }).lean();
     expect(je).toBeTruthy();
     // 100 units x PHP 12 - the whole point: the receiving books show what the
     // goods are actually worth.

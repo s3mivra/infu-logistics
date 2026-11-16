@@ -40,18 +40,18 @@ async function makeInventory(itemName, unit = 'ml', unitCost = 0.5, itemCode = '
 }
 
 async function makeProduct(over = {}) {
-  const milk = await Inventory().findOne({ itemName: 'Full Milk' });
+  const milk = await Inventory().findOne({ itemName: 'FULL MILK' });
   return Product().create({
     productCode: 'BEV-0001', name: 'Spanish Latte', category: 'Coffee', basePrice: 150,
-    baseRecipe: milk ? [{ invId: String(milk._id), name: 'Full Milk', qty: 150, cost: 0.5, unit: 'ml' }] : [],
-    sizes: [{ sizeCode: 'L', name: 'Large', price: 180, recipe: milk ? [{ invId: String(milk._id), name: 'Full Milk', qty: 220, cost: 0.5, unit: 'ml' }] : [] }],
+    baseRecipe: milk ? [{ invId: String(milk._id), name: 'FULL MILK', qty: 150, cost: 0.5, unit: 'ml' }] : [],
+    sizes: [{ sizeCode: 'L', name: 'Large', price: 180, recipe: milk ? [{ invId: String(milk._id), name: 'FULL MILK', qty: 220, cost: 0.5, unit: 'ml' }] : [] }],
     ...over,
   });
 }
 
 describe('exporting a menu backup', () => {
   it('carries products, sizes and recipes with ingredient names', async () => {
-    await makeInventory('Full Milk');
+    await makeInventory('FULL MILK');
     await makeProduct();
 
     const res = await auth('get', '/api/products/menu-backup');
@@ -60,16 +60,16 @@ describe('exporting a menu backup', () => {
     expect(res.body.counts.products).toBe(1);
 
     const [p] = res.body.products;
-    expect(p.name).toBe('Spanish Latte');
+    expect(p.name).toBe('SPANISH LATTE');
     expect(p.basePrice).toBe(150);
     // The NAME is what survives a rebuild - it must be in the file.
-    expect(p.baseRecipe[0]).toMatchObject({ name: 'Full Milk', qty: 150, unit: 'ml' });
+    expect(p.baseRecipe[0]).toMatchObject({ name: 'FULL MILK', qty: 150, unit: 'ml' });
     expect(p.sizes[0]).toMatchObject({ sizeCode: 'L', price: 180 });
-    expect(p.sizes[0].recipe[0].name).toBe('Full Milk');
+    expect(p.sizes[0].recipe[0].name).toBe('FULL MILK');
   });
 
   it('carries the stock item code on every recipe line', async () => {
-    await makeInventory('Full Milk', 'ml', 0.5, 'RM-MILK-01');
+    await makeInventory('FULL MILK', 'ml', 0.5, 'RM-MILK-01');
     await makeProduct();
 
     const [p] = (await auth('get', '/api/products/menu-backup')).body.products;
@@ -78,7 +78,7 @@ describe('exporting a menu backup', () => {
   });
 
   it('excludes archived products unless asked', async () => {
-    await makeInventory('Full Milk');
+    await makeInventory('FULL MILK');
     await makeProduct({ name: 'Retired Drink', productCode: 'BEV-0009', isArchived: true });
 
     expect((await auth('get', '/api/products/menu-backup')).body.counts.products).toBe(0);
@@ -88,7 +88,7 @@ describe('exporting a menu backup', () => {
 
 describe('restoring into a rebuilt database', () => {
   it('re-links recipes by name when every invId has changed', async () => {
-    await makeInventory('Full Milk');
+    await makeInventory('FULL MILK');
     await makeProduct();
     const backup = (await auth('get', '/api/products/menu-backup')).body;
     const oldInvId = backup.products[0].baseRecipe[0].invId;
@@ -96,7 +96,7 @@ describe('restoring into a rebuilt database', () => {
     // Simulate the rebuild: wipe everything and recreate stock with NEW ids.
     await Product().deleteMany({});
     await Inventory().deleteMany({});
-    const rebuilt = await makeInventory('Full Milk', 'ml', 0.75);
+    const rebuilt = await makeInventory('FULL MILK', 'ml', 0.75);
     expect(String(rebuilt._id)).not.toBe(oldInvId);
 
     const res = await auth('post', '/api/products/menu-backup/restore').send({ backup });
@@ -114,13 +114,13 @@ describe('restoring into a rebuilt database', () => {
 
   it('re-links by stock code even when the item has been RENAMED', async () => {
     // The case name-matching alone cannot survive: same stock, new label.
-    await makeInventory('Full Milk', 'ml', 0.5, 'RM-MILK-01');
+    await makeInventory('FULL MILK', 'ml', 0.5, 'RM-MILK-01');
     await makeProduct();
     const backup = (await auth('get', '/api/products/menu-backup')).body;
 
     await Product().deleteMany({});
     await Inventory().deleteMany({});
-    const renamed = await makeInventory('Alaska Barista Fresh Milk', 'ml', 0.9, 'RM-MILK-01');
+    const renamed = await makeInventory('ALASKA BARISTA FRESH MILK', 'ml', 0.9, 'RM-MILK-01');
 
     const res = await auth('post', '/api/products/menu-backup/restore').send({ backup });
     expect(res.body.unmatchedIngredients).toEqual([]);
@@ -129,18 +129,18 @@ describe('restoring into a rebuilt database', () => {
 
     const restored = await Product().findOne({ name: 'Spanish Latte' }).lean();
     expect(restored.baseRecipe[0].invId).toBe(String(renamed._id));
-    expect(restored.baseRecipe[0].name).toBe('Alaska Barista Fresh Milk'); // takes the CURRENT name
+    expect(restored.baseRecipe[0].name).toBe('ALASKA BARISTA FRESH MILK'); // takes the CURRENT name
     expect(restored.baseRecipe[0].qty).toBe(150);
   });
 
   it('still falls back to the name when the stock code has changed', async () => {
-    await makeInventory('Full Milk', 'ml', 0.5, 'RM-MILK-01');
+    await makeInventory('FULL MILK', 'ml', 0.5, 'RM-MILK-01');
     await makeProduct();
     const backup = (await auth('get', '/api/products/menu-backup')).body;
 
     await Product().deleteMany({});
     await Inventory().deleteMany({});
-    await makeInventory('Full Milk', 'ml', 0.5, 'RM-TOTALLY-DIFFERENT');
+    await makeInventory('FULL MILK', 'ml', 0.5, 'RM-TOTALLY-DIFFERENT');
 
     const res = await auth('post', '/api/products/menu-backup/restore').send({ backup });
     expect(res.body.unmatchedIngredients).toEqual([]);
@@ -148,7 +148,7 @@ describe('restoring into a rebuilt database', () => {
   });
 
   it('reports an ingredient it cannot find instead of dropping it silently', async () => {
-    await makeInventory('Full Milk');
+    await makeInventory('FULL MILK');
     await makeProduct();
     const backup = (await auth('get', '/api/products/menu-backup')).body;
 
@@ -157,34 +157,34 @@ describe('restoring into a rebuilt database', () => {
 
     const res = await auth('post', '/api/products/menu-backup/restore').send({ backup });
     expect(res.body.created).toBe(1);
-    expect(res.body.unmatchedIngredients).toContain('Full Milk');
+    expect(res.body.unmatchedIngredients).toContain('FULL MILK');
     const restored = await Product().findOne({ name: 'Spanish Latte' }).lean();
     expect(restored.baseRecipe).toHaveLength(0); // reported, not silently wrong
   });
 
   it('refuses to match an ingredient tracked in a different dimension', async () => {
-    await makeInventory('Full Milk');
+    await makeInventory('FULL MILK');
     await makeProduct();
     const backup = (await auth('get', '/api/products/menu-backup')).body;
 
     await Product().deleteMany({});
     await Inventory().deleteMany({});
-    await makeInventory('Full Milk', 'pcs', 3); // same name, but counted not poured
+    await makeInventory('FULL MILK', 'pcs', 3); // same name, but counted not poured
 
     const res = await auth('post', '/api/products/menu-backup/restore').send({ backup });
-    expect(res.body.unmatchedIngredients.join(' ')).toMatch(/Full Milk/);
+    expect(res.body.unmatchedIngredients.join(' ')).toMatch(/Full Milk/i);
     const restored = await Product().findOne({ name: 'Spanish Latte' }).lean();
     expect(restored.baseRecipe).toHaveLength(0);
   });
 
   it('keeps the original product code when it is still free', async () => {
-    await makeInventory('Full Milk');
+    await makeInventory('FULL MILK');
     await makeProduct();
     const backup = (await auth('get', '/api/products/menu-backup')).body;
     await Product().deleteMany({});
 
     await auth('post', '/api/products/menu-backup/restore').send({ backup });
-    expect((await Product().findOne({ name: 'Spanish Latte' }).lean()).productCode).toBe('BEV-0001');
+    expect((await Product().findOne({ name: 'SPANISH LATTE' }).lean()).productCode).toBe('BEV-0001');
   });
 });
 
@@ -192,7 +192,7 @@ describe('the rest of the menu, not just products', () => {
   const M = (n) => mongoose.model(n);
 
   async function seedEverything() {
-    await makeInventory('Full Milk', 'ml', 0.5, 'RM-MILK-01');
+    await makeInventory('FULL MILK', 'ml', 0.5, 'RM-MILK-01');
     await makeProduct();
     await M('Category').create({ name: 'Coffee', department: 'Bar' });
     await M('ModifierGroup').create({
@@ -221,11 +221,11 @@ describe('the rest of the menu, not just products', () => {
     expect(b.counts).toMatchObject({
       products: 1, categories: 1, modifierGroups: 1, addOns: 1, discounts: 1, discountRules: 1,
     });
-    expect(b.categories[0]).toMatchObject({ name: 'Coffee', department: 'Bar' });
-    expect(b.addOns[0]).toMatchObject({ name: 'Extra Shot', price: 30, category: 'Coffee Extras' });
+    expect(b.categories[0]).toMatchObject({ name: 'COFFEE', department: 'Bar' });
+    expect(b.addOns[0]).toMatchObject({ name: 'EXTRA SHOT', price: 30, category: 'COFFEE EXTRAS' });
     expect(b.discounts[0]).toMatchObject({ name: 'Senior Citizen', percentage: 20, isSCPWD: true });
     expect(b.discountRules[0]).toMatchObject({ name: 'Happy Hour', percent: 15, priority: 2, minSubtotal: 200 });
-    expect(b.combos[0]).toMatchObject({ name: 'Latte + Shot', price: 170 });
+    expect(b.combos[0]).toMatchObject({ name: 'LATTE + SHOT', price: 170 });
   });
 
   it('keeps the modifier group selection rules', async () => {
@@ -233,7 +233,7 @@ describe('the rest of the menu, not just products', () => {
     const b = (await auth('get', '/api/products/menu-backup')).body;
     // These are the fields that actually drive the POS prompt - losing them
     // would turn an optional 0-3 pick into a forced single choice.
-    expect(b.modifierGroups[0]).toMatchObject({ name: 'Sugar Level', isRequired: false, minSelect: 0, maxSelect: 3 });
+    expect(b.modifierGroups[0]).toMatchObject({ name: 'SUGAR LEVEL', isRequired: false, minSelect: 0, maxSelect: 3 });
     expect(b.modifierGroups[0].options).toHaveLength(2);
   });
 
@@ -241,7 +241,7 @@ describe('the rest of the menu, not just products', () => {
     await seedEverything();
     const backup = (await auth('get', '/api/products/menu-backup')).body;
     await wipeAll();
-    await makeInventory('Full Milk', 'ml', 0.5, 'RM-MILK-01');
+    await makeInventory('FULL MILK', 'ml', 0.5, 'RM-MILK-01');
 
     const res = await auth('post', '/api/products/menu-backup/restore').send({ backup });
     expect(res.status).toBe(200);
@@ -260,7 +260,7 @@ describe('the rest of the menu, not just products', () => {
     await seedEverything();
     const backup = (await auth('get', '/api/products/menu-backup')).body;
     await wipeAll();
-    await makeInventory('Full Milk', 'ml', 0.5, 'RM-MILK-01');
+    await makeInventory('FULL MILK', 'ml', 0.5, 'RM-MILK-01');
 
     await auth('post', '/api/products/menu-backup/restore').send({ backup });
     const product = await M('Product').findOne({ name: 'Spanish Latte' }).lean();
@@ -276,7 +276,7 @@ describe('the rest of the menu, not just products', () => {
 
     const res = await auth('post', '/api/products/menu-backup/restore').send({ backup });
     expect(res.body.added.combos).toBe(0);
-    expect(res.body.incompleteCombos).toEqual([{ combo: 'Latte + Shot', missing: ['Spanish Latte'] }]);
+    expect(res.body.incompleteCombos).toEqual([{ combo: 'LATTE + SHOT', missing: ['SPANISH LATTE'] }]);
     expect(await M('Combo').countDocuments({})).toBe(0); // never half-built
   });
 
@@ -294,7 +294,7 @@ describe('the rest of the menu, not just products', () => {
 
 describe('restoring over a live menu', () => {
   it('skips products already on the menu by default', async () => {
-    await makeInventory('Full Milk');
+    await makeInventory('FULL MILK');
     await makeProduct();
     const backup = (await auth('get', '/api/products/menu-backup')).body;
     backup.products[0].basePrice = 999; // a stale price in the backup
@@ -303,22 +303,22 @@ describe('restoring over a live menu', () => {
     expect(res.body.skipped).toBe(1);
     expect(res.body.created).toBe(0);
     // Hand-tuned pricing must not be clobbered by a stale file.
-    expect((await Product().findOne({ name: 'Spanish Latte' }).lean()).basePrice).toBe(150);
+    expect((await Product().findOne({ name: 'SPANISH LATTE' }).lean()).basePrice).toBe(150);
   });
 
   it('overwrites only when explicitly asked', async () => {
-    await makeInventory('Full Milk');
+    await makeInventory('FULL MILK');
     await makeProduct();
     const backup = (await auth('get', '/api/products/menu-backup')).body;
     backup.products[0].basePrice = 999;
 
     const res = await auth('post', '/api/products/menu-backup/restore').send({ backup, onConflict: 'overwrite' });
     expect(res.body.updated).toBe(1);
-    expect((await Product().findOne({ name: 'Spanish Latte' }).lean()).basePrice).toBe(999);
+    expect((await Product().findOne({ name: 'SPANISH LATTE' }).lean()).basePrice).toBe(999);
   });
 
   it('changes nothing on a dry run', async () => {
-    await makeInventory('Full Milk');
+    await makeInventory('FULL MILK');
     await makeProduct();
     const backup = (await auth('get', '/api/products/menu-backup')).body;
     await Product().deleteMany({});
@@ -337,11 +337,11 @@ describe('restoring over a live menu', () => {
 // water gone from every drink, which understates COGS for good.
 describe('ingredients that are not stock', () => {
   const withWater = async () => {
-    const milk = await Inventory().findOne({ itemName: 'Full Milk' });
+    const milk = await Inventory().findOne({ itemName: 'FULL MILK' });
     return Product().create({
       productCode: 'BEV-0002', name: 'Cold Brew', category: 'Coffee', basePrice: 140,
       baseRecipe: [
-        { invId: String(milk._id), name: 'Full Milk', qty: 150, cost: 0.5, unit: 'ml', packBase: 1 },
+        { invId: String(milk._id), name: 'FULL MILK', qty: 150, cost: 0.5, unit: 'ml', packBase: 1 },
         { name: 'Filtered Water', qty: 200, cost: 0, unit: 'ml', nonStock: true, packBase: 1 },
       ],
       sizes: [{ sizeCode: 'L', name: 'Large', price: 170, recipe: [
@@ -351,19 +351,19 @@ describe('ingredients that are not stock', () => {
   };
 
   it('says so in the file, rather than leaving it to be guessed', async () => {
-    await makeInventory('Full Milk');
+    await makeInventory('FULL MILK');
     await withWater();
 
     const { body } = await auth('get', '/api/products/menu-backup');
-    const p = body.products.find(x => x.name === 'Cold Brew');
-    const water = p.baseRecipe.find(l => l.name === 'Filtered Water');
+    const p = body.products.find(x => x.name === 'COLD BREW');
+    const water = p.baseRecipe.find(l => l.name === 'FILTERED WATER');
     expect(water.nonStock).toBe(true);
     expect(water.qty).toBe(200);
-    expect(p.baseRecipe.find(l => l.name === 'Full Milk').nonStock).toBe(false);
+    expect(p.baseRecipe.find(l => l.name === 'FULL MILK').nonStock).toBe(false);
   });
 
   it('comes back whole, and is not reported as a missing ingredient', async () => {
-    await makeInventory('Full Milk');
+    await makeInventory('FULL MILK');
     await withWater();
     const backup = (await auth('get', '/api/products/menu-backup')).body;
 
@@ -375,7 +375,7 @@ describe('ingredients that are not stock', () => {
 
     const restored = await Product().findOne({ name: 'Cold Brew' }).lean();
     expect(restored.baseRecipe).toHaveLength(2);
-    const water = restored.baseRecipe.find(l => l.name === 'Filtered Water');
+    const water = restored.baseRecipe.find(l => l.name === 'FILTERED WATER');
     expect(water.nonStock).toBe(true);
     expect(water.qty).toBe(200);
     expect(water.unit).toBe('ml');
@@ -386,7 +386,7 @@ describe('ingredients that are not stock', () => {
   });
 
   it('survives a backup made before the flag existed', async () => {
-    await makeInventory('Full Milk');
+    await makeInventory('FULL MILK');
     await withWater();
     const backup = (await auth('get', '/api/products/menu-backup')).body;
     // An older file carries neither the flag nor a stock id or code - and a
@@ -400,7 +400,7 @@ describe('ingredients that are not stock', () => {
     await auth('post', '/api/products/menu-backup/restore').send({ backup });
 
     const restored = await Product().findOne({ name: 'Cold Brew' }).lean();
-    expect(restored.baseRecipe.find(l => l.name === 'Filtered Water')).toMatchObject({ qty: 200, nonStock: true });
+    expect(restored.baseRecipe.find(l => l.name === 'FILTERED WATER')).toMatchObject({ qty: 200, nonStock: true });
   });
 });
 

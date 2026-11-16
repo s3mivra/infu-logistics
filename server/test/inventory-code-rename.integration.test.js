@@ -37,7 +37,7 @@ describe('PUT /api/inventory/:id - itemCode rename', () => {
 
     const prod = await mongoose.model('Product').findOne({ productCode: 'RML-9001' }).lean();
     expect(prod).toBeTruthy();
-    expect(prod.name).toBe('Widget');
+    expect(prod.name).toBe('WIDGET');
     // Old code no longer resolves to a product.
     expect(await mongoose.model('Product').findOne({ productCode: 'RML-0001' }).lean()).toBeNull();
   });

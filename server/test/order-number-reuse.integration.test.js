@@ -78,7 +78,7 @@ describe('print name on a line', () => {
     });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const o = await mongoose.model('Order').findById(r.body.order._id).lean();
-    expect(o.items[0].printName).toBe('House Blend 1kg');
-    expect(o.items[0].name).toBe('Open Item');
+    expect(o.items[0].printName).toBe('HOUSE BLEND 1KG');
+    expect(o.items[0].name).toBe('OPEN ITEM');
   });
 });

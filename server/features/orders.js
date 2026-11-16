@@ -887,7 +887,7 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
     }
     // A size is identified by sizeName, or by the "Name (Size)" label the POS builds.
     const sizeName = item.sizeName
-      || ((item.name || '').startsWith(`${product.name} (`) && item.name.endsWith(')') ? item.name.slice(product.name.length + 2, -1) : '');
+      || (nameKeyOf(item.name).startsWith(`${nameKeyOf(product.name)} (`) && String(item.name).trim().endsWith(')') ? String(item.name).trim().slice(nameKeyOf(product.name).length + 2, -1) : '');
     const size = sizeName ? (product.sizes || []).find(s => sameName(s.name, sizeName)) : null;
     // The menu offers the base size as its own choice ("Regular", or the
     // product's baseSize) - that is the base price, not an extra size.

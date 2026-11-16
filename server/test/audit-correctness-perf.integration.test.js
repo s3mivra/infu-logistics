@@ -28,7 +28,7 @@ describe('product photos (M112)', () => {
 
   it('the catalogue lists an address, not the photo itself', async () => {
     const res = await request(app).get('/api/products');
-    const row = res.body.find?.((p) => p.name === 'Photo Item') || (res.body.products || []).find((p) => p.name === 'Photo Item');
+    const row = res.body.find?.((p) => p.name === 'PHOTO ITEM') || (res.body.products || []).find((p) => p.name === 'PHOTO ITEM');
     expect(row.image).toMatch(new RegExp(`/api/products/${product._id}/image\\?v=\\d+$`));
     expect(JSON.stringify(res.body)).not.toContain('base64');
   });
@@ -43,7 +43,7 @@ describe('product photos (M112)', () => {
 
   it('saving the form with that address keeps the stored photo', async () => {
     const list = await as('get', '/api/products');
-    const row = (Array.isArray(list.body) ? list.body : list.body.products).find((p) => p.name === 'Photo Item');
+    const row = (Array.isArray(list.body) ? list.body : list.body.products).find((p) => p.name === 'PHOTO ITEM');
     const put = await as('put', `/api/products/${product._id}`).send({ name: 'Photo Item', image: row.image });
     expect(put.status).toBeLessThan(400);
     const after = await M('Product').findById(product._id, { image: 1 }).lean();
@@ -60,7 +60,7 @@ describe('client exposure counts what is unpaid (M107)', () => {
       items: [{ name: 'X', quantity: 1, price: 1000 }],
     });
     const res = await as('get', '/api/clients/summary');
-    const row = res.body.clients.find((c) => c.name === 'Partly Paid Co');
+    const row = res.body.clients.find((c) => c.name === 'PARTLY PAID CO');
     expect(row.exposure).toBe(100);
   });
 });

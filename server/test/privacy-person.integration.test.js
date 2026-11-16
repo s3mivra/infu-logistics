@@ -38,9 +38,9 @@ afterAll(async () => { await ctx.stop(); });
 describe('finding a person', () => {
   it('searches clients, staff and walk-in customers', async () => {
     const r = await as(privTok).get('/api/privacy/search?q=Maria');
-    expect(r.body.people.some((p) => p.type === 'client' && p.label.includes('Maria Santos'))).toBe(true);
+    expect(r.body.people.some((p) => p.type === 'client' && p.label.includes('MARIA SANTOS'))).toBe(true);
     const w = await as(privTok).get('/api/privacy/search?q=0999');
-    expect(w.body.people.find((p) => p.type === 'customer')).toMatchObject({ name: 'Jose Walkin', phone: '0999 000 1111' });
+    expect(w.body.people.find((p) => p.type === 'customer')).toMatchObject({ name: 'JOSE WALKIN', phone: '0999 000 1111' });
     const s = await as(privTok).get('/api/privacy/search?q=Ben');
     expect(s.body.people.some((p) => p.type === 'staff')).toBe(true);
   });
@@ -86,11 +86,11 @@ describe('erasing', () => {
     expect(r.body.kept.join(' ')).toMatch(/SC\/PWD/);
     const acct = await M('ClientAccount').findById(client._id).lean();
     expect(acct).toMatchObject({ phone: '', email: '', isActive: false });
-    expect(acct.name).toMatch(/^Erased client /);
+    expect(acct.name).toMatch(/^Erased client /i);
     const [o1, o2, old] = await Promise.all(['PV-1', 'PV-2', 'PV-OLD'].map((n) => M('Order').findOne({ orderNumber: n }).lean()));
     expect(o1).toMatchObject({ customerPhone: '', deliveryAddress: '', total: 500 });
-    expect(o1.customerName).toMatch(/^Erased client /);
-    expect(o2.scPwdName).toBe('Maria Santos');      // inside the tax retention period
+    expect(o1.customerName).toMatch(/^Erased client /i);
+    expect(o2.scPwdName).toBe('MARIA SANTOS');      // inside the tax retention period
     expect(old.scPwdName).toBe('');                 // past it
     const audit = await M('AuditLog').findOne({ action: 'PersonalData_ERASE' }).lean();
     expect(audit.userId).toBe('PvOwner');
@@ -100,7 +100,7 @@ describe('erasing', () => {
   it('a walk-in customer: their name and contact come off their orders', async () => {
     const r = await as(ownerTok).post('/api/privacy/erase', { type: 'customer', name: 'Jose Walkin', phone: '0999 000 1111', confirm: 'ERASE', password: 'pw' });
     expect(r.body.erased.orders).toBe(1);
-    expect(await M('Order').findOne({ orderNumber: 'PV-W1' }).lean()).toMatchObject({ customerName: 'Erased customer', customerPhone: '', deliveryAddress: '' });
+    expect(await M('Order').findOne({ orderNumber: 'PV-W1' }).lean()).toMatchObject({ customerName: 'ERASED CUSTOMER', customerPhone: '', deliveryAddress: '' });
   });
 
   it('staff: the account is locked; government numbers stay while payroll is recent', async () => {

@@ -91,7 +91,7 @@ describe('the template is the sheet to fill in, not an empty export', () => {
     // a category header row before each group, as the import sheet does.
     const row = (await get('/api/export/inventory')).body.rows.find(r => r[0] === 'RM-9');
     expect(row).toContain('RM-9');
-    expect(row).toContain('Alaska Milk');
+    expect(row).toContain('ALASKA MILK');
     // Total value is derived, not stored - worth exporting, easy to get wrong.
     expect(row).toContain(1000);
   });

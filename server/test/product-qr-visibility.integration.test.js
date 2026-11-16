@@ -40,15 +40,15 @@ beforeEach(async () => {
 describe('counter-only products', () => {
   it('are on the POS but not on the QR menu; products are on both by default', async () => {
     expect(latte.showOnQr).toBe(true);
-    expect(await qrMenuNames()).toEqual(['Latte']);
-    expect((await posNames()).sort()).toEqual(['Latte', 'Whole Cake']);
+    expect(await qrMenuNames()).toEqual(['LATTE']);
+    expect((await posNames()).sort()).toEqual(['LATTE', 'WHOLE CAKE']);
   });
 
   it('cannot be ordered from a QR code, and the session survives the refusal', async () => {
     const sess = await newQrSession();
     const refused = await qrOrder(sess, cake);
     expect(refused.status).toBe(400);
-    expect(refused.body.error).toMatch(/Whole Cake can only be ordered at the counter/);
+    expect(refused.body.error).toMatch(/Whole Cake can only be ordered at the counter/i);
     // Same session, fixed cart: it goes through.
     const ok = await qrOrder(sess, latte);
     expect(ok.body.success).toBe(true);
@@ -67,11 +67,11 @@ describe('the switch', () => {
   it('moves a product onto and off the QR menu', async () => {
     let res = await as(boss)('patch', `/api/products/${cake._id}/qr`).send({ showOnQr: true });
     expect(res.body.success).toBe(true);
-    expect((await qrMenuNames()).sort()).toEqual(['Latte', 'Whole Cake']);
+    expect((await qrMenuNames()).sort()).toEqual(['LATTE', 'WHOLE CAKE']);
 
     res = await as(boss)('patch', `/api/products/${latte._id}/qr`).send({ showOnQr: false });
     expect(res.body.product.showOnQr).toBe(false);
-    expect(await qrMenuNames()).toEqual(['Whole Cake']);
+    expect(await qrMenuNames()).toEqual(['WHOLE CAKE']);
     expect(await M('AuditLog').countDocuments({ action: 'PRODUCT_HIDDEN_FROM_QR' })).toBeGreaterThan(0);
   });
 

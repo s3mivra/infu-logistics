@@ -50,7 +50,7 @@ describe('an SC/PWD discount needs a cardholder', () => {
   it('completes once they are recorded, and keeps them on the sale', async () => {
     const order = await scPwdSale();
     const saved = await auth('put', `/api/orders/${order._id}`).send({
-      scPwdName: 'Maria Santos', scPwdIdNumber: 'SC-2019-004412', scPwdKind: 'Senior Citizen',
+      scPwdName: 'MARIA SANTOS', scPwdIdNumber: 'SC-2019-004412', scPwdKind: 'Senior Citizen',
     });
     expect(saved.body.success).toBe(true);
 
@@ -59,7 +59,7 @@ describe('an SC/PWD discount needs a cardholder', () => {
 
     const fresh = await M('Order').findById(order._id).lean();
     expect(fresh).toMatchObject({
-      status: 'Completed', scPwdName: 'Maria Santos',
+      status: 'Completed', scPwdName: 'MARIA SANTOS',
       scPwdIdNumber: 'SC-2019-004412', scPwdKind: 'Senior Citizen',
     });
   }, 30000);

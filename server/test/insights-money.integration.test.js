@@ -109,9 +109,9 @@ describe('supplier prices', () => {
     expect(res.status).toBe(200);
     const beans = res.body.items.find(i => i.itemCode === 'BEAN-1');
     expect(beans.supplierCount).toBe(2);
-    expect(beans.cheapest).toBe('Bravo');
-    expect(beans.suppliers.map(s => [s.supplier, s.lastCost])).toEqual([['Bravo', 400], ['Acme', 450]]);
-    expect(beans.suppliers.find(s => s.supplier === 'Acme')).toMatchObject({ lowest: 420, highest: 450, orders: 2 });
+    expect(beans.cheapest).toBe('BRAVO');
+    expect(beans.suppliers.map(s => [s.supplier, s.lastCost])).toEqual([['BRAVO', 400], ['ACME', 450]]);
+    expect(beans.suppliers.find(s => s.supplier === 'ACME')).toMatchObject({ lowest: 420, highest: 450, orders: 2 });
     expect(beans.spread).toBe(12.5);              // 450 is 12.5% above 400
   });
 });

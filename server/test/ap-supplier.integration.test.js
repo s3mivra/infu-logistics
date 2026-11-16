@@ -9,7 +9,7 @@ let app, stop, superToken, supplierAId, supplierBId, invId;
 
 const auth = (t) => ({ Authorization: `Bearer ${t}` });
 const ap = async () => (await request(app).get('/api/finance/ap-outstanding').set(auth(superToken))).body;
-const rowFor = (body, name) => body.bySupplier.find(s => s.supplier === name);
+const rowFor = (body, name) => body.bySupplier.find(s => String(s.supplier).toUpperCase() === String(name).toUpperCase());
 
 beforeAll(async () => {
   ({ app, stop } = await bootApp({ businessType: 'log', jwtSecret: 'ap-test-secret-0123456789' }));

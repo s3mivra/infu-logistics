@@ -45,7 +45,7 @@ describe('sales documents, channel and salesperson', () => {
     expect(wholesale.drNumber).toMatch(/DR/);
     expect(wholesale.completedAt).toBeTruthy();
     expect(wholesale.deliveryReceipts).toHaveLength(1);
-    expect(wholesale.deliveryReceipts[0].lines[0]).toMatchObject({ name: 'Crate', qty: 2 });
+    expect(wholesale.deliveryReceipts[0].lines[0]).toMatchObject({ name: 'CRATE', qty: 2 });
     retail = await sell({ clientAccountId: retailId });
     expect(retail.drNumber).not.toBe(wholesale.drNumber);
   });
@@ -78,7 +78,7 @@ describe('sales documents, channel and salesperson', () => {
     const r = await as(tok.boss, 'get', `/api/reports/sales-by-customer?start=${today}&end=${today}`);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const bulk = r.body.customers.find(c => c.customerNumber === 'PR-W');
-    expect(bulk).toMatchObject({ customer: 'Bulk Buyer', orders: 1, net: 1000, share: 50 });
+    expect(bulk).toMatchObject({ customer: 'BULK BUYER', orders: 1, net: 1000, share: 50 });
     expect(r.body.totalNet).toBe(2000);
     const nets = r.body.customers.map(c => c.net);
     expect(nets).toEqual([...nets].sort((a, b) => b - a));

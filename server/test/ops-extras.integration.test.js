@@ -98,7 +98,7 @@ describe('one client’s record', () => {
     expect(res.status).toBe(200);
     expect(res.body.client).toMatchObject({ username: 'recordco', isActive: true });
     expect(res.body.orders).toHaveLength(1);
-    expect(res.body.orders[0]).toMatchObject({ orderNumber: 'REC-1', total: 250, items: '2 x Widget' });
+    expect(res.body.orders[0]).toMatchObject({ orderNumber: 'REC-1', total: 250, items: '2 x WIDGET' });
     const raw = JSON.stringify(res.body);
     expect(raw).not.toMatch(/tok-should-not-leak|\$2[aby]\$/);     // no token, no password hash
     expect(await M('AuditLog').exists({ action: /export/i })).toBeTruthy();

@@ -157,7 +157,7 @@ describe('the low-stock list', () => {
     await as('put', '/api/mail/settings').send({ ownerEmail: 'owner@example.com', lowStock: true, dailySummary: false, reminders: false, weeklyReport: false, monthlyReport: false });
     await as('post', '/api/mail/run-now');
     const low = sentMail.find(m => /running low/.test(m.subject));
-    expect(low.text).toMatch(/Dairy Co:\n\s+- MILK.*order about 24 at ~PHP 85\.00/);
+    expect(low.text).toMatch(/Dairy Co:\n\s+- MILK.*order about 24 at ~PHP 85\.00/i);
   });
 });
 

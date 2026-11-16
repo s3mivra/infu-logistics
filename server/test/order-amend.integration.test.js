@@ -50,7 +50,7 @@ describe('amending an open order', () => {
     expect(a.reason).toMatch(/8 sacks/);
     expect(a.totalBefore).toBe(10100);
     expect(a.totalAfter).toBe(8500);
-    expect(a.changes[0]).toMatchObject({ name: 'Rice Sack', from: 12, to: 8 });
+    expect(a.changes[0]).toMatchObject({ name: 'RICE SACK', from: 12, to: 8 });
   });
 
   it('removes a line with quantity 0 but refuses to empty the order', async () => {
@@ -101,11 +101,11 @@ describe('adding products while amending', () => {
     const { body: { order } } = await place([line(bag, 2)]);
     const res = await amend(order._id, { reason: 'Client added rice', adds: [{ productId: String(sack._id), quantity: 3, price: 1 }] });
     expect(res.status).toBe(200);
-    const added = res.body.order.items.find(i => i.name === 'Rice Sack');
+    const added = res.body.order.items.find(i => i.name === 'RICE SACK');
     expect(added.price).toBe(1000);
     expect(added.department).toBe('Logistics');
     expect(res.body.order.total).toBe(200 + 3000);
-    expect(res.body.order.amendments[0].changes).toContainEqual(expect.objectContaining({ name: 'Rice Sack', from: 0, to: 3 }));
+    expect(res.body.order.amendments[0].changes).toContainEqual(expect.objectContaining({ name: 'RICE SACK', from: 0, to: 3 }));
   });
 
   it('raises the quantity of a product already on the order, and applies its bulk break', async () => {

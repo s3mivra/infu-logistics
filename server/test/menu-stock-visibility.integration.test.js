@@ -34,7 +34,7 @@ beforeEach(async () => {
 // Anonymous = the QR menu. Staff = the Products tab.
 const asCustomer = () => request(app).get('/api/products');
 const asStaff = () => request(app).get('/api/products').set('Authorization', `Bearer ${tok}`);
-const find = (res, name) => res.body.products.find(p => p.name === name);
+const find = (res, name) => res.body.products.find(p => String(p.name).toUpperCase() === String(name).toUpperCase());
 
 async function espressoWithBeans({ stockQty, perShot = 18 }) {
   const beans = await Inventory().create({ itemCode: 'RM-BEAN', itemName: 'Coffee Beans', unit: 'g', stockQty, unitCost: 1 });
@@ -56,8 +56,8 @@ describe('customer and staff must agree on availability', () => {
   it('agrees with staff on the same product', async () => {
     await espressoWithBeans({ stockQty: 500 });
 
-    expect(find(await asCustomer(), 'Espresso').stockAvailable)
-      .toBe(find(await asStaff(), 'Espresso').stockAvailable);
+    expect(find(await asCustomer(), 'ESPRESSO').stockAvailable)
+      .toBe(find(await asStaff(), 'ESPRESSO').stockAvailable);
   });
 
   it('agrees when the ingredient IS short', async () => {
@@ -72,8 +72,8 @@ describe('customer and staff must agree on availability', () => {
 
   it('agrees when the ingredient is completely out', async () => {
     await espressoWithBeans({ stockQty: 0 });
-    expect(find(await asCustomer(), 'Espresso').stockAvailable).toBe(false);
-    expect(find(await asStaff(), 'Espresso').stockAvailable).toBe(false);
+    expect(find(await asCustomer(), 'ESPRESSO').stockAvailable).toBe(false);
+    expect(find(await asStaff(), 'ESPRESSO').stockAvailable).toBe(false);
   });
 });
 
@@ -95,7 +95,7 @@ describe('recipe data still never reaches a customer', () => {
     await espressoWithBeans({ stockQty: 500 });
     const staff = find(await asStaff(), 'Espresso');
     expect(staff.baseRecipe).toHaveLength(1);
-    expect(staff.baseRecipe[0].name).toBe('Coffee Beans');
+    expect(staff.baseRecipe[0].name).toBe('COFFEE BEANS');
     expect(staff.__recipeForStock).toBeUndefined();
   });
 
@@ -125,7 +125,7 @@ describe('a product with no materials cannot be made', () => {
     expect(staff.stockAvailable).toBe(false);
     expect(staff.stockReason).toMatch(/no materials have been added/i);
     // And the customer must see the same thing.
-    expect(find(await asCustomer(), 'Empty Drink').stockAvailable).toBe(false);
+    expect(find(await asCustomer(), 'EMPTY DRINK').stockAvailable).toBe(false);
   });
 
   it('is NOT available when materials exist but none are linked to stock', async () => {
@@ -147,7 +147,7 @@ describe('a product with no materials cannot be made', () => {
     await Product().create({ productCode: 'BEV-0012', name: 'Empty Drink', category: 'Coffee', basePrice: 90, baseRecipe: [] });
 
     // A real 1:1 resale good stays sellable - that route is deliberate.
-    expect(find(await asStaff(), 'Empty Drink').stockAvailable).toBe(true);
+    expect(find(await asStaff(), 'EMPTY DRINK').stockAvailable).toBe(true);
   });
 });
 
@@ -164,7 +164,7 @@ describe('sizes priced without materials', () => {
     });
 
     const staff = find(await asStaff(), 'Sized Drink');
-    expect(staff.sizesWithoutRecipe).toEqual(['12oz Iced']);
+    expect(staff.sizesWithoutRecipe).toEqual(['12OZ ICED']);
     // The base size is fine, so the product itself is still sellable.
     expect(staff.stockAvailable).toBe(true);
   });
@@ -182,7 +182,7 @@ describe('sizes priced without materials', () => {
 
     // Stripping size recipes must not make every size look material-less.
     const customer = find(await asCustomer(), 'Sized Drink 2');
-    expect(customer.sizesWithoutRecipe).toEqual(['12oz Iced']);
+    expect(customer.sizesWithoutRecipe).toEqual(['12OZ ICED']);
     expect(customer.sizes[0].recipe).toBeUndefined();
     expect(customer.__sizeRecipesForStock).toBeUndefined();
   });
@@ -194,7 +194,7 @@ describe('sizes priced without materials', () => {
       baseRecipe: [{ invId: String(beans._id), name: 'Coffee Beans', qty: 18, cost: 1, unit: 'g' }],
       sizes: [{ sizeCode: 'S', name: '8oz', price: 100, recipe: [{ invId: String(beans._id), name: 'Coffee Beans', qty: 18, cost: 1, unit: 'g' }] }],
     });
-    expect(find(await asStaff(), 'All Sized').sizesWithoutRecipe).toEqual([]);
+    expect(find(await asStaff(), 'ALL SIZED').sizesWithoutRecipe).toEqual([]);
   });
 });
 
@@ -206,7 +206,7 @@ describe('why a product is unavailable', () => {
     });
     const p = find(await asStaff(), 'Ghost Latte');
     expect(p.stockAvailable).toBe(false);
-    expect(p.stockReason).toMatch(/Vanished Syrup/);
+    expect(p.stockReason).toMatch(/Vanished Syrup/i);
   });
 
   it('explains a product with no linked recipe at all', async () => {
@@ -218,6 +218,6 @@ describe('why a product is unavailable', () => {
 
   it('says nothing when the product is fine', async () => {
     await espressoWithBeans({ stockQty: 500 });
-    expect(find(await asStaff(), 'Espresso').stockReason).toBe('');
+    expect(find(await asStaff(), 'ESPRESSO').stockReason).toBe('');
   });
 });

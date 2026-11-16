@@ -94,7 +94,7 @@ describe('Batch 2 - spoilage commits a balanced journal entry inside a transacti
     const after = await Inventory.findById(item._id).lean();
     expect(after.stockQty).toBe(900); // 1000 − 100
 
-    const je = await JournalEntry.findOne({ description: /Test Flour/ }).lean();
+    const je = await JournalEntry.findOne({ description: /Test Flour/i }).lean();
     expect(je).toBeTruthy();
     expect(je.totalDebit).toBeCloseTo(50, 6);   // 100 × 0.5
     expect(je.totalCredit).toBeCloseTo(50, 6);

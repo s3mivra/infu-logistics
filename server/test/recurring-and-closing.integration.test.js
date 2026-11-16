@@ -27,7 +27,7 @@ describe('repeating bills', () => {
     expect(first.body.raised).toHaveLength(1);
     const bill = await mongoose.model('Bill').findOne({ billNumber: first.body.raised[0].billNumber }).lean();
     expect([bill.status, bill.amount, bill.supplierName]).toEqual(['Pending', 25000, 'LANDLORD CO']);
-    expect(bill.description).toMatch(/^Office rent - \d{4}-\d{2}$/);
+    expect(bill.description).toMatch(/^Office rent - \d{4}-\d{2}$/i);
     expect(new Date(bill.dueDate).getDate()).toBe(5);
     // the same month is not raised twice
     expect((await as(tok, 'post', '/api/recurring-bills/raise').send({})).body.raised).toHaveLength(0);

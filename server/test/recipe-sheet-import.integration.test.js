@@ -53,8 +53,8 @@ describe('the draft the review screen is built from', () => {
   it('splits one row into a base size and an extra size', async () => {
     const { body } = await parse();
     const d = body.drafts.find(x => x.name === 'LATTE');
-    expect(d.baseSizeName).toBe('12oz Hot');
-    expect(d.sizes.map(s => s.name)).toEqual(['16oz Iced']);
+    expect(d.baseSizeName).toBe('12oz Hot');   // the draft, as typed
+    expect(d.sizes.map(s => s.name)).toEqual(['16oz Iced']);   // the draft, as typed
   }, 30000);
 
   it('gives each size only its own milk', async () => {
@@ -100,7 +100,7 @@ describe('the draft the review screen is built from', () => {
     const { body } = await parse();
     const d = body.drafts.find(x => x.name === 'SEASALT');
     // 260ml in the milk column + 20ml in the foam.
-    const milk = d.baseRecipe.filter(r => r.name === 'Full Milk');
+    const milk = d.baseRecipe.filter(r => r.name === 'Full Milk');   // a draft, not saved: as typed
     expect(milk).toHaveLength(1);
     expect(milk[0].qty).toBe(280);
   }, 30000);
@@ -139,10 +139,10 @@ describe('importing that draft', () => {
   it('fills in the size and its price', async () => {
     await importDraft();
     const p = await M('Product').findOne({ name: 'LATTE' }).lean();
-    expect(p.baseSize).toBe('12oz Hot');
+    expect(p.baseSize).toBe('12OZ HOT');
     expect(p.basePrice).toBe(130);   // straight from the sheet
     expect(p.sizes).toHaveLength(1);
-    expect(p.sizes[0].name).toBe('16oz Iced');
+    expect(p.sizes[0].name).toBe('16OZ ICED');
     expect(p.sizes[0].price).toBe(150);
     expect(p.sizes[0].recipe.find(r => /milk/i.test(r.name)).qty).toBe(170);
   }, 30000);

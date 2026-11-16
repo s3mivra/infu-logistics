@@ -127,7 +127,7 @@ describe('GET /api/products - COGS/recipe strip (fix verification)', () => {
   });
   it('anonymous response omits baseRecipe / costOverride / size recipe', async () => {
     const res = await request(app).get('/api/products');
-    const p = res.body.products.find(x => x.name === 'Secret Recipe Latte');
+    const p = res.body.products.find(x => x.name === 'SECRET RECIPE LATTE');
     expect(p).toBeTruthy();
     expect(p.baseRecipe).toBeUndefined();
     expect(p.costOverride).toBeUndefined();
@@ -136,7 +136,7 @@ describe('GET /api/products - COGS/recipe strip (fix verification)', () => {
   });
   it('admin response keeps recipe/cost for management', async () => {
     const res = await request(app).get('/api/products').set(auth(superToken));
-    const p = res.body.products.find(x => x.name === 'Secret Recipe Latte');
+    const p = res.body.products.find(x => x.name === 'SECRET RECIPE LATTE');
     expect(Array.isArray(p.baseRecipe)).toBe(true);
     expect(p.costOverride).toBe(42);
   });
@@ -151,13 +151,13 @@ describe('GET /api/products - raw materials (no SRP) hidden from customer-facing
   it('anonymous caller never sees a basePrice<=0 product', async () => {
     const res = await request(app).get('/api/products');
     const names = res.body.products.map(p => p.name);
-    expect(names).not.toContain('RM No Price Good');
-    expect(names).toContain('RM Priced Good');
+    expect(names).not.toContain('RM NO PRICE GOOD');
+    expect(names).toContain('RM PRICED GOOD');
   });
   it('admin/staff caller still sees it, for management', async () => {
     const res = await request(app).get('/api/products').set(auth(superToken));
     const names = res.body.products.map(p => p.name);
-    expect(names).toContain('RM No Price Good');
-    expect(names).toContain('RM Priced Good');
+    expect(names).toContain('RM NO PRICE GOOD');
+    expect(names).toContain('RM PRICED GOOD');
   });
 });

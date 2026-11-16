@@ -65,14 +65,14 @@ describe('fb mode: product images toggle', () => {
     expect(off.status).toBe(200);
 
     const customer = await request(app).get('/api/products'); // no token → customer
-    expect(customer.body.products.find(p => p.name === 'FB Latte').image).toBe('');
+    expect(customer.body.products.find(p => p.name === 'FB LATTE').image).toBe('');
 
     const staff = await request(app).get('/api/products').set('Authorization', `Bearer ${staffTok}`);
-    expect(staff.body.products.find(p => p.name === 'FB Latte').image).toBe('http://example.com/latte.png');
+    expect(staff.body.products.find(p => p.name === 'FB LATTE').image).toBe('http://example.com/latte.png');
 
     await request(app).patch('/api/settings/imagesEnabled').set('Authorization', `Bearer ${superTok}`).send({ value: true });
     const reEnabled = await request(app).get('/api/products');
-    expect(reEnabled.body.products.find(p => p.name === 'FB Latte').image).toBe('http://example.com/latte.png');
+    expect(reEnabled.body.products.find(p => p.name === 'FB LATTE').image).toBe('http://example.com/latte.png');
   });
 });
 

@@ -421,7 +421,7 @@ describe('importing an Orders export back', () => {
     });
     expect(r.body.created).toBe(1);
     const o = await mongoose.model('Order').findOne({ orderNumber: 'ORD-2026-A9003' }).lean();
-    expect(o.items.map(i => i.name)).toEqual(['Line A', 'Line B']);
+    expect(o.items.map(i => i.name)).toEqual(['LINE A', 'LINE B']);
     expect(o.total).toBe(600);
   });
 
@@ -491,7 +491,7 @@ describe('replacing a sale already imported', () => {
     const first = await post({ importRef: 'RP-1', items: [{ name: 'Widget', price: 100, quantity: 10 }] });   // 1000 - the wrong figure
     expect(first.status, JSON.stringify(first.body)).toBe(200);
     // Without the option it is still a duplicate.
-    expect((await post({ importRef: 'RP-1', items: [{ name: 'Widget', price: 100, quantity: 10 }], discountAmount: 50 })).status).toBe(409);
+    expect((await post({ importRef: 'RP-1', items: [{ name: 'WIDGET', price: 100, quantity: 10 }], discountAmount: 50 })).status).toBe(409);
     const again = await post({ importRef: 'RP-1', items: [{ name: 'Widget', price: 100, quantity: 10 }], discountAmount: 50, replaceExisting: true });
     expect(again.status, JSON.stringify(again.body)).toBe(200);
     expect(again.body.order.total).toBe(950);

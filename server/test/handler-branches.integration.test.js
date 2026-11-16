@@ -188,7 +188,7 @@ describe('log inventory import creates the linked product', () => {
     expect(product).toBeTruthy();           // product created despite no category on the row
     expect(product.name).toBe('LOG SYNC GOOD'); // inventory item names are always ALL CAPS
     expect(product.basePrice).toBe(40);     // srp carried through
-    expect(product.category).toBe('General'); // fallback bucket
+    expect(product.category).toBe('GENERAL'); // fallback bucket
     expect(product.isAvailable).toBe(true); // stock > 0
   });
 

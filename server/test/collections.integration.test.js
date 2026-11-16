@@ -36,10 +36,10 @@ describe('AR collection reminders', () => {
     const res = await auth('get', '/api/collections/overdue', superTok);
     expect(res.status).toBe(200);
     const names = res.body.clients.map((c) => c.client);
-    expect(names).toContain('Overdue Client');
-    expect(names).not.toContain('Fresh Client');
-    expect(names).not.toContain('Cash Client');
-    const overdueRow = res.body.clients.find((c) => c.client === 'Overdue Client');
+    expect(names).toContain('OVERDUE CLIENT');
+    expect(names).not.toContain('FRESH CLIENT');
+    expect(names).not.toContain('CASH CLIENT');
+    const overdueRow = res.body.clients.find((c) => c.client === 'OVERDUE CLIENT');
     expect(overdueRow.lastReminder).toBeNull();
     expect(overdueRow.d61_90).toBeCloseTo(800, 2);
   });
@@ -52,7 +52,7 @@ describe('AR collection reminders', () => {
   it('the never-contacted overdue client shows up in the due-today worklist', async () => {
     const res = await auth('get', '/api/collections/due', superTok);
     expect(res.status).toBe(200);
-    const row = res.body.clients.find((c) => c.client === 'Overdue Client');
+    const row = res.body.clients.find((c) => c.client === 'OVERDUE CLIENT');
     expect(row).toBeTruthy();
     expect(row.neverContacted).toBe(true);
   });
@@ -81,13 +81,13 @@ describe('AR collection reminders', () => {
 
   it('after logging a future follow-up, the client drops off the due-today list', async () => {
     const res = await auth('get', '/api/collections/due', superTok);
-    const row = res.body.clients.find((c) => c.client === 'Overdue Client');
+    const row = res.body.clients.find((c) => c.client === 'OVERDUE CLIENT');
     expect(row).toBeUndefined();
   });
 
   it('the overdue list now shows the logged reminder', async () => {
     const res = await auth('get', '/api/collections/overdue', superTok);
-    const row = res.body.clients.find((c) => c.client === 'Overdue Client');
+    const row = res.body.clients.find((c) => c.client === 'OVERDUE CLIENT');
     expect(row.lastReminder).toBeTruthy();
     expect(row.lastReminder.method).toBe('Call');
   });
@@ -96,7 +96,7 @@ describe('AR collection reminders', () => {
     const res = await auth('get', '/api/collections/reminders?client=Overdue Client', superTok);
     expect(res.status).toBe(200);
     expect(res.body.reminders.length).toBe(1);
-    expect(res.body.reminders[0].note).toBe('Promised to pay next week');
+    expect(res.body.reminders[0].note).toBe('PROMISED TO PAY NEXT WEEK');
     // The snapshot is still kept, for whoever may read the books.
     expect(res.body.reminders[0].amountOwedAtTime).toBeCloseTo(800, 2);
   });
@@ -106,7 +106,7 @@ describe('AR collection reminders', () => {
       client: 'Overdue Client', method: 'SMS', nextFollowUpDate: new Date(Date.now() - 86400000).toISOString(),
     });
     const res = await auth('get', '/api/collections/due', superTok);
-    const row = res.body.clients.find((c) => c.client === 'Overdue Client');
+    const row = res.body.clients.find((c) => c.client === 'OVERDUE CLIENT');
     expect(row).toBeTruthy();
     expect(row.neverContacted).toBe(false);
   });

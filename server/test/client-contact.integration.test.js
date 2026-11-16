@@ -27,7 +27,7 @@ describe('client contact fields', () => {
     expect(res.status).toBe(200);
     expect(res.body.client.phone).toBe('0917-555-1234');
     expect(res.body.client.email).toBe('billing@contact.co'); // lowercased
-    expect(res.body.client.contactNotes).toBe('Prefers SMS after 5pm');
+    expect(res.body.client.contactNotes).toBe('PREFERS SMS AFTER 5PM');
     clientId = res.body.client._id;
   });
 
@@ -64,7 +64,7 @@ describe('VAT-registered customers', () => {
     const created = await auth('post', '/api/client-accounts', superTok).send({
       username: 'vatbuyer', password: 'secret123', name: 'Vat Buyer Co',
       isVatRegistered: true, tin: '123-456-789-00000',
-      registeredName: 'VAT BUYER TRADING CORPORATION', registeredAddress: '12 Ayala Ave, Makati City',
+      registeredName: 'VAT BUYER TRADING CORPORATION', registeredAddress: '12 AYALA AVE, MAKATI CITY',
     });
     expect(created.status).toBe(200);
 
@@ -72,7 +72,7 @@ describe('VAT-registered customers', () => {
     let saved = await ClientAccount.findById(created.body.client._id).lean();
     expect(saved).toMatchObject({
       isVatRegistered: true, tin: '123-456-789-00000',
-      registeredName: 'VAT BUYER TRADING CORPORATION', registeredAddress: '12 Ayala Ave, Makati City',
+      registeredName: 'VAT BUYER TRADING CORPORATION', registeredAddress: '12 AYALA AVE, MAKATI CITY',
     });
 
     const patched = await auth('patch', `/api/client-accounts/${created.body.client._id}`, superTok)

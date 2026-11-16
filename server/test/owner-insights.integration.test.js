@@ -64,14 +64,14 @@ describe('what changed', () => {
     expect(b.previous.end < b.current.start).toBe(true);
     expect(b.current.orders).toBe(2);
     expect(b.previous.orders).toBe(1);
-    const flourMove = b.costMovers.find(c => c.itemName === 'Flour');
+    const flourMove = b.costMovers.find(c => c.itemName === 'FLOUR');
     expect(flourMove).toMatchObject({ unitCost: 50, prevUnitCost: 40, changePct: 25 });
-    expect(b.costMovers.find(c => c.itemName === 'Sugar')).toBeUndefined();
-    expect(b.insights.some(i => i.kind === 'cost' && /Flour now costs 25% more/.test(i.text))).toBe(true);
-    const candy = b.productMovers.find(p => p.name === 'Candy');
+    expect(b.costMovers.find(c => c.itemName === 'SUGAR')).toBeUndefined();
+    expect(b.insights.some(i => i.kind === 'cost' && /Flour now costs 25% more/i.test(i.text)), JSON.stringify(b.insights)).toBe(true);
+    const candy = b.productMovers.find(p => p.name === 'CANDY');
     expect(candy).toMatchObject({ revenue: 800, prevRevenue: 0, change: 800 });
-    expect(b.productMovers.find(p => p.name === 'Bread')).toMatchObject({ revenue: 600, prevRevenue: 1000, change: -400 });
-    expect(b.insights.some(i => i.kind === 'product' && /Bread sold 400\.00 less/.test(i.text))).toBe(true);
+    expect(b.productMovers.find(p => p.name === 'BREAD')).toMatchObject({ revenue: 600, prevRevenue: 1000, change: -400 });
+    expect(b.insights.some(i => i.kind === 'product' && /Bread sold 400\.00 less/i.test(i.text))).toBe(true);
   });
 
   it('reads the same revenue and cost of sales as the P&L', async () => {
@@ -88,10 +88,10 @@ describe('product profitability', () => {
     const b = res.body;
     const byName = Object.fromEntries(b.items.map(i => [i.name, i]));
     // Bread: 6 x 100 revenue, 6 x 1kg flour at 50. Candy: 20 x 40, 20 x 0.5kg sugar at 10.
-    expect(byName.Bread).toMatchObject({ qty: 6, revenue: 600, cogs: 300, profit: 300, margin: 50 });
-    expect(byName.Candy).toMatchObject({ qty: 20, revenue: 800, cogs: 100, profit: 700, margin: 87.5 });
-    expect(b.best[0].name).toBe('Candy');
-    expect(b.worst[0].name).toBe('Bread');
+    expect(byName.BREAD).toMatchObject({ qty: 6, revenue: 600, cogs: 300, profit: 300, margin: 50 });
+    expect(byName.CANDY).toMatchObject({ qty: 20, revenue: 800, cogs: 100, profit: 700, margin: 87.5 });
+    expect(b.best[0].name).toBe('CANDY');
+    expect(b.worst[0].name).toBe('BREAD');
     expect(b.totals).toMatchObject({ revenue: 1400, cogs: 400, profit: 1000 });
     expect(b.lossMakers).toEqual([]);
   });
@@ -99,7 +99,7 @@ describe('product profitability', () => {
   it('honours an explicit date range', async () => {
     const start = new Date(daysAgo(50)).toISOString().slice(0, 10), end = new Date(daysAgo(35)).toISOString().slice(0, 10);
     const b = (await as('get', `/api/insights/product-profitability?start=${start}&end=${end}`)).body;
-    expect(b.items.map(i => i.name)).toEqual(['Bread']);
+    expect(b.items.map(i => i.name)).toEqual(['BREAD']);
     expect(b.items[0].revenue).toBe(1000);
   });
 });

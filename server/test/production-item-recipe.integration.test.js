@@ -60,7 +60,7 @@ describe('a batch with something that is not stock in it', () => {
   it('files, with the water written down as part of the batch', async () => {
     const res = await file();
     expect(res.body.success).toBe(true);
-    const water = res.body.order.materials.find(m => m.itemName === 'Filtered Water');
+    const water = res.body.order.materials.find(m => m.itemName === 'FILTERED WATER');
     expect(water).toMatchObject({ nonStock: true, qty: 200, unit: 'ml' });
     expect(water.invId).toBeFalsy();
   });
@@ -95,7 +95,7 @@ describe('remembering the recipe', () => {
     expect(item.productionRecipe.map(r => [r.itemName, r.qty, !!r.nonStock])).toEqual([
       ['CONDENSED MILK', 377, false],
       ['FRESH MILK', 500, false],
-      ['Filtered Water', 200, true],
+      ['FILTERED WATER', 200, true],
     ]);
   });
 
@@ -125,7 +125,7 @@ describe('remembering the recipe', () => {
     const made = await M('Inventory').findOne({ itemName: 'ICED MILK BASE' }).lean();
     expect(made.stockQty).toBe(980);
     expect(made.recipeYield).toBe(980);
-    expect(made.productionRecipe.map(r => r.itemName)).toEqual(['FRESH MILK', 'Ice']);
+    expect(made.productionRecipe.map(r => r.itemName)).toEqual(['FRESH MILK', 'ICE']);
   });
 
   it('is not written down by a batch that was filed and then rejected', async () => {

@@ -15,7 +15,9 @@
 //     typed and it is copied as text across sales, shifts and payroll -
 //     changing it needs every copy changed together, not a setter;
 //   - stock location and stock category names (matched to their own lists);
-//   - existing journal entries (the books' history); new ones are in capitals.
+//   - journal entries and stock-card remarks: the app writes that wording
+//     itself and finds its own entries by it (a sale's entry, an expense, a
+//     carried-in P&L), so it stays exactly as written.
 
 // { model: { fields: [...], arrays: { arrayPath: [subfields] } } }
 export const CAPS_FIELDS = {
@@ -35,12 +37,11 @@ export const CAPS_FIELDS = {
   Bill: { fields: ['supplierName', 'description'] },
   PurchaseOrder: { fields: ['supplier', 'notes'], arrays: { lines: ['itemName'], returns: ['reason'] } },
   PurchaseRecord: { fields: ['supplier', 'notes'] },
-  JournalEntry: { fields: ['description', 'supplierName', 'changeReason'] },
   ManualJournal: { fields: ['description', 'rejectionReason'] },
   RequisitionSlip: { fields: ['description', 'payee', 'supplier', 'notes', 'rejectionReason'], arrays: { lines: ['itemName'] } },
   Quotation: { fields: ['clientName', 'clientNotes', 'quoteNotes', 'declineReason'], arrays: { lines: ['name', 'note'] } },
   Reservation: { fields: ['clientName', 'note', 'closeReason'], arrays: { items: ['itemName'] } },
-  StockCard: { fields: ['itemName', 'remarks'] },
+  StockCard: { fields: ['itemName'] },
   Advance: { fields: ['payeeName', 'purpose', 'cancelReason'], arrays: { liquidations: ['note'] } },
   // The other side of a name match: an add-on or option is matched to the copy
   // a product carries by name, sales counts are kept by product name, and
@@ -57,6 +58,8 @@ export const CAPS_FIELDS = {
   RecurringBill: { fields: ['supplierName', 'description'] },
   CheckVoucher: { fields: ['payeeName'] },
   CostingSheet: { fields: ['name', 'notes'], arrays: { lines: ['name'] } },
+  // Filed under the client's name, which the overdue list now shows in capitals.
+  CollectionReminder: { fields: ['clientKey', 'note'] },
 };
 
 // Kept by name under a unique key: rows that differ only by case are merged

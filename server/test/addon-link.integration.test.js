@@ -40,30 +40,30 @@ describe('attaching', () => {
     const res = await link({ addOnIds: [String(shot._id), String(oat._id)], target: { all: true }, action: 'attach' });
     expect(res.body.success).toBe(true);
     const tAddOns = await addOnsOf(tea);
-    expect(tAddOns.map((a) => a.name).sort()).toEqual(['Extra Shot', 'Oat Milk']);
-    expect(tAddOns.find((a) => a.name === 'Oat Milk')).toMatchObject({ price: 25, recipe: [] });
+    expect(tAddOns.map((a) => a.name).sort()).toEqual(['EXTRA SHOT', 'OAT MILK']);
+    expect(tAddOns.find((a) => a.name === 'OAT MILK')).toMatchObject({ price: 25, recipe: [] });
   });
 
   it('never duplicates one a product has, nor touches its own price and recipe', async () => {
     await link({ addOnIds: [String(shot._id)], target: { all: true }, action: 'attach' });
     await link({ addOnIds: [String(shot._id)], target: { all: true }, action: 'attach' });
     const lAddOns = await addOnsOf(latte);
-    expect(lAddOns.filter((a) => a.name === 'Extra Shot')).toHaveLength(1);
+    expect(lAddOns.filter((a) => a.name === 'EXTRA SHOT')).toHaveLength(1);
     expect(lAddOns[0].price).toBe(40);
     expect(lAddOns[0].recipe[0].qty).toBe(25);
-    expect((await addOnsOf(mocha)).filter((a) => a.name === 'Extra Shot')).toHaveLength(1);
+    expect((await addOnsOf(mocha)).filter((a) => a.name === 'EXTRA SHOT')).toHaveLength(1);
   });
 
   it('can be limited to a category', async () => {
     await link({ addOnIds: [String(oat._id)], target: { categories: ['Coffee'] }, action: 'attach' });
-    expect((await addOnsOf(mocha)).map((a) => a.name)).toContain('Oat Milk');
-    expect((await addOnsOf(tea)).map((a) => a.name)).not.toContain('Oat Milk');
+    expect((await addOnsOf(mocha)).map((a) => a.name)).toContain('OAT MILK');
+    expect((await addOnsOf(tea)).map((a) => a.name)).not.toContain('OAT MILK');
   });
 
   it('can be limited to chosen products, with all add-ons at once', async () => {
     const res = await link({ addOnIds: 'all', target: { productIds: [String(tea._id)] }, action: 'attach' });
     expect(res.body.products).toBe(1);
-    expect((await addOnsOf(tea)).map((a) => a.name).sort()).toEqual(['Extra Shot', 'Oat Milk']);
+    expect((await addOnsOf(tea)).map((a) => a.name).sort()).toEqual(['EXTRA SHOT', 'OAT MILK']);
     expect((await addOnsOf(mocha)).length).toBe(0);
   });
 });
@@ -72,8 +72,8 @@ describe('removing', () => {
   it('takes the add-on off only the products chosen', async () => {
     await link({ addOnIds: [String(shot._id)], target: { all: true }, action: 'attach' });
     await link({ addOnIds: [String(shot._id)], target: { categories: ['Coffee'] }, action: 'detach' });
-    expect((await addOnsOf(latte)).map((a) => a.name)).not.toContain('Extra Shot');
-    expect((await addOnsOf(tea)).map((a) => a.name)).toContain('Extra Shot');
+    expect((await addOnsOf(latte)).map((a) => a.name)).not.toContain('EXTRA SHOT');
+    expect((await addOnsOf(tea)).map((a) => a.name)).toContain('EXTRA SHOT');
   });
 });
 

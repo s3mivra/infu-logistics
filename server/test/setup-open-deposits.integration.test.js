@@ -69,7 +69,7 @@ describe('Open Deposits & Advances', () => {
     const reyes = advances.find(a => a.referenceNumber === 'OR-1001');
     expect(reyes).toMatchObject({ type: 'customer', amount: 4000, clientId: String(client._id), status: 'Open', account: '260200' });
     const walkIn = advances.find(a => a.referenceNumber === 'OR-1002');
-    expect(walkIn).toMatchObject({ type: 'customer', clientId: '', payeeName: 'Walk-in Juan' });
+    expect(walkIn).toMatchObject({ type: 'customer', clientId: '', payeeName: 'WALK-IN JUAN' });
     expect(advances.find(a => a.referenceNumber === 'CV-55')).toMatchObject({ type: 'supplier', payeeId: String(supplier._id), account: '170200' });
     expect(advances.find(a => a.referenceNumber === 'CA-12')).toMatchObject({ type: 'employee', account: '170100' });
     expect((await M('ClientAccount').findById(client._id).lean()).creditBalance).toBe(1000);

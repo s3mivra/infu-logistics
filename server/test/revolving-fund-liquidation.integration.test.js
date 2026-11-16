@@ -47,7 +47,7 @@ describe('spending lands in the validation queue', () => {
     const r = await as(tok.accountant, 'get', '/api/revolving-funds/unvalidated');
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.rows).toHaveLength(1);
-    expect(r.body.rows[0]).toMatchObject({ fundName: 'Logistics Revolving Fund', amount: 2051, description: 'DIESEL', spentBy: 'rfCustodian', payee: 'REPHIL NASAK INC.' });
+    expect(r.body.rows[0]).toMatchObject({ fundName: 'LOGISTICS REVOLVING FUND', amount: 2051, description: 'DIESEL', spentBy: 'rfCustodian', payee: 'REPHIL NASAK INC.' });
   });
 
   it('a spend recorded before validation existed is not dragged into the queue', async () => {

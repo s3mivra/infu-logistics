@@ -174,7 +174,7 @@ describe('bulk renumber a stock category', () => {
 
     const res = await request(app).post(`/api/stock-categories/${cat._id}/renumber`).set(auth(superToken));
     expect(res.body.success).toBe(true);
-    expect(res.body.renamed).toEqual([{ itemName: 'Butterfly Pea', from: 'P20004', to: 'P90001' }]);
+    expect(res.body.renamed).toEqual([{ itemName: 'BUTTERFLY PEA', from: 'P20004', to: 'P90001' }]);
 
     const fresh = await Inventory.findById(item._id).lean();
     expect(fresh.itemCode).toBe('P90001');
