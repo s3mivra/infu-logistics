@@ -880,7 +880,7 @@ app.get('/api/client-onboard/:token', clientLoginOnly, async (req, res) => {
       if (await ClientAccount.exists({ onboardingTokensUsed: usedTokenHash(req.params.token) })) {
         return res.status(410).json({ success: false, used: true, signInPath: '/client-login', error: 'This account is already set up. Sign in with your username and password.' });
       }
-      return res.status(404).json({ success: false, error: 'This link is invalid or was already used. Ask the shop to send you a new one.' });
+      return res.status(404).json({ success: false, error: 'This link is invalid or was already used. If you already set up your account, sign in below; otherwise ask the shop for a new link.' });
     }
     // A placeholder name is not shown: the client is asked for their own.
     res.json({ success: true, client: { name: client.namePending ? '' : client.name, nameRequired: !!client.namePending, clientCode: client.clientCode, phone: client.phone, email: client.email } });
@@ -897,7 +897,7 @@ app.post('/api/client-onboard/:token', clientLoginOnly, async (req, res) => {
       if (await ClientAccount.exists({ onboardingTokensUsed: usedTokenHash(req.params.token) })) {
         return res.status(410).json({ success: false, used: true, signInPath: '/client-login', error: 'This account is already set up. Sign in with your username and password.' });
       }
-      return res.status(404).json({ success: false, error: 'This link is invalid or was already used. Ask the shop to send you a new one.' });
+      return res.status(404).json({ success: false, error: 'This link is invalid or was already used. If you already set up your account, sign in below; otherwise ask the shop for a new link.' });
     }
     const { name, phone, email, username, password } = req.body || {};
     const cleanUsername = lower(username);

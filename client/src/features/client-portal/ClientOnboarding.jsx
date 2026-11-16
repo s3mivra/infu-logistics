@@ -86,8 +86,16 @@ export default function ClientOnboarding() {
         {loading ? (
           <div className="flex items-center justify-center py-10 text-fg/70"><Loader2 size={22} className="animate-spin" /></div>
         ) : loadError ? (
-          <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 text-danger text-sm rounded-xl px-4 py-3">
-            <AlertCircle size={14} className="flex-shrink-0 mt-0.5" /><span>{loadError}</span>
+          <div className="space-y-4">
+            <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 text-danger text-sm rounded-xl px-4 py-3">
+              <AlertCircle size={14} className="flex-shrink-0 mt-0.5" /><span>{loadError}</span>
+            </div>
+            {/* A link already used to set up an account lands here too: the
+                way on is to sign in with the username and password chosen then. */}
+            <div className="text-center">
+              <p className="text-fg/75 text-sm mb-3">Already set up your account?</p>
+              <Link to="/client-login" data-testid="onboard-sign-in" className="inline-block bg-brand hover:bg-brand/90 text-on-brand font-bold text-sm px-5 py-2.5 rounded-xl transition">Sign in</Link>
+            </div>
           </div>
         ) : done ? (
           <div className="text-center py-4">
