@@ -1,4 +1,5 @@
 import { startTask, endTask } from '../../shared/progress';
+import { meansServerAway, waitForServer, reportServerDown } from '../../shared/serverStatus';
 // ── CLIENT AUTH (in-memory access token + silent refresh) ────────────────────
 //
 // The access token is held ONLY in module memory - never localStorage - so an XSS
@@ -78,6 +79,10 @@ export const can = (perm, t = accessToken) => {
 
 // De-duplicate concurrent refreshes: many in-flight requests share one refresh call.
 let refreshing = null;
+// The last refresh could not reach the server at all (an update restarting
+// it): the sign-in is not refused, only not checked yet.
+let refreshUnreachable = false;
+export const lastRefreshUnreachable = () => refreshUnreachable;
 
 // Returns the { token, user } payload on success, or null. Updates in-memory token.
 export function refreshSession(API_URL) {
@@ -85,14 +90,16 @@ export function refreshSession(API_URL) {
     // Only a definite refusal (401/403) ends the session. A refresh that hit a
     // rate limit, a server fault or a dropped connection used to null the token
     // too, signing the till out over a blip (2026-11 audit, M116).
+    refreshUnreachable = false;
     refreshing = fetch(`${API_URL}/api/auth/refresh`, { method: 'POST', credentials: 'include' })
       .then(async (r) => {
         if (r.ok) return r.json();
+        if (meansServerAway(r)) { refreshUnreachable = true; reportServerDown(); }
         if (r.status === 401 || r.status === 403) accessToken = null;
         return null;
       })
       .then((d) => { if (d?.token) { accessToken = d.token; if (d.user) setUser(d.user); return d; } return null; })
-      .catch(() => null)
+      .catch((err) => { if (meansServerAway(err) && navigator.onLine !== false) { refreshUnreachable = true; reportServerDown(); } return null; })
       .finally(() => { refreshing = null; });
   }
   return refreshing;
@@ -188,6 +195,28 @@ export async function apiFetch(API_URL, endpoint, options = {}) {
   }
 }
 
+// While an update restarts the server, a request that is safe to send again
+// waits for it and goes once more, so the screen carries on instead of
+// showing an error: a read, a write the proxy refused (it never reached the
+// app), or a write with an Idempotency-Key (the server ignores a repeat).
+// A plain write whose connection dropped may have been done: it is left to fail.
+async function sendThroughUpdate(build, options) {
+  const method = String(options.method || 'GET').toUpperCase();
+  const keyed = Object.keys(options.headers || {}).some((h) => h.toLowerCase() === 'idempotency-key');
+  const readOnly = method === 'GET' || method === 'HEAD';
+  try {
+    const res = await build();
+    if (meansServerAway(res)) { reportServerDown(); if (await waitForServer()) return build(); }
+    return res;
+  } catch (err) {
+    if (meansServerAway(err) && (readOnly || keyed) && navigator.onLine !== false) {
+      reportServerDown();
+      if (await waitForServer()) return build();
+    }
+    throw err;
+  }
+}
+
 async function apiFetchInner(API_URL, endpoint, options = {}) {
   const build = () => {
     const headers = { ...(options.headers || {}) };
@@ -201,7 +230,7 @@ async function apiFetchInner(API_URL, endpoint, options = {}) {
 
   // The auth routes themselves must not wait on a refresh - one of them IS it.
   if (!/\/api\/(auth|users\/login)/.test(endpoint)) await freshToken(API_URL);
-  let response = await build();
+  let response = await sendThroughUpdate(build, options);
   if (response.status === 401 && await isTokenRejection(response)) {
     // The token was refused before the route ran, so sending it again - a POST
     // included - cannot do the work twice.

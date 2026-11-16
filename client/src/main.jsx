@@ -12,6 +12,8 @@ import '@fontsource/inter/900.css'
 import './index.css'
 import { registerServiceWorker, initInstallPrompt } from './shared/pwa'
 import { startAutoUpdate } from './shared/autoUpdate'
+import { watchServer } from './shared/serverStatus'
+import { API_URL } from './shared/apiBase.js'
 import { installEnterKeyNav } from './shared/enterKeyNav'
 import { installBackdropGuard } from './shared/ui/backdropGuard'
 
@@ -20,6 +22,9 @@ initInstallPrompt()
 registerServiceWorker()
 // A till left open all day moves to a new version by itself, when it is idle.
 startAutoUpdate()
+// While an update restarts the server: an "Update in progress" notice, and
+// requests wait and go again instead of failing (see serverStatus.js).
+watchServer(API_URL)
 
 // Enter key moves focus to the next field, app-wide (both business types).
 installEnterKeyNav()

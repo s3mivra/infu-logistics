@@ -12,3 +12,13 @@ export function useSessionState(key, initial) {
   useEffect(() => { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch { /* this visit only */ } }, [k, v]);
   return [v, setV];
 }
+
+// Forget every saved value under a prefix (signing out clears the till's cart).
+export function clearSessionState(prefix) {
+  try {
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(`place.${prefix}`)) sessionStorage.removeItem(k);
+    }
+  } catch { /* nothing saved */ }
+}

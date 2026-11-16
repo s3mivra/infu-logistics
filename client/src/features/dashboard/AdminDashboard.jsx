@@ -62,6 +62,8 @@ import * as ui from '../../shared/ui';
 import { dateStr, monthStartStr, setClientBusinessTz, todayStr, yearStartStr } from '../../shared/businessDay.js';
 import { PACK_UNIT } from '../../shared/packUnit.js';
 import { setUpdateGuard } from '../../shared/autoUpdate.js';
+import { waitForServer } from '../../shared/serverStatus';
+import { useSessionState, clearSessionState } from '../../shared/useSessionState';
 // Tabs are lazy-loaded so only the active tab's code ships on first dashboard
 // paint; the rest load on demand when the operator opens them.
 const AnalyticsTab  = lazyRetry(() => import('../analytics/AnalyticsTab'));
@@ -535,7 +537,18 @@ export default function AdminDashboard() {
   // Silent-refresh bootstrap: restore the session from the refresh cookie on load.
   useEffect(() => {
     let cancelled = false;
-    auth.refreshSession(API_URL).then((data) => {
+    // Loaded while an update restarts the server: the sign-in cannot be
+    // checked yet, but it was not refused - wait for the server and ask again,
+    // rather than dropping a signed-in person at the login screen.
+    const restore = async () => {
+      let data = await auth.refreshSession(API_URL);
+      while (!cancelled && !data && navigator.onLine && auth.lastRefreshUnreachable()) {
+        if (!(await waitForServer())) break;
+        data = await auth.refreshSession(API_URL);
+      }
+      return data;
+    };
+    restore().then((data) => {
       if (cancelled) return;
       if (data?.user) {
         setActiveAdmin(data.user); setIsAuthenticated(true);
@@ -605,7 +618,7 @@ export default function AdminDashboard() {
   const [isPosOpen, setIsPosOpen] = useState(false);
   // "Just QR" from the login screen - the ordering code with nobody signed in.
   const [justQrOpen, setJustQrOpen] = useState(false);
-  const [posCart, setPosCart] = useState([]);
+  const [posCart, setPosCart] = useSessionState('pos.cart', []);   // kept through a refresh or an update
   const [posSubmitting, setPosSubmitting] = useState(false); // disables Place Order while in flight
   const posSubmittingRef = useRef(false);                    // synchronous double-tap guard
   // Over a client's credit limit, an approver releases the sale: their PIN here
@@ -647,12 +660,12 @@ export default function AdminDashboard() {
   const [posPage, setPosPage] = useState(1);
   const [posSearch, setPosSearch] = useState('');
   const POS_PER_PAGE = 9;
-  const [posCustomerName, setPosCustomerName] = useState('');
+  const [posCustomerName, setPosCustomerName] = useSessionState('pos.customerName', '');
   // Optional client account link - when set, the order qualifies for that
   // client's per-product discount overrides on the server side.
-  const [posClientId, setPosClientId] = useState('');
+  const [posClientId, setPosClientId] = useSessionState('pos.clientId', '');
   // Manual Order's price tier: '' is SRP (list price, plus the client's own tier).
-  const [posPriceTier, setPosPriceTier] = useState('');
+  const [posPriceTier, setPosPriceTier] = useSessionState('pos.priceTier', '');
   // Who the sale is credited to (Commissions). Blank = the client's assigned
   // salesperson, else whoever rings it up - decided on the server.
   const [posSalesperson, setPosSalesperson] = useState('');
@@ -667,7 +680,7 @@ export default function AdminDashboard() {
   // Reserve-only mode: place order with status 'Reserved' (no payment yet).
   // Cashier later promotes Reserved → Pending (pay later) or Preparing (pay now).
   const [posReserveOnly, setPosReserveOnly] = useState(false);
-  const [posTable, setPosTable] = useState(BUSINESS_TYPE === 'log' ? 'Walk In' : 'Dine-In');
+  const [posTable, setPosTable] = useSessionState('pos.table', BUSINESS_TYPE === 'log' ? 'Walk In' : 'Dine-In');
   // Which branch/location THIS DEVICE rings sales up as - a StorageLocation
   // name, persisted per-device (not per-user) since a POS tablet physically
   // lives at one branch. Stamped onto every order so Analytics can compare
@@ -679,15 +692,15 @@ export default function AdminDashboard() {
   const [posActiveSize, setPosActiveSize] = useState(null);
   const [posActiveAddOns, setPosActiveAddOns] = useState([]);
   const [posItemQty, setPosItemQty] = useState(1);
-  const [posDiscountType, setPosDiscountType] = useState('flat'); // 'flat' | 'percent'
-  const [posDiscountValue, setPosDiscountValue] = useState('');
+  const [posDiscountType, setPosDiscountType] = useSessionState('pos.discountType', 'flat'); // 'flat' | 'percent'
+  const [posDiscountValue, setPosDiscountValue] = useSessionState('pos.discountValue', '');
   const [posCheckoutModal, setPosCheckoutModal] = useState(false);
   const [posCashTendered, setPosCashTendered] = useState('');
   // --- DELIVERY DETAIL STATES ---
-  const [posDeliveryAddress, setPosDeliveryAddress] = useState('');
-  const [posCustomerPhone, setPosCustomerPhone] = useState('');
-  const [posDeliveryFee, setPosDeliveryFee] = useState('');
-  const [posScheduledTime, setPosScheduledTime] = useState('');
+  const [posDeliveryAddress, setPosDeliveryAddress] = useSessionState('pos.deliveryAddress', '');
+  const [posCustomerPhone, setPosCustomerPhone] = useSessionState('pos.customerPhone', '');
+  const [posDeliveryFee, setPosDeliveryFee] = useSessionState('pos.deliveryFee', '');
+  const [posScheduledTime, setPosScheduledTime] = useSessionState('pos.scheduledTime', '');
   // --- SPOILAGE MODAL STATE ---
   const [spoilageModal, setSpoilageModal] = useState(null); // { item }
   const [spoilageForm, setSpoilageForm] = useState({ qty: '', reason: '', note: '' });
@@ -1348,6 +1361,7 @@ export default function AdminDashboard() {
     if (clockStatus.isClockedIn) {
       try { await apiFetch('/api/clock/out', { method: 'POST', body: '{}' }); } catch { /* non-blocking */ }
     }
+    clearSessionState('pos.');   // the next person at this till starts with an empty cart
     auth.logout(API_URL); // revoke refresh session server-side + clear cookie
     auth.clearToken();
     setIsAuthenticated(false);
@@ -3934,7 +3948,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
           { label: 'Type', value: order.table || '-' },
           { label: 'Date', value: dateStr },
           (order.cashier && order.cashier !== 'System') ? { label: 'Cashier', value: order.cashier } : null,
-          (order.customerName && order.customerName !== 'Guest') ? { label: 'Name', value: order.customerName } : null,
+          (order.customerName && !/^guest$/i.test(order.customerName)) ? { label: 'Name', value: order.customerName } : null,
           order.customerPhone ? { label: 'Phone', value: order.customerPhone } : null,
           order.deliveryAddress ? { label: 'Address', value: order.deliveryAddress } : null,
           order.scheduledTime ? { label: 'Sched', value: order.scheduledTime } : null,
@@ -5715,7 +5729,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     if (!data.success) return ui.alert(data.error || 'Failed to resume.');
     const o = data.order;
     setPosCart(o.items || []);
-    setPosCustomerName(o.customerName === 'Guest' ? '' : o.customerName);
+    setPosCustomerName(/^guest$/i.test(o.customerName || '') ? '' : o.customerName);
     setPosTable(o.table || 'Dine-In');
     setPosNotes(o.orderNotes || '');
     setPosGuestCount(o.guestCount || 1);
