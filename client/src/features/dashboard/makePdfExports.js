@@ -197,7 +197,8 @@ export default function makePdfExports(deps) {
         }
       } catch { return ui.alert('Could not load all past sales for the export - check the connection and try again.'); }
     }
-    const allOrders = [...orders.filter(o => o.status !== 'Pending' && o.status !== 'Preparing' && o.status !== 'Ready'), ...past].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    // A cancelled order was never a sale: it is left out of the report altogether.
+    const allOrders = [...orders.filter(o => o.status !== 'Pending' && o.status !== 'Preparing' && o.status !== 'Ready'), ...past].filter(o => o.status !== 'Cancelled').sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
     if (allOrders.length === 0) return ui.alert("No orders to export.");
     
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
@@ -306,7 +307,9 @@ export default function makePdfExports(deps) {
   };
 
   // 2. EXPORT SPECIFIC DAY 
-  const exportDayToPDF = async (dateString, dayOrders) => {
+  const exportDayToPDF = async (dateString, dayOrdersIn) => {
+    // A cancelled order was never a sale: it is left out of the report altogether.
+    const dayOrders = (dayOrdersIn || []).filter(o => o.status !== 'Cancelled');
     if (dayOrders.length === 0) return ui.alert("No orders to export.");
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
     await addLogoToPDF(doc);
