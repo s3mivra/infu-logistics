@@ -51,6 +51,49 @@ describe('one product, two batches on a purchase order', () => {
   });
 });
 
+describe('one PO line that arrives in several batches', () => {
+  it('keeps each batch apart, with its own expiry and lot number', async () => {
+    const before = await mongoose.model('Inventory').findById(invId).lean();
+    const created = await request(app).post('/api/purchase-orders').set(auth()).send({
+      supplier: 'Oat Supplier',
+      lines: [{ invId, itemName: 'OATSIDE BARISTA EDITION', unit: 'L', packSize: 1, unitCost: 100, orderedQty: 12 }],
+    });
+    const po = created.body.purchaseOrder;
+    const r = await request(app).post(`/api/purchase-orders/${po._id}/receive`).set(auth()).send({ received: [{
+      lineId: po.lines[0]._id,
+      batches: [
+        { qty: 7, expiryDate: '2027-06-30', batchNo: 'LOT-A' },
+        { qty: 5, expiryDate: '2027-08-31', batchNo: 'LOT-B' },
+        { qty: 0, expiryDate: '2027-09-30' },                 // an empty row is ignored
+      ],
+    }] });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.purchaseOrder?.status || (await mongoose.model('PurchaseOrder').findById(po._id).lean()).status).toBe('Complete');
+
+    const item = await mongoose.model('Inventory').findById(invId).lean();
+    expect(item.stockQty - before.stockQty).toBe(12000);   // 7 L + 5 L
+    const added = (item.expiryBatches || []).filter(b => b.batchNo === 'LOT-A' || b.batchNo === 'LOT-B')
+      .map(b => [b.batchNo, new Date(b.expiryDate).toISOString().slice(0, 10), b.qty]).sort();
+    expect(added).toEqual([['LOT-A', '2027-06-30', 7000], ['LOT-B', '2027-08-31', 5000]]);
+    const card = await mongoose.model('StockCard').findOne({ inventoryId: invId, remarks: /2 batches/ }).lean();
+    expect(card?.remarks).toMatch(/lot LOT-A 7 exp 2027-06-30; lot LOT-B 5 exp 2027-08-31/);
+  });
+
+  it('takes a lot number on a single batch too', async () => {
+    const created = await request(app).post('/api/purchase-orders').set(auth()).send({
+      supplier: 'Oat Supplier',
+      lines: [{ invId, itemName: 'OATSIDE BARISTA EDITION', unit: 'L', packSize: 1, unitCost: 100, orderedQty: 2 }],
+    });
+    const po = created.body.purchaseOrder;
+    const r = await request(app).post(`/api/purchase-orders/${po._id}/receive`).set(auth()).send({ received: [
+      { lineId: po.lines[0]._id, receivedQty: 2, expiryDate: '2027-10-31', batchNo: 'LOT-C' },
+    ] });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const item = await mongoose.model('Inventory').findById(invId).lean();
+    expect(item.expiryBatches.find(b => b.batchNo === 'LOT-C')?.qty).toBe(2000);
+  });
+});
+
 describe('paid on delivery', () => {
   const netOf = async (code) => {
     const rows = await mongoose.model('JournalEntry').aggregate([{ $unwind: '$lines' }, { $match: { 'lines.accountCode': code } },

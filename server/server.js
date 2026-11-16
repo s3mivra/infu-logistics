@@ -1791,6 +1791,8 @@ const InventorySchema = new mongoose.Schema({
     productionDate: { type: Date },
     receivedAt:  { type: Date, default: Date.now },
     reference:   { type: String, default: '' },
+    // The supplier's batch / lot number printed on the goods, when given.
+    batchNo:     { type: String, default: '' },
     unitCost:    { type: Number, default: 0 }       // per-base-unit cost when this batch was received
   }]
 }, { timestamps: true });

@@ -454,7 +454,7 @@ export default function registerPurchaseOrders(ctx) {
     let payableTotal = 0;
     let paidNow = 0;          // paid on delivery, from `paidFrom`
     const paidName = paidFrom ? (acctMeta(paidFrom)?.name || paidFrom) : '';
-    for (const { line, delta, expiryDate, productionDate } of deltas) {
+    for (const { line, delta, expiryDate, productionDate, batchNo, batches = [] } of deltas) {
       const kind = line.purchaseType || 'inventory';
 
       // What the supplier charges for this line, VAT included.
@@ -497,14 +497,28 @@ export default function registerPurchaseOrders(ctx) {
       // Expiry (FEFO), or production date for goods with no real expiry (roasted
       // beans, etc.): the actual delivery's date, entered at receiving time - may
       // differ from whatever was planned on the PO line at draft time.
-      if (expiryDate || productionDate) {
+      // A line that came in as several batches keeps each one apart, with
+      // its own dates and lot number, so the oldest is used first.
+      const perBase = baseQty > 0 ? lineCost / baseQty : 0;
+      if (batches.length) {
+        for (const b of batches) {
+          item.expiryBatches = addBatch(item.expiryBatches || [], {
+            qty: b.qty * basePerPack,
+            expiryDate: b.expiryDate ? new Date(b.expiryDate) : null,
+            productionDate: b.productionDate ? new Date(b.productionDate) : null,
+            receivedAt: new Date(), reference: rcvRef, unitCost: perBase, batchNo: b.batchNo,
+          });
+        }
+        item.expiryDate = soonestExpiry(item.expiryBatches);
+      } else if (expiryDate || productionDate || batchNo) {
         item.expiryBatches = addBatch(item.expiryBatches || [], {
           qty: baseQty,
           expiryDate: expiryDate ? new Date(expiryDate) : null,
           productionDate: productionDate ? new Date(productionDate) : null,
           receivedAt: new Date(),
           reference: rcvRef,
-          unitCost: baseQty > 0 ? lineCost / baseQty : 0,
+          unitCost: perBase,
+          batchNo,
         });
         item.expiryDate = soonestExpiry(item.expiryBatches);
       }
@@ -518,7 +532,13 @@ export default function registerPurchaseOrders(ctx) {
         qtyChange: baseQty,
         unitCost: baseQty > 0 ? lineCost / baseQty : 0,
         balanceAfter: item.stockQty,
-        remarks: `Received on PO`,
+        remarks: (() => {
+          const d = (x) => (x ? new Date(x).toISOString().slice(0, 10) : '');
+          const one = (b) => [b.batchNo && `lot ${b.batchNo}`, `${b.qty}`, b.expiryDate && `exp ${d(b.expiryDate)}`, !b.expiryDate && b.productionDate && `made ${d(b.productionDate)}`].filter(Boolean).join(' ');
+          if (batches.length > 1) return `Received on PO in ${batches.length} batches: ${batches.map(one).join('; ')}`.slice(0, 300);
+          if (batches.length === 1) return `Received on PO: ${one(batches[0])}`.slice(0, 300);
+          return batchNo ? `Received on PO: lot ${batchNo}` : 'Received on PO';
+        })(),
       });
 
       if (lineCost > 0) {
@@ -627,7 +647,13 @@ export default function registerPurchaseOrders(ctx) {
       const byId = new Map();
       received.forEach((r, i) => {
         const key = r.lineId != null ? String(r.lineId) : (r.index != null ? `#${r.index}` : `#${i}`);
-        byId.set(key, { receivedQty: Math.max(0, Number(r.receivedQty) || 0), expiryDate: r.expiryDate || null, productionDate: r.productionDate || null });
+        // One line may arrive as several batches, each with its own dates and
+        // lot number: then what arrived is the sum of the batches.
+        const batches = (Array.isArray(r.batches) ? r.batches : [])
+          .map(b => ({ qty: Math.max(0, Number(b?.qty) || 0), expiryDate: b?.expiryDate || null, productionDate: b?.expiryDate ? null : (b?.productionDate || null), batchNo: String(b?.batchNo || '').trim().slice(0, 60) }))
+          .filter(b => b.qty > 0);
+        const qty = batches.length ? batches.reduce((t, b) => t + b.qty, 0) : Math.max(0, Number(r.receivedQty) || 0);
+        byId.set(key, { receivedQty: qty, expiryDate: r.expiryDate || null, productionDate: r.productionDate || null, batchNo: String(r.batchNo || '').trim().slice(0, 60), batches });
       });
       // Collect this delivery's deltas per line BEFORE mutating, so stock posting
       // moves only what arrived now - a top-up delivery must not re-post the
@@ -658,7 +684,7 @@ export default function registerPurchaseOrders(ctx) {
         if (entry == null) return;
         const delta = entry.receivedQty;
         line.receivedQty = (Number(line.receivedQty) || 0) + delta;
-        if (delta > 0) deltas.push({ line, delta, expiryDate: entry.expiryDate, productionDate: entry.productionDate });
+        if (delta > 0) deltas.push({ line, delta, expiryDate: entry.expiryDate, productionDate: entry.productionDate, batchNo: entry.batchNo, batches: entry.batches });
       });
 
       const allFull = po.lines.every(l => (l.receivedQty ?? 0) >= (l.orderedQty || 0));

@@ -93,7 +93,7 @@ export function consumeSpecificBatch(batches, rotationDate, qtyToConsume) {
 // Returns the new array; does not mutate input. expiryDate and productionDate are
 // independent - a batch normally carries one or the other (never-expiring goods
 // like beans use productionDate only), but both are accepted if given.
-export function addBatch(batches, { qty, expiryDate, productionDate, receivedAt, reference, unitCost }) {
+export function addBatch(batches, { qty, expiryDate, productionDate, receivedAt, reference, unitCost, batchNo }) {
   if (!qty || qty <= 0) return [...batches];
   const newBatch = {
     qty: +qty,
@@ -101,6 +101,7 @@ export function addBatch(batches, { qty, expiryDate, productionDate, receivedAt,
     productionDate: productionDate ? new Date(productionDate) : null,
     receivedAt: receivedAt ? new Date(receivedAt) : new Date(),
     reference: reference || '',
+    ...(batchNo ? { batchNo: String(batchNo).trim().slice(0, 60) } : {}),
     unitCost: unitCost || 0
   };
   return [...batches, newBatch];

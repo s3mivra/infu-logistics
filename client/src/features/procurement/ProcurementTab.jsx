@@ -790,6 +790,13 @@ export default function ProcurementTab({ ctx }) {
   const [scanCounting, setScanCounting] = useState(false);
   const [receiveExpiry, setReceiveExpiry] = useState({});
   const [receiveProduction, setReceiveProduction] = useState({});
+  // The supplier's batch / lot number on each line, and any further batches a
+  // line arrived in (each with its own quantity, dates and lot number).
+  const [receiveBatchNo, setReceiveBatchNo] = useState({});
+  const [receiveMore, setReceiveMore] = useState({});   // { [lineKey]: [{ qty, expiryDate, productionDate, batchNo }] }
+  const moreOf = (key) => receiveMore[key] || [];
+  const setMore = (key, rows) => setReceiveMore(m => ({ ...m, [key]: rows }));
+  const lineTotalOf = (key) => (Number(receiveQtys[key]) || 0) + moreOf(key).reduce((t, b) => t + (Number(b.qty) || 0), 0);
   const [receiveNotes, setReceiveNotes] = useState('');
   // Goods going BACK. Opened from a PO that has already been received - the
   // quantities offered are what is still returnable on each line.
@@ -890,6 +897,8 @@ export default function ProcurementTab({ ctx }) {
     setScanCounting(false);
     setReceiveExpiry(exp);
     setReceiveProduction(prod);
+    setReceiveBatchNo({});
+    setReceiveMore({});
     setReceiveNotes(po.notes || '');
     setReceivePaidFrom(po.payOnDelivery ? (po.payOnDeliveryAccount || '111000') : '');
   };
@@ -898,11 +907,21 @@ export default function ProcurementTab({ ctx }) {
     setReceiving(true); setError('');
     try {
       const received = (po.lines || [])
-        .map((l, i) => ({
-          lineId: l._id, index: i, receivedQty: Number(receiveQtys[l._id || i]) || 0,
-          expiryDate: receiveExpiry[l._id || i] || null,
-          productionDate: receiveExpiry[l._id || i] ? null : (receiveProduction[l._id || i] || null),
-        }))
+        .map((l, i) => {
+          const key = l._id || i;
+          const first = {
+            qty: Number(receiveQtys[key]) || 0,
+            expiryDate: receiveExpiry[key] || null,
+            productionDate: receiveExpiry[key] ? null : (receiveProduction[key] || null),
+            batchNo: (receiveBatchNo[key] || '').trim(),
+          };
+          const more = moreOf(key)
+            .map(b => ({ qty: Number(b.qty) || 0, expiryDate: b.expiryDate || null, productionDate: b.expiryDate ? null : (b.productionDate || null), batchNo: (b.batchNo || '').trim() }))
+            .filter(b => b.qty > 0);
+          // Several batches: each goes in with its own dates and lot number.
+          if (more.length) return { lineId: l._id, index: i, batches: [first, ...more].filter(b => b.qty > 0), receivedQty: lineTotalOf(key) };
+          return { lineId: l._id, index: i, receivedQty: first.qty, expiryDate: first.expiryDate, productionDate: first.productionDate, batchNo: first.batchNo };
+        })
         .filter(r => r.receivedQty > 0); // only send lines the user actually entered a delivered qty for
       const send = (acceptOverReceipt) => apiFetch(`/api/purchase-orders/${po._id}/receive`, { method: 'POST', body: JSON.stringify({ received, notes: receiveNotes, claimInputVat: receiveClaimVat, paidOnDelivery: receivePaidFrom ? { account: receivePaidFrom } : false, acceptOverReceipt }) });
       let d = await (await send(false)).json();
@@ -1346,38 +1365,80 @@ export default function ProcurementTab({ ctx }) {
                   ) : (
                   <div className="space-y-2">
                     {missingLines.map(({ l, key, rem }) => {
-                      const recv = Number(receiveQtys[key]);
-                      const short = !isNaN(recv) && recv > 0 && recv < rem;
+                      const recv = lineTotalOf(key);
+                      const short = recv > 0 && recv < rem;
                       const alreadyIn = Number(l.receivedQty) || 0;
+                      const more = moreOf(key);
+                      const fieldCls = 'w-full bg-page-bg border border-white/15 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-brand/60';
+                      const lbl = 'block text-[9px] font-black uppercase tracking-wider text-fg/60 mb-0.5';
+                      // One batch's boxes, each labelled: quantity, expiry, production, lot.
+                      const batchRow = (b, onChange, idx) => (
+                        <div className="grid grid-cols-2 sm:grid-cols-[6.5rem_1fr_1fr_1fr_auto] gap-2 items-end" data-testid="receive-batch">
+                          <label>
+                            <span className={lbl}>{idx === 0 && more.length === 0 ? 'Qty received' : `Batch ${idx + 1} qty`}</span>
+                            <input type="number" min="0" step="any" value={b.qty ?? ''} onChange={e => onChange({ qty: e.target.value })}
+                              aria-label={`Quantity received of ${l.itemName}${idx ? `, batch ${idx + 1}` : ''}`}
+                              className={`${fieldCls} text-right font-bold text-sm ${short ? 'border-red-500/60' : ''}`} />
+                          </label>
+                          <label>
+                            <span className={lbl}>Expiry date</span>
+                            <input type="date" value={b.expiryDate ?? ''} onChange={e => onChange({ expiryDate: e.target.value })}
+                              title="The use-by / best-before date on the goods" aria-label={`Expiry date of ${l.itemName}`} className={fieldCls} />
+                          </label>
+                          <label className={b.expiryDate ? 'opacity-40' : ''}>
+                            <span className={lbl}>Production date</span>
+                            <input type="date" value={b.productionDate ?? ''} onChange={e => onChange({ productionDate: e.target.value })} disabled={!!b.expiryDate}
+                              title={b.expiryDate ? 'Not needed - the expiry date is used' : 'When it was made - for goods with no expiry date, e.g. roasted beans'}
+                              aria-label={`Production date of ${l.itemName}`} className={fieldCls} />
+                          </label>
+                          <label>
+                            <span className={lbl}>Batch / lot no.</span>
+                            <input type="text" value={b.batchNo ?? ''} onChange={e => onChange({ batchNo: e.target.value })} placeholder="optional"
+                              aria-label={`Batch number of ${l.itemName}`} className={fieldCls} />
+                          </label>
+                          {idx > 0 ? (
+                            <button type="button" onClick={() => setMore(key, more.filter((_, k) => k !== idx - 1))}
+                              className="text-[10px] font-bold text-danger underline pb-2 justify-self-start" aria-label={`Remove batch ${idx + 1}`}>Remove</button>
+                          ) : <span className="hidden sm:block" />}
+                        </div>
+                      );
+                      const first = { qty: receiveQtys[key], expiryDate: receiveExpiry[key], productionDate: receiveProduction[key], batchNo: receiveBatchNo[key] };
+                      const setFirst = (patch) => {
+                        if ('qty' in patch) setReceiveQtys(q => ({ ...q, [key]: patch.qty }));
+                        if ('expiryDate' in patch) setReceiveExpiry(x => ({ ...x, [key]: patch.expiryDate }));
+                        if ('productionDate' in patch) setReceiveProduction(x => ({ ...x, [key]: patch.productionDate }));
+                        if ('batchNo' in patch) setReceiveBatchNo(x => ({ ...x, [key]: patch.batchNo }));
+                      };
                       return (
-                        <div key={key} className="flex flex-wrap items-center gap-3 bg-surface border border-white/10 rounded-lg px-3 py-2">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold text-brand-text truncate" title={String((l.itemName) ?? '')}>{l.itemName}</p>
-                            <p className="text-fg/80 text-xs">
-                              Ordered: {l.orderedQty} {l.unit} @ {money(l.unitCost)}
-                              {alreadyIn > 0 && <span className="text-success"> · Received so far: {alreadyIn}</span>}
-                              <span className="text-warning"> · Missing: {rem} {l.unit}</span>
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <input type="number" min="0" step="any" value={receiveQtys[key] ?? ''}
-                              onChange={e => setReceiveQtys(q => ({ ...q, [key]: e.target.value }))}
-                              aria-label={`Quantity received of ${l.itemName}`}
-                              className={`w-24 bg-page-bg border rounded-lg px-2 py-1.5 text-sm text-right text-fg font-bold focus:outline-none ${short ? 'border-red-500/60' : 'border-white/15 focus:border-brand/60'}`} />
-                            <span className="text-fg/70 text-xs font-bold w-8">{l.unit}</span>
-                            <input type="date" value={receiveExpiry[key] ?? ''}
-                              onChange={e => setReceiveExpiry(x => ({ ...x, [key]: e.target.value }))}
-                              title="Expiry date on this delivery (optional)"
-                              aria-label={`Expiry date of ${l.itemName}`}
-                              className="w-[9.5rem] bg-page-bg border border-white/15 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-brand/60" />
-                            {!receiveExpiry[key] && (
-                              <input type="date" value={receiveProduction[key] ?? ''}
-                                onChange={e => setReceiveProduction(x => ({ ...x, [key]: e.target.value }))}
-                                title="Production date on this delivery - for goods with no real expiry, e.g. beans"
-                                aria-label={`Production date of ${l.itemName}`}
-                                className="w-[9.5rem] bg-page-bg border border-white/15 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-brand/60" />
+                        <div key={key} className="bg-surface border border-white/10 rounded-lg px-3 py-2.5 space-y-2">
+                          <div className="flex flex-wrap items-baseline justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-bold text-brand-text truncate" title={String((l.itemName) ?? '')}>{l.itemName}</p>
+                              <p className="text-fg/80 text-xs">
+                                Ordered: {l.orderedQty} {l.unit} @ {money(l.unitCost)}
+                                {alreadyIn > 0 && <span className="text-success"> · Received so far: {alreadyIn}</span>}
+                                <span className="text-warning"> · Missing: {rem} {l.unit}</span>
+                              </p>
+                            </div>
+                            {more.length > 0 && (
+                              <span className={`text-xs font-black ${recv > rem ? 'text-warning' : 'text-fg'}`}>{recv} {l.unit} in {more.length + 1} batches</span>
                             )}
                           </div>
+                          {batchRow(first, setFirst, 0)}
+                          {more.map((b, k) => (
+                            <div key={k} className="border-t border-white/5 pt-2">
+                              {batchRow(b, (patch) => setMore(key, more.map((x, n) => (n === k ? { ...x, ...patch } : x))), k + 1)}
+                            </div>
+                          ))}
+                          <button type="button" data-testid="add-batch"
+                            onClick={() => {
+                              // A new batch starts with what is left of the line, if any.
+                              const left = Math.max(0, rem - recv);
+                              setMore(key, [...more, { qty: left > 0 ? String(left) : '', expiryDate: '', productionDate: '', batchNo: '' }]);
+                            }}
+                            className="text-[11px] font-black text-brand-text hover:underline">
+                            + Add batch (different expiry or lot)
+                          </button>
                         </div>
                       );
                     })}
