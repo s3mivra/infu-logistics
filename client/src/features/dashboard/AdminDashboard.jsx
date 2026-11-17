@@ -4597,6 +4597,10 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
           `Items decreased: ${s.decreased}\n` +
           `Inventory gain: ₱${(s.gainValue || 0).toFixed(2)}\n` +
           `Inventory loss: ₱${(s.lossValue || 0).toFixed(2)}\n` +
+          // Items added by hand that took their real code from the sheet, and
+          // products moved off an empty duplicate onto the real item.
+          (s.recoded ? `Given their real code: ${s.recoded}\n` : '') +
+          (s.relinked ? `Products re-linked to their stock: ${s.relinked}\n` : '') +
           (s.errors?.length ? `\nWarnings:\n- ${s.errors.join('\n- ')}` : '')
         );
         setImportModal(false);

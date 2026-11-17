@@ -1,7 +1,7 @@
 ﻿// inventory routes - moved verbatim from server.js (feature-driven restructure).
 // All models/helpers/middleware still live in server.js and arrive via ctx.
 /* eslint-disable no-unused-vars */
-import { title, upper, positiveQty } from '../lib/normalize.js';
+import { title, upper, positiveQty } from '../lib/normalize.js';
 import { sameName } from '../lib/caps.js';
 import { businessDateStr, businessTimeZone } from '../lib/businessTime.js';
 import { INPUT_VAT } from '../lib/vatPosting.js';
@@ -1829,6 +1829,12 @@ async function runInventoryImport(req, res, attempt) {
     // below. Scoped to this one request, so re-importing the same single-row
     // sheet on a later day still does a plain stock-take replace, unaffected.
     const seenThisImport = new Set();
+    // Every item this import touched, so products left on an empty twin of
+    // one of them can be moved to it at the end (the relink after the loop).
+    const touchedItems = new Map();
+    // A code the app made up itself (RML-A0001...) is a placeholder, not the
+    // business's own: an item carrying one is still waiting for its real code.
+    const isPlaceholderCode = (c) => !String(c || '').trim() || /^RML-?A?\d+$/i.test(String(c).trim());
     // A sheet's section headers ("BEANS", "TEA", ...) already imply a code
     // prefix (P10001, P20001, ...) - StockCategory.prefix (#9) is what drives
     // BOTH the "next code" auto-numbering on the manual Add form AND what shows
@@ -1981,6 +1987,24 @@ async function runInventoryImport(req, res, attempt) {
       let existing = null;
       if (itemCode) {
         existing = await Inventory.findOne({ itemCode, businessType: BUSINESS_TYPE }).session(session);
+        // Nothing has the sheet's code yet: an item of the same name that only
+        // carries a placeholder code (added by hand before the real sheet came
+        // in) IS this item - take it over and give it its real code, instead
+        // of making a second item the catalog does not point at. An item that
+        // already has a real code of its own is a different SKU and is left alone.
+        if (!existing) {
+          const sameName = await Inventory.findOne({
+            itemName: { $regex: new RegExp(`^${itemName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+            businessType: BUSINESS_TYPE,
+          }).session(session);
+          if (sameName && isPlaceholderCode(sameName.itemCode)) {
+            const oldCode = sameName.itemCode;
+            sameName.itemCode = itemCode;
+            existing = sameName;
+            if (oldCode) await Product.updateMany({ productCode: oldCode, businessType: BUSINESS_TYPE }, { $set: { productCode: itemCode } }, { session });
+            summary.recoded = (summary.recoded || 0) + 1;
+          }
+        }
       } else {
         existing = await Inventory.findOne({
           itemName: { $regex: new RegExp(`^${itemName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
@@ -1991,6 +2015,7 @@ async function runInventoryImport(req, res, attempt) {
       // Pre-generate one reference for this import row (shared by StockCard + JournalEntry)
       const impRef = await mkSeqRef('INV-IMP');
 
+      if (existing) touchedItems.set(String(existing._id), existing);
       const importKey = itemCode || itemName.toLowerCase();
       const isRepeatBatchRow = existing && seenThisImport.has(importKey);
       seenThisImport.add(importKey);
@@ -2298,6 +2323,7 @@ async function runInventoryImport(req, res, attempt) {
           stockCategory: categoryName || '',
         }], { session });
         const item = created[0];
+        touchedItems.set(String(item._id), item);
         const valueImpact = newBaseQty * (item.unitCost || 0);
 
         await StockCard.create([{
@@ -2367,6 +2393,34 @@ async function runInventoryImport(req, res, attempt) {
         }
       }
     }
+
+    // Products left pointing at an empty twin: an earlier import made a second
+    // item for a hand-added one, and the catalog stayed on the first. Each item
+    // this import touched that has a real code takes over the recipe lines that
+    // point at a same-name item with only a placeholder code - so re-importing
+    // the sheet once repairs what is already broken.
+    let relinked = 0;
+    for (const item of touchedItems.values()) {
+      if (isPlaceholderCode(item.itemCode)) continue;
+      const twins = await Inventory.find({
+        _id: { $ne: item._id }, businessType: BUSINESS_TYPE,
+        itemName: { $regex: new RegExp(`^${String(item.itemName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      }, { itemCode: 1 }).session(session).lean();
+      const twinIds = twins.filter(t => isPlaceholderCode(t.itemCode)).map(t => String(t._id));
+      if (!twinIds.length) continue;
+      const twinCodes = twins.filter(t => twinIds.includes(String(t._id)) && t.itemCode).map(t => t.itemCode);
+      const prods = await Product.find({ $or: [{ 'baseRecipe.invId': { $in: twinIds } }, { 'sizes.recipe.invId': { $in: twinIds } }] }).session(session);
+      for (const prod of prods) {
+        const move = (lines) => (lines || []).map(l => (twinIds.includes(String(l.invId)) ? Object.assign(l, { invId: String(item._id), name: item.itemName }) : l));
+        prod.baseRecipe = move(prod.baseRecipe);
+        for (const sz of prod.sizes || []) sz.recipe = move(sz.recipe);
+        if (twinCodes.includes(prod.productCode)) prod.productCode = item.itemCode;
+        prod.markModified('baseRecipe'); prod.markModified('sizes');
+        await prod.save({ session });
+        relinked++;
+      }
+    }
+    if (relinked) summary.relinked = relinked;
 
     await session.commitTransaction();
     session.endSession();
