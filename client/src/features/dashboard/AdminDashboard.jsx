@@ -6665,7 +6665,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     arOutstanding, loadPdfLibs, addLogoToPDF, BIZ_NAME, pdfMoney, arAgeing, apData, salesByPayment,
     sbpRange, profitByCategory, menuEngineering, cashierVariance, commissions, bills, billsFilter, auditLogEntries,
     expenseList, stockTransfers, inventory, apiFetch, products, BUSINESS_TYPE, rfFunds, rfTxs,
-    rfActiveFund, calcRecipeCost, pricingTable,
+    rfActiveFund, calcRecipeCost, pricingTable, getEstimatedStock,
   });
 
   // from ./makeReportFetchers.js

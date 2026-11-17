@@ -12,7 +12,7 @@ export default function makeReportExports(deps) {
     arOutstanding, loadPdfLibs, addLogoToPDF, BIZ_NAME, pdfMoney, arAgeing, apData, salesByPayment,
     sbpRange, profitByCategory, menuEngineering, cashierVariance, commissions, bills, billsFilter, auditLogEntries,
     expenseList, stockTransfers, inventory, apiFetch, products, BUSINESS_TYPE, rfFunds, rfTxs,
-    rfActiveFund, calcRecipeCost, pricingTable,
+    rfActiveFund, calcRecipeCost, pricingTable, getEstimatedStock,
   } = deps;
 
   // ── Reports that previously had no export - same jsPDF/autoTable/addLogoToPDF
@@ -290,21 +290,41 @@ export default function makeReportExports(deps) {
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('MENU ITEMS', 105, 22, { align: 'center' });
+    doc.setFontSize(10); doc.text(BUSINESS_TYPE === 'log' ? 'CATALOG ITEMS' : 'MENU ITEMS', 105, 22, { align: 'center' });
+    // How many can still be made or sold, worked out the same way as the
+    // screen's "12 left" / "Out of stock" (from the recipe and the stock on
+    // hand). null = nothing in it is counted (no recipe, or only non-stock lines).
+    const stockOf = (p) => (typeof getEstimatedStock === 'function' ? getEstimatedStock(p.baseRecipe) : null);
+    const rows = products.map(p => ({ p, est: stockOf(p) }));
+    const outCount = rows.filter(r => r.est !== null && r.est <= 0).length;
+    const lowCount = rows.filter(r => r.est !== null && r.est > 0 && r.est <= 5).length;
     doc.setFontSize(9); doc.text(`${products.length} item(s) · ${formatDate(new Date())}`, 105, 28, { align: 'center' });
+    doc.setTextColor(outCount ? 180 : 90, outCount ? 40 : 90, outCount ? 40 : 90);
+    doc.text(`${outCount} out of stock · ${lowCount} low (5 or fewer)`, 105, 33, { align: 'center' });
+    doc.setTextColor(0);
     // Sizes (small/medium/large) is an fb menu concept - a log item has no
     // sizes at all (always "-"), it has a unit/pack instead (e.g. "1kg",
     // "pcs"). Show whichever actually applies to this business type.
     const lastCol = BUSINESS_TYPE === 'log' ? 'Unit' : 'Sizes';
+    const stockText = (est) => (est === null ? '-' : est <= 0 ? 'Out of stock' : String(Math.floor(est)));
     autoTable(doc, {
-      startY: 34,
-      head: [['Name', 'Category', 'Code', 'Price', 'Available', lastCol]],
-      body: products.map(p => [
-        p.name, p.category || '-', p.productCode || '-', pdfMoney(p.basePrice),
-        p.isAvailable === false ? 'Removed' : (p.isOutOfStock ? 'Out of Stock' : 'Yes'),
+      startY: 38,
+      head: [['Name', 'Category', 'Code', 'Price', 'Stock', 'Available', lastCol]],
+      body: rows.map(({ p, est }) => [
+        p.name, p.category || '-', p.productCode || '-', pdfMoney(p.basePrice), stockText(est),
+        p.isAvailable === false ? 'Removed' : ((est !== null && est <= 0) || p.isOutOfStock || p.stockAvailable === false ? 'No' : 'Yes'),
         BUSINESS_TYPE === 'log' ? (p.baseSize || 'pcs') : ((p.sizes || []).map(s => s.name).join(', ') || '-'),
       ]),
-      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 3: { halign: 'right' } },
+      styles: { fontSize: 8 }, headStyles: { fillColor: [30, 30, 30] },
+      columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right', fontStyle: 'bold' } },
+      // Out of stock in red, running low in amber - as on the screen.
+      didParseCell: (d) => {
+        if (d.section === 'head' && (d.column.index === 3 || d.column.index === 4)) d.cell.styles.halign = 'right';
+        if (d.section !== 'body') return;
+        const est = rows[d.row.index]?.est;
+        if (est !== null && est !== undefined && est <= 0) d.cell.styles.textColor = [185, 35, 35];
+        else if (est !== null && est !== undefined && est <= 5 && d.column.index === 4) d.cell.styles.textColor = [170, 110, 0];
+      },
     });
     doc.save(`Menu-Items-${todayStr()}.pdf`);
   };
