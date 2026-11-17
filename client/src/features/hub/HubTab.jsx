@@ -9,6 +9,8 @@ import RangePresets from '../../shared/RangePresets';
 import { useRefreshTick } from '../../shared/refreshBus';
 import BranchNetworkPanel from './BranchNetworkPanel';
 import PagedRows from '../../shared/PagedRows';
+import { groupShipments, displayQty, lineValue, exportTransferSlip, exportAllTransfers } from '../../shared/transferSlips';
+import { ChevronDown, ChevronRight, FileText } from 'lucide-react';
 // Shared colours (shared/statusTone.js): same meaning, same colour, on every screen.
 const statusColor = new Proxy({}, { get: (_, k) => statusTone(k) });
 
@@ -126,6 +128,9 @@ export default function HubTab({ ctx }) {
   // again or the Inventory tab keeps showing pre-transfer quantities until the
   // user reloads the page.
   const { apiFetch: authFetch, isSuperAdmin, inventory = [], peso, fetchERPData, can = () => true } = ctx;
+  // History shown one shipment per row; which ones are opened to their lines.
+  const [openShipments, setOpenShipments] = useState({});
+  const pdfDeps = { loadPdfLibs: ctx.loadPdfLibs, addLogoToPDF: ctx.addLogoToPDF, bizName: ctx.BIZ_NAME };
 
   const [info, setInfo]           = useState(null);
 
@@ -436,15 +441,16 @@ export default function HubTab({ ctx }) {
     setSendBusy(true); setSendErr('');
     const warnings = [];
     try {
-      for (const line of sendCart) {
-        const r = await authFetch('/api/hub/transfers/send', {
-          method: 'POST',
-          body: JSON.stringify({ partnerSlug: sendPartner, items: [{ itemId: line.itemId, qty: line.qty, note: line.note }] }),
-        });
-        const d = await r.json();
-        if (!r.ok) { setSendErr(d.error); return; }
-        if (d.warning) warnings.push(d.warning);
-      }
+      // One request for the whole cart: one shipment, one slip to approve,
+      // one reference - not a separate transfer per item.
+      const r = await authFetch('/api/hub/transfers/send', {
+        method: 'POST',
+        body: JSON.stringify({ partnerSlug: sendPartner, items: sendCart.map(line => ({ itemId: line.itemId, qty: line.qty, note: line.note })) }),
+      });
+      const d = await r.json();
+      if (!r.ok) { setSendErr(d.error); return; }
+      if (d.warning) warnings.push(d.warning);
+      if (d.errors?.length) warnings.push(...d.errors);
       setSendCart([]);
       if (warnings.length) setSendErr(`⚠ ${warnings.join('; ')}`);
       else setSendErr('⚠ Transfer slip filed - it must be approved below before the partner is notified.');
@@ -1452,7 +1458,14 @@ export default function HubTab({ ctx }) {
       <div className={card}>
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-fg font-black uppercase tracking-wider text-sm">Transfer History</h3>
-          <button onClick={load} className={btn('ghost')}><RefreshCw size={13} /></button>
+          <div className="flex items-center gap-2">
+            {transfers.length > 0 && (
+              <button onClick={() => exportAllTransfers(groupShipments(transfers), pdfDeps)} className={btn('ghost')} title="Every shipment: a summary, then each one's slip">
+                <Download size={13} /> Export PDF
+              </button>
+            )}
+            <button onClick={load} className={btn('ghost')}><RefreshCw size={13} /></button>
+          </div>
         </div>
         {transfers.length === 0 ? (
           <p className="text-fg/70 text-xs py-6 text-center uppercase tracking-widest">No transfers yet</p>
@@ -1461,45 +1474,80 @@ export default function HubTab({ ctx }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-fg/70 text-[10px] uppercase tracking-widest border-b border-white/10">
+                  <th className="w-6" />
+                  <th className="text-left py-2">Date</th>
                   <th className="text-left py-2">Ref</th>
                   <th className="text-left py-2">Dir</th>
                   <th className="text-left py-2">Partner</th>
-                  <th className="text-left py-2">Item</th>
-                  <th className="text-right py-2">Qty</th>
+                  <th className="text-left py-2">Items</th>
+                  <th className="text-right py-2">Value</th>
                   <th className="text-left py-2 pl-3">Status</th>
-                  <th className="text-right py-2">Action</th>
+                  <th className="text-right py-2">Slip</th>
                 </tr>
               </thead>
               <tbody>
-                <PagedRows items={transfers} label="transfers" render={t => (
-                  <tr key={t._id} className="border-b border-white/5 hover:bg-white/2">
-                    <td className="py-2 text-fg/75 text-xs font-mono">{t.reference}</td>
-                    <td className="py-2">
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${t.direction === 'outbound' ? 'bg-blue-500/15 text-info' : 'bg-purple-500/15 text-special'}`}>
-                        {t.direction === 'outbound' ? '↑ OUT' : '↓ IN'}
-                      </span>
-                    </td>
-                    <td className="py-2 text-fg/70 text-xs">{t.partnerName || t.partnerSlug}</td>
-                    <td className="py-2 text-fg font-bold text-xs">{t.itemName}</td>
-                    <td className="py-2 text-right text-fg tabular-nums font-bold text-xs">{t.qtyBase} {t.unit}</td>
-                    <td className="py-2 pl-3">
-                      <span className={`text-[10px] font-black px-2 py-1 rounded ${statusColor[t.status] || 'bg-white/10 text-fg/70'}`}>{t.status}</span>
-                    </td>
-                    <td className="py-2 text-right">
-                      {t.direction === 'inbound' && t.status === 'Pending' && (
-                        <div className="flex gap-1 justify-end">
-                          <button onClick={() => openAccept(t)} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-accent/15 text-brand-text hover:bg-accent/25 min-h-[28px]">Accept</button>
-                          <button onClick={() => act(t._id, 'reject')} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-red-500/10 text-danger hover:bg-red-500/20 min-h-[28px]">Reject</button>
-                        </div>
-                      )}
-                      {t.direction === 'outbound' && ['Pending', 'Requested'].includes(t.status) && (
-                        <button onClick={() => act(t._id, 'cancel')} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/8 text-fg/75 hover:bg-white/15 min-h-[28px]">
-                          {t.status === 'Requested' ? 'Withdraw' : 'Cancel'}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                )} />
+                <PagedRows items={groupShipments(transfers)} label="shipments" render={sh => {
+                  const open = !!openShipments[sh.key];
+                  const toggle = () => setOpenShipments(o => ({ ...o, [sh.key]: !o[sh.key] }));
+                  const firstStatus = sh.lines[0]?.status;
+                  return (
+                    <Fragment key={sh.key}>
+                      <tr className="border-b border-white/5 hover:bg-white/2 cursor-pointer" onClick={toggle} data-testid="shipment-row">
+                        <td className="py-2 text-fg/60">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
+                        <td className="py-2 text-fg/70 text-xs whitespace-nowrap">{formatDate(sh.date)}</td>
+                        <td className="py-2 text-fg/75 text-xs font-mono whitespace-nowrap">{sh.ref}</td>
+                        <td className="py-2">
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${sh.direction === 'outbound' ? 'bg-blue-500/15 text-info' : 'bg-purple-500/15 text-special'}`}>
+                            {sh.direction === 'outbound' ? '↑ OUT' : '↓ IN'}
+                          </span>
+                        </td>
+                        <td className="py-2 text-fg/70 text-xs">{sh.partnerName}</td>
+                        <td className="py-2 text-fg text-xs">
+                          <span className="font-black">{sh.lines.length} item{sh.lines.length === 1 ? '' : 's'}</span>
+                          <span className="text-fg/60"> · {sh.lines.slice(0, 2).map(l => l.itemName).join(', ')}{sh.lines.length > 2 ? '…' : ''}</span>
+                        </td>
+                        <td className="py-2 text-right text-fg tabular-nums font-bold text-xs">{peso ? peso(sh.value) : sh.value.toFixed(2)}</td>
+                        <td className="py-2 pl-3">
+                          <span className={`text-[10px] font-black px-2 py-1 rounded ${sh.status.mixed ? 'bg-white/10 text-fg/80' : (statusColor[firstStatus] || 'bg-white/10 text-fg/70')}`}>{sh.status.label}</span>
+                        </td>
+                        <td className="py-2 text-right">
+                          <button onClick={e => { e.stopPropagation(); exportTransferSlip(sh, pdfDeps); }} title="Print this shipment's transfer slip"
+                            className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/8 text-fg/80 hover:bg-white/15 min-h-[28px] inline-flex items-center gap-1">
+                            <FileText size={11} /> Slip
+                          </button>
+                        </td>
+                      </tr>
+                      {open && sh.lines.map(t => (
+                        <tr key={t._id} className="border-b border-white/5 bg-white/[0.02]">
+                          <td />
+                          <td className="py-1.5 text-fg/60 text-[11px] font-mono" colSpan={2}>{t.reference}</td>
+                          <td className="py-1.5 text-fg/60 text-[11px]">{t.itemCode || ''}</td>
+                          <td className="py-1.5 text-fg font-bold text-xs" colSpan={2}>{t.itemName}{t.note ? <span className="block text-fg/60 font-normal text-[11px]">{t.note}</span> : null}</td>
+                          <td className="py-1.5 text-right text-fg tabular-nums text-xs">
+                            <span className="font-bold">{displayQty(t)}</span>
+                            <span className="block text-fg/60 text-[11px]">{peso ? peso(lineValue(t)) : lineValue(t).toFixed(2)}</span>
+                          </td>
+                          <td className="py-1.5 pl-3">
+                            <span className={`text-[10px] font-black px-2 py-1 rounded ${statusColor[t.status] || 'bg-white/10 text-fg/70'}`}>{t.status}</span>
+                          </td>
+                          <td className="py-1.5 text-right">
+                            {t.direction === 'inbound' && t.status === 'Pending' && (
+                              <div className="flex gap-1 justify-end">
+                                <button onClick={() => openAccept(t)} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-accent/15 text-brand-text hover:bg-accent/25 min-h-[28px]">Accept</button>
+                                <button onClick={() => act(t._id, 'reject')} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-red-500/10 text-danger hover:bg-red-500/20 min-h-[28px]">Reject</button>
+                              </div>
+                            )}
+                            {t.direction === 'outbound' && ['Pending', 'Requested'].includes(t.status) && (
+                              <button onClick={() => act(t._id, 'cancel')} className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/8 text-fg/75 hover:bg-white/15 min-h-[28px]">
+                                {t.status === 'Requested' ? 'Withdraw' : 'Cancel'}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  );
+                }} />
               </tbody>
             </table>
           </div>
