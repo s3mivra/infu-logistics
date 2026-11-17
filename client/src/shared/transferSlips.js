@@ -107,7 +107,9 @@ export async function exportTransferSlip(s, { loadPdfLibs, addLogoToPDF, bizName
   const { jsPDF, autoTable } = await loadPdfLibs();
   const doc = new jsPDF();
   if (addLogoToPDF) await addLogoToPDF(doc);
-  drawSlip(doc, autoTable, s, { bizName, y: 22 });
+  // The logo takes the top-right corner (a 30 x 18 box from y 4), where the
+  // slip's ref / date / status go - so the slip starts below it.
+  drawSlip(doc, autoTable, s, { bizName, y: addLogoToPDF ? 34 : 22 });
   doc.save(`Transfer-${s.ref}.pdf`);
   return doc;
 }
