@@ -105,17 +105,22 @@ export default function makeReportExports(deps) {
     doc.save(`Profit-By-Category-${todayStr()}.pdf`);
   };
 
-  const exportMenuEngineeringPDF = async () => {
+  // `opts.rows` / `opts.subtitle`: what the screen is showing (its range and
+  // filters) - the PDF prints exactly that.
+  const exportMenuEngineeringPDF = async (opts = {}) => {
     if (!menuEngineering) return ui.alert(`Refresh ${BUSINESS_TYPE === 'log' ? 'Product Mix' : 'Menu Engineering'} first.`);
+    const rows = Array.isArray(opts.rows) ? opts.rows : (menuEngineering.items || menuEngineering || []);
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
-    doc.setFontSize(10); doc.text('MENU ENGINEERING', 105, 22, { align: 'center' });
-    doc.setFontSize(9); doc.text(formatDate(new Date()), 105, 28, { align: 'center' });
+    doc.setFontSize(10); doc.text(BUSINESS_TYPE === 'log' ? 'PRODUCT MIX' : 'MENU ENGINEERING', 105, 22, { align: 'center' });
+    doc.setFontSize(9); doc.text(opts.subtitle || formatDate(new Date()), 105, 28, { align: 'center' });
     autoTable(doc, {
       startY: 34,
-      head: [['Item', 'Qty', 'Revenue', 'Margin', 'Class']],
-      body: (menuEngineering.items || menuEngineering || []).map(r => [r.name, r.qty, pdfMoney(r.revenue), `${r.margin.toFixed(1)}%`, r.quadrant]),
+      head: [['Item', 'Category', 'Qty', 'Revenue', 'Margin', 'Class']],
+      body: rows.map(r => [r.name, r.category || '-', r.qty, pdfMoney(r.revenue), `${r.margin.toFixed(1)}%`, r.quadrant]),
+      foot: [['Total', '', rows.reduce((t, r) => t + (Number(r.qty) || 0), 0), pdfMoney(rows.reduce((t, r) => t + (Number(r.revenue) || 0), 0)), '', '']],
+      footStyles: { fillColor: [45, 45, 45], textColor: 255 },
       styles: { fontSize: 9 }, headStyles: { fillColor: [30, 30, 30] }, columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
     });
     doc.save(`Menu-Engineering-${todayStr()}.pdf`);

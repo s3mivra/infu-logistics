@@ -1003,7 +1003,7 @@ app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, require
       for (const it of (o.items || [])) {
         for (const line of reportLinesForItem(it, prods, prodMap, invMap, addOnMap)) {
           const key = line.name;
-          if (!stat[key]) stat[key] = { name: key, qty: 0, revenue: 0, cogs: 0 };
+          if (!stat[key]) stat[key] = { name: key, category: line.category || 'Uncategorized', qty: 0, revenue: 0, cogs: 0 };
           stat[key].qty += line.qty;
           stat[key].revenue += line.revenue;
           stat[key].cogs += line.cogs;
@@ -1021,7 +1021,7 @@ app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, require
       r.quadrant = hiVol && hiMargin ? 'Star' : hiVol && !hiMargin ? 'Plowhorse' : !hiVol && hiMargin ? 'Puzzle' : 'Dog';
     });
     rows.sort((a, b) => b.revenue - a.revenue);
-    res.json({ success: true, items: rows, avgQty, avgMargin });
+    res.json({ success: true, items: rows, avgQty, avgMargin, start: start || null, end: end || null });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 

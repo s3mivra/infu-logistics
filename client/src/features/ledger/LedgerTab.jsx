@@ -15,7 +15,7 @@ import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocume
 import { LEDGER_TAB_GROUPS, REPORT_TAB_GROUPS } from '../dashboard/navRegistry';
 import * as auth from '../auth/auth';
 
-import { dateStr, monthStartStr, todayStr } from '../../shared/businessDay.js';
+import { dateStr, monthStartStr, todayStr, presetRange } from '../../shared/businessDay.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import ManualJournalApprovals from './ManualJournalApprovals';
 import LedgerEntryEditor from './LedgerEntryEditor';
@@ -1448,7 +1448,7 @@ It posts only what is not already accrued for that month.`)) return;
   // so those lists have to be present before it can open.
   if (id === 'advances') { if (!advances) fetchAdvances(); fetchBills(); fetchArOutstanding(); }
   if (id === 'profitcat') fetchProfitByCategory();
-  if (id === 'menueng') fetchMenuEngineering();
+  if (id === 'menueng') fetchMenuEngineering(meRange);
   if (id === 'variance') fetchCashierVariance();
   if (id === 'commissions') fetchCommissions();
   if (id === 'revolving') { fetchRfFunds(); setRfActiveFund(null); setRfTxs([]); }
@@ -1592,7 +1592,22 @@ It posts only what is not already accrued for that month.`)) return;
   const sbpPage  = usePagination(salesByPayment?.breakdown, 10);
   const sliPage  = usePagination(salesLineItems?.rows, 15);
   const pbcPage  = usePagination(profitByCategory?.categories, 10);
-  const mePage   = usePagination(menuEngineering?.items, 10);
+  // Product Mix: the range it covers (this month to start with), and the
+  // class / category / search the list is narrowed by.
+  const [meRange, setMeRange] = useSessionState('menueng.range', () => presetRange('thisMonth'));
+  const [meClass, setMeClass] = useState('');
+  const [meCat, setMeCat] = useState('');
+  const [meQuery, setMeQuery] = useState('');
+  const meCats = useMemo(() => [...new Set((menuEngineering?.items || []).map(r => r.category || 'Uncategorized'))].sort(), [menuEngineering]);
+  const meShown = useMemo(() => {
+    const q = meQuery.trim().toUpperCase();
+    return (menuEngineering?.items || []).filter(r => (!meClass || r.quadrant === meClass)
+      && (!meCat || (r.category || 'Uncategorized') === meCat)
+      && (!q || String(r.name || '').toUpperCase().includes(q)));
+  }, [menuEngineering, meClass, meCat, meQuery]);
+  const meCounts = useMemo(() => (menuEngineering?.items || []).reduce((c, r) => ({ ...c, [r.quadrant]: (c[r.quadrant] || 0) + 1 }), {}), [menuEngineering]);
+  const runMenuEng = () => fetchMenuEngineering(meRange);
+  const mePage   = usePagination(meShown, 10);
   const cvPage   = usePagination(cashierVariance?.cashiers, 10);
   const cmPage   = usePagination(commissions?.sellers, 10);
   const billsPage = usePagination(bills, 12);
@@ -2488,17 +2503,59 @@ It posts only what is not already accrued for that month.`)) return;
               <div className="flex justify-between items-center">
                 <p className="text-xs text-fg/65">Stars (sell + profit), Plowhorses (sell, low margin), Puzzles (high margin, low sell), Dogs (neither).</p>
                 <div className="flex gap-2">
-                  {menuEngineering && <button onClick={exportMenuEngineeringPDF} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
-                  <button onClick={fetchMenuEngineering} className="flex items-center gap-2 px-4 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
+                  {menuEngineering && <button onClick={() => exportMenuEngineeringPDF({ rows: meShown, subtitle: `${meRange?.start ? `${meRange.start} to ${meRange.end || meRange.start}` : 'All time'}${meClass ? ` · ${meClass}s` : ''}${meCat ? ` · ${meCat}` : ''}${meQuery.trim() ? ` · "${meQuery.trim()}"` : ''}` })} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg rounded-xl font-bold text-sm transition"><Download size={14}/> PDF</button>}
+                  <button onClick={runMenuEng} className="flex items-center gap-2 px-4 py-2 bg-brand text-on-brand rounded-xl font-bold text-sm hover:bg-brand/90 transition"><RefreshCw size={14}/> Refresh</button>
                 </div>
               </div>
+              {/* The months it covers: a quick range, one whole month, or any two dates. */}
+              <div className="flex items-end gap-2 flex-wrap" data-testid="menueng-range">
+                <RangePresets value={meRange} onChange={r => setMeRange(p => ({ ...p, ...r }))} onRun={runMenuEng} />
+                <label className="text-xs font-bold text-fg/70">Month
+                  <input type="month" value={meRange?.start && meRange?.end && meRange.start.slice(0, 7) === meRange.end.slice(0, 7) && meRange.start.endsWith('-01') ? meRange.start.slice(0, 7) : ''}
+                    onChange={e => {
+                      const m = e.target.value; if (!m) return;
+                      const [y, mo] = m.split('-').map(Number);
+                      const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+                      setMeRange({ start: `${m}-01`, end: `${m}-${String(last).padStart(2, '0')}` });
+                    }}
+                    className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
+                </label>
+                <label className="text-xs font-bold text-fg/70">From
+                  <input type="date" value={meRange?.start || ''} onChange={e => setMeRange(r => ({ ...r, start: e.target.value }))} className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
+                </label>
+                <label className="text-xs font-bold text-fg/70">To
+                  <input type="date" value={meRange?.end || ''} onChange={e => setMeRange(r => ({ ...r, end: e.target.value }))} className="block bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg mt-1" />
+                </label>
+                <button onClick={runMenuEng} className="bg-brand hover:bg-brand/90 text-on-brand font-bold text-sm px-4 py-2 rounded-lg transition">Show</button>
+                <button onClick={() => { setMeRange({ start: '', end: '' }); fetchMenuEngineering(null); }} className="text-xs font-bold text-fg/65 underline px-1 py-2">All time</button>
+              </div>
+              {menuEngineering && (
+                <div className="flex items-center gap-2 flex-wrap" data-testid="menueng-filters">
+                  <input type="search" value={meQuery} onChange={e => setMeQuery(e.target.value)} placeholder="Search item"
+                    className="flex-1 min-w-[180px] bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg outline-none focus:border-brand/60" />
+                  <select value={meClass} onChange={e => setMeClass(e.target.value)} aria-label="Class"
+                    className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg font-bold outline-none focus:border-brand/60">
+                    <option value="">Every class</option>
+                    {['Star', 'Plowhorse', 'Puzzle', 'Dog'].map(c => <option key={c} value={c}>{c}s ({meCounts[c] || 0})</option>)}
+                  </select>
+                  <select value={meCat} onChange={e => setMeCat(e.target.value)} aria-label="Category"
+                    className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg font-bold outline-none focus:border-brand/60">
+                    <option value="">Every category</option>
+                    {meCats.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <span className="text-xs text-fg/65">
+                    {meShown.length} of {(menuEngineering.items || []).length} · ₱{meShown.reduce((t, r) => t + (Number(r.revenue) || 0), 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {(meClass || meCat || meQuery) && <button onClick={() => { setMeClass(''); setMeCat(''); setMeQuery(''); }} className="ml-2 underline hover:text-fg">clear</button>}
+                  </span>
+                </div>
+              )}
               {!menuEngineering ? (
                 <p className="text-fg/65 text-sm text-center p-6 font-bold">Click Refresh to analyse {BUSINESS_TYPE === 'log' ? 'the products' : 'the menu'}.</p>
               ) : (
                 <div className="bg-surface border border-white/10 rounded-xl overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[520px]">
                     <thead className="text-white bg-accent text-[10px] font-black uppercase tracking-wider border-b border-white/5">
-                      <tr><th className="px-5 py-3">Item</th><th className="px-5 py-3 text-right">Qty</th><th className="px-5 py-3 text-right">Revenue</th><th className="px-5 py-3 text-right">Margin</th><th className="px-5 py-3 text-center">Class</th></tr>
+                      <tr><th className="px-5 py-3">Item</th><th className="px-5 py-3">Category</th><th className="px-5 py-3 text-right">Qty</th><th className="px-5 py-3 text-right">Revenue</th><th className="px-5 py-3 text-right">Margin</th><th className="px-5 py-3 text-center">Class</th></tr>
                     </thead>
                     <tbody>
                       {mePage.pageItems.map((r,i) => {
@@ -2506,6 +2563,7 @@ It posts only what is not already accrued for that month.`)) return;
                         return (
                           <tr key={i} className={`border-b border-white/5 ${i%2?'bg-white/[0.015]':''}`}>
                             <td className="px-5 py-2.5 font-bold text-fg">{r.name}</td>
+                            <td className="px-5 py-2.5 text-fg/65">{r.category || '-'}</td>
                             <td className="px-5 py-2.5 text-right text-fg/70 tabular-nums">{r.qty}</td>
                             <td className="px-5 py-2.5 text-right text-brand-text font-black tabular-nums">₱{r.revenue.toFixed(2)}</td>
                             <td className="px-5 py-2.5 text-right tabular-nums font-bold text-fg/70">{r.margin.toFixed(1)}%</td>

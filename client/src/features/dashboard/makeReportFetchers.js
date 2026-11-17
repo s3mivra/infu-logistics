@@ -13,8 +13,10 @@ export default function makeReportFetchers(deps) {
   } = deps;
 
   // ── Reports ───────────────────────────────────────────────────────────────────
-  const fetchMenuEngineering = async () => {
-    try { const res = await apiFetch('/api/reports/menu-engineering'); const d = await res.json(); if (d.success) setMenuEngineering(d); }
+  // For a date range when given ({ start, end }); all time without one.
+  const fetchMenuEngineering = async (range) => {
+    const q = range?.start || range?.end ? `?${new URLSearchParams({ ...(range.start ? { start: range.start } : {}), ...(range.end ? { end: range.end } : {}) })}` : '';
+    try { const res = await apiFetch(`/api/reports/menu-engineering${q}`); const d = await res.json(); if (d.success) setMenuEngineering(d); }
     catch (err) { console.error('fetchMenuEngineering', err); }
   };
   const fetchCashierVariance = async () => {
