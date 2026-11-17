@@ -131,6 +131,8 @@ export default function ProcurementTab({ ctx }) {
   };
 
   const [subTab, setSubTab] = useSessionState('procurement.tab', 'orders');   // 'orders' | 'receiving' | 'suppliers'
+  const [poQuery, setPoQuery] = useSessionState('procurement.poQuery', '');
+  const [poSort, setPoSort] = useSessionState('procurement.poSort', 'newest');
   // A page this person may not open is never the one showing.
   useEffect(() => {
     if (can(`screen.procurement.${subTab}`)) return;
@@ -943,8 +945,49 @@ export default function ProcurementTab({ ctx }) {
   // Incomplete is NOT terminal - a short delivery stays actionable until every
   // line is fully received, so it belongs with the active/receivable POs, not
   // in History (which is only for genuinely finished records).
-  const activePOs = pos.filter(p => ['Ordered', 'Processing', 'Incomplete'].includes(p.status));
-  const historyPOs = pos.filter(p => ['Complete', 'Cancelled'].includes(p.status));
+  // Find a PO: by number, supplier, an item on it or its notes; and in the
+  // order asked for (newest first by default). Applies to Active, History and
+  // Receiving alike, so a PO found here is found on every list.
+  const poQ = String(poQuery || '').trim().toLowerCase();
+  const poTotal = (p) => Number(p.actualTotal) || Number(p.estTotal) || 0;
+  const poWhen = (p) => new Date(p.createdAt || p.orderDate || 0).getTime() || 0;
+  const poShown = (list) => {
+    const hit = !poQ ? list : list.filter(p => [p.poNumber, p.supplier, p.notes, p.status, ...(p.lines || []).map(l => `${l.itemName || ''} ${l.itemCode || ''}`)]
+      .some(v => String(v || '').toLowerCase().includes(poQ)));
+    const by = {
+      newest: (a, b) => poWhen(b) - poWhen(a),
+      oldest: (a, b) => poWhen(a) - poWhen(b),
+      largest: (a, b) => poTotal(b) - poTotal(a),
+      smallest: (a, b) => poTotal(a) - poTotal(b),
+      supplier: (a, b) => String(a.supplier || '').localeCompare(String(b.supplier || '')) || poWhen(b) - poWhen(a),
+    }[poSort] || ((a, b) => poWhen(b) - poWhen(a));
+    return [...hit].sort(by);
+  };
+  const activePOs = poShown(pos.filter(p => ['Ordered', 'Processing', 'Incomplete'].includes(p.status)));
+  const historyPOs = poShown(pos.filter(p => ['Complete', 'Cancelled'].includes(p.status)));
+  const activeCount = pos.filter(p => ['Ordered', 'Processing', 'Incomplete'].includes(p.status)).length;
+  // Find a PO, and choose the order the lists are in (Orders and Receiving).
+  const poFilterBar = (
+    <div className="flex flex-wrap items-center gap-2 mb-4" data-testid="po-filters">
+      <input type="search" value={poQuery} onChange={e => setPoQuery(e.target.value)} data-testid="po-search"
+        placeholder="Search PO no., supplier, item or notes" aria-label="Search purchase orders"
+        className="flex-1 min-w-[200px] bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg placeholder-fg/60 focus:outline-none focus:border-brand/60" />
+      <select value={poSort} onChange={e => setPoSort(e.target.value)} aria-label="Sort purchase orders" data-testid="po-sort"
+        className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-fg font-bold focus:outline-none focus:border-brand/60">
+        <option value="newest">Newest to oldest</option>
+        <option value="oldest">Oldest to newest</option>
+        <option value="largest">Largest amount first</option>
+        <option value="smallest">Smallest amount first</option>
+        <option value="supplier">Supplier A-Z</option>
+      </select>
+      {poQ && (
+        <span className="text-xs text-fg/70">
+          {activePOs.length + historyPOs.length} found
+          <button type="button" onClick={() => setPoQuery('')} className="ml-2 underline hover:text-fg">clear</button>
+        </span>
+      )}
+    </div>
+  );
   // Per-line remaining-to-receive, used to show "the missing ones only".
   const remainingOf = (l) => Math.max(0, (Number(l.orderedQty) || 0) - (Number(l.receivedQty) || 0));
 
@@ -1018,7 +1061,7 @@ export default function ProcurementTab({ ctx }) {
       <div className="flex max-w-full overflow-x-auto scrollbar-hide bg-white/5 border border-white/10 rounded-xl p-1 mb-5">
         {[
           { id: 'orders', label: 'Purchase Orders', icon: ClipboardList },
-          { id: 'receiving', label: 'Receiving', icon: PackageCheck, badge: activePOs.length },
+          { id: 'receiving', label: 'Receiving', icon: PackageCheck, badge: activeCount },
           { id: 'suppliers', label: 'Suppliers', icon: Building2 },
         ].filter(({ id }) => can(`screen.procurement.${id}`)).map(({ id, label, icon: Icon, badge }) => (
           <button key={id} onClick={() => setSubTab(id)}
@@ -1063,7 +1106,8 @@ export default function ProcurementTab({ ctx }) {
               )}
             </div>
           )}
-          <PoSection title="Active" empty="No active purchase orders. Create one with “New PO”." pos={activePOs} money={money} showReceived
+          {poFilterBar}
+          <PoSection title="Active" empty={poQ ? 'No active PO matches your search.' : 'No active purchase orders. Create one with “New PO”.'} pos={activePOs} money={money} showReceived
             renderActions={(po) => {
               // Incomplete already has a partial delivery reconciled against it -
               // editing/deleting would desync from what's already posted to
@@ -1096,7 +1140,7 @@ export default function ProcurementTab({ ctx }) {
               </div>
               );
             }} />
-          <PoSection title="History" empty="No completed or cancelled POs yet." pos={historyPOs} money={money} showReceived
+          <PoSection title="History" empty={poQ ? 'No completed or cancelled PO matches your search.' : 'No completed or cancelled POs yet.'} pos={historyPOs} money={money} showReceived
             renderActions={(po) => (
               <div className="flex items-center gap-1.5">
                 <button onClick={() => printPurchaseOrder(po)} title="Print purchase order" className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 text-fg/65 hover:bg-white/10 hover:text-fg transition">Print</button>
@@ -1300,10 +1344,11 @@ export default function ProcurementTab({ ctx }) {
       ) : (
         /* ── RECEIVING / RECONCILIATION ── */
         <div className="space-y-3">
+          {poFilterBar}
           {activePOs.length === 0 ? (
             <div className="text-center py-16 text-fg font-bold">
               <PackageCheck size={32} className="mx-auto mb-3 opacity-40" />
-              Nothing awaiting delivery. Create a PO in the Purchase Orders tab first.
+              {poQ ? 'No PO awaiting delivery matches your search.' : 'Nothing awaiting delivery. Create a PO in the Purchase Orders tab first.'}
             </div>
           ) : activePOs.map(po => (
             <div key={po._id} className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
