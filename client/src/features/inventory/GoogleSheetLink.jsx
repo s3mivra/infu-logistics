@@ -107,6 +107,10 @@ export default function GoogleSheetModal({
 }) {
   const [url, setUrl] = useState(sheet?.url || '');
   const [checkTime, setCheckTime] = useState(sheet?.checkTime || '');
+  // The stock sheet only: does a pull set each item to the sheet's count, or
+  // add the sheet's quantities to the stock?
+  const isStockSheet = base === '/api/inventory-sheet';
+  const [stockMode, setStockMode] = useState(sheet?.stockMode === 'add' ? 'add' : 'follow');
   // 'all', or the names ticked. availableTabs is what the sheet had when last read.
   const [tabs, setTabs] = useState(sheet?.tabs || 'all');
   const [available, setAvailable] = useState(sheet?.availableTabs || []);
@@ -116,7 +120,8 @@ export default function GoogleSheetModal({
   const [msg, setMsg] = useState(null);
 
   const dirty = url.trim() !== (sheet?.url || '') || checkTime !== (sheet?.checkTime || '')
-    || JSON.stringify(tabs) !== JSON.stringify(sheet?.tabs || 'all');
+    || JSON.stringify(tabs) !== JSON.stringify(sheet?.tabs || 'all')
+    || (isStockSheet && stockMode !== (sheet?.stockMode === 'add' ? 'add' : 'follow'));
   const noneTicked = Array.isArray(tabs) && tabs.length === 0;
 
   // Reads the tab names of the link in the box - works before it is saved.
@@ -135,7 +140,7 @@ export default function GoogleSheetModal({
   const save = async () => {
     setSaving(true); setMsg(null);
     try {
-      const r = await apiFetch(base, { method: 'PUT', body: JSON.stringify({ url: url.trim(), checkTime, tabs }) });
+      const r = await apiFetch(base, { method: 'PUT', body: JSON.stringify({ url: url.trim(), checkTime, tabs, ...(isStockSheet ? { stockMode } : {}) }) });
       const d = await r.json();
       if (d.success) { setSheet(d.sheet); setAvailable(d.sheet.availableTabs || []); setTabs(d.sheet.tabs || 'all'); setMsg({ tone: 'ok', text: url.trim() ? 'Saved. The sheet was read successfully.' : 'Sheet unlinked.' }); }
       else setMsg({ tone: 'err', text: d.error || 'Could not save.' });
@@ -230,6 +235,24 @@ export default function GoogleSheetModal({
               Only these tabs are checked for changes and brought into the import. With "All tabs", a tab without stock columns (like notes) is skipped when you pull.
             </p>
           </fieldset>
+
+          {isStockSheet && (
+            <fieldset data-testid="sheet-stock-mode">
+              <legend className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">When pulled, the sheet's quantities</legend>
+              <div className="flex flex-wrap gap-2">
+                {[['follow', 'Replace stock (follow the sheet)', 'Each item becomes the count in the sheet - for a stock count.'],
+                  ['add', 'Add to stock (increase)', 'The sheet\'s quantities are added to what is already in stock - for deliveries or stock coming in.']].map(([v, label]) => (
+                  <button key={v} type="button" onClick={() => setStockMode(v)} aria-pressed={stockMode === v}
+                    className={`px-3 py-2 rounded-lg text-xs font-bold border transition ${stockMode === v ? 'bg-brand text-on-brand border-brand' : 'border-white/15 text-fg/80 hover:text-fg'}`}>{label}</button>
+                ))}
+              </div>
+              <p className="text-[10px] text-fg/70 mt-1 leading-snug">
+                {stockMode === 'add'
+                  ? 'Each pull adds the sheet\'s quantities to current stock - pull each sheet of arrivals once, or it is added twice.'
+                  : 'Each pull sets every item to the count in the sheet. You can still switch this in the preview before importing.'}
+              </p>
+            </fieldset>
+          )}
 
           <div>
             <label htmlFor="gsheet-time" className="text-[10px] font-bold text-fg/70 uppercase tracking-widest block mb-1.5">Check for changes every day at</label>

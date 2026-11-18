@@ -1812,6 +1812,9 @@ async function runInventoryImport(req, res, attempt) {
     // balance sheet as Inventory, so nothing posts - it would count twice.
     // Books Health then compares the two. Superadmin only, like the route.
     const opening = req.body?.opening === true;
+    // 'add': every row ADDS its quantity to the item (stock arriving), instead
+    // of setting the item to it (a stock count). New items are created either way.
+    const addMode = req.body?.mode === 'add';
     const postEntry = opening ? async () => [] : (docs, opts) => JournalEntry.create(docs, opts);
     if (!Array.isArray(items) || items.length === 0) {
       await session.abortTransaction(); session.endSession();
@@ -2017,7 +2020,7 @@ async function runInventoryImport(req, res, attempt) {
 
       if (existing) touchedItems.set(String(existing._id), existing);
       const importKey = itemCode || itemName.toLowerCase();
-      const isRepeatBatchRow = existing && seenThisImport.has(importKey);
+      const isRepeatBatchRow = existing && (addMode || seenThisImport.has(importKey));
       seenThisImport.add(importKey);
 
       if (existing && isRepeatBatchRow) {

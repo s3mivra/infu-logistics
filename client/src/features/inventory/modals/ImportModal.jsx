@@ -6,7 +6,11 @@ import { useDashboard } from '../../dashboard/DashboardContext';
 import { todayStr } from '../../../shared/businessDay.js';
 // Extracted from AdminDashboard; reads shared state via useDashboard().
 export default function ImportModal() {
-  const { BIZ_NAME, importModal, importProgress, importRows, importSubmitting, loadPdfLibs, peso, setImportModal, submitImport } = useDashboard();
+  const { BIZ_NAME, importModal, importProgress, importRows, importSubmitting, loadPdfLibs, peso, setImportModal, submitImport, importMode = 'follow', setImportMode } = useDashboard();
+  const adding = importMode === 'add';
+  // Adding: every existing item shows as stock coming in on top of what is
+  // there (the same as an extra batch row), with its new total.
+  const rows = adding ? importRows.map(r => (r._newItem || r._error || r._skipped || r._isCategory ? r : { ...r, _diff: Number(r.qty) || 0, _newBatch: true })) : importRows;
 
   if (!(importModal)) return null;
 
@@ -16,7 +20,15 @@ export default function ImportModal() {
           <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
             <div>
               <h2 className="text-fg font-black text-lg">Stock count</h2>
-              <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-0.5">From a sheet · replaces quantities · audited via journal entries</p>
+              <p className="text-fg/70 text-xs font-bold uppercase tracking-widest mt-0.5">From a sheet · {adding ? 'adds to quantities' : 'replaces quantities'} · audited via journal entries</p>
+              {setImportMode && (
+                <div className="mt-2 inline-flex rounded-lg border border-white/15 overflow-hidden" role="radiogroup" aria-label="How the import changes stock" data-testid="import-mode">
+                  {[['follow', 'Follow the sheet', 'Each item becomes the sheet\'s count'], ['add', 'Add to stock', 'The sheet\'s quantities are added to what is there']].map(([v, label, hint]) => (
+                    <button key={v} type="button" role="radio" aria-checked={importMode === v} title={hint} onClick={() => setImportMode(v)}
+                      className={`px-3 py-1.5 text-[11px] font-black uppercase tracking-wider transition ${importMode === v ? 'bg-brand text-on-brand' : 'text-fg/70 hover:text-fg'}`}>{label}</button>
+                  ))}
+                </div>
+              )}
             </div>
             <button onClick={() => setImportModal(false)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 text-fg/75 flex items-center justify-center transition" aria-label="Close"><X size={16}/></button>
           </div>
@@ -31,7 +43,7 @@ export default function ImportModal() {
                 difference is booked as a stock gain or loss. Receiving goods you bought? Use <b>Procurement</b> instead.
               </p>
               {(() => {
-                const m = importRows.find(r => r._columns)?._columns;
+                const m = rows.find(r => r._columns)?._columns;
                 if (!m) return null;
                 return (
                   <p className="text-[11px] text-fg/70 leading-snug mt-1.5">
@@ -47,16 +59,16 @@ export default function ImportModal() {
 
           {/* Summary chips */}
           {(() => {
-            const valid = importRows.filter(r => !r._error && !r._isCategory && !r._skipped);
+            const valid = rows.filter(r => !r._error && !r._isCategory && !r._skipped);
             const newCount = valid.filter(r => r._newItem).length;
             const batchCount = valid.filter(r => !r._newItem && r._newBatch).length;
             const upCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff > 0).length;
             const downCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff < 0).length;
             const sameCount = valid.filter(r => !r._newItem && !r._newBatch && r._diff === 0).length;
-            const errCount = importRows.filter(r => r._error).length;
-            const skippedCount = importRows.filter(r => r._skipped).length;
-            const noteCount = importRows.filter(r => r._notes?.length).length;
-            const dateWarnRows = importRows.filter(r => r._dateFormatWarn);
+            const errCount = rows.filter(r => r._error).length;
+            const skippedCount = rows.filter(r => r._skipped).length;
+            const noteCount = rows.filter(r => r._notes?.length).length;
+            const dateWarnRows = rows.filter(r => r._dateFormatWarn);
             const dateFixedCount = dateWarnRows.filter(r => r._dateFormatWarn.corrected).length;
             const dateUnfixedCount = dateWarnRows.length - dateFixedCount;
             return (
@@ -89,7 +101,7 @@ export default function ImportModal() {
                 </tr>
               </thead>
               <tbody>
-                {importRows.map((r, i) => {
+                {rows.map((r, i) => {
                   if (r._isCategory) return (
                     <tr key={i} className="bg-white/5">
                       <td colSpan={7} className="px-4 py-2 text-fg/75 font-black text-[10px] uppercase tracking-[0.2em]">{r.category}</td>
@@ -124,8 +136,8 @@ export default function ImportModal() {
                   // row's own qty already IS the true final total, no need to
                   // manually add up every batch row by eye.
                   const key = r.itemCode || (r.itemName || '').toLowerCase();
-                  const next = importRows[i + 1];
-                  const prev = importRows[i - 1];
+                  const next = rows[i + 1];
+                  const prev = rows[i - 1];
                   const nextKey = next && !next._isCategory && !next._error ? (next.itemCode || (next.itemName || '').toLowerCase()) : null;
                   const prevKey = prev && !prev._isCategory && !prev._error ? (prev.itemCode || (prev.itemName || '').toLowerCase()) : null;
                   const isLastOfGroup = key !== nextKey;
@@ -213,7 +225,7 @@ export default function ImportModal() {
               doc.setFontSize(16); doc.text(`${BIZ_NAME} - Bulk Import Preview`, 14, 14);
               doc.setFontSize(9); doc.text(`Generated: ${formatDateTime(new Date())}`, 14, 21);
               const body = [];
-              importRows.forEach((r, i) => {
+              rows.forEach((r, i) => {
                 const isErr = !!r._error;
                 const isNew = r._newItem;
                 const isBatch = !isNew && !!r._newBatch;
@@ -233,8 +245,8 @@ export default function ImportModal() {
                 body.push([r.itemCode || '-', r.itemName || '(missing)', status, current, next, delta, cost]);
 
                 const key = r.itemCode || (r.itemName || '').toLowerCase();
-                const next2 = importRows[i + 1];
-                const prev2 = importRows[i - 1];
+                const next2 = rows[i + 1];
+                const prev2 = rows[i - 1];
                 const nextKey = next2 && !next2._isCategory && !next2._error ? (next2.itemCode || (next2.itemName || '').toLowerCase()) : null;
                 const prevKey = prev2 && !prev2._isCategory && !prev2._error ? (prev2.itemCode || (prev2.itemName || '').toLowerCase()) : null;
                 const isLastOfGroup = key !== nextKey;
@@ -257,7 +269,7 @@ export default function ImportModal() {
             }} className="px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-fg/65 hover:text-fg font-bold text-xs uppercase tracking-wider transition min-h-[44px]">
               Export PDF
             </button>
-            <button onClick={submitImport} disabled={importSubmitting || importRows.every(r => r._error)}
+            <button onClick={submitImport} disabled={importSubmitting || rows.every(r => r._error)}
               className="flex-1 px-5 py-3 rounded-xl bg-brand hover:bg-brand-dark text-on-brand font-black text-sm uppercase tracking-widest transition shadow-elev-2 disabled:opacity-50 min-h-[44px] flex items-center justify-center gap-2">
               <Check size={16}/> {importSubmitting ? 'Importing…' : 'Confirm Import'}
             </button>

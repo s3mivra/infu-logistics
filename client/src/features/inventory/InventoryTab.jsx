@@ -55,7 +55,7 @@ export default function InventoryTab({ ctx }) {
     stockLocations, stockCategories, saveStockLocation, deleteStockLocation, saveStockCategory, deleteStockCategory, backfillStockCategoryPrefixes, renumberStockCategory,
     stockTransfers, locationAnalytics, fetchStockTransfers, requestStockTransfer, actOnStockTransfer,
     openEditInventory, 
-    parseImportFile, peso,
+    parseImportFile, setImportMode, peso,
     physicalCounts, 
     products,
     rfFunds,
@@ -190,7 +190,9 @@ export default function InventoryTab({ ctx }) {
 
   // Linked Google Sheet - superadmin only, like the stock import it feeds.
   const [sheet, setSheet, reloadSheet] = useInventorySheet(apiFetch, !!isSuperAdmin);
-  const [pullSheet, pullingSheet] = usePull(apiFetch, parseImportFile, reloadSheet, sheet?.tabs);
+  // A pull imports the way the sheet link says (follow its counts, or add to stock).
+  const parseForPull = (f) => { setImportMode?.(sheet?.stockMode === 'add' ? 'add' : 'follow'); return parseImportFile(f); };
+  const [pullSheet, pullingSheet] = usePull(apiFetch, parseForPull, reloadSheet, sheet?.tabs);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [purchasesOpen, setPurchasesOpen] = useState(false);
 
@@ -288,7 +290,7 @@ export default function InventoryTab({ ctx }) {
                     <label className="w-full flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-white/80 hover:bg-white/8 hover:text-brand-text transition cursor-pointer">
                       <Download size={12} className="rotate-180" /> Stock count from a sheet
                       <input type="file" accept=".xlsx,.xls,.csv"
-                        onChange={e => { parseImportFile(e.target.files?.[0]); e.target.value = ''; setOpenActionMenu(null); }}
+                        onChange={e => { setImportMode?.('follow'); parseImportFile(e.target.files?.[0]); e.target.value = ''; setOpenActionMenu(null); }}
                         className="hidden" />
                     </label>
                     <button onClick={() => { downloadImportTemplate(); setOpenActionMenu(null); }}

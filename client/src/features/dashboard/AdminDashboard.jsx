@@ -4365,6 +4365,10 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
   // opening balance sheet: the stock is registered without posting, because
   // its value is already on that balance sheet. Any other import resets it.
   const importOpeningRef = useRef(false);
+  // 'follow': the import sets each item to the sheet's count; 'add': it adds
+  // the sheet's quantities to the stock. A pulled sheet starts on its saved
+  // choice, a file on 'follow'; the preview can switch it before importing.
+  const [importMode, setImportMode] = useState('follow');
   const parseImportFile = async (file, { opening = false } = {}) => {
     if (!file) return;
     importOpeningRef.current = opening === true;
@@ -4562,10 +4566,13 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
     if (importSubmitting) return;
     const validRows = importRows.filter(r => !r._error && !r._isCategory && !r._skipped && r.itemName && r.displayUnit);
     if (validRows.length === 0) return ui.alert('No valid rows to import.');
+    const adding = importMode === 'add';
     if (!(await ui.confirm({
-      title: 'Replace stock from import?',
-      message: `This will REPLACE current stock for ${validRows.length} item(s).`,
-      detail: 'New items will be created. Differences will be booked as journal adjustments.',
+      title: adding ? 'Add to stock from import?' : 'Replace stock from import?',
+      message: adding
+        ? `This will ADD the sheet's quantities to current stock for ${validRows.length} item(s).`
+        : `This will REPLACE current stock for ${validRows.length} item(s).`,
+      detail: adding ? 'New items will be created. What is added is booked as a journal adjustment.' : 'New items will be created. Differences will be booked as journal adjustments.',
       confirmLabel: 'Import',
       tone: 'danger',
     }))) return;
@@ -4578,7 +4585,7 @@ const updateStatus = async (orderId, newStatus, extra = {}) => {
       setImportProgress(Math.round(prog));
     }, 120);
     try {
-      const payload = { ...inventoryImportPayload(validRows), ...(importOpeningRef.current ? { opening: true } : {}) };
+      const payload = { ...inventoryImportPayload(validRows), ...(importOpeningRef.current ? { opening: true } : {}), ...(importMode === 'add' ? { mode: 'add' } : {}) };
       const res = await apiFetch('/api/inventory/import', {
         method: 'POST',
         body: JSON.stringify(payload)
@@ -7267,7 +7274,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     toggleAskOperatorEachSale,
     depositAmount, setDepositAmount, depositError, setDepositError, depositLoading,
     // ── Stock history / import / partial fulfil modals ──────────────────────
-    submitImport, loadPdfLibs, addLogoToPDF, pdfMoney,
+    submitImport, importMode, setImportMode, loadPdfLibs, addLogoToPDF, pdfMoney,
     // ── Ledger sub-tabs ─────────────────────────────────────────────────────
     ledgerSubTab, setLedgerSubTab, jeForm, setJeForm, jeDraft, cashOnHand, standardAccounts,
     // ── Chart of Accounts CRUD ──
