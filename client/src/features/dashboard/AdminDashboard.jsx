@@ -5951,9 +5951,9 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     const byDay = {};
     for (const r of rows) {
       const day = new Date(r.date).toLocaleDateString('en-CA'); // YYYY-MM-DD
-      if (!byDay[day]) byDay[day] = { date: r.date, orderNumber: null, count: 0, cash: 0, ewallet: 0, bank: 0, delivery: 0, subtotal: 0, total: 0, methods: {} };
+      if (!byDay[day]) byDay[day] = { date: r.date, orderNumber: null, count: 0, cash: 0, ewallet: 0, bank: 0, delivery: 0, credit: 0, subtotal: 0, total: 0, methods: {} };
       const t = byDay[day];
-      t.count++; t.cash += r.cash; t.ewallet += r.ewallet; t.bank += r.bank; t.delivery += r.delivery; t.total += r.total; t.subtotal += r.subtotal || 0;
+      t.count++; t.cash += r.cash; t.ewallet += r.ewallet; t.bank += r.bank; t.delivery += r.delivery; t.credit += r.credit || 0; t.total += r.total; t.subtotal += r.subtotal || 0;
       for (const [m, a] of Object.entries(r.methods || {})) t.methods[m] = (t.methods[m] || 0) + a;
     }
     return Object.values(byDay).sort((a, b) => new Date(a.date) - new Date(b.date));

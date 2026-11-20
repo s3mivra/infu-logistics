@@ -1674,8 +1674,10 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePer
           .map(c => [String(c._id), c.clientCode]))
       : {};
 
+    const CREDIT_METHODS = ['On Account', 'Credit', 'Charge', 'A/R'];
     const rows = orders.map(o => {
-      const ch = { cash: 0, ewallet: 0, bank: 0, delivery: 0 };
+      // Credit (sold on account) is owed, not received: its own column, never E-Wallet.
+      const ch = { cash: 0, ewallet: 0, bank: 0, delivery: 0, credit: 0 };
       const methods = {};
       const splits = (o.payments && o.payments.length)
         ? o.payments
@@ -1683,7 +1685,7 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePer
       for (const p of splits) {
         const amt = Number(p.amount) || 0;
         const m = p.method || 'Cash';
-        ch[paymentChannel(m)] += amt;
+        ch[CREDIT_METHODS.includes(m) ? 'credit' : paymentChannel(m)] += amt;
         methods[m] = (methods[m] || 0) + amt;
       }
       const refId = o.clientId || o.clientAccountId || '';
@@ -1698,11 +1700,12 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePer
     });
 
     const totals = rows.reduce((t, r) => {
-      t.cash += r.cash; t.ewallet += r.ewallet; t.bank += r.bank; t.delivery += r.delivery; t.total += r.total; t.subtotal += r.subtotal;
+      t.cash += r.cash; t.ewallet += r.ewallet; t.bank += r.bank; t.delivery += r.delivery; t.credit += r.credit; t.total += r.total; t.subtotal += r.subtotal;
       for (const [m, a] of Object.entries(r.methods)) t.methods[m] = (t.methods[m] || 0) + a;
       return t;
-    }, { cash: 0, ewallet: 0, bank: 0, delivery: 0, subtotal: 0, total: 0, methods: {} });
+    }, { cash: 0, ewallet: 0, bank: 0, delivery: 0, credit: 0, subtotal: 0, total: 0, methods: {} });
     totals.subtotal = roundMoney(totals.subtotal);
+    totals.credit = roundMoney(totals.credit);
 
     // A/R collected in this same range, whenever the sale itself was made: a
     // sale on account appears above on its own day, and the money for it on
