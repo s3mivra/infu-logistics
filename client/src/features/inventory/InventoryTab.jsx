@@ -584,6 +584,14 @@ export default function InventoryTab({ ctx }) {
                                 </button>
                               )}
                             </div>
+                          ) : (item.expiryBatches?.length || 0) > 0 ? (
+                            // No expiry date (goods dated by when they were made, e.g.
+                            // roasted coffee): the batches still open from here.
+                            <button onClick={() => setExpandedBatchRows(s => ({ ...s, [item._id]: !s[item._id] }))}
+                              title={`${item.expiryBatches.length} batch${item.expiryBatches.length === 1 ? '' : 'es'}`} data-testid="batch-toggle"
+                              className="text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide bg-white/10 text-on-brand hover:bg-white/20 transition inline-flex items-center gap-0.5">
+                              {expandedBatchRows[item._id] ? <ChevronUp size={10}/> : <ChevronDown size={10}/>} {item.expiryBatches.length} batch{item.expiryBatches.length === 1 ? '' : 'es'}
+                            </button>
                           ) : <span className="text-on-brand text-xs">-</span>}
                         </td>
                         <td className="py-3">
@@ -737,7 +745,7 @@ export default function InventoryTab({ ctx }) {
                                               <td className="py-1.5 pl-3 text-right text-white text-[10px] tabular-nums">{b.unitCost ? peso(b.unitCost * bPackBase) : '-'}<span className="text-white">/{bUnit}</span></td>
                                             </>);
                                           })()}
-                                          <td className="py-1.5 pl-3 text-white text-[10px]">{b.reference || '-'}</td>
+                                          <td className="py-1.5 pl-3 text-white text-[10px]">{b.reference || '-'}{b.batchNo ? <span className="block text-on-brand/80">Lot {b.batchNo}</span> : null}</td>
                                           <td className="py-1.5 text-right whitespace-nowrap">
                                             <button onClick={() => setEditingBatch({
                                               itemId: item._id, batchIdx: b._originalIdx,
