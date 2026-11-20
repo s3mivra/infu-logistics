@@ -1440,7 +1440,7 @@ It posts only what is not already accrued for that month.`)) return;
   if (id === 'salessummary') fetchSalesSummary();
   if (id === 'payments') fetchSalesByPayment();
   if (id === 'arreport' && !arReport) fetchArReport();
-  if (id === 'collections') { if (!collectionReport) fetchCollectionReport(); if (!checkRegister) fetchChecks(); }
+  if (id === 'collections') { if (!collectionReport) fetchCollectionReport(); if (!checkRegister) fetchChecks(); fetchArOutstanding(); }
   if (id === 'pricelog') { fetchChangeRequests(); if (!priceChangeLog) fetchPriceChangeLog(); }
   if (id === 'apreport' && !apReport) fetchApReport();
   if (id === 'supplierpay' && !supplierPayments) fetchSupplierPayments();
@@ -2336,7 +2336,9 @@ It posts only what is not already accrued for that month.`)) return;
           <CollectionsTab
             ledgerSubTab={ledgerSubTab} checkFilter={checkFilter} setCheckFilter={setCheckFilter} fetchChecks={fetchChecks} checkRegister={checkRegister} actOnCheck={actOnCheck}
             collRange={collRange} setCollRange={setCollRange} fetchCollectionReport={fetchCollectionReport} collectionReport={collectionReport}
-            isSuperAdmin={activeAdmin?.role === 'superadmin'} apiFetch={apiFetch} />
+            isSuperAdmin={activeAdmin?.role === 'superadmin'} apiFetch={apiFetch}
+            canCollect={can('ar.collect')} arOrders={arOutstanding?.orders || []}
+            onCollected={() => { fetchArOutstanding?.(); fetchArAgeing?.(); fetchChecks(checkFilter); fetchCollectionReport(); }} />
 
           {/* ===== A/P REPORT SUB-TAB ===== */}
           {/* The mirror of the A/R report. Aged on the DUE date, not the bill

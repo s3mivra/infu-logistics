@@ -101,7 +101,7 @@ export default function CollectFromClient({ apiFetch, orders = [], onDone }) {
     <div className="bg-surface border border-white/10 rounded-xl mb-4">
       <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} className="w-full flex items-center gap-2 px-4 py-3 text-left">
         <HandCoins size={15} className="text-brand-text" />
-        <span className="text-sm font-black text-fg">Collect one payment from a client</span>
+        <span className="text-sm font-black text-fg">+ New collection</span>
         <span className="text-fg/65 font-bold text-xs">spread over what they owe, oldest first</span>
       </button>
       {open && (

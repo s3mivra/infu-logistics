@@ -6,11 +6,13 @@ import RecordLink from '../../shared/RecordLink';
 import RangePresets from '../../shared/RangePresets';
 
 import PagedRows from '../../shared/PagedRows';
+import CollectFromClient from './CollectFromClient';
 // The collection report and the check register.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
 export default function CollectionsTab({
   ledgerSubTab, checkFilter, setCheckFilter, fetchChecks, checkRegister, actOnCheck, collRange, setCollRange,
   fetchCollectionReport, collectionReport, isSuperAdmin = false, apiFetch,
+  canCollect = false, arOrders = [], onCollected,
 }) {
   // The owner correcting a collection's dates: { key, collected, deposited }.
   const [dateEdit, setDateEdit] = useState(null);
@@ -28,6 +30,9 @@ export default function CollectionsTab({
     <>
     {ledgerSubTab === 'collections' && (
       <div className="space-y-4 animate-fade-in">
+        {/* New collection: one payment (cash, transfer or a check) from a
+            client, spread over the sales they owe on. */}
+        {canCollect && <CollectFromClient apiFetch={apiFetch} orders={arOrders} onDone={onCollected} />}
         {/* ── CHECK REGISTER ──────────────────────────────────────────
             A check is a promise of money, and the gap between taking one
             in and the bank honouring it is where receivables go wrong.

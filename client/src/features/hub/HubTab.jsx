@@ -222,12 +222,6 @@ export default function HubTab({ ctx }) {
   const [askPartner, setAskPartner]     = useState('');
   const [askItemName, setAskItemName]   = useState('');
   const [askUnit, setAskUnit]           = useState('');
-  const [askQty, setAskQty]             = useState('');
-  // Quick-pick from your OWN inventory catalogue (a running-low item you
-  // already stock is the common case) - just pre-fills the name/unit text
-  // fields below, which stay freely editable since you can't see the
-  // partner's stock and the request is name+qty only, not a real item link.
-  const [askPick, setAskPick]           = useState('');
 
   // "+ New item not yet in Inventory" - Send Stock normally requires picking
   // a REAL inventory item (it decrements actual stock on send), but a brand
@@ -239,7 +233,6 @@ export default function HubTab({ ctx }) {
   const [sendNewUnit, setSendNewUnit]       = useState('pcs');
   const [sendNewCost, setSendNewCost]       = useState('');
   const [sendNewBusy, setSendNewBusy]       = useState(false);
-  const [askNote, setAskNote]           = useState('');
   const [askCart, setAskCart]           = useState([]); // [{itemName,unit,qty,note}]
   const [askBusy, setAskBusy]           = useState(false);
   const [askErr, setAskErr]             = useState('');
@@ -267,13 +260,6 @@ export default function HubTab({ ctx }) {
   const [declineReason, setDeclineReason] = useState('');
   const [declineBusy, setDeclineBusy]     = useState(false);
 
-  const addToAskCart = () => {
-    const qty = parseFloat(askQty);
-    if (!askItemName.trim() || !(qty > 0)) return;
-    setAskCart(c => [...c, { itemName: askItemName.trim(), unit: askUnit.trim(), qty, note: askNote.trim() }]);
-    setAskItemName(''); setAskUnit(''); setAskQty(''); setAskNote(''); setAskPick('');
-  };
-  const removeFromAskCart = (idx) => setAskCart(c => c.filter((_, i) => i !== idx));
 
   const sendAsk = async () => {
     if (!askPartner || askCart.length === 0) return;
@@ -398,6 +384,16 @@ export default function HubTab({ ctx }) {
   };
 
   const removeFromCart = (idx) => setSendCart(c => c.filter((_, i) => i !== idx));
+  // Request Stock, the same way: tap one of your products to ask for one more,
+  // or type a name they may have that you don't stock.
+  const askAdd = (itemName, unit) => setAskCart(c => {
+    const key = String(itemName).trim().toUpperCase();
+    const at = c.findIndex(l => String(l.itemName).trim().toUpperCase() === key);
+    if (at >= 0) return c.map((l, i) => (i === at ? { ...l, qty: Number(l.qty || 0) + 1 } : l));
+    return [...c, { itemName: String(itemName).trim(), unit: unit || 'pcs', qty: 1, note: '' }];
+  });
+  const setAskLine = (idx, patch) => setAskCart(c => c.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+  const dropAskLine = (idx) => setAskCart(c => c.filter((_, i) => i !== idx));
   // Manual-order style: tap a product to add one; tap again (or +) for more.
   const quickAdd = (inv) => setSendCart(c => {
     const at = c.findIndex(l => l.itemId === inv._id);
@@ -1204,63 +1200,69 @@ export default function HubTab({ ctx }) {
               </div>
 
               <div className="bg-page-bg border border-white/8 rounded-xl p-3 mb-3">
-                <p className="text-[10px] text-fg/70 uppercase font-bold mb-2">Add Item</p>
-                {/* Quick-pick from your own catalogue (e.g. asking for more of
-                    something you already stock but is running low) - just
-                    fills the Item Name/Unit fields below, which stay editable
-                    since you can't see the partner's stock and this is a
-                    name+qty ask, not a link to a real inventory item. */}
-                <SearchSelect value={askPick} onChange={e => {
-                  const id = e.target.value; setAskPick(id);
-                  const item = inventory.find(i => i._id === id);
-                  if (item) { setAskItemName(item.itemName); setAskUnit(item.unit || ''); }
-                }} className={`${input} mb-2`}
-                  placeholder="Or pick from your own products (optional)"
-                  options={inventory.map(i => ({ value: i._id, label: i.itemName, hint: i.unit || '' }))} />
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                  <input value={askItemName} onChange={e => { setAskItemName(e.target.value); setAskPick(''); }} className={input} placeholder="Item name" />
-                  <input value={askUnit} onChange={e => setAskUnit(e.target.value)} className={input} placeholder="Unit (pcs, kg…)" />
-                  <input
-                    type="number" min="0.001" step="any" value={askQty}
-                    onChange={e => setAskQty(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && addToAskCart()}
-                    className={input} placeholder="Quantity"
-                  />
-                  <input value={askNote} onChange={e => setAskNote(e.target.value)} onKeyDown={e => e.key === 'Enter' && addToAskCart()} className={input} placeholder="Note (optional)" />
-                </div>
-                <button onClick={addToAskCart} disabled={!askItemName.trim() || !(parseFloat(askQty) > 0)} className={`mt-2 ${btn('ghost')} text-xs`}>
-                  + Add to Request
-                </button>
+                <input value={askItemName} onChange={e => setAskItemName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && askItemName.trim()) { askAdd(askItemName, askUnit); setAskItemName(''); } }}
+                  className={input} placeholder="Search your products, or type what you need - tap to add" aria-label="Search or name a product to ask for" />
+                {(() => {
+                  const q = askItemName.trim().toLowerCase();
+                  const list = inventory.filter(i => !q || String(i.itemName || '').toLowerCase().includes(q)).slice(0, 60);
+                  const exact = q && inventory.some(i => String(i.itemName || '').trim().toLowerCase() === q);
+                  return (
+                    <>
+                      {q && !exact && (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <button type="button" onClick={() => { askAdd(askItemName, askUnit); setAskItemName(''); }} className={`${btn('ghost')} text-xs`}>+ Ask for "{askItemName.trim()}"</button>
+                          <input value={askUnit} onChange={e => setAskUnit(e.target.value)} className={`${input} w-28`} placeholder="Unit (pcs…)" aria-label="Unit" />
+                        </div>
+                      )}
+                      <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 max-h-72 overflow-y-auto pr-1">
+                        {list.map(i => {
+                          const inCart = askCart.find(l => String(l.itemName).trim().toUpperCase() === String(i.itemName).trim().toUpperCase());
+                          const low = !(Number(i.stockQty) > 0);
+                          return (
+                            <button key={i._id} type="button" onClick={() => askAdd(i.itemName, i.unit)}
+                              className={`relative text-left rounded-xl border p-2.5 transition ${inCart ? 'border-brand bg-brand/10' : 'border-white/8 bg-white/3 hover:border-white/20'}`}>
+                              <p className="text-xs font-bold text-fg leading-tight line-clamp-2 pr-5">{i.itemName}</p>
+                              <p className={`text-[10px] mt-1 tabular-nums ${low ? 'text-warning' : 'text-fg/65'}`}>You have {Number(i.stockQty) || 0} {i.unit}</p>
+                              {inCart && <span className="absolute top-1.5 right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-brand text-on-brand text-[10px] font-black flex items-center justify-center">{inCart.qty}</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
 
               {askCart.length > 0 && (
                 <div className="border border-white/8 rounded-xl overflow-hidden mb-3">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-fg/70 text-[9px] uppercase tracking-widest border-b border-white/8 bg-white/3">
-                        <th className="text-left py-2 px-3">Item</th>
-                        <th className="text-right py-2 px-3">Qty</th>
-                        <th className="text-left py-2 px-3">Note</th>
-                        <th className="py-2 px-3" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {askCart.map((line, i) => (
-                        <tr key={i} className="border-b border-white/5 last:border-0">
-                          <td className="py-2 px-3 font-bold text-fg">{line.itemName}</td>
-                          <td className="py-2 px-3 text-right tabular-nums text-fg">{line.qty} {line.unit}</td>
-                          <td className="py-2 px-3 text-fg/75 italic">{line.note || '-'}</td>
-                          <td className="py-2 px-3 text-right">
-                            <button onClick={() => removeFromAskCart(i)} className="text-danger text-[10px] font-bold uppercase">Remove</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="flex items-center justify-between px-3 py-2 bg-white/3 border-b border-white/8">
+                    <p className="text-[10px] text-fg/70 uppercase font-black tracking-widest">To ask for · {askCart.length} item{askCart.length > 1 ? 's' : ''}</p>
+                    <button type="button" onClick={() => setAskCart([])} className="text-[10px] font-bold uppercase text-fg/60 hover:text-danger">Clear</button>
+                  </div>
+                  {askCart.map((line, i) => (
+                    <div key={`${line.itemName}-${i}`} className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-white/5 last:border-0">
+                      <div className="flex-1 min-w-[140px]">
+                        <p className="text-xs font-bold text-fg">{line.itemName}</p>
+                        <p className="text-[10px] text-fg/60">{line.unit}</p>
+                      </div>
+                      <div className="flex items-center rounded-lg border border-white/10 overflow-hidden">
+                        <button type="button" aria-label={`One less ${line.itemName}`} onClick={() => (Number(line.qty) <= 1 ? dropAskLine(i) : setAskLine(i, { qty: Number(line.qty) - 1 }))} className="px-2.5 py-1 text-fg/80 hover:bg-white/10 font-black">−</button>
+                        <input type="number" min="0.001" step="any" inputMode="decimal" value={line.qty} aria-label={`Quantity of ${line.itemName}`}
+                          onChange={e => setAskLine(i, { qty: e.target.value === '' ? '' : Number(e.target.value) })}
+                          onBlur={() => { if (!(Number(line.qty) > 0)) dropAskLine(i); }}
+                          className="w-16 bg-transparent text-center text-xs text-fg tabular-nums outline-none" />
+                        <button type="button" aria-label={`One more ${line.itemName}`} onClick={() => setAskLine(i, { qty: Number(line.qty || 0) + 1 })} className="px-2.5 py-1 text-fg/80 hover:bg-white/10 font-black">+</button>
+                      </div>
+                      <input value={line.note || ''} onChange={e => setAskLine(i, { note: e.target.value })} placeholder="Note" aria-label={`Note for ${line.itemName}`}
+                        className="w-32 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg outline-none focus:border-brand" />
+                      <button type="button" onClick={() => dropAskLine(i)} aria-label={`Remove ${line.itemName}`} className="text-danger text-[10px] font-bold uppercase">Remove</button>
+                    </div>
+                  ))}
                 </div>
               )}
 
-              <button onClick={sendAsk} disabled={askBusy || !askPartner || askCart.length === 0} className={btn()}>
+              <button onClick={sendAsk} disabled={askBusy || !askPartner || askCart.length === 0 || askCart.some(l => !(Number(l.qty) > 0))} className={btn()}>
                 {askBusy ? 'Sending…' : `Ask for ${askCart.length > 0 ? `${askCart.length} item${askCart.length > 1 ? 's' : ''}` : 'Stock'}`}
               </button>
               {askErr && <p className={`text-xs mt-2 ${askErr.startsWith('⚠') ? 'text-warning' : 'text-danger'}`}>{askErr}</p>}
