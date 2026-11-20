@@ -743,8 +743,12 @@ export default function defineWorkflowModels({ BUSINESS_TYPE, currentBranchCode,
     tenantId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
     branchCode:   { type: String, default: '', index: true },
     quoteNumber:  { type: String, index: true },              // QUO-2026-000001
-    clientAccountId: { type: mongoose.Schema.Types.ObjectId, ref: 'ClientAccount', required: true, index: true },
+    // Empty for a quotation made for someone with no account yet (a prospect,
+    // named in clientName): it is printed and sent, but cannot be accepted
+    // from the client portal.
+    clientAccountId: { type: mongoose.Schema.Types.ObjectId, ref: 'ClientAccount', default: null, index: true },
     clientName:   { type: String, default: '' },
+    clientContact: { type: String, default: '' },   // phone / email / address for a prospect
 
     lines: [{
       productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', default: null },

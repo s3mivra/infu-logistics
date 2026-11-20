@@ -784,7 +784,7 @@ const resolveCatalogPrices = async (req, items, { selfService, buyerClientId, ti
     AddOn.find({}, { name: 1, price: 1 }).lean(),
     ModifierGroup.find({}, { name: 1, options: 1 }).lean(),
     Sale.find(activeSalesQuery()).lean(),
-    selfService && buyerClientId
+    buyerClientId
       ? Quotation.find({ clientAccountId: String(buyerClientId), status: 'Accepted', $or: [{ orderId: null }, { orderId: { $exists: false } }] }).lean()
       : [],
   ]);
@@ -1145,7 +1145,8 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     }
     const priced = await resolveCatalogPrices(req, items, {
       selfService: isClientOrder || !!req.qrSession,
-      buyerClientId: isClientOrder ? String(req.user.clientId || req.user._id || '') : '',
+      // Staff ordering on a client's behalf get that client's accepted quotes too.
+      buyerClientId: isClientOrder ? String(req.user.clientId || req.user._id || '') : (onBehalfClientId || ''),
       tierBuyerId: _tierBuyerId, tierBuyerSegments: _tierBuyerSegments,
     });
     if (priced.error) return res.status(400).json({ success: false, error: priced.error });

@@ -290,6 +290,96 @@ export default function registerQuotations(ctx) {
     }
   });
 
+  // ── MADE BY STAFF ─────────────────────────────────────────────────────────
+  // A quotation built here, already priced - like a manual order, but nothing
+  // is sold, posted or taken from stock. For a client account (who can then
+  // accept it from the portal) or for a prospect named by hand.
+  // Body: { clientAccountId?, clientName?, clientContact?, lines: [{ productId?, name, quantity, price, note? }],
+  //         discountPercent?, quoteNotes?, validUntil?, approval? }
+  app.post('/api/quotations', verifyToken, ...canQuote, async (req, res) => {
+    try {
+      const b = req.body || {};
+      let client = null;
+      if (b.clientAccountId) {
+        if (!mongoose.Types.ObjectId.isValid(b.clientAccountId)) return res.status(400).json({ success: false, error: 'Invalid client.' });
+        client = await ClientAccount.findOne({ _id: b.clientAccountId, ...tenantScope(req) }, { name: 1, username: 1, phone: 1, email: 1 }).lean();
+        if (!client) return res.status(404).json({ success: false, error: 'Client not found.' });
+      }
+      const clientName = String(client?.name || b.clientName || '').trim().slice(0, 160);
+      if (!clientName) return res.status(400).json({ success: false, error: 'Choose a client, or type who the quotation is for.' });
+      const disc = Math.min(100, Math.max(0, Number(b.discountPercent) || 0));
+      const lines = [];
+      for (const it of Array.isArray(b.lines) ? b.lines : []) {
+        const name = String(it?.name || '').trim().slice(0, 160);
+        if (!name) continue;
+        const qty = Math.max(0.0001, Number(it.quantity) || 1);
+        const price = money(it.price);
+        if (!Number.isFinite(price) || price < 0) return res.status(400).json({ success: false, error: `${name}: enter a price.` });
+        // An order-wide discount is applied to each line's quoted price, so
+        // the client sees exactly what they would pay per unit.
+        const quoted = money(price * (1 - disc / 100));
+        lines.push({
+          productId: mongoose.Types.ObjectId.isValid(String(it.productId || '')) ? it.productId : null,
+          name, quantity: qty, askedPrice: price, quotedPrice: quoted, note: String(it.note || '').slice(0, 200),
+        });
+      }
+      if (!lines.length) return res.status(400).json({ success: false, error: 'Add at least one item.' });
+
+      // Below the catalogue price is a price override, under the till's rule.
+      if (!hasPermission(req.user, 'orders.override') && !checkApproval(b.approval, { permission: 'orders.override', requestedBy: req.user?._id, target: 'new-quotation' })) {
+        const Product = mongoose.model('Product');
+        const ids = lines.map(l => l.productId).filter(Boolean);
+        const list = new Map((await Product.find({ _id: { $in: ids } }, { basePrice: 1 }).lean()).map(p => [String(p._id), Number(p.basePrice) || 0]));
+        const below = lines.find(l => l.productId && list.has(String(l.productId)) && l.quotedPrice < list.get(String(l.productId)) - 0.005);
+        if (below) return res.status(403).json({ success: false, needsApproval: 'orders.override', target: 'new-quotation', error: `Quoting ${below.name} below its catalogue price needs a manager's approval.` });
+      }
+      let validUntil = null;
+      if (b.validUntil) {
+        validUntil = dayEnd(b.validUntil);
+        if (Number.isNaN(validUntil.getTime())) return res.status(400).json({ success: false, error: 'Invalid validity date.' });
+      }
+      const q = await Quotation.create({
+        businessType: BUSINESS_TYPE, ...tenantScope(req),
+        branchCode: await currentBranchCode(),
+        quoteNumber: await mkSeqRef('QUO'),
+        clientAccountId: client?._id || null,
+        clientName,
+        clientContact: String(b.clientContact || [client?.phone, client?.email].filter(Boolean).join(' · ') || '').slice(0, 300),
+        lines,
+        quoteNotes: String(b.quoteNotes || '').slice(0, 1000),
+        validUntil,
+        status: 'Quoted', quotedBy: req.user?.name || '', quotedAt: new Date(),
+      });
+      await logAudit(req, { action: 'create', entity: 'Quotation', entityId: q._id, after: { quoteNumber: q.quoteNumber, clientName, total: quotedTotal(q.toObject()) } });
+      emitToMgr?.('erpUpdated');
+      res.json({ success: true, quotation: decorate(q.toObject()) });
+    } catch (err) {
+      log.error?.({ err }, 'POST /api/quotations failed');
+      (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+    }
+  });
+
+  // The client said yes (by phone, in person): staff accept it for them. The
+  // order is then placed through the ordinary order route for that client,
+  // which charges the quoted prices and ties the quotation to the order.
+  app.post('/api/quotations/:id/accept', verifyToken, ...canQuote, async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Not found' });
+      const q = await Quotation.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+      if (!q) return res.status(404).json({ success: false, error: 'Not found' });
+      if (!q.clientAccountId) return res.status(409).json({ success: false, error: 'This quotation is for someone without a client account. Add them as a client first, then make the quotation for that account.' });
+      if (q.status !== 'Quoted') return res.status(409).json({ success: false, error: `Only a quoted price can be accepted (this one is ${q.status}).` });
+      if (q.validUntil && new Date(q.validUntil) < new Date()) return res.status(409).json({ success: false, error: 'That quotation has expired. Make a new one.' });
+      q.status = 'Accepted';
+      q.respondedAt = new Date();
+      await q.save();
+      await logAudit(req, { action: 'accept', entity: 'Quotation', entityId: q._id, after: { quoteNumber: q.quoteNumber, by: req.user?.name || '' } });
+      emitToMgr?.('erpUpdated');
+      const items = q.lines.map(l => ({ productId: l.productId ? String(l.productId) : undefined, name: l.name, price: money(l.quotedPrice), quantity: l.quantity || 1 }));
+      res.json({ success: true, quotation: decorate(q.toObject()), items, clientAccountId: String(q.clientAccountId) });
+    } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+  });
+
   // Recording the order a quote turned into, so the two are tied together and
   // a quote can never be spent twice.
   app.post('/api/quotations/:id/link-order', verifyToken, ...canQuote, async (req, res) => {

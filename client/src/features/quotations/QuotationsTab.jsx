@@ -8,6 +8,9 @@ import {
 import { useDashboard } from '../dashboard/DashboardContext';
 import * as ui from '../../shared/ui';
 import { useRefreshTick } from '../../shared/refreshBus';
+import QuoteMaker from './QuoteMaker';
+import { exportQuotationPDF } from '../../shared/quotationPdf';
+import { Plus, Download, ShoppingCart } from 'lucide-react';
 
 // Quotations - prices asked for, not sales made.
 //
@@ -29,7 +32,27 @@ const STATUS = {
 };
 
 export default function QuotationsTab() {
-  const { apiFetch } = useDashboard();
+  const { apiFetch, products = [], clientAccounts = [], loadPdfLibs, addLogoToPDF, BIZ_NAME, fetchOrders } = useDashboard();
+  const pdfDeps = { loadPdfLibs, addLogoToPDF, bizName: BIZ_NAME };
+  const [making, setMaking] = useState(false);
+  // The full quotation (with its lines) for the PDF - the list rows are summaries.
+  const printQuote = async (row) => {
+    try {
+      const d = await (await apiFetch(`/api/quotations/${row._id}`)).json();
+      await exportQuotationPDF(d.quotation || row, pdfDeps);
+    } catch { ui.alert('Could not make the PDF.'); }
+  };
+  // The client said yes: accept it for them and place the order at the quoted prices.
+  const acceptAndOrder = async (row) => {
+    if (!(await ui.confirm({ title: `Accept ${row.quoteNumber} and make the order?`, message: `${row.clientName} - ${peso(row.quotedTotal || 0)}`, detail: 'The order is placed for this client at the quoted prices, and appears under Orders.', confirmLabel: 'Accept & order' }))) return;
+    const acc = await (await apiFetch(`/api/quotations/${row._id}/accept`, { method: 'POST', body: '{}' })).json();
+    if (!acc.success) return ui.alert(acc.error || 'Could not accept it.');
+    const ord = await (await apiFetch('/api/orders', { method: 'POST', body: JSON.stringify({ items: acc.items, clientAccountId: acc.clientAccountId, table: 'Walk In', orderNotes: `From quotation ${row.quoteNumber}` }) })).json();
+    if (!ord.success) { ui.alert(`Accepted, but the order was not placed: ${ord.error || 'unknown error'}. Place it from the till.`); load(); return; }
+    ui.toast(`${ord.order.orderNumber} placed from ${row.quoteNumber}.`, { tone: 'success' });
+    fetchOrders?.();
+    load();
+  };
   const [rows, setRows] = useState([]);
   const [counts, setCounts] = useState({ waiting: 0, quoted: 0, accepted: 0 });
   const [status, setStatus] = useState('');
@@ -53,13 +76,22 @@ export default function QuotationsTab() {
   if (open) {
     return <QuoteSheet id={open} apiFetch={apiFetch} onBack={() => { setOpen(null); load(); }} />;
   }
+  const maker = making && (
+    <QuoteMaker apiFetch={apiFetch} products={products} clients={clientAccounts} pdfDeps={pdfDeps}
+      onClose={() => setMaking(false)} onSaved={() => { setMaking(false); load(); }} />
+  );
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
+        {maker}
         <h1 className="flex items-center gap-2 font-black text-fg text-lg mr-auto">
           <FileText size={18} /> Quotations
         </h1>
+        <button onClick={() => setMaking(true)} data-testid="new-quotation"
+          className="flex items-center gap-1.5 text-xs bg-brand hover:bg-brand/90 text-on-brand px-3 py-2 rounded-lg font-black uppercase tracking-wider transition">
+          <Plus size={13} /> New quotation
+        </button>
         <select value={status} onChange={e => setStatus(e.target.value)}
           className="bg-sidebar-bg border border-white/10 rounded-lg px-3 py-2 text-xs text-fg focus:border-brand/50 focus:outline-none">
           <option value="">Every status</option>
@@ -75,7 +107,7 @@ export default function QuotationsTab() {
       </div>
 
       <p className="text-xs text-fg/75 leading-relaxed max-w-3xl">
-        A price a client has asked for. None of this is a sale and none of it is in the books - the
+        A price offer - one a client asked for, or one you made with New quotation. None of this is a sale and none of it is in the books - the
         figures here are what you have offered, not what you have earned. Only the client accepting,
         and the order that follows, reaches the ledger.
       </p>
@@ -131,10 +163,24 @@ export default function QuotationsTab() {
                       </span>
                     </td>
                     <td className="px-3 py-2.5 text-right">
-                      <button onClick={() => setOpen(q._id)}
-                        className="text-[9px] bg-brand/10 hover:bg-brand/20 text-brand-text px-2.5 py-1 rounded font-bold uppercase tracking-wider transition">
-                        {q.status === 'Requested' ? 'Price it' : 'Open'}
-                      </button>
+                      <div className="flex justify-end gap-1.5">
+                        {q.quotedTotal != null && (
+                          <button onClick={() => printQuote(q)} title="Print or save this quotation as a PDF"
+                            className="text-[9px] border border-white/15 text-fg/80 hover:bg-white/5 px-2.5 py-1 rounded font-bold uppercase tracking-wider transition inline-flex items-center gap-1">
+                            <Download size={10} /> PDF
+                          </button>
+                        )}
+                        {q.status === 'Quoted' && q.clientAccountId && !q.orderId && (
+                          <button onClick={() => acceptAndOrder(q)} title="The client said yes: accept it and make the order"
+                            className="text-[9px] bg-green-500/15 text-success hover:bg-green-500/25 px-2.5 py-1 rounded font-bold uppercase tracking-wider transition inline-flex items-center gap-1">
+                            <ShoppingCart size={10} /> Accept & order
+                          </button>
+                        )}
+                        <button onClick={() => setOpen(q._id)}
+                          className="text-[9px] bg-brand/10 hover:bg-brand/20 text-brand-text px-2.5 py-1 rounded font-bold uppercase tracking-wider transition">
+                          {q.status === 'Requested' ? 'Price it' : 'Open'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
