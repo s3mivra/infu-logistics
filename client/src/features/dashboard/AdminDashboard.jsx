@@ -5971,6 +5971,8 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       ['Cash', ['Cash']], ['Bank', ['Bank Transfer']], ['Check', ['Check', 'Cheque']], ['GCash', ['GCash']], ['Maya', ['Maya']],
       ['Maribank/SeaBank', ['Maribank']], ['Other E-Wallet', ['E-Wallet', 'Other E-Wallet']],
       ['GrabFood', ['Grab Delivery']], ...(BUSINESS_TYPE === 'log' ? [['Lalamove', ['Lalamove']]] : [['Foodpanda', ['Foodpanda']]]), ['Manual/Direct', ['Manual Delivery']],
+      // Sold on credit: nothing paid at the sale, owed on account.
+      ['Credit', ['On Account', 'Credit', 'Charge', 'A/R']],
     ];
     const cv = (r, ms) => ms.reduce((s, m) => s + (r?.methods?.[m] || 0), 0);
     // Item-level detail lives in the separate Sales Line Items report.

@@ -46,7 +46,7 @@ export default function SalesByOrderTab({
                   <th className="py-2">Customer ID</th><th className="py-2">Customer Name</th>
                   <th className="py-2">{salesView === 'day' ? 'Orders' : 'Order'}</th>
                   <th className="py-2 text-right">Cash</th><th className="py-2 text-right">E-Wallet</th>
-                  <th className="py-2 text-right">Bank</th><th className="py-2 text-right">Delivery</th><th className="py-2 text-right" title="Before discount and delivery fee">Gross Sales</th><th className="py-2 text-right" title="What was charged: after discount, with any delivery fee">Sales After Discount</th>
+                  <th className="py-2 text-right">Bank</th><th className="py-2 text-right">Delivery</th><th className="py-2 text-right" title="Sold on account: owed, not yet paid">Credit</th><th className="py-2 text-right" title="Before discount and delivery fee">Gross Sales</th><th className="py-2 text-right" title="What was charged: after discount, with any delivery fee">Sales After Discount</th>
                 </tr>
               </thead>
               <tbody className="text-fg/75">
@@ -62,6 +62,7 @@ export default function SalesByOrderTab({
                     <td className="py-1.5 text-right font-mono">{row.ewallet ? money2(row.ewallet) : ''}</td>
                     <td className="py-1.5 text-right font-mono">{row.bank ? money2(row.bank) : ''}</td>
                     <td className="py-1.5 text-right font-mono">{row.delivery ? money2(row.delivery) : ''}</td>
+                    <td className="py-1.5 text-right font-mono text-warning">{(() => { const c = ['On Account', 'Credit', 'Charge', 'A/R'].reduce((s, m) => s + (Number(row?.methods?.[m]) || 0), 0); return c ? money2(c) : ''; })()}</td>
                     <td className="py-1.5 text-right font-mono text-fg/70">{money2(row.subtotal || 0)}</td>
                     <td className="py-1.5 text-right font-mono font-bold text-fg/90">{money2(row.total)}</td>
                   </tr>
@@ -76,6 +77,7 @@ export default function SalesByOrderTab({
                     <td className="py-2 text-right font-mono">{money2(salesSummary.totals.ewallet)}</td>
                     <td className="py-2 text-right font-mono">{money2(salesSummary.totals.bank)}</td>
                     <td className="py-2 text-right font-mono">{money2(salesSummary.totals.delivery)}</td>
+                    <td className="py-2 text-right font-mono text-warning">{money2(['On Account', 'Credit', 'Charge', 'A/R'].reduce((s, m) => s + (Number(salesSummary.totals?.methods?.[m]) || 0), 0))}</td>
                     <td className="py-2 text-right font-mono">{money2(salesSummary.totals.subtotal || 0)}</td>
                     <td className="py-2 text-right font-mono text-brand-text">{money2(salesSummary.totals.total)}</td>
                   </tr>
