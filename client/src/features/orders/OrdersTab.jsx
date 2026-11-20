@@ -2537,7 +2537,22 @@ function ReservationInfo({ order, apiFetch, fetchOrders, paymentMethodGroups }) 
   const [amount, setAmount] = React.useState('');
   const [method, setMethod] = React.useState('Cash');
   const [busy, setBusy] = React.useState(false);
+  const [editingDate, setEditingDate] = React.useState(false);
+  const [newWhen, setNewWhen] = React.useState('');
   const when = reservationWhen(order.reservedFor);
+  // datetime-local wants local time, no zone.
+  const localValue = (d) => { if (!d) return ''; const x = new Date(d); if (Number.isNaN(x.getTime())) return ''; const p = (n) => String(n).padStart(2, '0'); return `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}T${p(x.getHours())}:${p(x.getMinutes())}`; };
+  const saveDate = async () => {
+    if (!newWhen) return ui.alert('Pick the new date and time.');
+    setBusy(true);
+    try {
+      const d = await (await apiFetch(`/api/orders/${order._id}`, { method: 'PUT', body: JSON.stringify({ reservedFor: new Date(newWhen).toISOString() }) })).json();
+      if (!d.success) return ui.alert(d.error || 'The date was not changed.');
+      ui.toast('Reservation date changed.', { tone: 'success' });
+      setEditingDate(false);
+      fetchOrders?.();
+    } finally { setBusy(false); }
+  };
   const paid = Number(order.depositRemaining) || 0;
   const balance = Math.max(0, Math.round(((Number(order.total) || 0) - paid) * 100) / 100);
   const methods = [...new Set(['Cash', 'GCash', 'Maya', 'Bank Transfer', 'Card',
@@ -2558,10 +2573,25 @@ function ReservationInfo({ order, apiFetch, fetchOrders, paymentMethodGroups }) 
     <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs space-y-1.5" data-testid="reservation-info">
       <div className="flex items-center justify-between gap-2">
         <span className="text-fg/65 font-bold uppercase tracking-wider text-[10px]">For</span>
-        {when
-          ? <span className={`font-black ${when.overdue ? 'text-danger' : when.soon ? 'text-warning' : 'text-fg'}`}>{when.label} · {when.time}</span>
-          : <span className="text-fg/60">No date set</span>}
+        <span className="flex items-center gap-2">
+          {when
+            ? <span className={`font-black ${when.overdue ? 'text-danger' : when.soon ? 'text-warning' : 'text-fg'}`}>{when.label} · {when.time}</span>
+            : <span className="text-fg/60">No date set</span>}
+          {!editingDate && (
+            <button type="button" onClick={() => { setNewWhen(localValue(order.reservedFor)); setEditingDate(true); }} data-testid="change-reservation-date"
+              className="text-[10px] font-black uppercase tracking-wider text-special underline">{when ? 'Change date' : 'Set date'}</button>
+          )}
+        </span>
       </div>
+      {editingDate && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <input type="datetime-local" value={newWhen} onChange={e => setNewWhen(e.target.value)}
+            className="flex-1 min-w-[160px] bg-surface border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-brand/60" />
+          <button type="button" onClick={saveDate} disabled={busy}
+            className="bg-brand text-on-brand px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider disabled:opacity-50">Save</button>
+          <button type="button" onClick={() => setEditingDate(false)} className="text-fg/65 px-1 text-[10px] font-bold underline">Cancel</button>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-2">
         <span className="text-fg/65">Deposit paid</span>
         <span className="font-bold tabular-nums text-success">₱{paid.toFixed(2)}</span>

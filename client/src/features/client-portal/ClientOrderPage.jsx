@@ -634,9 +634,15 @@ export default function ClientOrderPage() {
   // total they were actually charged already had the tier rate applied.
   const lineDiscPct = (it) => Math.max(Number(it.productDiscountPercent || 0), Number(it.discountPercent || 0));
 
-  const orderTotal = useCallback((order) => (order?.items || []).reduce(
+  const linesTotal = useCallback((order) => (order?.items || []).reduce(
     (s, i) => s + Number(i.price || 0) * (1 - lineDiscPct(i) / 100) * Number(i.quantity || 0), 0
   ), []);
+  // What the client is actually charged: the order's own total from the
+  // server - which includes a discount the shop added to the whole order
+  // afterwards, and any delivery fee - falling back to the lines.
+  const orderTotal = useCallback((order) => (Number.isFinite(Number(order?.total)) && order?.total != null ? Number(order.total) : linesTotal(order)), [linesTotal]);
+  // The order-wide discount on top of the line discounts, when the shop gave one.
+  const orderDiscount = useCallback((order) => Math.max(0, Math.round((linesTotal(order) + (Number(order?.deliveryFee) || 0) - orderTotal(order)) * 100) / 100), [linesTotal, orderTotal]);
 
   // Renders the slip using the SAME shared A4 document template as the staff-side
   // order slip / billing statement, so the client's copy is the identical layout.
@@ -674,14 +680,14 @@ export default function ClientOrderPage() {
         ],
         schedRows: order.orderNotes ? [{ label: 'Notes:', value: order.orderNotes }] : [],
         items,
-        totals: [{ label: 'TOTAL', value: orderTotal(order), grand: true }],
+        totals: [...(orderDiscount(order) > 0.004 ? [{ label: 'Discount', value: -orderDiscount(order) }] : []), ...((Number(order.deliveryFee) || 0) > 0 ? [{ label: order.feeLabel || 'Delivery Fee', value: Number(order.deliveryFee) }] : []), { label: 'TOTAL', value: orderTotal(order), grand: true }],
       }));
     } catch {
       ui.alert('Could not generate the slip. Please try again.');
     } finally {
       setSlipDownloading(false);
     }
-  }, [portal, clientInfo, orderTotal]);
+  }, [portal, clientInfo, orderTotal, orderDiscount]);
 
   // Cart helpers
   const addToCart = useCallback((product) => {
@@ -1207,6 +1213,7 @@ export default function ClientOrderPage() {
                   <span className="text-right">
                     <span className="text-[9px] font-black uppercase tracking-[0.12em] text-brand-text block leading-none mb-0.5">Total</span>
                     <span className="font-black text-base tabular-nums leading-none">{peso(orderTotal(slipOrder))}</span>
+                    {orderDiscount(slipOrder) > 0.004 && <span className="block text-[10px] text-success font-bold">incl. ₱{orderDiscount(slipOrder).toFixed(2)} discount</span>}
                   </span>
                 </div>
               </div>
