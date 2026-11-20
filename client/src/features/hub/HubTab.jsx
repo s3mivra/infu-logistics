@@ -199,10 +199,10 @@ export default function HubTab({ ctx }) {
   // send transfer form
   const [sendFrom, setSendFrom]       = useState('__self__');
   const [sendPartner, setSendPartner] = useState('');
-  const [sendItem, setSendItem]       = useState('');
   const [sendQty, setSendQty]         = useState('');
   const [sendNote, setSendNote]       = useState('');
   const [sendCart, setSendCart]       = useState([]); // [{itemId,itemName,unit,qty,note}]
+  const [sendSearch, setSendSearch]   = useState('');
   const [sendBusy, setSendBusy]       = useState(false);
   const [sendErr, setSendErr]         = useState('');
 
@@ -397,16 +397,15 @@ export default function HubTab({ ctx }) {
     load();
   };
 
-  const addToCart = () => {
-    const qty = parseFloat(sendQty);
-    if (!sendItem || !(qty > 0)) return;
-    const inv = inventory.find(i => i._id === sendItem);
-    if (!inv) return;
-    setSendCart(c => [...c, { itemId: sendItem, itemName: inv.itemName, unit: inv.unit, qty, note: sendNote.trim() }]);
-    setSendItem(''); setSendQty(''); setSendNote('');
-  };
-
   const removeFromCart = (idx) => setSendCart(c => c.filter((_, i) => i !== idx));
+  // Manual-order style: tap a product to add one; tap again (or +) for more.
+  const quickAdd = (inv) => setSendCart(c => {
+    const at = c.findIndex(l => l.itemId === inv._id);
+    if (at >= 0) return c.map((l, i) => (i === at ? { ...l, qty: Number(l.qty || 0) + 1 } : l));
+    return [...c, { itemId: inv._id, itemName: inv.itemName, unit: inv.unit, qty: 1, note: '' }];
+  });
+  const setLine = (idx, patch) => setSendCart(c => c.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+  const stockOf = (id) => Number(inventory.find(i => i._id === id)?.stockQty ?? NaN);
 
   // Creates the new Inventory item (starting stock = the qty being sent),
   // then adds it to the cart exactly like picking an existing one - Send
@@ -1122,59 +1121,64 @@ export default function HubTab({ ctx }) {
                   </>
                 ) : (
                   <>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                      <SearchSelect value={sendItem} onChange={e => setSendItem(e.target.value)} className={input}
-                        placeholder="Type to find a product"
-                        options={inventory.map(i => ({ value: i._id, label: i.itemName, hint: `${i.stockQty} ${i.unit}` }))} />
-                      <input
-                        type="number" min="0.001" step="any" value={sendQty}
-                        onChange={e => setSendQty(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && addToCart()}
-                        className={input}
-                        placeholder={sendItem && inventory.find(i => i._id === sendItem) ? `Qty (${inventory.find(i => i._id === sendItem).unit})` : 'Quantity'}
-                      />
-                      <input value={sendNote} onChange={e => setSendNote(e.target.value)} onKeyDown={e => e.key === 'Enter' && addToCart()} className={input} placeholder="Note (optional)" />
+                    <input value={sendSearch} onChange={e => setSendSearch(e.target.value)} className={input} placeholder="Search products - tap one to add it" aria-label="Search products to send" />
+                    <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 max-h-72 overflow-y-auto pr-1">
+                      {inventory
+                        .filter(i => !sendSearch.trim() || String(i.itemName || '').toLowerCase().includes(sendSearch.trim().toLowerCase()))
+                        .slice(0, 60)
+                        .map(i => {
+                          const inCart = sendCart.find(l => l.itemId === i._id);
+                          const out = !(Number(i.stockQty) > 0);
+                          return (
+                            <button key={i._id} type="button" onClick={() => quickAdd(i)} disabled={out}
+                              className={`relative text-left rounded-xl border p-2.5 transition ${inCart ? 'border-brand bg-brand/10' : 'border-white/8 bg-white/3 hover:border-white/20'} ${out ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                              <p className="text-xs font-bold text-fg leading-tight line-clamp-2 pr-5">{i.itemName}</p>
+                              <p className={`text-[10px] mt-1 tabular-nums ${out ? 'text-danger' : 'text-fg/65'}`}>{out ? 'Out of stock' : `${i.stockQty} ${i.unit} on hand`}</p>
+                              {inCart && <span className="absolute top-1.5 right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-brand text-on-brand text-[10px] font-black flex items-center justify-center">{inCart.qty}</span>}
+                            </button>
+                          );
+                        })}
                     </div>
-                    <button
-                      onClick={addToCart}
-                      disabled={!sendItem || !(parseFloat(sendQty) > 0)}
-                      className={`mt-2 ${btn('ghost')} text-xs`}
-                    >+ Add to Transfer</button>
                   </>
                 )}
               </div>
 
-              {/* Cart */}
+              {/* Cart: change quantities and notes in place, like a manual order. */}
               {sendCart.length > 0 && (
                 <div className="border border-white/8 rounded-xl overflow-hidden mb-3">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-fg/70 text-[9px] uppercase tracking-widest border-b border-white/8 bg-white/3">
-                        <th className="text-left py-2 px-3">Product</th>
-                        <th className="text-right py-2 px-3">Qty</th>
-                        <th className="text-left py-2 px-3">Note</th>
-                        <th className="py-2 px-3" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sendCart.map((line, i) => (
-                        <tr key={i} className="border-b border-white/5 last:border-0">
-                          <td className="py-2 px-3 font-bold text-fg">{line.itemName}</td>
-                          <td className="py-2 px-3 text-right tabular-nums text-fg">{line.qty} {line.unit}</td>
-                          <td className="py-2 px-3 text-fg/75 italic">{line.note || '-'}</td>
-                          <td className="py-2 px-3 text-right">
-                            <button onClick={() => removeFromCart(i)} className="text-danger text-[10px] font-bold uppercase">Remove</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="flex items-center justify-between px-3 py-2 bg-white/3 border-b border-white/8">
+                    <p className="text-[10px] text-fg/70 uppercase font-black tracking-widest">To send · {sendCart.length} item{sendCart.length > 1 ? 's' : ''}</p>
+                    <button type="button" onClick={() => setSendCart([])} className="text-[10px] font-bold uppercase text-fg/60 hover:text-danger">Clear</button>
+                  </div>
+                  {sendCart.map((line, i) => {
+                    const have = stockOf(line.itemId);
+                    const over = Number.isFinite(have) && Number(line.qty) > have;
+                    return (
+                      <div key={line.itemId || i} className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-white/5 last:border-0">
+                        <div className="flex-1 min-w-[140px]">
+                          <p className="text-xs font-bold text-fg">{line.itemName}</p>
+                          <p className={`text-[10px] ${over ? 'text-danger' : 'text-fg/60'}`}>{Number.isFinite(have) ? `${have} ${line.unit} on hand${over ? ' - not enough' : ''}` : line.unit}</p>
+                        </div>
+                        <div className="flex items-center rounded-lg border border-white/10 overflow-hidden">
+                          <button type="button" aria-label={`One less ${line.itemName}`} onClick={() => (Number(line.qty) <= 1 ? removeFromCart(i) : setLine(i, { qty: Number(line.qty) - 1 }))} className="px-2.5 py-1 text-fg/80 hover:bg-white/10 font-black">−</button>
+                          <input type="number" min="0.001" step="any" inputMode="decimal" value={line.qty} aria-label={`Quantity of ${line.itemName}`}
+                            onChange={e => setLine(i, { qty: e.target.value === '' ? '' : Number(e.target.value) })}
+                            onBlur={() => { if (!(Number(line.qty) > 0)) removeFromCart(i); }}
+                            className="w-16 bg-transparent text-center text-xs text-fg tabular-nums outline-none" />
+                          <button type="button" aria-label={`One more ${line.itemName}`} onClick={() => setLine(i, { qty: Number(line.qty || 0) + 1 })} className="px-2.5 py-1 text-fg/80 hover:bg-white/10 font-black">+</button>
+                        </div>
+                        <input value={line.note || ''} onChange={e => setLine(i, { note: e.target.value })} placeholder="Note" aria-label={`Note for ${line.itemName}`}
+                          className="w-32 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg outline-none focus:border-brand" />
+                        <button type="button" onClick={() => removeFromCart(i)} aria-label={`Remove ${line.itemName}`} className="text-danger text-[10px] font-bold uppercase">Remove</button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
               <button
                 onClick={sendTransfer}
-                disabled={sendBusy || !sendPartner || sendCart.length === 0}
+                disabled={sendBusy || !sendPartner || sendCart.length === 0 || sendCart.some(l => !(Number(l.qty) > 0))}
                 className={btn()}
               >
                 {sendBusy ? 'Sending…' : `Send ${sendCart.length > 0 ? `${sendCart.length} item${sendCart.length > 1 ? 's' : ''}` : 'Transfer'}`}
