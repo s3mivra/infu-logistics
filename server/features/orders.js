@@ -3390,6 +3390,67 @@ app.post('/api/orders/archive', verifyToken, requireStaff, permit('orders.delete
 // The journal entry is dated on the deposit date, because that is when the
 // asset account actually moved.
 // ============================================================
+// ── CORRECT A COLLECTION'S DATES (owner) ────────────────────────────────────
+// The day money was collected, or banked, typed wrong. The collection's own
+// journal entry moves with its collection date, so the books and the list
+// agree - unless that day's period is closed, which this does not reopen.
+// Body: { collectionDate?, depositDate? (null = not banked yet) }
+app.patch('/api/orders/:id/ar-payments/:paymentId/dates', verifyToken, requireStaff, async (req, res) => {
+  try {
+    if (String(req.user?.role || '').toLowerCase() !== 'superadmin') return res.status(403).json({ success: false, error: 'Only the owner can change collection dates.' });
+    const order = await Order.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+    const pay = (order.arPayments || []).find(p => String(p._id) === String(req.params.paymentId));
+    if (!pay) return res.status(404).json({ success: false, error: 'Collection not found.' });
+    const parse = (v) => { const d = new Date(v); return Number.isNaN(d.getTime()) ? null : d; };
+    const before = { collectionDate: pay.collectionDate || pay.createdAt, depositDate: pay.depositDate || null };
+    let collected = before.collectionDate;
+    if (req.body?.collectionDate) {
+      collected = parse(req.body.collectionDate);
+      if (!collected) return res.status(400).json({ success: false, error: 'Invalid collection date.' });
+      if (collected > new Date()) return res.status(400).json({ success: false, error: 'A collection cannot be dated in the future.' });
+    }
+    let deposited = before.depositDate;
+    if (req.body?.depositDate !== undefined) {
+      deposited = req.body.depositDate ? parse(req.body.depositDate) : null;
+      if (req.body.depositDate && !deposited) return res.status(400).json({ success: false, error: 'Invalid deposit date.' });
+      if (deposited && deposited < new Date(new Date(collected).setHours(0, 0, 0, 0))) return res.status(400).json({ success: false, error: 'Money cannot be banked before it was collected.' });
+    }
+    // Neither the old day nor the new one may be in a closed period.
+    for (const d of [before.collectionDate, collected]) {
+      const lock = d && await periodLockFor(new Date(d));
+      if (lock) return res.status(409).json({ success: false, error: `That is in a closed period (${lock.label || lock.period || 'closed'}). Reopen it first.` });
+    }
+    // The books are append-only: the collection's entry is not edited. It is
+    // reversed on its old day and posted again on the new one, and the
+    // collection then points at the new entry (a bounce reverses that one).
+    const moved = String(new Date(collected).toDateString()) !== String(new Date(before.collectionDate).toDateString());
+    if (pay.journalRef && moved) {
+      const original = await JournalEntry.findOne({ reference: pay.journalRef }).lean();
+      if (original) {
+        const flip = (original.lines || []).map(l => ({ accountCode: l.accountCode, accountName: l.accountName, debit: l.credit || 0, credit: l.debit || 0 }));
+        const same = (original.lines || []).map(l => ({ accountCode: l.accountCode, accountName: l.accountName, debit: l.debit || 0, credit: l.credit || 0 }));
+        const tag = Date.now().toString(36).toUpperCase();
+        const newRef = `${pay.journalRef}-RD${tag}`;
+        await JournalEntry.create([
+          { reference: `${pay.journalRef}-RDREV${tag}`, date: original.date, description: `Date corrected: reverses ${pay.journalRef} (${order.orderNumber})`, lines: flip, totalDebit: original.totalCredit, totalCredit: original.totalDebit },
+          { reference: newRef, date: collected, description: `${original.description || 'A/R collection'} (date corrected)`, lines: same, totalDebit: original.totalDebit, totalCredit: original.totalCredit },
+        ]);
+        pay.journalRef = newRef;
+      }
+    }
+    pay.collectionDate = collected;
+    pay.depositDate = deposited;
+    order.markModified('arPayments');
+    await order.save();
+    await logAudit(req, { action: 'update', entity: 'Order', entityId: order._id, before, after: { collectionDate: collected, depositDate: deposited, orderNumber: order.orderNumber, paymentId: String(pay._id) } });
+    res.json({ success: true });
+  } catch (err) {
+    captureError(req, err);
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
+
 // ── RESERVATION DEPOSIT ─────────────────────────────────────────────────────
 // Money taken now for an order booked for a later day. It is not a sale yet:
 // DR cash (or bank, e-wallet...) / CR 260200 Customer Advances / Deposits.

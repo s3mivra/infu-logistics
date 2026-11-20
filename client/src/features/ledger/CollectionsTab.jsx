@@ -1,5 +1,7 @@
 import { formatDate } from '../../shared/dates.js';
-import { } from 'lucide-react';
+import { useState } from 'react';
+import { Pencil } from 'lucide-react';
+import * as ui from '../../shared/ui';
 import RecordLink from '../../shared/RecordLink';
 import RangePresets from '../../shared/RangePresets';
 
@@ -8,8 +10,20 @@ import PagedRows from '../../shared/PagedRows';
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
 export default function CollectionsTab({
   ledgerSubTab, checkFilter, setCheckFilter, fetchChecks, checkRegister, actOnCheck, collRange, setCollRange,
-  fetchCollectionReport, collectionReport,
+  fetchCollectionReport, collectionReport, isSuperAdmin = false, apiFetch,
 }) {
+  // The owner correcting a collection's dates: { key, collected, deposited }.
+  const [dateEdit, setDateEdit] = useState(null);
+  const saveDates = async (r) => {
+    const d = await (await apiFetch(`/api/orders/${r.orderId}/ar-payments/${r.paymentId}/dates`, {
+      method: 'PATCH', body: JSON.stringify({ collectionDate: dateEdit.collected, depositDate: dateEdit.deposited || null }),
+    })).json();
+    if (!d.success) return ui.alert(d.error || 'The dates were not changed.');
+    ui.toast('Dates changed.', { tone: 'success' });
+    setDateEdit(null);
+    fetchCollectionReport?.();
+  };
+  const ymd = (d) => (d ? new Date(d).toLocaleDateString('en-CA') : '');
   return (
     <>
     {ledgerSubTab === 'collections' && (
@@ -259,8 +273,24 @@ export default function CollectionsTab({
                 <tbody>
                   <PagedRows items={collectionReport.collections} label="collections" render={(r, idx) => (
                     <tr key={`${r.orderId}-${idx}`} className="border-b border-white/5 hover:bg-white/5 transition">
+                      {dateEdit?.key === `${r.orderId}-${r.paymentId}` ? (
+                        <td className="py-2 text-xs" colSpan={2}>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <input type="date" value={dateEdit.collected} onChange={e => setDateEdit(x => ({ ...x, collected: e.target.value }))} aria-label="Collected on"
+                              className="bg-page-bg border border-white/15 rounded px-2 py-1 text-xs text-fg" />
+                            <input type="date" value={dateEdit.deposited} onChange={e => setDateEdit(x => ({ ...x, deposited: e.target.value }))} aria-label="Deposited on (blank = not yet)"
+                              className="bg-page-bg border border-white/15 rounded px-2 py-1 text-xs text-fg" />
+                            <button onClick={() => saveDates(r)} className="bg-brand text-on-brand px-2 py-1 rounded text-[10px] font-black uppercase">Save</button>
+                            <button onClick={() => setDateEdit(null)} className="text-fg/65 text-[10px] underline">Cancel</button>
+                          </div>
+                        </td>
+                      ) : (<>
                       <td className="py-2.5 text-fg/70 text-xs">
                         {formatDate(r.collectionDate)}
+                        {isSuperAdmin && r.paymentId && (
+                          <button onClick={() => setDateEdit({ key: `${r.orderId}-${r.paymentId}`, collected: ymd(r.collectionDate), deposited: ymd(r.depositDate) })}
+                            title="Change the collected / deposited dates" aria-label="Edit dates" className="ml-1.5 text-fg/50 hover:text-fg align-middle"><Pencil size={11} /></button>
+                        )}
                         {r.collectedBy && <span className="block text-[9px] text-fg/70">by {r.collectedBy}</span>}
                       </td>
                       <td className="py-2.5 text-xs">
@@ -269,6 +299,7 @@ export default function CollectionsTab({
                           : <span className="text-[10px] font-black px-2 py-1 rounded bg-yellow-500/15 text-warning">IN TRANSIT</span>}
                         {r.floatDays > 0 && <span className="block text-[9px] text-warning">+{r.floatDays}d float</span>}
                       </td>
+                      </>)}
                       <td className="py-2.5 text-fg font-bold"><RecordLink kind="order" value={r.orderNumber} /></td>
                       <td className="py-2.5 text-fg/70"><RecordLink kind="client" value={r.client} /></td>
                       <td className="py-2.5"><span className="text-[10px] font-black uppercase tracking-wider bg-brand/15 text-brand-text px-2 py-1 rounded">{r.depositedTo || '-'}</span></td>

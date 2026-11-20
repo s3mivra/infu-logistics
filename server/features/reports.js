@@ -2442,6 +2442,7 @@ app.get('/api/reports/collections', verifyToken, ...canViewReports, requirePermi
         if (basis === 'collection' && inTransit) undepositedTotal += amt;
         rows.push({
           orderId: o._id,
+          paymentId: p._id,
           orderNumber: o.orderNumber,
           client: keyOf(o),
           invoiceTotal: Math.round((Number(o.total) || 0) * 100) / 100,

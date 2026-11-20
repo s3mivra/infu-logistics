@@ -2334,7 +2334,8 @@ It posts only what is not already accrued for that month.`)) return;
               actually came in over a period. */}
           <CollectionsTab
             ledgerSubTab={ledgerSubTab} checkFilter={checkFilter} setCheckFilter={setCheckFilter} fetchChecks={fetchChecks} checkRegister={checkRegister} actOnCheck={actOnCheck}
-            collRange={collRange} setCollRange={setCollRange} fetchCollectionReport={fetchCollectionReport} collectionReport={collectionReport} />
+            collRange={collRange} setCollRange={setCollRange} fetchCollectionReport={fetchCollectionReport} collectionReport={collectionReport}
+            isSuperAdmin={activeAdmin?.role === 'superadmin'} apiFetch={apiFetch} />
 
           {/* ===== A/P REPORT SUB-TAB ===== */}
           {/* The mirror of the A/R report. Aged on the DUE date, not the bill

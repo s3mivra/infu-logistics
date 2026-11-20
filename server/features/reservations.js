@@ -24,6 +24,8 @@ export default function registerReservations(ctx) {
     Order,
     ClientAccount,
     Settings,
+    Product,
+    baseUnitsPerSale,
     emitToMgr,
     verifyToken,
     requireStaff,
@@ -147,7 +149,19 @@ export default function registerReservations(ctx) {
             businessType: BUSINESS_TYPE, ...tenantScope(req),
             itemName: new RegExp(`^${String(line.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
           }, { _id: 1 }).lean();
-          if (inv) wanted.push({ invId: String(inv._id), qty: line.quantity });
+          if (!inv) continue;
+          // The stock a sale of this line would take, in the stock's own BASE
+          // units - what completing the order deducts. The line's quantity is
+          // in sale units (3 packs): holding "3" of an item kept in grams held
+          // 3 g of a 3 kg order. The product's own recipe line says how much
+          // one sale takes; otherwise one pack of the item.
+          const product = line.productId && mongoose.Types.ObjectId.isValid(String(line.productId))
+            ? await Product.findById(line.productId, { name: 1, baseSize: 1, baseRecipe: 1 }).lean() : null;
+          const own = (product?.baseRecipe || []).filter(rl => rl.invId && !rl.nonStock);
+          const per = own.length === 1 && String(own[0].invId) === String(inv._id) && Number(own[0].qty) > 0
+            ? Number(own[0].qty)
+            : (baseUnitsPerSale ? baseUnitsPerSale(product || { name: line.name }, await Inventory.findById(inv._id).lean()) : 1);
+          wanted.push({ invId: String(inv._id), qty: per * (Number(line.quantity) || 0) });
         }
         if (!wanted.length) return res.status(400).json({ success: false, error: 'None of this order\'s lines match a stocked item, so there is nothing to hold.' });
       }
