@@ -403,7 +403,9 @@ export default function OrdersTab({ ctx }) {
     } catch { setTakeOut(t => ({ ...t, busy: false })); ui.alert('Network error - nothing was changed.'); }
   };
 
-  const openAmend = (order) => setAmendModal({ order, qty: (order.items || []).map(i => String(i.quantity)), adds: [], search: '', reason: '', busy: false, error: '' });
+  // priceMode / price per line: '₱' a new unit price, '%' a percent off; '' = unchanged.
+  const openAmend = (order) => setAmendModal({ order, qty: (order.items || []).map(i => String(i.quantity)), priceMode: (order.items || []).map(() => 'price'), price: (order.items || []).map(() => ''), adds: [], search: '', reason: '', busy: false, error: '' });
+  const unitNow = (it) => Number(it.price || 0) * (1 - Math.max(Number(it.productDiscountPercent) || 0, Number(it.discountPercent) || 0) / 100);
   // Products that can be added in place: sellable, and not needing a size or
   // option picked (those go through a new order - the server enforces the same).
   const amendableProducts = React.useMemo(() => (products || []).filter(p =>
@@ -412,10 +414,19 @@ export default function OrdersTab({ ctx }) {
   const submitAmend = async () => {
     const m = amendModal;
     const changes = m.order.items
-      .map((it, index) => ({ index, quantity: Number(m.qty[index]) }))
-      .filter(c => c.quantity !== Number(m.order.items[c.index].quantity));
+      .map((it, index) => {
+        const c = { index };
+        if (Number(m.qty[index]) !== Number(it.quantity)) c.quantity = Number(m.qty[index]);
+        const pv = String(m.price?.[index] ?? '').trim();
+        if (pv !== '') {
+          if (m.priceMode?.[index] === 'pct') c.discountPercent = Number(pv);
+          else c.price = Number(pv);
+        }
+        return c;
+      })
+      .filter(c => c.quantity !== undefined || c.price !== undefined || c.discountPercent !== undefined);
     const adds = m.adds.filter(a => Number(a.quantity) > 0).map(a => ({ productId: a.productId, quantity: Number(a.quantity) }));
-    if (!changes.length && !adds.length) return setAmendModal({ ...m, error: 'Change a quantity or add a product.' });
+    if (!changes.length && !adds.length) return setAmendModal({ ...m, error: 'Change a quantity or price, or add a product.' });
     if (!m.reason.trim()) return setAmendModal({ ...m, error: 'Say why the order is changing.' });
     setAmendModal({ ...m, busy: true, error: '' });
     try {
@@ -2425,15 +2436,32 @@ export default function OrdersTab({ ctx }) {
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => !amendModal.busy && setAmendModal(null)}>
                 <div role="dialog" aria-modal="true" aria-labelledby="amend-title" className="bg-sidebar-bg border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                   <h2 id="amend-title" className="font-black text-fg text-lg">Amend {amendModal.order.orderNumber}</h2>
-                  <p className="text-xs text-fg/70 mt-1 mb-4">Correct the order before it is completed. Set 0 to remove a line. Prices are recalculated, so a smaller quantity can lose a bulk discount. The client sees the change and the reason in their portal.</p>
+                  <p className="text-xs text-fg/70 mt-1 mb-4">Correct the order before it is completed. Set 0 to remove a line, or change a line's price (₱ a new unit price, % off). Quantities re-price the line, so a smaller quantity can lose a bulk discount; a price changed by hand needs a manager's OK. The client sees the change and the reason in their portal.</p>
                   <div className="space-y-2 mb-3">
                     {amendModal.order.items.map((it, i) => {
-                      const changed = Number(amendModal.qty[i]) !== Number(it.quantity);
+                      const pv = String(amendModal.price?.[i] ?? '').trim();
+                      const pct = amendModal.priceMode?.[i] === 'pct';
+                      const newUnit = pv === '' ? null : (pct ? Number(it.price || 0) * (1 - Number(pv) / 100) : Number(pv));
+                      const changed = Number(amendModal.qty[i]) !== Number(it.quantity) || newUnit != null;
                       return (
                         <div key={i} className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${changed ? 'border-sky-500/40 bg-sky-500/5' : 'border-white/10'}`}>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm text-fg font-bold truncate" title={String((it.name) ?? '')}>{it.name}</p>
-                            <p className="text-[10px] text-fg/65">Ordered {it.quantity}{changed ? ` → ${amendModal.qty[i] || 0}` : ''}</p>
+                            <p className="text-[10px] text-fg/65">Ordered {it.quantity}{Number(amendModal.qty[i]) !== Number(it.quantity) ? ` → ${amendModal.qty[i] || 0}` : ''} · ₱{unitNow(it).toFixed(2)} each{newUnit != null && Number.isFinite(newUnit) ? ` → ₱${newUnit.toFixed(2)}` : ''}</p>
+                            {/* The line's price: a new unit price, or a percent off it. Empty = unchanged. */}
+                            <div className="mt-1.5 flex items-center gap-1.5">
+                              <div className="inline-flex rounded-md border border-white/10 overflow-hidden" role="radiogroup" aria-label={`How to change the price of ${it.name}`}>
+                                {[['price', '₱'], ['pct', '%']].map(([v, lbl]) => (
+                                  <button key={v} type="button" role="radio" aria-checked={(amendModal.priceMode?.[i] || 'price') === v}
+                                    onClick={() => setAmendModal(m => ({ ...m, priceMode: m.priceMode.map((x, j) => (j === i ? v : x)), price: m.price.map((x, j) => (j === i ? '' : x)), error: '' }))}
+                                    className={`px-2 py-0.5 text-[10px] font-black ${(amendModal.priceMode?.[i] || 'price') === v ? 'bg-brand text-on-brand' : 'text-fg/70'}`}>{lbl}</button>
+                                ))}
+                              </div>
+                              <input type="number" min="0" step="0.01" inputMode="decimal" value={amendModal.price?.[i] ?? ''}
+                                placeholder={pct ? '% off' : unitNow(it).toFixed(2)} aria-label={pct ? `Percent off ${it.name}` : `New unit price for ${it.name}`}
+                                onChange={e => setAmendModal(m => ({ ...m, price: m.price.map((x, j) => (j === i ? e.target.value : x)), error: '' }))}
+                                className="w-24 bg-white/5 border border-white/10 rounded-md px-2 py-1 text-xs text-fg text-right tabular-nums outline-none focus:border-brand" />
+                            </div>
                           </div>
                           <label htmlFor={`amend-qty-${i}`} className="sr-only">New quantity for {it.name}</label>
                           <input id={`amend-qty-${i}`} type="number" min="0" step={BUSINESS_TYPE === 'log' ? '1' : 'any'} value={amendModal.qty[i]}

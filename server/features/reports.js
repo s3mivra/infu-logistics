@@ -1025,6 +1025,46 @@ app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, require
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
 });
 
+// ── REPORT: COMPLIMENTARY ────────────────────────────────────────────────────
+// What was given away: every completed complimentary order in the range -
+// who it was for, why, who approved it, what it would have sold for and what
+// it cost - with totals by reason and by person.
+app.get('/api/reports/complimentary', verifyToken, ...canViewReports, requirePermission('screen.reports.complimentary'), async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: true };
+    if (start || end) {
+      match.createdAt = {};
+      if (start) match.createdAt.$gte = dayStart(start);
+      if (end) match.createdAt.$lte = dayEnd(end);
+    }
+    const orders = await Order.find(match, {
+      orderNumber: 1, createdAt: 1, completedAt: 1, items: 1, subtotal: 1, complimentaryCost: 1, employeeName: 1, customerName: 1,
+      complimentaryReasonType: 1, complimentaryReasonNote: 1, complimentaryApprovedBy: 1, complimentaryReferenceNumber: 1, cashier: 1,
+    }).sort({ createdAt: -1 }).lean();
+    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const rows = orders.map((o) => ({
+      orderId: o._id, orderNumber: o.orderNumber, date: o.completedAt || o.createdAt,
+      forWhom: o.employeeName || o.customerName || '-',
+      reason: o.complimentaryReasonType || 'UNSPECIFIED', note: o.complimentaryReasonNote || '',
+      approvedBy: o.complimentaryApprovedBy || '', reference: o.complimentaryReferenceNumber || '', cashier: o.cashier || '',
+      items: (o.items || []).map((it) => `${it.quantity} x ${it.name}`).join(', '),
+      value: r2(o.subtotal), cost: r2(o.complimentaryCost),
+    }));
+    const group = (key) => Object.values(rows.reduce((m, r) => {
+      const k = r[key] || '-';
+      m[k] = m[k] || { name: k, count: 0, value: 0, cost: 0 };
+      m[k].count += 1; m[k].value = r2(m[k].value + r.value); m[k].cost = r2(m[k].cost + r.cost);
+      return m;
+    }, {})).sort((a, b) => b.value - a.value);
+    res.json({
+      success: true, start: start || null, end: end || null, rows,
+      totals: { count: rows.length, value: r2(rows.reduce((t, r) => t + r.value, 0)), cost: r2(rows.reduce((t, r) => t + r.cost, 0)) },
+      byReason: group('reason'), byPerson: group('forWhom'),
+    });
+  } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
+});
+
 // ── REPORT: CASHIER VARIANCE TREND ───────────────────────────────────────────
 app.get('/api/reports/cashier-variance', verifyToken, ...canViewReports, requirePermission('screen.reports.variance'), async (req, res) => {
   try {

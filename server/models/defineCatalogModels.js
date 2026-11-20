@@ -359,6 +359,7 @@ export default function defineCatalogModels({ BUSINESS_TYPE }) {
       totalBefore: Number,
       totalAfter:  Number,
       changes:     [{ name: String, from: Number, to: Number }],
+      priceApprovedBy: { type: String, default: undefined },   // who allowed a price changed by hand
     }],
     // --- PARTIAL FULFILLMENT (logistics - single order, fulfilled in batches) ---
     amountPaid:       { type: Number, default: 0 },        // cash/AR collected so far

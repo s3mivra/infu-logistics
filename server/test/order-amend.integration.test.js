@@ -158,3 +158,21 @@ describe('what cannot be amended', () => {
     expect((await Order().findById(order._id).lean()).total).toBe(5000);
   });
 });
+
+describe('changing a price while amending', () => {
+  it('sets a new unit price, or a percent off, and the total follows', async () => {
+    const order = (await place([line(bag, 4), line(sack, 1)])).body.order;
+    const r = await amend(order._id, { reason: 'Agreed price', changes: [{ index: 0, price: 90 }, { index: 1, discountPercent: 10 }] });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const o = await Order().findById(order._id).lean();
+    expect(o.total).toBe(4 * 90 + 1000 * 0.9);
+    expect(o.amendments.at(-1).changes.map(c => c.name)).toEqual(expect.arrayContaining(['SUGAR BAG (price)', 'RICE SACK (price)']));
+  });
+
+  it("needs a manager's approval without the override permission", async () => {
+    const order = (await place([line(bag, 2)])).body.order;
+    const r = await amend(order._id, { reason: 'Cheaper', changes: [{ index: 0, price: 50 }] }, staffTok);
+    expect([403, 401]).toContain(r.status);
+    expect((await Order().findById(order._id).lean()).items[0].price).toBe(100);
+  });
+});

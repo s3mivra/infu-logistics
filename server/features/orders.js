@@ -1703,10 +1703,26 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
     const changes = Array.isArray(req.body?.changes) ? req.body.changes : [];
     const wholeUnits = BUSINESS_TYPE === 'log';
     const wanted = new Map();
+    // A line's price changed by hand: { price } (the new unit price) or
+    // { discountPercent } (off the line's price). A price override, under the
+    // till's rule - orders.override, or a manager's approval for this order.
+    const repriced = new Map();
     for (const ch of changes) {
       const idx = Number(ch?.index);
-      const qty = Number(ch?.quantity);
       if (!Number.isInteger(idx) || !order.items[idx]) return res.status(400).json({ success: false, error: 'One of the changed lines does not exist on this order.' });
+      const it0 = order.items[idx];
+      if (ch?.price !== undefined && ch.price !== null && ch.price !== '') {
+        const v = Math.round(Number(ch.price) * 100) / 100;
+        if (!Number.isFinite(v) || v < 0) return res.status(400).json({ success: false, error: `Invalid price for ${it0.name}.` });
+        const nowUnit = Number(it0.price) * (1 - Math.max(Number(it0.productDiscountPercent) || 0, Number(it0.discountPercent) || 0) / 100);
+        if (Math.abs(v - nowUnit) > 0.004) repriced.set(idx, { price: v });
+      } else if (ch?.discountPercent !== undefined && ch.discountPercent !== null && ch.discountPercent !== '') {
+        const pct = Number(ch.discountPercent);
+        if (!Number.isFinite(pct) || pct < 0 || pct > 100) return res.status(400).json({ success: false, error: `Invalid discount for ${it0.name}.` });
+        if (Math.abs(pct - (Number(it0.discountPercent) || 0)) > 0.0001) repriced.set(idx, { discountPercent: pct });
+      }
+      if (ch?.quantity === undefined) continue;
+      const qty = Number(ch?.quantity);
       if (!Number.isFinite(qty) || qty < 0 || (wholeUnits && !Number.isInteger(qty))) {
         return res.status(400).json({ success: false, error: `Invalid quantity for ${order.items[idx].name}.` });
       }
@@ -1745,7 +1761,15 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
       }
     }
 
-    if (wanted.size === 0 && newLines.length === 0) return res.status(400).json({ success: false, error: 'Nothing was changed.' });
+    if (wanted.size === 0 && newLines.length === 0 && repriced.size === 0) return res.status(400).json({ success: false, error: 'Nothing was changed.' });
+    let priceApprovedBy = null;
+    if (repriced.size) {
+      priceApprovedBy = overrideOk(req, order._id);
+      if (!priceApprovedBy) {
+        const first = order.items[[...repriced.keys()][0]];
+        return res.status(403).json({ success: false, needsApproval: 'orders.override', target: String(order._id), error: `Changing the price of ${first.name} needs a manager's approval.` });
+      }
+    }
     const kept = order.items.filter((it, i) => (wanted.has(i) ? wanted.get(i) : it.quantity) > 0);
     if (kept.length === 0 && newLines.length === 0) return res.status(400).json({ success: false, error: 'An order needs at least one line. Cancel the order instead.' });
 
@@ -1777,6 +1801,20 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
         else it.productDiscountPercent = linePercent(line);
       }
     }
+    // Prices set by hand, after any re-pricing for quantity, so they stand.
+    for (const [i, pr] of repriced) {
+      const it = order.items[i];
+      if (!it || (wanted.has(i) && wanted.get(i) === 0)) continue;
+      const before = Math.round(Number(it.price) * (1 - Math.max(Number(it.productDiscountPercent) || 0, Number(it.discountPercent) || 0) / 100) * 100) / 100;
+      if (pr.price !== undefined) {
+        // The typed price is what the line is now charged: no percent on top.
+        it.price = pr.price; it.productDiscountPercent = 0; it.discountPercent = 0;
+      } else {
+        it.discountPercent = pr.discountPercent;
+      }
+      const after = Math.round(Number(it.price) * (1 - Math.max(Number(it.productDiscountPercent) || 0, Number(it.discountPercent) || 0) / 100) * 100) / 100;
+      changeLog.push({ name: `${it.name} (price)`, from: before, to: after });
+    }
     for (const line of newLines) {
       changeLog.push({ name: line.name, from: 0, to: line.quantity });
       const tu = tierUnitPrice(line);
@@ -1806,7 +1844,8 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
     if (order.amountTendered) order.changeDue = Number(Math.max(0, order.amountTendered - totalAfter).toFixed(2));
 
     order.revision = (order.revision || 0) + 1;
-    order.amendments.push({ revision: order.revision, by: req.user?.name || '', reason, totalBefore, totalAfter, changes: changeLog });
+    order.amendments.push({ revision: order.revision, by: req.user?.name || '', reason, totalBefore, totalAfter, changes: changeLog,
+      ...(priceApprovedBy ? { priceApprovedBy: priceApprovedBy.approverName || '' } : {}) });
     await order.save();
 
     await logAudit(req, {

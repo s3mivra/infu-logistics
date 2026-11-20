@@ -24,6 +24,7 @@ import PaymentMethodPicker, { paymentDetailsPayload, missingPaymentDetail, noteP
 import { CashFlowReport, SalesByChannelReport, SalesByCustomerReport, BudgetReport, ExceptionsReport, ClosingChecklist } from './ProcessReports';
 import Attachments from '../../shared/Attachments';
 import RangePresets from '../../shared/RangePresets';
+import ComplimentaryReport from './ComplimentaryReport';
 import FundSpendsToCheck from './FundSpendsToCheck';
 import RecurringBills from './RecurringBills';
 import { PrepListReport, FeedbackReport } from '../cafe/CafeExtras';
@@ -2497,6 +2498,8 @@ It posts only what is not already accrued for that month.`)) return;
               )}
             </div>
           )}
+
+          {ledgerSubTab === 'complimentary' && <ComplimentaryReport />}
 
           {/* ===== MENU ENGINEERING ===== */}
           {ledgerSubTab === 'menueng' && (

@@ -157,7 +157,7 @@ export const SCREENS = [
   ] },
   { tab: 'reports', label: 'Reports', parent: 'reports.view', pages: [
     ['salessummary', 'Sales'], ['saleschannel', 'Sales by Channel'], ['salescustomer', 'Sales by Customer'], ['payments', 'By Payment'],
-    ['profitcat', 'By Category'], ['menueng', 'Menu Engineering'],
+    ['profitcat', 'By Category'], ['menueng', 'Menu Engineering'], ['complimentary', 'Complimentary'],
     ['arreport', 'Receivables: aging report'], ['collections', 'Receivables: collections'],
     ['apreport', 'Payables: A/P report'], ['supplierpay', 'Supplier Payments'], ['checkvouchers', 'Check Vouchers'], ['advances', 'Advances'],
     ['pnlmonthly', 'P&L'], ['bsmonthly', 'Balance Sheet'], ['cashflow', 'Cash Flow Statement'], ['budget', 'Budget vs Actual'], ['percentagetax', 'Percentage Tax'], ['vatreturn', 'VAT Return'],

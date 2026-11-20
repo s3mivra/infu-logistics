@@ -13,7 +13,7 @@
 // Both now render from here, so a new screen is one entry rather than two that
 // have to be kept in step. The ledger and report sub-pages live here too, and
 // LedgerTab builds its own sub-nav from the same constants.
-import {
+import { Gift,
   ShoppingCart, Package, Network, Factory, Truck, Users, FileText, ChefHat,
   BarChart3, BarChart2, DollarSign, Clock, ShieldCheck, Building2, Landmark,
   Receipt, Settings, TrendingUp, RefreshCw, Banknote, HandCoins, Download,
@@ -154,6 +154,7 @@ export const REPORT_TAB_GROUPS = [
     ['profitcat', 'By Category', BarChart2],
     // A cafe engineers its menu; a logistics business has a product mix.
     ['menueng', REPORT_NAMES.menueng, TrendingUp],
+    ['complimentary', 'Complimentary', Gift],
   ]],
   ['Receivable', [
     // One page: open invoices (record payments), the aging report, collections.
