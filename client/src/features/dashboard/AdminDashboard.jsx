@@ -7024,6 +7024,10 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
           {!rail && <p title={BIZ_NAME} className="text-base font-black text-brand-text tracking-tight leading-tight line-clamp-2 break-words min-w-0 flex-1">{BIZ_NAME}</p>}
           <div className={`hidden md:flex shrink-0 gap-2 ${rail ? 'flex-col items-center' : 'items-center'}`}>
             <NotificationBell align="left" />
+            {/* Reload without signing out or closing the installed app: the
+                sign-in is kept in a cookie and the till's cart in the session. */}
+            <button onClick={() => window.location.reload()} title="Reload the app - you stay signed in, and the till's cart is kept" aria-label="Reload the app" data-testid="reload-app"
+              className="shrink-0 p-2 rounded-xl bg-white/5 text-fg/75 border border-white/10 hover:bg-white/10 hover:text-fg transition"><RefreshCw size={14} /></button>
             <HelpTip screen={activeTab} />
           </div>
         </div>
@@ -7709,6 +7713,8 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
             </button>
             <HelpTip screen={activeTab} />
             <div className="shrink-0"><NotificationBell /></div>
+            <button onClick={() => window.location.reload()} title="Reload the app - you stay signed in, and the till's cart is kept" aria-label="Reload the app" data-testid="reload-app"
+              className="shrink-0 p-2 rounded-xl bg-white/5 text-fg/75 border border-white/10 hover:bg-white/10 hover:text-fg transition"><RefreshCw size={14} /></button>
             <button onClick={e => { e.preventDefault(); BUSINESS_TYPE === 'log' ? handleCopyPortalLink() : handleShowQR(); }} className="shrink-0 flex items-center gap-1.5 bg-brand/20 text-brand-text border border-brand/30 px-3 py-2 rounded-xl font-bold text-xs hover:bg-brand/30 transition">
               <QrCode size={13} /> {BUSINESS_TYPE === 'log' ? 'Portal' : 'QR'}
             </button>

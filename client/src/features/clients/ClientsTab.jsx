@@ -940,6 +940,7 @@ Credit moved: ₱${Number(m.creditBalance).toFixed(2)}` : ''));
       <span className="text-xs font-bold text-fg/70">Merge into</span>
       <div className="flex-1 min-w-[220px]">
         <SearchSelect value={target} onChange={e => setTarget(e.target.value)} placeholder="Type to find the account to keep"
+          className="w-full bg-page-bg border border-white/15 rounded-lg px-3 py-2 text-sm text-fg placeholder-fg/60 outline-none focus:border-brand/60"
           options={others.map(x => ({ value: x._id, label: x.name, hint: x.clientCode || '' }))} />
       </div>
       <button onClick={go} disabled={busy || !target} className={`${chip} bg-red-500/15 text-danger border border-red-500/30 disabled:opacity-50`}>Merge</button>
