@@ -37,7 +37,7 @@ describe('editing the dates of a collection', () => {
     const rev = await M('JournalEntry').findOne({ reference: /^ARS-CD-1-RDREV/ }).lean();
     expect(new Date(rev.date).toISOString().slice(0, 10)).toBe('2026-11-10');
     expect(rev.lines.find(l => l.accountCode === '111000').credit).toBe(1000);
-    // Banked before it was collected is refused.
-    expect((await request(app).patch(path).set('Authorization', `Bearer ${owner}`).send({ depositDate: '2026-11-01' })).status).toBe(400);
+    // Banked before the collection was recorded is allowed (paid straight into the bank).
+    expect((await request(app).patch(path).set('Authorization', `Bearer ${owner}`).send({ depositDate: '2026-10-19' })).status).toBe(200);
   });
 });
