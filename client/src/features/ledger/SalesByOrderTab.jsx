@@ -6,6 +6,11 @@ import RangePresets from '../../shared/RangePresets';
 import PagedRows from '../../shared/PagedRows';
 // Sales, by order and by day.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
+// Sold on account: owed, not paid. An older server counted it under E-Wallet
+// (it has no `credit` field), so take it back out of E-Wallet there.
+const creditOf = (r) => ['On Account', 'Credit', 'Charge', 'A/R'].reduce((t, m) => t + (Number(r?.methods?.[m]) || 0), 0);
+const ewalletOnly = (r) => (r?.credit === undefined ? Math.max(0, (Number(r?.ewallet) || 0) - creditOf(r)) : Number(r?.ewallet) || 0);
+
 export default function SalesByOrderTab({
   ledgerSubTab, salesView, salesViewTabs, sssRange, setSssRange, fetchSalesSummary, salesSourceSelect, salesSummary,
   exportSalesSummaryPDF, exportSssExcel, sssRows, money2,
@@ -59,7 +64,7 @@ export default function SalesByOrderTab({
                     <td className="py-1.5 text-xs text-fg/70">{isDayRow ? '-' : (row.customerName || 'Guest')}</td>
                     <td className="py-1.5 font-mono text-xs text-fg/70">{isDayRow ? row.count : row.orderNumber}</td>
                     <td className="py-1.5 text-right font-mono">{row.cash ? money2(row.cash) : ''}</td>
-                    <td className="py-1.5 text-right font-mono">{row.ewallet ? money2(row.ewallet) : ''}</td>
+                    <td className="py-1.5 text-right font-mono">{(() => { const e = ewalletOnly(row); return e ? money2(e) : ''; })()}</td>
                     <td className="py-1.5 text-right font-mono">{row.bank ? money2(row.bank) : ''}</td>
                     <td className="py-1.5 text-right font-mono">{row.delivery ? money2(row.delivery) : ''}</td>
                     <td className="py-1.5 text-right font-mono text-warning">{(() => { const c = ['On Account', 'Credit', 'Charge', 'A/R'].reduce((s, m) => s + (Number(row?.methods?.[m]) || 0), 0); return c ? money2(c) : ''; })()}</td>
@@ -74,7 +79,7 @@ export default function SalesByOrderTab({
                   <tr className="font-black text-fg border-t-2 border-white/20">
                     <td className="py-2" colSpan={4}>Totals</td>
                     <td className="py-2 text-right font-mono">{money2(salesSummary.totals.cash)}</td>
-                    <td className="py-2 text-right font-mono">{money2(salesSummary.totals.ewallet)}</td>
+                    <td className="py-2 text-right font-mono">{money2(ewalletOnly(salesSummary.totals))}</td>
                     <td className="py-2 text-right font-mono">{money2(salesSummary.totals.bank)}</td>
                     <td className="py-2 text-right font-mono">{money2(salesSummary.totals.delivery)}</td>
                     <td className="py-2 text-right font-mono text-warning">{money2(['On Account', 'Credit', 'Charge', 'A/R'].reduce((s, m) => s + (Number(salesSummary.totals?.methods?.[m]) || 0), 0))}</td>
