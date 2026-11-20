@@ -3414,8 +3414,7 @@ app.patch('/api/orders/:id/ar-payments/:paymentId/dates', verifyToken, requireSt
     if (req.body?.depositDate !== undefined) {
       deposited = req.body.depositDate ? parse(req.body.depositDate) : null;
       if (req.body.depositDate && !deposited) return res.status(400).json({ success: false, error: 'Invalid deposit date.' });
-      // A deposit dated before the collection is allowed: a client often pays
-      // straight into the bank, and the collection is recorded after.
+      if (deposited && deposited < new Date(new Date(collected).setHours(0, 0, 0, 0))) return res.status(400).json({ success: false, error: 'Money cannot be banked before it was collected.' });
     }
     // Neither the old day nor the new one may be in a closed period.
     for (const d of [before.collectionDate, collected]) {
