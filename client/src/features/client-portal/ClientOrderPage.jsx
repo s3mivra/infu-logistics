@@ -71,8 +71,9 @@ const CLIENT_PAYMENT_METHODS = ['Cash', 'Bank Transfer', 'Check', 'QR', 'GCash',
 // the Payment Routing screen) just displays its own name as-is.
 const METHOD_LABELS = { QR: 'QR / Scan to Pay', Maribank: 'Maribank / Seabank' };
 // Tenders whose reference number is the ONLY handle on the money afterwards:
-// a QR confirmation number, or a check number. Both are mandatory.
-const REFERENCE_REQUIRED = ['QR', 'Check'];
+// a QR confirmation number. A check is not asked for here: whoever collects it
+// records its number, bank and date when the collection is entered.
+const REFERENCE_REQUIRED = ['QR'];
 
 const peso = formatPeso;
 // Map an order's status to a client-facing queue state for the portal sidebar.

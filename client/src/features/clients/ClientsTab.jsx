@@ -9,6 +9,7 @@ import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocume
 import { socket } from '../../shared/staffSocket.js';
 import { useDashboard } from '../dashboard/DashboardContext';
 import RangePresets from '../../shared/RangePresets';
+import SearchSelect from '../../shared/ui/SearchSelect';
 import { useRefreshTick } from '../../shared/refreshBus';
 import { loadXlsx } from '../../shared/xlsx';
 
@@ -691,6 +692,9 @@ export default function ClientsTab() {
                                 <FileText size={13} /> Statement of account
                               </button>
                             )}
+                            {isSuperAdmin && (
+                              <MergeClient client={c} clients={data.clients} apiFetch={apiFetch} onDone={load} chip={chip} />
+                            )}
                             {can('clients.edit') && (
                               <button onClick={() => downloadClientRecord(apiFetch, c)} title="Everything held about this client, in one file - for when they ask"
                                 className={`${chip} border border-white/15 text-fg/80 hover:bg-white/5`}>
@@ -886,6 +890,60 @@ export default function ClientsTab() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// The same customer recorded twice: merge this account into the one to keep.
+// Its sales, quotations, advances, reservations, reminders, special prices and
+// credit move over; this one is switched off and marked as merged.
+function MergeClient({ client, clients, apiFetch, onDone, chip }) {
+  const [open, setOpen] = useState(false);
+  const [target, setTarget] = useState('');
+  const [busy, setBusy] = useState(false);
+  const others = (clients || []).filter(x => x._id !== client._id);
+  const go = async () => {
+    const into = others.find(x => x._id === target);
+    if (!into) return ui.alert('Pick the account to keep.');
+    if (!(await ui.confirm({
+      title: 'Merge these clients?',
+      message: `"${client.name}" (${client.clientCode || '-'}) goes into "${into.name}" (${into.clientCode || '-'}).`,
+      detail: 'Its sales, quotations, advances, reservations, reminders, special prices and credit move to the account kept. This one is switched off. This cannot be undone from here.',
+      confirmLabel: 'Merge', tone: 'danger',
+    }))) return;
+    setBusy(true);
+    try {
+      const d = await (await apiFetch(`/api/clients/${client._id}/merge-into/${into._id}`, { method: 'POST', body: '{}' })).json();
+      if (!d.success) return ui.alert(d.error || 'The clients were not merged.');
+      const m = d.moved || {};
+      ui.alert(`Merged into ${into.name}.
+
+Sales moved: ${m.sales || 0}` + (m.quotations ? `
+Quotations: ${m.quotations}` : '') + (m.advances ? `
+Advances: ${m.advances}` : '')
+        + (m.reservations ? `
+Reservations: ${m.reservations}` : '') + (m.prices ? `
+Products with special prices: ${m.prices}` : '') + (m.creditBalance ? `
+Credit moved: ₱${Number(m.creditBalance).toFixed(2)}` : ''));
+      setOpen(false); setTarget('');
+      onDone?.();
+    } finally { setBusy(false); }
+  };
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} title="This customer is recorded twice: move everything into the other account"
+        className={`${chip} border border-white/15 text-fg/80 hover:bg-white/5`}>Merge into…</button>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 w-full" data-testid="merge-client">
+      <span className="text-xs font-bold text-fg/70">Merge into</span>
+      <div className="flex-1 min-w-[220px]">
+        <SearchSelect value={target} onChange={e => setTarget(e.target.value)} placeholder="Type to find the account to keep"
+          options={others.map(x => ({ value: x._id, label: x.name, hint: x.clientCode || '' }))} />
+      </div>
+      <button onClick={go} disabled={busy || !target} className={`${chip} bg-red-500/15 text-danger border border-red-500/30 disabled:opacity-50`}>Merge</button>
+      <button onClick={() => { setOpen(false); setTarget(''); }} className="text-xs text-fg/65 underline">Cancel</button>
     </div>
   );
 }

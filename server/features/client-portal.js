@@ -438,7 +438,7 @@ app.get('/api/client-accounts', verifyToken, requireStaff, async (req, res) => {
       return res.status(403).json({ success: false, error: 'Forbidden: missing permission "pos.use".' });
     }
     const clients = isSuper
-      ? await ClientAccount.find({}, { password: 0 }).sort({ createdAt: -1 })
+      ? await ClientAccount.find({ mergedInto: { $in: [null, undefined] } }, { password: 0 }).sort({ createdAt: -1 })
       : await ClientAccount.find({ isActive: { $ne: false } }, TILL_CLIENT_FIELDS).sort({ name: 1 }).lean();
     res.json({ success: true, clients });
   } catch (err) {

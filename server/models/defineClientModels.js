@@ -98,6 +98,10 @@ export default function defineClientModels({ BUSINESS_TYPE, log }) {
     // settlement or refunded out via a Check Voucher. See
     // POST /api/orders/:id/settle-ar and /api/client-accounts/:id/credit/* .
     creditBalance: { type: Number, default: 0 },
+    // Set when this account was merged into another (the same customer
+    // recorded twice): everything it had now belongs to that one.
+    mergedInto: { type: mongoose.Schema.Types.ObjectId, ref: 'ClientAccount', default: null },
+    mergedAt:   { type: Date, default: null },
     creditHistory: [{
       type:        { type: String, enum: ['overpayment', 'applied', 'refunded', 'adjusted'], required: true },
       amount:      { type: Number, required: true },     // always positive; `type` says the direction

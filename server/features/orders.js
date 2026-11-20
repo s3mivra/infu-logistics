@@ -1350,7 +1350,12 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
     }
     let paymentCheckDate = null;
     if (tender === 'CHECK') {
-      if (!paymentReference) {
+      // A client ordering from the portal says only that they will pay by
+      // check: the check itself is recorded (number, bank, date) by whoever
+      // collects it, when the collection is entered. Staff entering a check
+      // sale have it in hand, so they still give its number.
+      const fromPortal = req.user?.role === 'client' || req.user?.aud === 'client';
+      if (!paymentReference && !fromPortal) {
         return res.status(400).json({
           success: false,
           error: 'A check number is required when paying by check.',

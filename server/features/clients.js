@@ -31,6 +31,92 @@ export default function registerClients(ctx) {
   // columns additionally require accounting.view - see below.
   const canViewClients = [requireStaff, requirePermission('orders.view')];
 
+  // ── MERGE TWO CLIENTS ─────────────────────────────────────────────────────
+  // The same customer recorded twice (a name cut short when it was promoted
+  // from walk-in sales, a second account opened by mistake). Everything the
+  // duplicate had moves to the account kept - its sales, quotations, advances,
+  // reservations, reminders, special prices and credit balance - and the
+  // duplicate is switched off and marked as merged, never deleted.
+  // Owner only: it rewrites who every one of those records belongs to.
+  app.post('/api/clients/:id/merge-into/:targetId', verifyToken, requireStaff, async (req, res) => {
+    if (String(req.user?.role || '').toLowerCase() !== 'superadmin') {
+      return res.status(403).json({ success: false, error: 'Only the owner can merge clients.' });
+    }
+    const { id, targetId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(targetId)) return res.status(400).json({ success: false, error: 'Invalid client.' });
+    if (id === targetId) return res.status(400).json({ success: false, error: 'Pick a different client to merge into.' });
+    const session = await mongoose.startSession();
+    try {
+      let moved = {};
+      await session.withTransaction(async () => {
+        // One after the other: a transaction cannot start with two reads at once.
+        const from = await ClientAccount.findOne({ _id: id, ...tenantScope(req) }).session(session);
+        const to = await ClientAccount.findOne({ _id: targetId, ...tenantScope(req) }).session(session);
+        if (!from || !to) throw Object.assign(new Error('Client not found.'), { status: 404 });
+        if (from.mergedInto) throw Object.assign(new Error('That client was already merged.'), { status: 409 });
+        if (to.mergedInto) throw Object.assign(new Error('Merge into an account that is still in use.'), { status: 409 });
+        const S = String(from._id), T = String(to._id);
+        const esc = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const M = (n) => mongoose.model(n);
+
+        // Sales: by either link, and walk-in sales under the old name with no link.
+        const byLink = await M('Order').updateMany({ businessType: BUSINESS_TYPE, clientAccountId: S }, { $set: { clientAccountId: T, customerName: to.name } }, { session });
+        const byPortal = await M('Order').updateMany({ businessType: BUSINESS_TYPE, clientId: S }, { $set: { clientId: T, customerName: to.name } }, { session });
+        const byName = await M('Order').updateMany({
+          businessType: BUSINESS_TYPE, customerName: { $regex: `^${esc(from.name)}$`, $options: 'i' },
+          $or: [{ clientAccountId: { $in: [null, ''] } }, { clientAccountId: { $exists: false } }],
+          clientId: { $in: [null, '', undefined] },
+        }, { $set: { clientAccountId: T, customerName: to.name } }, { session });
+        moved.sales = (byLink.modifiedCount || 0) + (byPortal.modifiedCount || 0) + (byName.modifiedCount || 0);
+
+        const tryModel = async (name, filter, update) => {
+          try { const r = await M(name).updateMany(filter, update, { session }); return r.modifiedCount || 0; }
+          catch (e) { if (/Schema hasn't been registered/.test(e.message)) return 0; throw e; }
+        };
+        moved.quotations = await tryModel('Quotation', { clientAccountId: from._id }, { $set: { clientAccountId: to._id, clientName: to.name } });
+        moved.advances = await tryModel('Advance', { clientId: S }, { $set: { clientId: T, payeeName: to.name } });
+        moved.reservations = await tryModel('Reservation', { clientId: S }, { $set: { clientId: T, clientName: to.name } });
+        moved.reminders = await tryModel('CollectionReminder', { $or: [{ clientAccountId: from._id }, { clientKey: { $regex: `^${esc(from.name)}$`, $options: 'i' } }] },
+          { $set: { clientAccountId: to._id, clientKey: to.name } });
+        // Special prices on products: the kept account takes the duplicate's
+        // wherever it has none of its own for that product.
+        const prods = await M('Product').find({ $or: [{ 'clientDiscounts.clientId': S }, { 'clientBulkBreaks.clientId': S }] }).session(session);
+        for (const p of prods) {
+          const hasOwnDisc = (p.clientDiscounts || []).some(d => d.clientId === T);
+          p.clientDiscounts = (p.clientDiscounts || []).filter(d => !(d.clientId === S && hasOwnDisc)).map(d => (d.clientId === S ? Object.assign(d, { clientId: T }) : d));
+          const hasOwnBreaks = (p.clientBulkBreaks || []).some(b => b.clientId === T);
+          p.clientBulkBreaks = (p.clientBulkBreaks || []).filter(b => !(b.clientId === S && hasOwnBreaks)).map(b => (b.clientId === S ? Object.assign(b, { clientId: T }) : b));
+          await p.save({ session });
+        }
+        moved.prices = prods.length;
+
+        // Money held for the duplicate is the kept account's now.
+        if ((Number(from.creditBalance) || 0) > 0) {
+          to.creditBalance = roundMoney((Number(to.creditBalance) || 0) + Number(from.creditBalance));
+          moved.creditBalance = roundMoney(Number(from.creditBalance));
+          from.creditBalance = 0;
+        }
+        // Fill in what the kept account is missing (phone, email, TIN, address).
+        for (const f of ['phone', 'email', 'tin', 'registeredName', 'registeredAddress', 'contactNotes']) {
+          if (!to[f] && from[f]) to[f] = from[f];
+        }
+        from.isActive = false;
+        from.mergedInto = to._id;
+        from.mergedAt = new Date();
+        await to.save({ session });
+        await from.save({ session });
+        moved.from = { id: S, name: from.name, clientCode: from.clientCode };
+        moved.into = { id: T, name: to.name, clientCode: to.clientCode };
+      });
+      try { await ctx.logAudit?.(req, { action: 'merge', entity: 'ClientAccount', entityId: targetId, after: moved }); } catch { /* best-effort */ }
+      res.json({ success: true, moved });
+    } catch (err) {
+      if (err.status) return res.status(err.status).json({ success: false, error: err.message });
+      captureError(req, err);
+      res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+    } finally { session.endSession(); }
+  });
+
   // An order belongs to a client through EITHER field: portal orders carry
   // clientId, cashier-placed on-behalf orders carry clientAccountId.
   const orderMatchesClient = (id) => ({
@@ -48,7 +134,7 @@ export default function registerClients(ctx) {
       })();
 
       const [clients, modeRow, globalRow] = await Promise.all([
-        ClientAccount.find({}, { password: 0 }).sort({ name: 1 }).lean(),
+        ClientAccount.find({ mergedInto: { $in: [null, undefined] } }, { password: 0 }).sort({ name: 1 }).lean(),
         Settings.findOne({ key: 'creditLimitMode' }).lean(),
         Settings.findOne({ key: 'globalCreditLimit' }).lean(),
       ]);
