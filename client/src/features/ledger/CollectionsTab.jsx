@@ -1,6 +1,6 @@
 import { formatDate } from '../../shared/dates.js';
 import { useState } from 'react';
-import { Pencil } from 'lucide-react';
+import { Pencil, Trash2 } from 'lucide-react';
 import * as ui from '../../shared/ui';
 import RecordLink from '../../shared/RecordLink';
 import RangePresets from '../../shared/RangePresets';
@@ -24,6 +24,13 @@ export default function CollectionsTab({
     ui.toast('Dates changed.', { tone: 'success' });
     setDateEdit(null);
     fetchCollectionReport?.();
+  };
+  const deleteCollection = async (r) => {
+    if (!(await ui.confirm(`Delete this collection of ₱${Number(r.amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}? Invoice ${r.orderNumber} will owe it again.`))) return;
+    const d = await (await apiFetch(`/api/orders/${r.orderId}/ar-payments/${r.paymentId}`, { method: 'DELETE' })).json();
+    if (!d.success) return ui.alert(d.error || 'The collection was not deleted.');
+    ui.toast('Collection deleted - the invoice is unsettled.', { tone: 'success' });
+    fetchCollectionReport?.(); fetchChecks?.(checkFilter);
   };
   const ymd = (d) => (d ? new Date(d).toLocaleDateString('en-CA') : '');
   return (
@@ -296,6 +303,7 @@ export default function CollectionsTab({
                           <button onClick={() => setDateEdit({ key: `${r.orderId}-${r.paymentId}`, collected: ymd(r.collectionDate), deposited: ymd(r.depositDate) })}
                             title="Change the collected / deposited dates" aria-label="Edit dates" className="ml-1.5 text-fg/50 hover:text-fg align-middle"><Pencil size={11} /></button>
                         )}
+                        {isSuperAdmin && r.paymentId && <button type="button" onClick={() => deleteCollection(r)} title="Delete this collection: the invoice owes it again" aria-label="Delete collection" className="ml-1.5 text-danger/70 hover:text-danger align-middle"><Trash2 size={11} /></button>}
                         {r.collectedBy && <span className="block text-[9px] text-fg/70">by {r.collectedBy}</span>}
                       </td>
                       <td className="py-2.5 text-xs">

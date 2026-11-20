@@ -3490,6 +3490,67 @@ app.patch('/api/orders/:id/ar-payments/:paymentId/dates', verifyToken, requireSt
   }
 });
 
+// ── DELETE A COLLECTION ─────────────────────────────────────────────────────
+// The owner takes back a collection recorded by mistake. The sale itself is
+// not touched: it simply owes that amount again (unsettled). The books are
+// append-only, so the collection's entry is reversed on its own day; an
+// overpayment it put on the client's credit comes back off, and client credit
+// it used goes back to the client. A check already deposited or cleared has
+// moved on to the bank, so it is bounced instead, not deleted.
+app.delete('/api/orders/:id/ar-payments/:paymentId', verifyToken, requireStaff, atomic(mongoose, async (req, res) => {
+  try {
+    if (String(req.user?.role || '').toLowerCase() !== 'superadmin') return res.status(403).json({ success: false, error: 'Only the owner can delete a collection.' });
+    const order = await Order.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE, ...tenantScope(req) });
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+    const pay = (order.arPayments || []).find(p => String(p._id) === String(req.params.paymentId));
+    if (!pay) return res.status(404).json({ success: false, error: 'Collection not found.' });
+    if (pay.checkStatus === 'Bounced') return res.status(400).json({ success: false, error: 'This check bounced, so the collection is already reversed.' });
+    if (['Deposited', 'Cleared'].includes(pay.checkStatus)) return res.status(400).json({ success: false, error: `This check is already ${pay.checkStatus.toLowerCase()}. Bounce it in the check register instead.` });
+    const amt = Math.round((Number(pay.amount) || 0) * 100) / 100;
+    const original = pay.journalRef ? await JournalEntry.findOne({ reference: pay.journalRef }).lean() : null;
+    const when = original?.date || pay.collectionDate || pay.createdAt || new Date();
+    const lock = await periodLockFor(new Date(when));
+    if (lock) return res.status(409).json({ success: false, error: `That collection is in a closed period (${lock.label || lock.period || 'closed'}). Reopen it first.` });
+
+    const client = order.clientId ? await ClientAccount.findOne({ _id: order.clientId, ...tenantScope(req) }) : null;
+    const overpaid = Math.round(((original?.lines || []).filter(l => l.accountCode === '260100').reduce((t, l) => t + (Number(l.credit) || 0), 0)) * 100) / 100;
+    if (overpaid > 0) {
+      if (!client) return res.status(400).json({ success: false, error: 'The overpayment on this collection was credited to a client account that no longer exists.' });
+      if ((Number(client.creditBalance) || 0) + 0.005 < overpaid) return res.status(400).json({ success: false, error: `₱${overpaid.toFixed(2)} of this collection went to the client's credit and has since been used. Undo that first.` });
+    }
+
+    if (original) {
+      const flip = (original.lines || []).map(l => ({ accountCode: l.accountCode, accountName: l.accountName, debit: l.credit || 0, credit: l.debit || 0 }));
+      await JournalEntry.create([{
+        reference: `${pay.journalRef}-DEL${Date.now().toString(36).toUpperCase()}`, date: original.date,
+        description: `Collection deleted: reverses ${pay.journalRef} (${order.orderNumber})`,
+        lines: flip, totalDebit: original.totalCredit, totalCredit: original.totalDebit,
+      }]);
+    }
+    if (client && (overpaid > 0 || pay.paymentMethod === 'Client Credit')) {
+      const back = pay.paymentMethod === 'Client Credit' ? amt : -overpaid;
+      client.creditBalance = Math.round(((Number(client.creditBalance) || 0) + back) * 100) / 100;
+      client.creditHistory.push({ type: back > 0 ? 'restored' : 'reversed', amount: Math.abs(back), orderId: order._id, orderNumber: order.orderNumber, reference: pay.journalRef || '', note: 'Collection deleted', by: req.user?.name || '' });
+      await client.save();
+    }
+
+    const before = { amount: amt, paymentMethod: pay.paymentMethod, referenceNumber: pay.referenceNumber, collectionDate: pay.collectionDate, checkNumber: pay.checkNumber };
+    order.arPayments = (order.arPayments || []).filter(p => String(p._id) !== String(pay._id));
+    order.arPaidAmount = Math.max(0, Math.round(((Number(order.arPaidAmount) || 0) - amt) * 100) / 100);
+    order.arSettled = isFullySettled(order);
+    order.arSettledAmount = order.arPaidAmount;
+    if (!order.arSettled) order.arSettledAt = null;
+    order.markModified('arPayments');
+    await order.save();
+    await logAudit(req, { action: 'delete-collection', entity: 'Order', entityId: order.orderNumber, before, after: { paidAfter: order.arPaidAmount, balance: arBalance(order), reopened: !order.arSettled } });
+    emitToMgr?.('erpUpdated');
+    res.json({ success: true, balance: arBalance(order), reopened: !order.arSettled });
+  } catch (err) {
+    captureError(req, err);
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+}));
+
 // ── RESERVATION DEPOSIT ─────────────────────────────────────────────────────
 // Money taken now for an order booked for a later day. It is not a sale yet:
 // DR cash (or bank, e-wallet...) / CR 260200 Customer Advances / Deposits.
