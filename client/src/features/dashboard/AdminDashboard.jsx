@@ -5968,7 +5968,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     // Fixed columns (match the on-screen Summary Sales table).
     const tm = salesSummary.totals?.methods || {};
     const COLS = [
-      ['Cash', ['Cash']], ['Bank', ['Bank Transfer']], ['Cheque', ['Check', 'Cheque']], ['GCash', ['GCash']], ['Maya', ['Maya']],
+      ['Cash', ['Cash']], ['Bank', ['Bank Transfer']], ['Check', ['Check', 'Cheque']], ['GCash', ['GCash']], ['Maya', ['Maya']],
       ['Maribank/SeaBank', ['Maribank']], ['Other E-Wallet', ['E-Wallet', 'Other E-Wallet']],
       ['GrabFood', ['Grab Delivery']], ...(BUSINESS_TYPE === 'log' ? [['Lalamove', ['Lalamove']]] : [['Foodpanda', ['Foodpanda']]]), ['Manual/Direct', ['Manual Delivery']],
     ];
