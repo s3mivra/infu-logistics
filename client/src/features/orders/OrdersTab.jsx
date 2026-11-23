@@ -1,4 +1,5 @@
-﻿import { formatDate, formatDateTime } from '../../shared/dates.js';
+﻿import { PACK_UNIT } from '../../shared/packUnit.js';
+import { formatDate, formatDateTime } from '../../shared/dates.js';
 import { groupShipments, exportTransferSlip } from '../../shared/transferSlips';
 import { LoyaltyDialog } from '../cafe/CafeExtras';
 import { statusTone } from '../../shared/statusTone';
@@ -61,7 +62,14 @@ function LineDiscountInput({ unitPrice, percent, onPercent, onPrice }) {
 // their acceptance, as Send Stock does) or type a new branch not in the hub
 // yet (no one to accept it, so the stock leaves now). The order is cancelled,
 // the shipment goes in the hub's transfer history, and its slip prints.
-function SendAsTransfer({ order, apiFetch, fetchOrders, pdfDeps, onOpenChange }) {
+function SendAsTransfer({ order, apiFetch, fetchOrders, pdfDeps, onOpenChange, inventory = [], itemDisplay }) {
+  // Whole products: show pieces where the item has a pack size, as the Hub does.
+  const shown = (l) => {
+    const inv = inventory.find(i => String(i.itemName || '').trim().toUpperCase() === String(l.itemName || '').trim().toUpperCase());
+    const d = inv && itemDisplay ? itemDisplay(inv) : null;
+    if (d?.isPacked && d.packBase > 0) return { qty: Math.round((l.qty / d.packBase) * 1000) / 1000, have: Math.floor((l.onHand / d.packBase) * 1000) / 1000, unit: PACK_UNIT };
+    return { qty: l.qty, have: l.onHand, unit: l.unit };
+  };
   const [open, setOpenRaw] = React.useState(false);
   // The card hides its payment buttons while this is open: it is not a sale.
   const setOpen = (v) => { setOpenRaw(v); onOpenChange?.(v); };
@@ -126,7 +134,7 @@ function SendAsTransfer({ order, apiFetch, fetchOrders, pdfDeps, onOpenChange })
           <p className="px-2 py-1.5 text-[10px] font-black uppercase tracking-widest text-fg/70 bg-white/5">Goes out at cost, not the order's price</p>
           {atCost.lines.map(l => (
             <div key={l.itemName} className="flex justify-between gap-2 px-2 py-1 text-xs border-t border-white/5">
-              <span className="text-fg/85">{l.qty} {l.unit} {l.itemName}{l.onHand < l.qty && <span className="text-danger"> (only {l.onHand} on hand)</span>}</span>
+              <span className="text-fg/85">{(() => { const v = shown(l); return <>{v.qty} {v.unit} {l.itemName}{l.onHand < l.qty && <span className="text-danger"> (only {v.have} {v.unit} on hand)</span>}</>; })()}</span>
               <span className="font-mono tabular-nums text-fg/85">₱{l.value.toFixed(2)}</span>
             </div>
           ))}
@@ -2222,7 +2230,7 @@ export default function OrdersTab({ ctx }) {
                                         <ReserveLater order={order} apiFetch={apiFetch} fetchOrders={fetchOrders} paymentMethodGroups={paymentMethodGroups} />
                                       )}
                                       {order.status === 'Pending' && can('inventory.manage') && !(order.payments || []).length && !(Number(order.amountPaid) > 0) && !(order.reservationDeposits || []).length && (
-                                        <div data-xfer className="flex flex-col"><SendAsTransfer onOpenChange={v => setXferOpen(p => ({ ...p, [order._id]: v }))} order={order} apiFetch={apiFetch} fetchOrders={fetchOrders} pdfDeps={{ loadPdfLibs: ctx.loadPdfLibs, addLogoToPDF: ctx.addLogoToPDF, bizName: ctx.BIZ_NAME }} /></div>
+                                        <div data-xfer className="flex flex-col"><SendAsTransfer inventory={ctx.inventory || []} itemDisplay={ctx.itemDisplay} onOpenChange={v => setXferOpen(p => ({ ...p, [order._id]: v }))} order={order} apiFetch={apiFetch} fetchOrders={fetchOrders} pdfDeps={{ loadPdfLibs: ctx.loadPdfLibs, addLogoToPDF: ctx.addLogoToPDF, bizName: ctx.BIZ_NAME }} /></div>
                                       )}
                                       {dueTotal !== displayTotal && (
                                         <div className="flex items-center justify-between rounded-lg bg-purple-500/10 border border-purple-500/30 px-3 py-2 text-xs" data-testid="reservation-balance">
