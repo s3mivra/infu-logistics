@@ -67,8 +67,8 @@ function drawSlip(doc, autoTable, s, { bizName = '', y = 16 } = {}) {
   const to = out ? s.partnerName : (bizName || 'This business');
   autoTable(doc, {
     startY: y + 9, theme: 'plain', tableWidth: pageW - 28,
-    body: [[{ content: 'FROM', styles: { fontStyle: 'bold', textColor: 110 } }, { content: 'TO', styles: { fontStyle: 'bold', textColor: 110 } }],
-      [{ content: from, styles: { fontStyle: 'bold', fontSize: 11 } }, { content: to, styles: { fontStyle: 'bold', fontSize: 11 } }]],
+    body: [[{ content: 'FROM', styles: { fontStyle: 'bold', textColor: 110 } }, { content: 'TO', styles: { fontStyle: 'bold', textColor: 110 } }, { content: 'BILLED TO', styles: { fontStyle: 'bold', textColor: 110 } }],
+      [{ content: from, styles: { fontStyle: 'bold', fontSize: 11 } }, { content: to, styles: { fontStyle: 'bold', fontSize: 11 } }, { content: to, styles: { fontStyle: 'bold', fontSize: 11 } }]],
     styles: { fontSize: 8, cellPadding: 1 },
   });
   const body = s.lines.map((l, i) => [
