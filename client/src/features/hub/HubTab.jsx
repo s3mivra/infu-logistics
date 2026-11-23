@@ -1,4 +1,5 @@
-﻿import { formatDate } from '../../shared/dates.js';
+﻿import { PACK_UNIT } from '../../shared/packUnit.js';
+import { formatDate } from '../../shared/dates.js';
 import { useState, useEffect, useCallback, Fragment } from 'react';
 import { statusTone } from '../../shared/statusTone';
 import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus, LayoutGrid, BarChart3, ExternalLink, Boxes, Share2, Landmark, AlertTriangle } from 'lucide-react';
@@ -128,6 +129,15 @@ export default function HubTab({ ctx }) {
   // again or the Inventory tab keeps showing pre-transfer quantities until the
   // user reloads the page.
   const { apiFetch: authFetch, isSuperAdmin, inventory = [], peso, fetchERPData, can = () => true } = ctx;
+  // Whole products move between branches, so count them as the shelf does:
+  // pieces (packs) where a pack size is known, else the item's own unit.
+  // `per` is how many base units (g, ml) one counted unit is.
+  const countOf = (inv) => {
+    const d = ctx.itemDisplay ? ctx.itemDisplay(inv) : null;
+    if (d?.isPacked && d.packBase > 0) return { per: d.packBase, unit: PACK_UNIT, have: Math.floor(((Number(inv.stockQty) || 0) / d.packBase) * 1000) / 1000 };
+    return { per: 1, unit: inv.unit, have: Number(inv.stockQty) || 0 };
+  };
+  const toBase = (line) => Math.round(Number(line.qty) * (Number(line.per) || 1) * 1e6) / 1e6;
   // History shown one shipment per row; which ones are opened to their lines.
   const [openShipments, setOpenShipments] = useState({});
   const pdfDeps = { loadPdfLibs: ctx.loadPdfLibs, addLogoToPDF: ctx.addLogoToPDF, bizName: ctx.BIZ_NAME };
@@ -267,7 +277,7 @@ export default function HubTab({ ctx }) {
     try {
       const r = await authFetch('/api/hub/transfer-requests', {
         method: 'POST',
-        body: JSON.stringify({ partnerSlug: askPartner, weAreAskingThemToSend: true, items: askCart }),
+        body: JSON.stringify({ partnerSlug: askPartner, weAreAskingThemToSend: true, items: askCart.map(l => ({ itemName: l.itemName, unit: l.baseUnit || l.unit, qty: toBase(l), note: l.note })) }),
       });
       const d = await r.json();
       if (!r.ok) { setAskErr(d.error); return; }
@@ -386,11 +396,11 @@ export default function HubTab({ ctx }) {
   const removeFromCart = (idx) => setSendCart(c => c.filter((_, i) => i !== idx));
   // Request Stock, the same way: tap one of your products to ask for one more,
   // or type a name they may have that you don't stock.
-  const askAdd = (itemName, unit) => setAskCart(c => {
+  const askAdd = (itemName, unit, per = 1, baseUnit = unit) => setAskCart(c => {
     const key = String(itemName).trim().toUpperCase();
     const at = c.findIndex(l => String(l.itemName).trim().toUpperCase() === key);
     if (at >= 0) return c.map((l, i) => (i === at ? { ...l, qty: Number(l.qty || 0) + 1 } : l));
-    return [...c, { itemName: String(itemName).trim(), unit: unit || 'pcs', qty: 1, note: '' }];
+    return [...c, { itemName: String(itemName).trim(), unit: unit || 'pcs', per, baseUnit: baseUnit || unit || 'pcs', qty: 1, note: '' }];
   });
   const setAskLine = (idx, patch) => setAskCart(c => c.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
   const dropAskLine = (idx) => setAskCart(c => c.filter((_, i) => i !== idx));
@@ -398,10 +408,11 @@ export default function HubTab({ ctx }) {
   const quickAdd = (inv) => setSendCart(c => {
     const at = c.findIndex(l => l.itemId === inv._id);
     if (at >= 0) return c.map((l, i) => (i === at ? { ...l, qty: Number(l.qty || 0) + 1 } : l));
-    return [...c, { itemId: inv._id, itemName: inv.itemName, unit: inv.unit, qty: 1, note: '' }];
+    const cnt = countOf(inv);
+    return [...c, { itemId: inv._id, itemName: inv.itemName, unit: cnt.unit, per: cnt.per, baseUnit: inv.unit, qty: 1, note: '' }];
   });
   const setLine = (idx, patch) => setSendCart(c => c.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
-  const stockOf = (id) => Number(inventory.find(i => i._id === id)?.stockQty ?? NaN);
+  const stockOf = (id) => { const inv = inventory.find(i => i._id === id); return inv ? countOf(inv).have : NaN; };
 
   // Creates the new Inventory item (starting stock = the qty being sent),
   // then adds it to the cart exactly like picking an existing one - Send
@@ -440,7 +451,7 @@ export default function HubTab({ ctx }) {
       // one reference - not a separate transfer per item.
       const r = await authFetch('/api/hub/transfers/send', {
         method: 'POST',
-        body: JSON.stringify({ partnerSlug: sendPartner, items: sendCart.map(line => ({ itemId: line.itemId, qty: line.qty, note: line.note })) }),
+        body: JSON.stringify({ partnerSlug: sendPartner, items: sendCart.map(line => ({ itemId: line.itemId, qty: toBase(line), note: line.note })) }),
       });
       const d = await r.json();
       if (!r.ok) { setSendErr(d.error); return; }
@@ -1129,7 +1140,7 @@ export default function HubTab({ ctx }) {
                             <button key={i._id} type="button" onClick={() => quickAdd(i)} disabled={out}
                               className={`relative text-left rounded-xl border p-2.5 transition ${inCart ? 'border-brand bg-brand/10' : 'border-white/8 bg-white/3 hover:border-white/20'} ${out ? 'opacity-40 cursor-not-allowed' : ''}`}>
                               <p className="text-xs font-bold text-fg leading-tight line-clamp-2 pr-5">{i.itemName}</p>
-                              <p className={`text-[10px] mt-1 tabular-nums ${out ? 'text-danger' : 'text-fg/65'}`}>{out ? 'Out of stock' : `${i.stockQty} ${i.unit} on hand`}</p>
+                              <p className={`text-[10px] mt-1 tabular-nums ${out ? 'text-danger' : 'text-fg/65'}`}>{out ? 'Out of stock' : (() => { const c = countOf(i); return `${c.have.toLocaleString()} ${c.unit} on hand`; })()}</p>
                               {inCart && <span className="absolute top-1.5 right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-brand text-on-brand text-[10px] font-black flex items-center justify-center">{inCart.qty}</span>}
                             </button>
                           );
@@ -1220,10 +1231,10 @@ export default function HubTab({ ctx }) {
                           const inCart = askCart.find(l => String(l.itemName).trim().toUpperCase() === String(i.itemName).trim().toUpperCase());
                           const low = !(Number(i.stockQty) > 0);
                           return (
-                            <button key={i._id} type="button" onClick={() => askAdd(i.itemName, i.unit)}
+                            <button key={i._id} type="button" onClick={() => { const c = countOf(i); askAdd(i.itemName, c.unit, c.per, i.unit); }}
                               className={`relative text-left rounded-xl border p-2.5 transition ${inCart ? 'border-brand bg-brand/10' : 'border-white/8 bg-white/3 hover:border-white/20'}`}>
                               <p className="text-xs font-bold text-fg leading-tight line-clamp-2 pr-5">{i.itemName}</p>
-                              <p className={`text-[10px] mt-1 tabular-nums ${low ? 'text-warning' : 'text-fg/65'}`}>You have {Number(i.stockQty) || 0} {i.unit}</p>
+                              <p className={`text-[10px] mt-1 tabular-nums ${low ? 'text-warning' : 'text-fg/65'}`}>You have {(() => { const c = countOf(i); return `${c.have.toLocaleString()} ${c.unit}`; })()}</p>
                               {inCart && <span className="absolute top-1.5 right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-brand text-on-brand text-[10px] font-black flex items-center justify-center">{inCart.qty}</span>}
                             </button>
                           );
