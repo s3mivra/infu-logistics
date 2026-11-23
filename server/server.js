@@ -891,6 +891,40 @@ async function migrateHubClearingAccount() {
   return res.modifiedCount || 0;
 }
 
+// Collections taken as "Cash on Hand" before that name had a route landed in
+// 118000 Unassigned Receipts. Move each one to 111000 Cash on Hand with a
+// correcting entry (the books are append-only), on the collection's own day,
+// or today when that period is closed. Safe to run again: a collection already
+// moved has its "-RCL" entry and is skipped.
+async function moveCashOnHandOutOfUnassigned() {
+  const orders = await Order.find({ arPayments: { $elemMatch: { paymentMethod: 'Cash on Hand', journalRef: { $nin: [null, ''] } } } }, { orderNumber: 1, arPayments: 1 }).lean();
+  let moved = 0, total = 0;
+  for (const o of orders) {
+    for (const p of o.arPayments || []) {
+      if (p.paymentMethod !== 'Cash on Hand' || !p.journalRef) continue;
+      const ref = `${p.journalRef}-RCL`;
+      if (await JournalEntry.exists({ reference: ref })) continue;
+      const je = await JournalEntry.findOne({ reference: p.journalRef }).lean();
+      if (!je) continue;
+      const amt = Math.round((je.lines || []).filter(l => l.accountCode === '118000').reduce((t, l) => t + (Number(l.debit) || 0) - (Number(l.credit) || 0), 0) * 100) / 100;
+      if (!(amt > 0)) continue;
+      const date = (await periodLockFor(new Date(je.date))) ? new Date() : je.date;
+      await JournalEntry.create({
+        reference: ref, date,
+        description: `Cash on Hand collection moved out of Unassigned Receipts (${p.journalRef}, ${o.orderNumber})`,
+        lines: [
+          { accountCode: '111000', accountName: acctMeta('111000')?.name || 'Cash on Hand', debit: amt, credit: 0 },
+          { accountCode: '118000', accountName: acctMeta('118000')?.name || 'Unassigned Receipts', debit: 0, credit: amt },
+        ],
+        totalDebit: amt, totalCredit: amt,
+      });
+      moved++; total += amt;
+    }
+  }
+  if (moved) log.info(`✅ Moved ${moved} Cash on Hand collection(s), ₱${total.toFixed(2)}, from Unassigned Receipts to Cash on Hand`);
+  return { moved, total: Math.round(total * 100) / 100 };
+}
+
 const runStartupTasks = async () => {
     log.info('Connected to MongoDB Atlas');
     // The business's own clock drives every day boundary - report ranges, the
@@ -946,6 +980,7 @@ const runStartupTasks = async () => {
       if (stampedTotal > 0) log.info(`✅ Stamped businessType=${BUSINESS_TYPE} on ${stampedTotal} legacy doc(s) - Orders:${bO.modifiedCount} Products:${bP.modifiedCount} Inventory:${bI.modifiedCount} Categories:${bC.modifiedCount}`);
 
       await migrateHubClearingAccount();
+      try { await moveCashOnHandOutOfUnassigned(); } catch (e) { log.warn({ err: e }, 'Could not move Cash on Hand collections out of Unassigned Receipts'); }
     } catch (err) {
       log.error({ err }, 'Seeding error');
     }
@@ -3695,6 +3730,7 @@ const ctx = {
   LinkedBusinessSchema, LinkedBusiness,
   HubInviteSchema, HubInvite,
   CrossTransferSchema, CrossTransfer,
+  moveCashOnHandOutOfUnassigned,
   TRANSFER_REQUEST_STATUSES,
   TransferRequestSchema,
   TransferRequest,
