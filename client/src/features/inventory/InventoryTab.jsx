@@ -1177,8 +1177,8 @@ export default function InventoryTab({ ctx }) {
                       <span className="ml-auto text-[9px] bg-orange-500 text-white px-1.5 py-0.5 rounded">{watch.length}</span>
                     </h4>
                     {watch.filter(i => i._days < 0).length > 0 && <p className="text-[10px] text-danger font-black uppercase tracking-wider">{watch.filter(i => i._days < 0).length} Expired - log spoilage</p>}
-                    <div className="space-y-1 max-h-36 overflow-y-auto custom-scrollbar">
-                      {watch.map((i, wi) => {
+                    <div className="space-y-1">
+                      <PagedList items={watch} size={10} label="items" render={(i, wi) => {
                         const txt = i._days < 0 ? `${Math.abs(i._days)}d ago` : i._days === 0 ? 'today' : `in ${i._days}d`;
                         const color = i._days < 0 ? 'text-danger' : i._days <= (i.expiryWarnDays || 7) ? 'text-warning' : 'text-caution';
                         const d = itemDisplay(i);
@@ -1188,7 +1188,7 @@ export default function InventoryTab({ ctx }) {
                             <span className={`tabular-nums ${color}`}>{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? PACK_UNIT : d.unit} · <span className="font-black">{txt}</span></span>
                           </div>
                         );
-                      })}
+                      }} />
                     </div>
                   </div>
                 )}

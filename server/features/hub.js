@@ -69,7 +69,8 @@ export default function registerHub(ctx) {
     app, BUSINESS_TYPE, mongoose,
     LinkedBusiness, HubInvite, CrossTransfer,
     TransferRequest, TRANSFER_REQUEST_STATUSES,
-    Inventory, StockCard, JournalEntry, Order,
+    Inventory, StockCard, JournalEntry, Order, Product,
+    resolveLinkedInventory, baseUnitsPerSale,
     verifyToken,
     requireStaff: requireAuth, requireSuperAdmin,
     logAudit,
@@ -396,6 +397,112 @@ export default function registerHub(ctx) {
       errors: errors.length ? errors : undefined,
     });
   });
+
+  // ── TURN A PENDING ORDER INTO A STOCK TRANSFER ─────────────────────────────
+  // A manual order rung up for one of our own branches is not a sale. It goes
+  // out as a hub stock transfer instead, and the order is cancelled.
+  //  - To a hub partner: filed as 'Requested', exactly like Send Stock. It
+  //    needs our approval and the partner accepts it on their side.
+  //  - To a new branch, not in the hub yet: there is nobody to accept it, so
+  //    it leaves our stock now ('Released'), with the same stock card and
+  //    journal entry a released hub shipment posts.
+  // Either way it lands in the hub's transfer history and prints the same slip.
+  // Body: { partnerSlug } or { branchName }
+  app.post('/api/hub/transfers/from-order/:id', verifyToken, requireAuth, permit('inventory.manage'), atomic(mongoose, async (req, res) => {
+    const partnerSlug = String(req.body?.partnerSlug || '').trim();
+    const branchName = String(req.body?.branchName || '').trim().slice(0, 120);
+    if (!partnerSlug && !branchName) return res.status(400).json({ error: 'Pick a hub branch or type the new branch name.' });
+
+    const order = await Order.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE });
+    if (!order) return res.status(404).json({ error: 'Order not found.' });
+    if (order.status !== 'Pending') return res.status(409).json({ error: `Only a pending order can be sent as a stock transfer (this one is ${String(order.status).toLowerCase()}).` });
+    const paid = (Number(order.amountPaid) || 0) + (order.arPayments || []).length + (order.reservationDeposits || []).reduce((t, d) => t + (Number(d.amount) || 0), 0);
+    if (paid > 0) return res.status(409).json({ error: 'This order already has money taken on it. Refund or void it instead.' });
+
+    let link = null;
+    if (partnerSlug) {
+      link = await LinkedBusiness.findOne({ businessType: BUSINESS_TYPE, partnerSlug, status: 'active' }).lean();
+      if (!link) return res.status(404).json({ error: 'No active link with that branch.' });
+    }
+
+    // Each order line, as the stock item it takes from.
+    const lines = [];
+    const problems = [];
+    for (const it of order.items || []) {
+      const qtySold = Number(it.quantity) || 0;
+      if (!(qtySold > 0)) continue;
+      const product = it.productId && mongoose.isValidObjectId(it.productId) ? await Product.findById(it.productId).lean() : null;
+      const inv = await resolveLinkedInventory(product || { name: it.name }, it.productCode || product?.productCode);
+      if (!inv) { problems.push(`${it.name}: not a stocked item`); continue; }
+      const qty = +(qtySold * baseUnitsPerSale(product || { name: it.name }, inv)).toFixed(6);
+      const prev = lines.find(l => String(l.item._id) === String(inv._id));
+      if (prev) prev.qty = +(prev.qty + qty).toFixed(6); else lines.push({ item: inv, qty, note: it.notes || '' });
+    }
+    if (problems.length) return res.status(400).json({ error: `Can't send this as a stock transfer - ${problems.join('; ')}.` });
+    if (!lines.length) return res.status(400).json({ error: 'This order has nothing to send.' });
+    const short = lines.filter(l => (Number(l.item.stockQty) || 0) < l.qty);
+    if (short.length) return res.status(409).json({ error: `Not enough stock: ${short.map(l => `${l.item.itemName} needs ${l.qty} ${l.item.unit}, on hand ${l.item.stockQty}`).join('; ')}.` });
+
+    const shipmentRef = `HT-${Date.now().toString(36).toUpperCase()}`;
+    const toName = link ? (link.partnerName || partnerSlug) : branchName;
+    const now = new Date();
+    const created = [];
+    for (const [n, l] of lines.entries()) {
+      const item = l.item;
+      const reference = `${shipmentRef}-L${n + 1}`;
+      const [t] = await CrossTransfer.create([{
+        businessType: BUSINESS_TYPE, direction: 'outbound',
+        partnerSlug: link ? partnerSlug : '', partnerName: toName,
+        itemId: item._id, itemName: item.itemName, unit: item.unit, qtyBase: l.qty,
+        unitCost: Number(item.unitCost) || 0, displayUnit: item.displayUnit || '',
+        unitMultiplier: Number(item.unitMultiplier) || 1, packSize: item.packSize ?? null,
+        itemCode: item.itemCode || '', stockCategory: item.stockCategory || '',
+        note: String(l.note || `From order ${order.orderNumber}`).trim(),
+        reference, shipmentRef,
+        status: link ? 'Requested' : 'Released',
+        requestedBy: req.user?.name || '',
+        ...(link ? {} : { approvedBy: req.user?.name || '', approvedAt: now }),
+      }]);
+      created.push(t);
+
+      if (!link) {
+        // A new branch: it leaves our stock now, as a released shipment does.
+        const live = await Inventory.findOneAndUpdate(
+          { _id: item._id, stockQty: { $gte: l.qty } },
+          { $inc: { stockQty: -l.qty } },
+          { returnDocument: 'after' },
+        );
+        if (!live) throw new Error(`${item.itemName} no longer has ${l.qty} ${item.unit} on hand.`);
+        await StockCard.create([{
+          inventoryId: live._id, itemName: live.itemName, type: 'Transfer Out', reference,
+          qtyChange: -l.qty, balanceAfter: live.stockQty, unitCost: live.unitCost || 0,
+          remarks: `Stock transfer to ${toName} (new branch) from order ${order.orderNumber}`,
+        }]);
+        await postHubJE({
+          reference,
+          description: `Stock transfer out: ${l.qty}${item.unit} of ${item.itemName} to ${toName} (order ${order.orderNumber})`,
+          debitCode: HUB_CLEARING_CODE, debitName: 'Hub Transfer Clearing',
+          creditCode: '130000', creditName: 'Inventory Asset',
+          amount: (Number(item.unitCost) || 0) * l.qty,
+        });
+      }
+    }
+
+    order.status = 'Cancelled';
+    order.cancelledBy = req.user?.name || '';
+    order.cancelledAt = now;
+    order.voidReason = `Sent as stock transfer ${shipmentRef} to ${toName}.`;
+    await order.save();
+
+    try {
+      await logAudit?.(req, { action: 'create', entity: 'CrossTransfer', entityId: shipmentRef, after: { fromOrder: order.orderNumber, to: toName, newBranch: !link, lines: created.length, status: created[0].status } });
+    } catch { /* audit is non-fatal */ }
+
+    res.json({
+      ok: true, shipmentRef, transfers: created, status: created[0].status,
+      message: link ? `Transfer slip ${shipmentRef} filed - it needs approval before ${toName} is told.` : `Sent to ${toName} as ${shipmentRef}. The stock has left.`,
+    });
+  }));
 
   // ── APPROVE an outbound transfer slip ──────────────────────────────────────
   // Approving is what actually sends: stock availability is re-checked here

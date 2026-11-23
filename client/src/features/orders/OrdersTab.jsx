@@ -1,4 +1,5 @@
 ﻿import { formatDate, formatDateTime } from '../../shared/dates.js';
+import { groupShipments, exportTransferSlip } from '../../shared/transferSlips';
 import { LoyaltyDialog } from '../cafe/CafeExtras';
 import { statusTone } from '../../shared/statusTone';
 import SplitPayEditor, { newSplit, splitReady, splitPayload } from '../ledger/SplitPayEditor';
@@ -51,6 +52,77 @@ function LineDiscountInput({ unitPrice, percent, onPercent, onPrice }) {
           title="Price to charge for one of this item (press Enter)"
           className={`w-16 px-1.5 ${box}`} />
       )}
+    </div>
+  );
+}
+
+// A pending order rung up for one of our branches: send it as a hub stock
+// transfer instead of selling it. Pick a hub branch (it needs approval and
+// their acceptance, as Send Stock does) or type a new branch not in the hub
+// yet (no one to accept it, so the stock leaves now). The order is cancelled,
+// the shipment goes in the hub's transfer history, and its slip prints.
+function SendAsTransfer({ order, apiFetch, fetchOrders, pdfDeps }) {
+  const [open, setOpen] = React.useState(false);
+  const [partners, setPartners] = React.useState(null);
+  const [to, setTo] = React.useState('');
+  const [newName, setNewName] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => {
+    if (!open || partners) return;
+    apiFetch('/api/hub/info').then(r => r.json())
+      .then(d => setPartners((d.links || []).filter(l => l.status === 'active')))
+      .catch(() => setPartners([]));
+  }, [open, partners, apiFetch]);
+  const isNew = to === '__new__' || (partners && partners.length === 0);
+  const send = async () => {
+    const body = isNew ? { branchName: newName.trim() } : { partnerSlug: to };
+    if (isNew ? !body.branchName : !body.partnerSlug) return ui.alert(isNew ? 'Type the new branch name.' : 'Pick the branch to send to.');
+    const target = isNew ? body.branchName : (partners.find(p => p.partnerSlug === to)?.partnerName || to);
+    if (!(await ui.confirm(isNew
+      ? `Send ${order.orderNumber} to ${target} as a stock transfer? It is a new branch, so the stock leaves now and the order is cancelled.`
+      : `Send ${order.orderNumber} to ${target} as a stock transfer? It needs approval, then ${target} accepts it. The order is cancelled.`))) return;
+    setBusy(true);
+    try {
+      const d = await (await apiFetch(`/api/hub/transfers/from-order/${order._id}`, { method: 'POST', body: JSON.stringify(body) })).json();
+      if (!d.ok) return ui.alert(d.error || 'The stock transfer was not made.');
+      ui.toast(d.message || `Stock transfer ${d.shipmentRef} made.`, { tone: 'success' });
+      try { const sh = groupShipments(d.transfers || [])[0]; if (sh && pdfDeps?.loadPdfLibs) await exportTransferSlip(sh, pdfDeps); } catch { /* printing is optional */ }
+      setOpen(false);
+      fetchOrders?.();
+    } finally { setBusy(false); }
+  };
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="self-end text-[10px] font-black uppercase tracking-wider text-brand-text hover:underline">
+        Send as stock transfer
+      </button>
+    );
+  }
+  const field = 'mt-1 w-full bg-page-bg border border-white/10 rounded-lg px-2 py-1.5 text-xs text-fg font-bold outline-none focus:border-brand/60 normal-case tracking-normal';
+  return (
+    <div className="flex flex-col gap-2 p-3 rounded-lg bg-brand/5 border border-brand/20">
+      <label className="text-[10px] font-bold uppercase tracking-widest text-fg/70">
+        Send to branch
+        {partners === null ? <p className="mt-1 text-xs text-fg/60 normal-case tracking-normal font-normal">Loading branches…</p> : (
+          <select value={isNew ? '__new__' : to} onChange={e => setTo(e.target.value)} className={field} aria-label="Branch to send to">
+            <option value="">Pick a branch…</option>
+            {partners.map(p => <option key={p.partnerSlug} value={p.partnerSlug}>{p.partnerName || p.partnerSlug} (hub)</option>)}
+            <option value="__new__">+ New branch (not in the hub yet)</option>
+          </select>
+        )}
+      </label>
+      {isNew && partners !== null && (
+        <label className="text-[10px] font-bold uppercase tracking-widest text-fg/70">
+          New branch name
+          <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Makati branch" className={field} />
+          <span className="block mt-1 normal-case tracking-normal font-normal text-fg/60">No approval from them is needed: the stock leaves when you send.</span>
+        </label>
+      )}
+      <div className="flex gap-2">
+        <button type="button" onClick={send} disabled={busy || partners === null}
+          className="flex-1 bg-brand text-on-brand py-2 rounded-lg font-black text-xs uppercase tracking-widest disabled:opacity-50">{busy ? 'Sending…' : 'Send & print slip'}</button>
+        <button type="button" onClick={() => setOpen(false)} className="px-3 text-xs font-bold text-fg/70 underline">Cancel</button>
+      </div>
     </div>
   );
 }
@@ -2103,6 +2175,9 @@ export default function OrdersTab({ ctx }) {
                                     <div className="flex flex-col w-full gap-2">
                                       {!(order.payments || []).length && !(Number(order.amountPaid) > 0) && (
                                         <ReserveLater order={order} apiFetch={apiFetch} fetchOrders={fetchOrders} paymentMethodGroups={paymentMethodGroups} />
+                                      )}
+                                      {order.status === 'Pending' && can('inventory.manage') && !(order.payments || []).length && !(Number(order.amountPaid) > 0) && !(order.reservationDeposits || []).length && (
+                                        <SendAsTransfer order={order} apiFetch={apiFetch} fetchOrders={fetchOrders} pdfDeps={{ loadPdfLibs: ctx.loadPdfLibs, addLogoToPDF: ctx.addLogoToPDF, bizName: ctx.BIZ_NAME }} />
                                       )}
                                       {dueTotal !== displayTotal && (
                                         <div className="flex items-center justify-between rounded-lg bg-purple-500/10 border border-purple-500/30 px-3 py-2 text-xs" data-testid="reservation-balance">
