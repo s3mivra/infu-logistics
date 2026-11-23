@@ -46,7 +46,7 @@ import ReceivablesReportTab from './ReceivablesReportTab';
 import SupplierPaymentsTab from './SupplierPaymentsTab';
 import BalanceSheetTab from './BalanceSheetTab';
 import SalesDocsTab from './SalesDocsTab';
-import SalesByOrderTab from './SalesByOrderTab';
+import SalesByOrderTab, { cashOnly, checkOf } from './SalesByOrderTab';
 import { BUSINESS_TYPE } from '../../shared/businessType.js';
 
 import PagedRows from '../../shared/PagedRows';
@@ -423,11 +423,11 @@ export default function LedgerTab({ ctx }) {
     if (!salesSummary) return ui.alert('Load the report first.');
     const XLSX = await loadXlsx();
     const day = sssGroup === 'day';
-    const head = ['Date', ...(day ? ['Orders'] : ['Customer ID', 'Customer Name', 'Order']), 'Cash', 'E-Wallet', 'Bank', 'Delivery', 'Gross Sales', 'Sales After Discount'];
-    const body = sssRows.map(r => [r.date ? dateStr(r.date) : '', ...(day ? [r.count] : [r.customerId || '', r.customerName || '', r.orderNumber]), r.cash || 0, r.ewallet || 0, r.bank || 0, r.delivery || 0, r.subtotal || 0, r.total || 0]);
+    const head = ['Date', ...(day ? ['Orders'] : ['Customer ID', 'Customer Name', 'Order']), 'Cash', 'Check', 'E-Wallet', 'Bank', 'Delivery', 'Gross Sales', 'Sales After Discount'];
+    const body = sssRows.map(r => [r.date ? dateStr(r.date) : '', ...(day ? [r.count] : [r.customerId || '', r.customerName || '', r.orderNumber]), cashOnly(r), checkOf(r), r.ewallet || 0, r.bank || 0, r.delivery || 0, r.subtotal || 0, r.total || 0]);
     const t = salesSummary.totals || {};
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body, [], ['TOTAL', ...(day ? [''] : ['', '', '']), t.cash || 0, t.ewallet || 0, t.bank || 0, t.delivery || 0, t.subtotal || 0, t.total || 0]]), day ? 'Sales per day' : 'Sales per order');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...body, [], ['TOTAL', ...(day ? [''] : ['', '', '']), cashOnly(t), checkOf(t), t.ewallet || 0, t.bank || 0, t.delivery || 0, t.subtotal || 0, t.total || 0]]), day ? 'Sales per day' : 'Sales per order');
     // A/R collected in the same range, whatever day the sale was made.
     const col = salesSummary.collections || [];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([

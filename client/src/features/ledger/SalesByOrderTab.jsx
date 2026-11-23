@@ -9,6 +9,9 @@ import PagedRows from '../../shared/PagedRows';
 // Sold on account: owed, not paid. An older server counted it under E-Wallet
 // (it has no `credit` field), so take it back out of E-Wallet there.
 const creditOf = (r) => ['On Account', 'Credit', 'Charge', 'A/R'].reduce((t, m) => t + (Number(r?.methods?.[m]) || 0), 0);
+// Checks: the server counts them under Cash; this report shows them apart.
+export const checkOf = (r) => ['Check', 'Cheque'].reduce((t, m) => t + (Number(r?.methods?.[m]) || 0), 0);
+export const cashOnly = (r) => Math.max(0, (Number(r?.cash) || 0) - checkOf(r));
 const ewalletOnly = (r) => (r?.credit === undefined ? Math.max(0, (Number(r?.ewallet) || 0) - creditOf(r)) : Number(r?.ewallet) || 0);
 
 export default function SalesByOrderTab({
@@ -50,7 +53,7 @@ export default function SalesByOrderTab({
                   <th className="py-2">Date</th>
                   <th className="py-2">Customer ID</th><th className="py-2">Customer Name</th>
                   <th className="py-2">{salesView === 'day' ? 'Orders' : 'Order'}</th>
-                  <th className="py-2 text-right">Cash</th><th className="py-2 text-right">E-Wallet</th>
+                  <th className="py-2 text-right">Cash</th><th className="py-2 text-right">Check</th><th className="py-2 text-right">E-Wallet</th>
                   <th className="py-2 text-right">Bank</th><th className="py-2 text-right">Delivery</th><th className="py-2 text-right" title="Sold on account: owed, not yet paid">Credit</th><th className="py-2 text-right" title="Before discount and delivery fee">Gross Sales</th><th className="py-2 text-right" title="What was charged: after discount, with any delivery fee">Sales After Discount</th>
                 </tr>
               </thead>
@@ -63,7 +66,8 @@ export default function SalesByOrderTab({
                     <td className="py-1.5 font-mono text-xs text-fg/70">{isDayRow ? '-' : (row.customerId || '-')}</td>
                     <td className="py-1.5 text-xs text-fg/70">{isDayRow ? '-' : (row.customerName || 'Guest')}</td>
                     <td className="py-1.5 font-mono text-xs text-fg/70">{isDayRow ? row.count : row.orderNumber}</td>
-                    <td className="py-1.5 text-right font-mono">{row.cash ? money2(row.cash) : ''}</td>
+                    <td className="py-1.5 text-right font-mono">{cashOnly(row) ? money2(cashOnly(row)) : ''}</td>
+                    <td className="py-1.5 text-right font-mono">{checkOf(row) ? money2(checkOf(row)) : ''}</td>
                     <td className="py-1.5 text-right font-mono">{(() => { const e = ewalletOnly(row); return e ? money2(e) : ''; })()}</td>
                     <td className="py-1.5 text-right font-mono">{row.bank ? money2(row.bank) : ''}</td>
                     <td className="py-1.5 text-right font-mono">{row.delivery ? money2(row.delivery) : ''}</td>
@@ -78,7 +82,8 @@ export default function SalesByOrderTab({
                 <tfoot>
                   <tr className="font-black text-fg border-t-2 border-white/20">
                     <td className="py-2" colSpan={4}>Totals</td>
-                    <td className="py-2 text-right font-mono">{money2(salesSummary.totals.cash)}</td>
+                    <td className="py-2 text-right font-mono">{money2(cashOnly(salesSummary.totals))}</td>
+                    <td className="py-2 text-right font-mono">{money2(checkOf(salesSummary.totals))}</td>
                     <td className="py-2 text-right font-mono">{money2(ewalletOnly(salesSummary.totals))}</td>
                     <td className="py-2 text-right font-mono">{money2(salesSummary.totals.bank)}</td>
                     <td className="py-2 text-right font-mono">{money2(salesSummary.totals.delivery)}</td>
