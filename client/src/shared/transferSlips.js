@@ -78,9 +78,9 @@ function drawSlip(doc, autoTable, s, { bizName = '', y = 16 } = {}) {
   ]);
   autoTable(doc, {
     startY: (doc.lastAutoTable?.finalY || y) + 4,
-    head: [['#', 'Code', 'Item', 'Qty', 'Unit cost', 'Amount', 'Status']],
+    head: [['#', 'Code', 'Item', 'Qty', 'Unit cost', 'Value at cost', 'Status']],
     body,
-    foot: [[{ content: `${s.lines.length} item${s.lines.length === 1 ? '' : 's'}`, colSpan: 5 }, { content: money(s.value), styles: { halign: 'right' } }, '']],
+    foot: [[{ content: `${s.lines.length} item${s.lines.length === 1 ? '' : 's'} - total at cost`, colSpan: 5 }, { content: money(s.value), styles: { halign: 'right' } }, '']],
     styles: { fontSize: 8.5, cellPadding: 2 },
     headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [45, 45, 45], textColor: 255, fontStyle: 'bold' },
     columnStyles: { 0: { cellWidth: 8 }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right', fontStyle: 'bold' } },
