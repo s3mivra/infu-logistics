@@ -18,6 +18,7 @@ import { rollUpByLocation, parseBranchCode } from '../lib/branchCode.js';
 // it reads the same in every file.
 import { requirePermission as permit } from '../lib/authz.js';
 import { claimJob } from '../lib/jobLock.js';
+import { releaseCancelledOrderNumber } from '../lib/orderNumbers.js';
 
 const TENANT = (() => {
   const m = (process.env.MONGO_URI || '').match(/\/semivra_([^?/]+)/);
@@ -465,7 +466,7 @@ export default function registerHub(ctx) {
         unitCost: Number(item.unitCost) || 0, displayUnit: item.displayUnit || '',
         unitMultiplier: Number(item.unitMultiplier) || 1, packSize: item.packSize ?? null,
         itemCode: item.itemCode || '', stockCategory: item.stockCategory || '',
-        note: String(l.note || `From order ${order.orderNumber}`).trim(),
+        note: String(l.note || '').trim(),
         reference, shipmentRef, billedTo: billedTo && billedTo !== 'Guest' ? billedTo : toName,
         status: link ? 'Requested' : 'Released',
         requestedBy: req.user?.name || '',
@@ -484,11 +485,11 @@ export default function registerHub(ctx) {
         await StockCard.create([{
           inventoryId: live._id, itemName: live.itemName, type: 'Transfer Out', reference,
           qtyChange: -l.qty, balanceAfter: live.stockQty, unitCost: live.unitCost || 0,
-          remarks: `Stock transfer to ${toName} (new branch) from order ${order.orderNumber}`,
+          remarks: `Stock transfer ${shipmentRef} to ${toName}`,
         }]);
         await postHubJE({
           reference,
-          description: `Stock transfer out: ${l.qty}${item.unit} of ${item.itemName} to ${toName} (order ${order.orderNumber})`,
+          description: `Stock transfer ${shipmentRef}: ${l.qty}${item.unit} of ${item.itemName} to ${toName}`,
           debitCode: HUB_CLEARING_CODE, debitName: 'Hub Transfer Clearing',
           creditCode: '130000', creditName: 'Inventory Asset',
           amount: (Number(item.unitCost) || 0) * l.qty,
@@ -503,9 +504,13 @@ export default function registerHub(ctx) {
     await order.save();
 
     try {
-      await logAudit?.(req, { action: 'create', entity: 'CrossTransfer', entityId: shipmentRef, after: { fromOrder: order.orderNumber, to: toName, newBranch: !link, lines: created.length, status: created[0].status } });
+      await logAudit?.(req, { action: 'create', entity: 'CrossTransfer', entityId: shipmentRef, after: { to: toName, newBranch: !link, lines: created.length, status: created[0].status } });
     } catch { /* audit is non-fatal */ }
 
+    // It is a transfer, known by its transfer number: give the order number
+    // back (once this has committed) so the next sale takes it.
+    const orderId = order._id;
+    res.on('finish', () => { if (res.statusCode < 300) releaseCancelledOrderNumber(orderId).catch(() => {}); });
     res.json({
       ok: true, shipmentRef, transfers: created, status: created[0].status,
       message: link ? `Transfer slip ${shipmentRef} filed - it needs approval before ${toName} is told.` : `Sent to ${toName} as ${shipmentRef}. The stock has left.`,
