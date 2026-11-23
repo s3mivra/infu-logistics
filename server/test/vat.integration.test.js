@@ -225,3 +225,27 @@ describe('a client that is not VATable', () => {
     expect(ob.vatAmount).toBe(120);
   });
 });
+
+describe('a client that is not VATable, on VAT-exclusive prices', () => {
+  it('adds no VAT on top for them; a VATable client pays the price plus VAT', async () => {
+    await setSetting('vatEnabled', true);
+    await setSetting('vatRate', 12);
+    await setSetting('vatInclusive', false);
+    try {
+      const Client = mongoose.model('ClientAccount');
+      const exemptCli = await Client.create({ username: 'novat_cli2', password: 'x', name: 'No Vat Buyer Two', vatExempt: true });
+      const normalCli = await Client.create({ username: 'vat_cli2', password: 'x', name: 'Vat Buyer Two' });
+      await mongoose.model('Product').updateOne({ _id: vatProd._id }, { $set: { basePrice: 1000 } });
+      const order = (cli) => request(app).post('/api/orders').set('Authorization', `Bearer ${staffTok}`)
+        .send({ items: [line(vatProd, 1000)], table: 'Takeout', paymentMethod: 'Cash', clientAccountId: String(cli._id) });
+      const oa = (await order(exemptCli)).body; const a = oa.order || oa;
+      expect(a.total).toBe(1000);
+      expect(a.vatAmount).toBe(0);
+      const ob = (await order(normalCli)).body; const b = ob.order || ob;
+      expect(b.total).toBe(1120);
+      expect(b.vatAmount).toBe(120);
+    } finally {
+      await setSetting('vatInclusive', true);
+    }
+  });
+});
