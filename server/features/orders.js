@@ -1223,6 +1223,12 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       } catch { /* ignore - no segment discount applies */ }
     }
     const { linePercent, productIsExempt } = await buildLinePricing(req, items, { buyerClientId: _buyerClientId, buyerSegments: _buyerSegments });
+    // A client marked not VATable: every line of their sale is VAT-exempt.
+    let buyerVatExempt = false;
+    if (_buyerClientId) {
+      try { buyerVatExempt = (await ClientAccount.findById(_buyerClientId, { vatExempt: 1 }).lean())?.vatExempt === true; }
+      catch { /* not a client id - follows the VAT in Settings */ }
+    }
 
     // Per-item pass resolves only the PRODUCT-level discounts. Order-level
     // discount and VAT are settled afterwards in one place, because with
@@ -1250,7 +1256,7 @@ app.post('/api/orders', orderLimiter, verifyOrderAuth, async (req, res) => {
       totalProductDisc += prodDisc;
       baseAfterProductDisc += itemBase - prodDisc;   // base the order-level discount works on
 
-      item.vatExempt = productIsExempt(item);
+      item.vatExempt = buyerVatExempt || productIsExempt(item);
       if (item.vatExempt) exemptAfterProductDisc += itemBase - prodDisc;
       return item;
     });

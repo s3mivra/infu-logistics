@@ -47,6 +47,9 @@ export default function defineClientModels({ BUSINESS_TYPE, log }) {
     registeredName:{ type: String, default: '' },
     registeredAddress: { type: String, default: '' },
     creditLimit:   { type: Number, default: null },
+    // Not VATable: this client's sales carry no VAT (e.g. a VAT-exempt or
+    // zero-rated buyer). Default false - they follow the VAT in Settings.
+    vatExempt:     { type: Boolean, default: false },
     // Payment terms in days for on-account (non-cash) sales. When a non-cash order
     // Completes, this is snapshotted onto the order to compute its A/R due date
     // (dueDate = completedAt + creditTermsDays). 0 = due on receipt (COD-style).

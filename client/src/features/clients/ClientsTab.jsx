@@ -72,6 +72,17 @@ export default function ClientsTab() {
     } catch { ui.alert('Network error.'); }
   };
 
+  // VATable or not: a VATable client follows the VAT in Settings; one that is
+  // not gets no VAT on their sales.
+  const setClientVat = async (c, vatable) => {
+    try {
+      const d = await (await apiFetch(`/api/client-accounts/${c._id}`, { method: 'PATCH', body: JSON.stringify({ vatExempt: !vatable }) })).json();
+      if (!d.success) { ui.alert(d.error || 'Could not change VAT.'); return; }
+      ui.toast(vatable ? `${c.name}'s sales now carry VAT.` : `${c.name}'s sales no longer carry VAT.`, { tone: 'success' });
+      load();
+    } catch { ui.alert('Network error.'); }
+  };
+
   // Everyday details, edited here rather than in the owner's Admin Panel
   // (which keeps what is about logging in: passwords and sign-in links).
   // Only what was actually changed is sent, so a blank box never wipes a
@@ -662,6 +673,24 @@ export default function ClientsTab() {
                             ) : tier ? (
                               <span className="text-[10px] font-bold uppercase tracking-wider text-fg/70 bg-white/5 border border-white/10 rounded-xl px-3 py-2">Tier: {tier}</span>
                             ) : null}
+                            {/* VAT: follows Settings unless the client is not VATable. */}
+                            {(() => {
+                              const pct = `${Math.round((Number(data.vat?.rate) || 0) * 10000) / 100}%`;
+                              const label = !data.vat?.enabled ? 'VAT is off in Settings' : c.vatExempt ? 'No VAT' : `VAT ${pct} (Settings)`;
+                              return can('clients.edit') ? (
+                                <label className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-fg/70" title="A VATable client follows the VAT rate in Settings. Not VATable: their sales carry no VAT.">
+                                  VAT
+                                  <select value={c.vatExempt ? 'no' : 'yes'} onChange={e => setClientVat(c, e.target.value === 'yes')} aria-label={`VAT for ${c.name}`}
+                                    className="bg-white/5 border border-white/10 rounded-xl px-2 py-1.5 text-fg text-xs font-bold normal-case tracking-normal outline-none focus:border-brand/60">
+                                    <option value="yes">VATable{data.vat?.enabled ? ` - ${pct}` : ''}</option>
+                                    <option value="no">Not VATable</option>
+                                  </select>
+                                  {!data.vat?.enabled && <span className="normal-case tracking-normal text-fg/55 font-normal">{label}</span>}
+                                </label>
+                              ) : (
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-fg/70 bg-white/5 border border-white/10 rounded-xl px-3 py-2">{label}</span>
+                              );
+                            })()}
                             {/* Their link */}
                             {canLinks && links && (
                               setupUrl ? (

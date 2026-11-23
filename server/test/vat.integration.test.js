@@ -202,3 +202,26 @@ describe('percentage tax is mutually exclusive with VAT', () => {
     expect(res.body.rate).toBe(0.03);
   });
 });
+
+describe('a client that is not VATable', () => {
+  it('books their sale with no VAT; a VATable client still follows Settings', async () => {
+    await setSetting('vatEnabled', true);
+    await setSetting('vatRate', 12);
+    const Client = mongoose.model('ClientAccount');
+    const exemptCli = await Client.create({ username: 'novat_cli', password: 'x', name: 'No Vat Buyer', vatExempt: true });
+    const normalCli = await Client.create({ username: 'vat_cli', password: 'x', name: 'Vat Buyer' });
+    await mongoose.model('Product').updateOne({ _id: vatProd._id }, { $set: { basePrice: 1120 } });
+    const order = (cli) => request(app).post('/api/orders').set('Authorization', `Bearer ${staffTok}`)
+      .send({ items: [line(vatProd, 1120)], table: 'Takeout', paymentMethod: 'Cash', clientAccountId: String(cli._id) });
+
+    const a = (await order(exemptCli)).body;
+    const oa = a.order || a;
+    expect(oa.total).toBe(1120);
+    expect(oa.vatAmount).toBe(0);
+    expect(oa.vatExemptSales).toBe(1120);
+
+    const b = (await order(normalCli)).body;
+    const ob = b.order || b;
+    expect(ob.vatAmount).toBe(120);
+  });
+});

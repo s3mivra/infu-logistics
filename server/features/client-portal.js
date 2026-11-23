@@ -640,7 +640,7 @@ app.post('/api/client-accounts/import', verifyToken, requireStaff, requirePermis
 
 app.patch('/api/client-accounts/:id', verifyToken, requireStaff, requirePermission('clients.edit'), async (req, res) => {
   try {
-    const { username, password, name, paymentMethod, isActive, creditLimit, creditTermsDays, segments, phone, email, contactNotes, requiresQuote, isVatRegistered, tin, registeredName, registeredAddress, assignedSalesperson } = req.body;
+    const { username, password, name, paymentMethod, isActive, creditLimit, creditTermsDays, segments, phone, email, contactNotes, requiresQuote, isVatRegistered, tin, registeredName, registeredAddress, assignedSalesperson, vatExempt } = req.body;
     if (!mongoose.Types.ObjectId.isValid(String(req.params.id))) return res.status(404).json({ success: false, error: 'Client account not found.' });
     const update = {};
     // clients.edit is for everyday details. Three things on this record are
@@ -667,6 +667,7 @@ app.patch('/api/client-accounts/:id', verifyToken, requireStaff, requirePermissi
     // A VAT-registered buyer's invoice details. Sent explicitly so they can be
     // cleared again; without a TIN their invoice cannot support an input-VAT claim.
     if (typeof isVatRegistered === 'boolean') update.isVatRegistered = isVatRegistered;
+    if (typeof vatExempt === 'boolean') update.vatExempt = vatExempt;
     if (tin !== undefined) update.tin = String(tin ?? '').trim().slice(0, 30);
     if (registeredName !== undefined) update.registeredName = String(registeredName ?? '').trim().slice(0, 200);
     if (registeredAddress !== undefined) update.registeredAddress = String(registeredAddress ?? '').trim().slice(0, 300);

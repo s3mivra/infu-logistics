@@ -133,11 +133,19 @@ export default function registerClients(ctx) {
         catch { return false; }
       })();
 
-      const [clients, modeRow, globalRow] = await Promise.all([
+      const [clients, modeRow, globalRow, vatOnRow, vatRateRow] = await Promise.all([
         ClientAccount.find({ mergedInto: { $in: [null, undefined] } }, { password: 0 }).sort({ name: 1 }).lean(),
         Settings.findOne({ key: 'creditLimitMode' }).lean(),
         Settings.findOne({ key: 'globalCreditLimit' }).lean(),
+        Settings.findOne({ key: 'vatEnabled' }).lean(),
+        Settings.findOne({ key: 'vatRate' }).lean(),
       ]);
+      // The business's VAT, so each client shows what "VATable" means for them.
+      const rawRate = Number(vatRateRow?.value);
+      const vat = {
+        enabled: vatOnRow?.value === true || vatOnRow?.value === 'true',
+        rate: Number.isFinite(rawRate) ? (rawRate > 1 ? rawRate / 100 : rawRate) : 0.12,
+      };
       const mode = modeRow?.value || DEFAULT_CREDIT_MODE;
       const globalLimit = globalRow?.value ?? null;
 
@@ -237,6 +245,7 @@ export default function registerClients(ctx) {
           isActive: c.isActive !== false,
           paymentMethod: c.paymentMethod,
           segments: c.segments || [],
+          vatExempt: c.vatExempt === true,
           source: c.source || 'portal',
           orderCount: st?.orderCount || 0,
           completedCount: st?.completedCount || 0,
@@ -255,7 +264,7 @@ export default function registerClients(ctx) {
         };
       });
 
-      res.json({ success: true, mode, globalLimit, showMoney, clients: rows });
+      res.json({ success: true, mode, globalLimit, showMoney, vat, clients: rows });
     } catch (err) {
       (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
     }
