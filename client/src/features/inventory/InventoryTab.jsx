@@ -1,4 +1,5 @@
-﻿import { DraftNote } from '../../shared/useFormDraft';
+﻿import PagedList from '../../shared/PagedList';
+import { DraftNote } from '../../shared/useFormDraft';
 import LoadingRows from '../../shared/LoadingRows';
 import React, { useState, useEffect } from 'react';
 import ScanBox, { findByCode } from '../../shared/ScanBox';
@@ -1151,7 +1152,7 @@ export default function InventoryTab({ ctx }) {
                   <div className="bg-red-900/5 border border-red-500/30 rounded-xl p-4">
                     <h4 className="text-danger font-black uppercase tracking-wider text-xs mb-2 flex items-center gap-1.5"><AlertTriangle size={13} /> Low Stock Alerts</h4>
                     <div className="space-y-1">
-                      {lowItems.map(i => {
+                      <PagedList items={lowItems} size={10} label="items" render={i => {
                         const d = itemDisplay(i);
                         const eff = i.effectiveThreshold != null ? i.effectiveThreshold : (i.lowStockThreshold || 0);
                         // Same pack-count basis as the qty beside it (packBase, not the
@@ -1165,7 +1166,7 @@ export default function InventoryTab({ ctx }) {
                             <span className="text-danger font-mono tabular-nums">{d.packQty.toLocaleString(undefined, { maximumFractionDigits: 3 })} {d.isPacked ? PACK_UNIT : d.unit} (min: {minDisp})</span>
                           </div>
                         );
-                      })}
+                      }} />
                     </div>
                   </div>
                 )}
