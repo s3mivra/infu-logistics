@@ -1436,7 +1436,7 @@ export default function HubTab({ ctx }) {
                   {slip.lines.map(l => (
                     <li key={l._id} className="text-xs text-fg/65 flex justify-between gap-3 border-t border-white/5 pt-1">
                       <span className="text-fg/80 font-bold truncate" title={String((l.itemName) ?? '')}>{l.itemName}</span>
-                      <span className="tabular-nums shrink-0">{l.qtyBase} {l.unit}</span>
+                      <span className="tabular-nums shrink-0">{displayQty(l)}</span>
                     </li>
                   ))}
                 </ul>
@@ -1458,7 +1458,7 @@ export default function HubTab({ ctx }) {
               <div key={t._id} className="flex items-center justify-between gap-3 bg-surface rounded-lg p-3">
                 <div>
                   <p className="text-fg font-bold text-sm">{t.itemName}</p>
-                  <p className="text-fg/75 text-xs">{t.qtyBase} {t.unit} from <span className="text-fg/80 font-bold">{t.partnerName || t.partnerSlug}</span></p>
+                  <p className="text-fg/75 text-xs">{displayQty(t)} from <span className="text-fg/80 font-bold">{t.partnerName || t.partnerSlug}</span></p>
                   {t.note && <p className="text-fg/70 text-xs italic">{t.note}</p>}
                 </div>
                 <div className="flex gap-2">
@@ -1579,7 +1579,7 @@ export default function HubTab({ ctx }) {
           <div className="bg-surface border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-elev-3 my-auto">
             <h3 className="text-fg font-black text-base mb-1">Accept Transfer</h3>
             <p className="text-fg/75 text-sm mb-4">
-              Receiving <span className="text-fg font-bold">{acceptTarget.qtyBase} {acceptTarget.unit}</span> of{' '}
+              Receiving <span className="text-fg font-bold">{displayQty(acceptTarget)}</span> of{' '}
               <span className="text-fg font-bold">{acceptTarget.itemName}</span> from{' '}
               <span className="text-brand-text font-bold">{acceptTarget.partnerName || acceptTarget.partnerSlug}</span>
             </p>

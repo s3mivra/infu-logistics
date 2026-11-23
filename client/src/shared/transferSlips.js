@@ -1,3 +1,5 @@
+import { BUSINESS_TYPE } from './businessType.js';
+import { PACK_UNIT } from './packUnit.js';
 // Network stock transfers as shipments: one row per shipment (like an order
 // or an invoice) with its lines, a printable transfer slip for each, and a
 // PDF of them all. Every line of one send carries the same shipmentRef.
@@ -11,6 +13,11 @@ export const shipmentKeyOf = (t) => t.shipmentRef || String(t.reference || '').r
 export function displayQty(t) {
   const mult = Number(t.unitMultiplier) || 1;
   const base = Number(t.qtyBase) || 0;
+  // Whole products with a pack size: count them in pieces, as the shelf does.
+  if (BUSINESS_TYPE === 'log' && Number(t.packSize) > 0) {
+    const pcs = Math.round((base / (Number(t.packSize) * mult)) * 1000) / 1000;
+    return `${pcs} ${PACK_UNIT}`;
+  }
   if (mult > 1 && t.displayUnit) {
     const shown = Math.round((base / mult) * 1000) / 1000;
     return `${shown} ${t.displayUnit}`;
