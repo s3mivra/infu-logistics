@@ -921,7 +921,38 @@ async function moveCashOnHandOutOfUnassigned() {
       moved++; total += amt;
     }
   }
-  if (moved) log.info(`✅ Moved ${moved} Cash on Hand collection(s), ₱${total.toFixed(2)}, from Unassigned Receipts to Cash on Hand`);
+  // Expenses paid "Cash on Hand": their entry does not say how they were paid,
+  // but each one logged an "unmapped tender" warning naming the method, a
+  // moment before the entry was made. Pair each warning with the expense
+  // entry that put money against 118000 straight after it.
+  const AuditLog = mongoose.model('AuditLog');
+  const warns = await AuditLog.find({ action: 'unmappedTender', targetReference: 'Cash on Hand', 'details.after.context': 'expense' }, { timestamp: 1 }).sort({ timestamp: 1 }).lean();
+  if (warns.length) {
+    const exps = await JournalEntry.find({ reference: /^EXP/, 'lines.accountCode': '118000' }, { reference: 1, date: 1, createdAt: 1, lines: 1 }).sort({ createdAt: 1 }).lean();
+    const used = new Set();
+    for (const w of warns) {
+      const at = new Date(w.timestamp).getTime();
+      const je = exps.find(e => !used.has(e.reference) && e.createdAt && new Date(e.createdAt).getTime() >= at - 1000 && new Date(e.createdAt).getTime() - at <= 60000);
+      if (!je) continue;
+      used.add(je.reference);
+      const ref = `${je.reference}-RCL`;
+      if (await JournalEntry.exists({ reference: ref })) continue;
+      const amt = Math.round((je.lines || []).filter(l => l.accountCode === '118000').reduce((t, l) => t + (Number(l.credit) || 0) - (Number(l.debit) || 0), 0) * 100) / 100;
+      if (!(amt > 0)) continue;
+      const date = (await periodLockFor(new Date(je.date))) ? new Date() : je.date;
+      await JournalEntry.create({
+        reference: ref, date,
+        description: `Cash on Hand expense moved out of Unassigned Receipts (${je.reference})`,
+        lines: [
+          { accountCode: '118000', accountName: acctMeta('118000')?.name || 'Unassigned Receipts', debit: amt, credit: 0 },
+          { accountCode: '111000', accountName: acctMeta('111000')?.name || 'Cash on Hand', debit: 0, credit: amt },
+        ],
+        totalDebit: amt, totalCredit: amt,
+      });
+      moved++; total -= amt;
+    }
+  }
+  if (moved) log.info(`✅ Moved ${moved} Cash on Hand collection(s)/expense(s), net ₱${total.toFixed(2)}, from Unassigned Receipts to Cash on Hand`);
   return { moved, total: Math.round(total * 100) / 100 };
 }
 

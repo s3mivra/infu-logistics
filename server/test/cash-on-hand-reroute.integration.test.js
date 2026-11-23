@@ -25,4 +25,23 @@ describe('Cash on Hand out of Unassigned Receipts', () => {
     expect(fixes[0].lines.find(l => l.accountCode === '111000').debit).toBe(500);
     expect(fixes[0].lines.find(l => l.accountCode === '118000').credit).toBe(500);
   });
+
+  it('moves an old Cash on Hand expense, matched by its warning, and only once', async () => {
+    const JE = mongoose.model('JournalEntry');
+    const at = new Date();
+    await mongoose.model('AuditLog').create({ userId: 'x', action: 'unmappedTender', targetReference: 'Cash on Hand', details: { after: { account: '118000', context: 'expense' } }, timestamp: at });
+    await JE.create({ reference: 'EXP-OLD1', date: at, description: 'old expense', totalDebit: 300, totalCredit: 300,
+      lines: [{ accountCode: '600000', accountName: 'Expense', debit: 300, credit: 0 }, { accountCode: '118000', accountName: 'Unassigned Receipts', debit: 0, credit: 300 }] });
+    await JE.create({ reference: 'EXP-OTHER', date: at, description: 'unrelated, a day later', totalDebit: 50, totalCredit: 50, createdAt: new Date(at.getTime() + 86400000),
+      lines: [{ accountCode: '600000', accountName: 'Expense', debit: 50, credit: 0 }, { accountCode: '118000', accountName: 'Unassigned Receipts', debit: 0, credit: 50 }] });
+
+    await ctx.runStartupTasks();
+    await ctx.runStartupTasks();
+
+    const fixes = await JE.find({ reference: 'EXP-OLD1-RCL' }).lean();
+    expect(fixes).toHaveLength(1);
+    expect(fixes[0].lines.find(l => l.accountCode === '118000').debit).toBe(300);
+    expect(fixes[0].lines.find(l => l.accountCode === '111000').credit).toBe(300);
+    expect(await JE.exists({ reference: 'EXP-OTHER-RCL' })).toBeNull();
+  });
 });
