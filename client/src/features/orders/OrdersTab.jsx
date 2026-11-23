@@ -61,8 +61,10 @@ function LineDiscountInput({ unitPrice, percent, onPercent, onPrice }) {
 // their acceptance, as Send Stock does) or type a new branch not in the hub
 // yet (no one to accept it, so the stock leaves now). The order is cancelled,
 // the shipment goes in the hub's transfer history, and its slip prints.
-function SendAsTransfer({ order, apiFetch, fetchOrders, pdfDeps }) {
-  const [open, setOpen] = React.useState(false);
+function SendAsTransfer({ order, apiFetch, fetchOrders, pdfDeps, onOpenChange }) {
+  const [open, setOpenRaw] = React.useState(false);
+  // The card hides its payment buttons while this is open: it is not a sale.
+  const setOpen = (v) => { setOpenRaw(v); onOpenChange?.(v); };
   const [partners, setPartners] = React.useState(null);
   const [to, setTo] = React.useState('');
   const [busy, setBusy] = React.useState(false);
@@ -190,6 +192,8 @@ const SEND_TARGET = DEFAULT_DEPARTMENT;
 const ORDER_STATUS_TONE = new Proxy({}, { get: (_, k) => statusTone(k) });
 
 export default function OrdersTab({ ctx }) {
+  // Orders whose "Send as stock transfer" form is open: no payment buttons.
+  const [xferOpen, setXferOpen] = React.useState({});
   // An order sent as a stock transfer prints as that transfer: its slip.
   const printTransferOf = async (order) => {
     try {
@@ -2213,12 +2217,12 @@ export default function OrdersTab({ ctx }) {
                                     || ((order.payments || []).length >= 2 ? order.payments.map(p => ({ method: p.method, amount: p.amount, reference: p.reference || '', checkDate: p.checkDate ? String(p.checkDate).slice(0, 10) : '' })) : newSplit(dueTotal));
                                   const splitNotReady = isSplitPay && !splitReady(dueTotal, splitNow);
                                   return (
-                                    <div className="flex flex-col w-full gap-2">
+                                    <div className={`flex flex-col w-full gap-2 ${xferOpen[order._id] ? '[&>*:not([data-xfer])]:hidden' : ''}`}>
                                       {!(order.payments || []).length && !(Number(order.amountPaid) > 0) && (
                                         <ReserveLater order={order} apiFetch={apiFetch} fetchOrders={fetchOrders} paymentMethodGroups={paymentMethodGroups} />
                                       )}
                                       {order.status === 'Pending' && can('inventory.manage') && !(order.payments || []).length && !(Number(order.amountPaid) > 0) && !(order.reservationDeposits || []).length && (
-                                        <SendAsTransfer order={order} apiFetch={apiFetch} fetchOrders={fetchOrders} pdfDeps={{ loadPdfLibs: ctx.loadPdfLibs, addLogoToPDF: ctx.addLogoToPDF, bizName: ctx.BIZ_NAME }} />
+                                        <div data-xfer className="flex flex-col"><SendAsTransfer onOpenChange={v => setXferOpen(p => ({ ...p, [order._id]: v }))} order={order} apiFetch={apiFetch} fetchOrders={fetchOrders} pdfDeps={{ loadPdfLibs: ctx.loadPdfLibs, addLogoToPDF: ctx.addLogoToPDF, bizName: ctx.BIZ_NAME }} /></div>
                                       )}
                                       {dueTotal !== displayTotal && (
                                         <div className="flex items-center justify-between rounded-lg bg-purple-500/10 border border-purple-500/30 px-3 py-2 text-xs" data-testid="reservation-balance">
