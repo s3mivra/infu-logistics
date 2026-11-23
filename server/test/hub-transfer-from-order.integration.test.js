@@ -31,7 +31,7 @@ describe('POST /api/hub/transfers/from-order/:id', () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.status).toBe('Released');
     expect((await mongoose.model('Inventory').findById(inv._id).lean()).stockQty).toBe(30);
-    expect((await mongoose.model('Order').findById(order._id).lean()).status).toBe('Cancelled');
+    expect(await mongoose.model('Order').findById(order._id).lean()).toMatchObject({ status: 'Cancelled', transferRef: r.body.shipmentRef });
     const list = (await request(app).get('/api/hub/transfers').set(auth(token))).body.transfers;
     const t = list.find(x => x.shipmentRef === r.body.shipmentRef);
     expect(t).toMatchObject({ partnerName: 'MAKATI BRANCH', billedTo: 'MAKATI BRANCH', qtyBase: 20, status: 'Released', direction: 'outbound' });

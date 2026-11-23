@@ -500,6 +500,7 @@ export default function registerHub(ctx) {
     order.status = 'Cancelled';
     order.cancelledBy = req.user?.name || '';
     order.cancelledAt = now;
+    order.transferRef = shipmentRef;
     order.voidReason = `Sent as stock transfer ${shipmentRef} to ${toName}.`;
     await order.save();
 

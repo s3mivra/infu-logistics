@@ -436,6 +436,8 @@ export default function defineCatalogModels({ BUSINESS_TYPE }) {
       balanceAfter: Number,   // base units, after this sale
     }],
     voidReason: { type: String, default: '' },
+    // Sent as a hub stock transfer instead of sold: its transfer number.
+    transferRef: { type: String, default: '' },
     // Attribution - who actually voided / cancelled the order. Captured from the
     // verified JWT, never the request body. Distinct from `cashier` (which is the
     // original placer - could be the client themselves on a client-portal order).

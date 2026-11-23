@@ -1461,7 +1461,12 @@ export default function OrdersTab({ ctx }) {
                             how, then status. Only the chevron collapses. */}
                         <div className="px-4 pt-3.5 pb-3 flex flex-col gap-1.5">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="text-fg font-black text-sm whitespace-nowrap tabular-nums">{order.orderNumber}</span>
+                            {order.transferRef ? (
+                              <span className="flex flex-col leading-tight">
+                                <span className="text-brand-text font-black text-sm whitespace-nowrap tabular-nums" title="Sent as a stock transfer">{order.transferRef}</span>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-fg/55">Stock transfer</span>
+                              </span>
+                            ) : <span className="text-fg font-black text-sm whitespace-nowrap tabular-nums">{order.orderNumber}</span>}
                             <div className="flex items-center gap-0.5 flex-shrink-0 text-fg/65">
                               {order.isParked && (
                                 <button onClick={() => resumeParked(order._id)} className="mr-1 px-2.5 py-1 bg-brand text-on-brand rounded-md text-[10px] font-black uppercase tracking-wider hover:bg-brand/90 transition flex items-center gap-1">
