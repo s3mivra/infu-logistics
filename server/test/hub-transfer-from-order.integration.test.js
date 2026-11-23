@@ -47,6 +47,14 @@ describe('POST /api/hub/transfers/from-order/:id', () => {
     expect((await mongoose.model('Inventory').findById(inv._id).lean()).stockQty).toBe(40);
   });
 
+  it('preview prices the order at cost and changes nothing', async () => {
+    await request(app).post('/api/inventory').set(auth(token)).send({ itemName: 'XFER MUGS', unit: 'pcs', stockQty: 10, unitCost: 7 });
+    const order = await mkOrder('XF-4', 'XFER MUGS', 4);
+    const r = await request(app).post(`/api/hub/transfers/from-order/${order._id}`).set(auth(token)).send({ preview: true });
+    expect(r.body).toMatchObject({ preview: true, total: 28, orderTotal: 400 });
+    expect((await mongoose.model('Order').findById(order._id).lean()).status).toBe('Pending');
+  });
+
   it('refuses when there is not enough stock, and leaves the order alone', async () => {
     await request(app).post('/api/inventory').set(auth(token)).send({ itemName: 'XFER LIDS', unit: 'pcs', stockQty: 3, unitCost: 1 });
     const order = await mkOrder('XF-3', 'XFER LIDS', 10);

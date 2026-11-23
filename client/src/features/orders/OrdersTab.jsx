@@ -66,6 +66,13 @@ function SendAsTransfer({ order, apiFetch, fetchOrders, pdfDeps }) {
   const [partners, setPartners] = React.useState(null);
   const [to, setTo] = React.useState('');
   const [busy, setBusy] = React.useState(false);
+  const [atCost, setAtCost] = React.useState(null);
+  React.useEffect(() => {
+    if (!open || atCost) return;
+    apiFetch(`/api/hub/transfers/from-order/${order._id}`, { method: 'POST', body: JSON.stringify({ preview: true }) }).then(r => r.json())
+      .then(d => setAtCost(d.ok ? d : { error: d.error || 'Could not price this at cost.' }))
+      .catch(() => setAtCost({ error: 'Network error.' }));
+  }, [open, atCost, apiFetch, order._id]);
   React.useEffect(() => {
     if (!open || partners) return;
     apiFetch('/api/hub/info').then(r => r.json())
@@ -112,6 +119,21 @@ function SendAsTransfer({ order, apiFetch, fetchOrders, pdfDeps }) {
           </select>
         )}
       </label>
+      {atCost && (atCost.error ? <p className="text-xs text-danger">{atCost.error}</p> : (
+        <div className="rounded-lg border border-white/10 overflow-hidden">
+          <p className="px-2 py-1.5 text-[10px] font-black uppercase tracking-widest text-fg/70 bg-white/5">Goes out at cost, not the order's price</p>
+          {atCost.lines.map(l => (
+            <div key={l.itemName} className="flex justify-between gap-2 px-2 py-1 text-xs border-t border-white/5">
+              <span className="text-fg/85">{l.qty} {l.unit} {l.itemName}{l.onHand < l.qty && <span className="text-danger"> (only {l.onHand} on hand)</span>}</span>
+              <span className="font-mono tabular-nums text-fg/85">₱{l.value.toFixed(2)}</span>
+            </div>
+          ))}
+          <div className="flex justify-between px-2 py-1.5 text-xs border-t border-white/10 font-black">
+            <span>Transfer value (at cost)</span><span className="font-mono tabular-nums text-brand-text">₱{atCost.total.toFixed(2)}</span>
+          </div>
+          <p className="px-2 pb-1.5 text-[10px] text-fg/55">Order price was ₱{Number(atCost.orderTotal).toFixed(2)}.</p>
+        </div>
+      ))}
       {isNew && partners !== null && (
         <p className="text-xs text-fg/70">
           Goes to and is billed to <span className="font-black text-fg">{order.customerName || 'Guest'}</span>, the customer on this order. No approval from them is needed: the stock leaves when you send.

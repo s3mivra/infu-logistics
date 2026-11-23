@@ -416,7 +416,7 @@ export default function registerHub(ctx) {
     // customer too, unless a name is given.
     const billedTo = String(order.customerName || '').trim().slice(0, 120);
     const branchName = String(req.body?.branchName || '').trim().slice(0, 120) || (req.body?.newBranch && billedTo !== 'Guest' ? billedTo : '');
-    if (!partnerSlug && !branchName) return res.status(400).json({ error: 'Pick a hub branch, or put the branch on the order as its customer.' });
+    if (!partnerSlug && !branchName && !req.body?.preview) return res.status(400).json({ error: 'Pick a hub branch, or put the branch on the order as its customer.' });
     if (order.status !== 'Pending') return res.status(409).json({ error: `Only a pending order can be sent as a stock transfer (this one is ${String(order.status).toLowerCase()}).` });
     const paid = (Number(order.amountPaid) || 0) + (order.arPayments || []).length + (order.reservationDeposits || []).reduce((t, d) => t + (Number(d.amount) || 0), 0);
     if (paid > 0) return res.status(409).json({ error: 'This order already has money taken on it. Refund or void it instead.' });
@@ -442,6 +442,12 @@ export default function registerHub(ctx) {
     }
     if (problems.length) return res.status(400).json({ error: `Can't send this as a stock transfer - ${problems.join('; ')}.` });
     if (!lines.length) return res.status(400).json({ error: 'This order has nothing to send.' });
+    // A look before sending: a transfer goes out at cost, not the order's price.
+    if (req.body?.preview) {
+      const rows = lines.map(l => ({ itemName: l.item.itemName, qty: l.qty, unit: l.item.unit, unitCost: Number(l.item.unitCost) || 0,
+        value: Math.round((Number(l.item.unitCost) || 0) * l.qty * 100) / 100, onHand: Number(l.item.stockQty) || 0 }));
+      return res.json({ ok: true, preview: true, lines: rows, total: Math.round(rows.reduce((t, r) => t + r.value, 0) * 100) / 100, orderTotal: Number(order.total) || 0 });
+    }
     const short = lines.filter(l => (Number(l.item.stockQty) || 0) < l.qty);
     if (short.length) return res.status(409).json({ error: `Not enough stock: ${short.map(l => `${l.item.itemName} needs ${l.qty} ${l.item.unit}, on hand ${l.item.stockQty}`).join('; ')}.` });
 
