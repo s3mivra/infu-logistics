@@ -33,7 +33,7 @@ export function groupShipments(transfers = []) {
   const map = new Map();
   for (const t of transfers) {
     const key = shipmentKeyOf(t);
-    if (!map.has(key)) map.set(key, { key, ref: key, direction: t.direction, partnerName: t.partnerName || t.partnerSlug || '', partnerSlug: t.partnerSlug, lines: [], date: t.createdAt });
+    if (!map.has(key)) map.set(key, { key, ref: key, direction: t.direction, partnerName: t.partnerName || t.partnerSlug || '', partnerSlug: t.partnerSlug, billedTo: t.billedTo || '', lines: [], date: t.createdAt });
     const s = map.get(key);
     s.lines.push(t);
     if (t.createdAt && (!s.date || new Date(t.createdAt) < new Date(s.date))) s.date = t.createdAt;
@@ -68,7 +68,7 @@ function drawSlip(doc, autoTable, s, { bizName = '', y = 16 } = {}) {
   autoTable(doc, {
     startY: y + 9, theme: 'plain', tableWidth: pageW - 28,
     body: [[{ content: 'FROM', styles: { fontStyle: 'bold', textColor: 110 } }, { content: 'TO', styles: { fontStyle: 'bold', textColor: 110 } }, { content: 'BILLED TO', styles: { fontStyle: 'bold', textColor: 110 } }],
-      [{ content: from, styles: { fontStyle: 'bold', fontSize: 11 } }, { content: to, styles: { fontStyle: 'bold', fontSize: 11 } }, { content: to, styles: { fontStyle: 'bold', fontSize: 11 } }]],
+      [{ content: from, styles: { fontStyle: 'bold', fontSize: 11 } }, { content: to, styles: { fontStyle: 'bold', fontSize: 11 } }, { content: s.billedTo || to, styles: { fontStyle: 'bold', fontSize: 11 } }]],
     styles: { fontSize: 8, cellPadding: 1 },
   });
   const body = s.lines.map((l, i) => [

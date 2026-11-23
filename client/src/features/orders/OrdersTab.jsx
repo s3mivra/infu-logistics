@@ -65,7 +65,6 @@ function SendAsTransfer({ order, apiFetch, fetchOrders, pdfDeps }) {
   const [open, setOpen] = React.useState(false);
   const [partners, setPartners] = React.useState(null);
   const [to, setTo] = React.useState('');
-  const [newName, setNewName] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   React.useEffect(() => {
     if (!open || partners) return;
@@ -75,9 +74,11 @@ function SendAsTransfer({ order, apiFetch, fetchOrders, pdfDeps }) {
   }, [open, partners, apiFetch]);
   const isNew = to === '__new__' || (partners && partners.length === 0);
   const send = async () => {
-    const body = isNew ? { branchName: newName.trim() } : { partnerSlug: to };
-    if (isNew ? !body.branchName : !body.partnerSlug) return ui.alert(isNew ? 'Type the new branch name.' : 'Pick the branch to send to.');
-    const target = isNew ? body.branchName : (partners.find(p => p.partnerSlug === to)?.partnerName || to);
+    const customer = String(order.customerName || '').trim();
+    if (isNew && (!customer || customer === 'Guest')) return ui.alert('Put the branch on the order as its customer first - it is who the transfer goes to and is billed to.');
+    const body = isNew ? { newBranch: true } : { partnerSlug: to };
+    if (!isNew && !body.partnerSlug) return ui.alert('Pick the branch to send to.');
+    const target = isNew ? customer : (partners.find(p => p.partnerSlug === to)?.partnerName || to);
     if (!(await ui.confirm(isNew
       ? `Send ${order.orderNumber} to ${target} as a stock transfer? It is a new branch, so the stock leaves now and the order is cancelled.`
       : `Send ${order.orderNumber} to ${target} as a stock transfer? It needs approval, then ${target} accepts it. The order is cancelled.`))) return;
@@ -107,16 +108,14 @@ function SendAsTransfer({ order, apiFetch, fetchOrders, pdfDeps }) {
           <select value={isNew ? '__new__' : to} onChange={e => setTo(e.target.value)} className={field} aria-label="Branch to send to">
             <option value="">Pick a branch…</option>
             {partners.map(p => <option key={p.partnerSlug} value={p.partnerSlug}>{p.partnerName || p.partnerSlug} (hub)</option>)}
-            <option value="__new__">+ New branch (not in the hub yet)</option>
+            <option value="__new__">This order's customer (not in the hub)</option>
           </select>
         )}
       </label>
       {isNew && partners !== null && (
-        <label className="text-[10px] font-bold uppercase tracking-widest text-fg/70">
-          New branch name
-          <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Makati branch" className={field} />
-          <span className="block mt-1 normal-case tracking-normal font-normal text-fg/60">No approval from them is needed: the stock leaves when you send.</span>
-        </label>
+        <p className="text-xs text-fg/70">
+          Goes to and is billed to <span className="font-black text-fg">{order.customerName || 'Guest'}</span>, the customer on this order. No approval from them is needed: the stock leaves when you send.
+        </p>
       )}
       <div className="flex gap-2">
         <button type="button" onClick={send} disabled={busy || partners === null}

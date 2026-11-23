@@ -1978,6 +1978,8 @@ const CrossTransferSchema = new mongoose.Schema({
   approvedAt:   { type: Date },
   rejectedBy:   { type: String, default: '' },
   rejectionReason: { type: String, default: '' },
+  // Who the shipment is billed to: the customer on the order it was made from.
+  billedTo:     { type: String, default: '' },
 }, { timestamps: true });
 const CrossTransfer = mongoose.model('CrossTransfer', CrossTransferSchema);
 

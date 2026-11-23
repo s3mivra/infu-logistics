@@ -11,7 +11,7 @@ let app, stop, token;
 const auth = (t) => ({ Authorization: `Bearer ${t}` });
 
 const mkOrder = (n, invName, qty) => mongoose.model('Order').create({
-  businessType: 'log', orderNumber: n, status: 'Pending', paymentMethod: 'Cash',
+  businessType: 'log', orderNumber: n, status: 'Pending', customerName: 'MAKATI BRANCH', paymentMethod: 'Cash',
   items: [{ name: invName, price: 100, quantity: qty }], subtotal: 100 * qty, total: 100 * qty,
 });
 
@@ -27,14 +27,14 @@ describe('POST /api/hub/transfers/from-order/:id', () => {
   it('to a new branch: stock leaves now, the order is cancelled, the shipment is Released', async () => {
     const inv = (await request(app).post('/api/inventory').set(auth(token)).send({ itemName: 'XFER BEANS', unit: 'pcs', stockQty: 50, unitCost: 10 })).body.item;
     const order = await mkOrder('XF-1', 'XFER BEANS', 20);
-    const r = await request(app).post(`/api/hub/transfers/from-order/${order._id}`).set(auth(token)).send({ branchName: 'Makati Branch' });
+    const r = await request(app).post(`/api/hub/transfers/from-order/${order._id}`).set(auth(token)).send({ newBranch: true });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.status).toBe('Released');
     expect((await mongoose.model('Inventory').findById(inv._id).lean()).stockQty).toBe(30);
     expect((await mongoose.model('Order').findById(order._id).lean()).status).toBe('Cancelled');
     const list = (await request(app).get('/api/hub/transfers').set(auth(token))).body.transfers;
     const t = list.find(x => x.shipmentRef === r.body.shipmentRef);
-    expect(t).toMatchObject({ partnerName: 'Makati Branch', qtyBase: 20, status: 'Released', direction: 'outbound' });
+    expect(t).toMatchObject({ partnerName: 'MAKATI BRANCH', billedTo: 'MAKATI BRANCH', qtyBase: 20, status: 'Released', direction: 'outbound' });
   });
 
   it('to a hub partner: filed as Requested, stock untouched until approved', async () => {
@@ -50,7 +50,7 @@ describe('POST /api/hub/transfers/from-order/:id', () => {
   it('refuses when there is not enough stock, and leaves the order alone', async () => {
     await request(app).post('/api/inventory').set(auth(token)).send({ itemName: 'XFER LIDS', unit: 'pcs', stockQty: 3, unitCost: 1 });
     const order = await mkOrder('XF-3', 'XFER LIDS', 10);
-    const r = await request(app).post(`/api/hub/transfers/from-order/${order._id}`).set(auth(token)).send({ branchName: 'New One' });
+    const r = await request(app).post(`/api/hub/transfers/from-order/${order._id}`).set(auth(token)).send({ newBranch: true });
     expect(r.status).toBe(409);
     expect((await mongoose.model('Order').findById(order._id).lean()).status).toBe('Pending');
   });

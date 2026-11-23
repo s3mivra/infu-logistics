@@ -410,11 +410,13 @@ export default function registerHub(ctx) {
   // Body: { partnerSlug } or { branchName }
   app.post('/api/hub/transfers/from-order/:id', verifyToken, requireAuth, permit('inventory.manage'), atomic(mongoose, async (req, res) => {
     const partnerSlug = String(req.body?.partnerSlug || '').trim();
-    const branchName = String(req.body?.branchName || '').trim().slice(0, 120);
-    if (!partnerSlug && !branchName) return res.status(400).json({ error: 'Pick a hub branch or type the new branch name.' });
-
     const order = await Order.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE });
     if (!order) return res.status(404).json({ error: 'Order not found.' });
+    // Billed to the order's customer. A new branch (not in the hub) is that
+    // customer too, unless a name is given.
+    const billedTo = String(order.customerName || '').trim().slice(0, 120);
+    const branchName = String(req.body?.branchName || '').trim().slice(0, 120) || (req.body?.newBranch && billedTo !== 'Guest' ? billedTo : '');
+    if (!partnerSlug && !branchName) return res.status(400).json({ error: 'Pick a hub branch, or put the branch on the order as its customer.' });
     if (order.status !== 'Pending') return res.status(409).json({ error: `Only a pending order can be sent as a stock transfer (this one is ${String(order.status).toLowerCase()}).` });
     const paid = (Number(order.amountPaid) || 0) + (order.arPayments || []).length + (order.reservationDeposits || []).reduce((t, d) => t + (Number(d.amount) || 0), 0);
     if (paid > 0) return res.status(409).json({ error: 'This order already has money taken on it. Refund or void it instead.' });
@@ -458,7 +460,7 @@ export default function registerHub(ctx) {
         unitMultiplier: Number(item.unitMultiplier) || 1, packSize: item.packSize ?? null,
         itemCode: item.itemCode || '', stockCategory: item.stockCategory || '',
         note: String(l.note || `From order ${order.orderNumber}`).trim(),
-        reference, shipmentRef,
+        reference, shipmentRef, billedTo: billedTo && billedTo !== 'Guest' ? billedTo : toName,
         status: link ? 'Requested' : 'Released',
         requestedBy: req.user?.name || '',
         ...(link ? {} : { approvedBy: req.user?.name || '', approvedAt: now }),
