@@ -190,6 +190,15 @@ const SEND_TARGET = DEFAULT_DEPARTMENT;
 const ORDER_STATUS_TONE = new Proxy({}, { get: (_, k) => statusTone(k) });
 
 export default function OrdersTab({ ctx }) {
+  // An order sent as a stock transfer prints as that transfer: its slip.
+  const printTransferOf = async (order) => {
+    try {
+      const d = await (await ctx.apiFetch('/api/hub/transfers')).json();
+      const sh = groupShipments((d.transfers || []).filter(t => t.shipmentRef === order.transferRef))[0];
+      if (!sh) { ui.alert(`Stock transfer ${order.transferRef} was not found.`); return; }
+      await exportTransferSlip(sh, { loadPdfLibs: ctx.loadPdfLibs, addLogoToPDF: ctx.addLogoToPDF, bizName: ctx.BIZ_NAME });
+    } catch { ui.alert('Could not print the transfer slip.'); }
+  };
   const [loyaltyOpen, setLoyaltyOpen] = React.useState(false);
   // Destructure everything from ctx
   // What this tab reads from ctx - only the names it uses. Add one here when
@@ -1483,6 +1492,11 @@ export default function OrdersTab({ ctx }) {
                                   <Edit size={14} />
                                 </button>
                               )}
+                              {order.transferRef ? (
+                                <button onClick={() => printTransferOf(order)} className="p-1.5 rounded-md hover:bg-white/10 hover:text-fg transition" title={`Print stock transfer slip ${order.transferRef}`} aria-label="Print stock transfer slip">
+                                  <Printer size={14} />
+                                </button>
+                              ) : (<>
                               <button onClick={() => printKitchenTicket(order)} className="p-1.5 rounded-md hover:bg-white/10 hover:text-fg transition" title={`${SEND_TARGET} ticket (no prices)`} aria-label={`Print ${SEND_TARGET} ticket`}>
                                 <ChefHat size={14} />
                               </button>
@@ -1500,6 +1514,7 @@ export default function OrdersTab({ ctx }) {
                                   </button>
                                 </>
                               )}
+                              </>)}
                               {departmentFilter === 'All' && canDelete(order) && (
                                 <button onClick={() => deleteOrder(order)}
                                   className="p-1.5 rounded-md hover:bg-red-500/15 hover:text-danger transition"

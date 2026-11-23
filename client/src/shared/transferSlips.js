@@ -60,7 +60,7 @@ function drawSlip(doc, autoTable, s, { bizName = '', y = 16 } = {}) {
   doc.setFontSize(15); doc.setFont(undefined, 'bold');
   doc.text('STOCK TRANSFER SLIP', 14, y);
   doc.setFontSize(9); doc.setFont(undefined, 'normal');
-  doc.text(`Ref: ${s.ref}`, pageW - 14, y - 5, { align: 'right' });
+  doc.text(`Transfer No: ${s.ref}`, pageW - 14, y - 5, { align: 'right' });
   doc.text(`Date: ${fmtDate(s.date)}`, pageW - 14, y, { align: 'right' });
   doc.text(`Status: ${s.status.label}`, pageW - 14, y + 5, { align: 'right' });
   const from = out ? (bizName || 'This business') : s.partnerName;
