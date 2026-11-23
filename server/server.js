@@ -2440,6 +2440,8 @@ const PaymentMethodMap = mongoose.model('PaymentMethodMap', PaymentMethodMapSche
 // Default routing seeded on first boot. Overridable per-method via the UI.
 const DEFAULT_PAYMENT_ACCOUNT_MAP = {
   'Cash':              '111000',
+  // What the collection and expense forms call cash.
+  'Cash on Hand':      '111000',
   'Pickup':            '111000',
   'Manual Delivery':   '111000',
   'Lalamove':          '111000',
