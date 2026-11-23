@@ -606,6 +606,9 @@ export default function ClientsTab() {
                       {!c.isActive && <span className="text-[8px] font-black bg-white/10 text-fg/65 px-1.5 py-0.5 rounded uppercase">Inactive</span>}
                       {c.overLimit && <span className="text-[8px] font-black bg-red-700 text-white px-1.5 py-0.5 rounded uppercase">Over</span>}
                       {c.source === 'pos' && <span className="text-[8px] font-black bg-white/10 text-fg/70 px-1.5 py-0.5 rounded uppercase" title="Auto-promoted repeat walk-in">Walk-in</span>}
+                      {data.vat?.enabled && (c.vatExempt
+                        ? <span className="text-[8px] font-black bg-warning/15 text-warning px-1.5 py-0.5 rounded uppercase" title="Not VATable: their sales carry no VAT">No VAT</span>
+                        : <span className="text-[8px] font-black bg-brand/10 text-brand-text px-1.5 py-0.5 rounded uppercase" title="VATable: follows the VAT rate in Settings">VAT {Math.round((Number(data.vat.rate) || 0) * 10000) / 100}%</span>)}
                     </span>
                   </td>
                   <td className="py-3 px-4 font-mono text-fg/70 text-[11px] tracking-wide whitespace-nowrap">{c.clientCode}</td>
