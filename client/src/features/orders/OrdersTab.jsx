@@ -2229,7 +2229,7 @@ export default function OrdersTab({ ctx }) {
                                       {!(order.payments || []).length && !(Number(order.amountPaid) > 0) && (
                                         <ReserveLater order={order} apiFetch={apiFetch} fetchOrders={fetchOrders} paymentMethodGroups={paymentMethodGroups} />
                                       )}
-                                      {order.status === 'Pending' && can('inventory.manage') && !(order.payments || []).length && !(Number(order.amountPaid) > 0) && !(order.reservationDeposits || []).length && (
+                                      {order.status === 'Pending' && can('orders.transfer') && !(order.payments || []).length && !(Number(order.amountPaid) > 0) && !(order.reservationDeposits || []).length && (
                                         <div data-xfer className="flex flex-col"><SendAsTransfer inventory={ctx.inventory || []} itemDisplay={ctx.itemDisplay} onOpenChange={v => setXferOpen(p => ({ ...p, [order._id]: v }))} order={order} apiFetch={apiFetch} fetchOrders={fetchOrders} pdfDeps={{ loadPdfLibs: ctx.loadPdfLibs, addLogoToPDF: ctx.addLogoToPDF, bizName: ctx.BIZ_NAME }} /></div>
                                       )}
                                       {dueTotal !== displayTotal && (

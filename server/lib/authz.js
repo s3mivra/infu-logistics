@@ -30,6 +30,7 @@ export const PERMISSIONS = [
   { key: 'orders.override',    group: 'Sales',       label: 'Change prices, give manual discounts and approve comps at the till' },
   // Were "superadmin or the admin role" by name; now given like anything else.
   { key: 'orders.refund',      group: 'Sales',       label: 'Refund, partly refund or exchange a completed order' },
+  { key: 'orders.transfer',    group: 'Sales',       label: 'Send a pending order as a stock transfer to a branch' },
   // Were superadmin-only: entering past sales, and bringing an Orders export back.
   { key: 'sales.backdate',     group: 'Sales',       label: 'Backdate sales and purchases, and import past ones' },
   // Copy only: the sign-in link, and an onboarding link an admin already
@@ -217,7 +218,7 @@ export function withScreens(list) {
 export const ROLE_DEFAULT_PERMISSIONS = {
   // Shop administrator: runs operations & config and can VIEW the books, but
   // cannot post journal entries (that's finance/superadmin) or manage staff.
-  admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'orders.override', 'orders.refund', 'clients.links', 'clients.invite', 'clients.create', 'clients.delete', 'clients.edit',
+  admin:   ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'orders.override', 'orders.refund', 'orders.transfer', 'clients.links', 'clients.invite', 'clients.create', 'clients.delete', 'clients.edit',
             'inventory.setup', 'inventory.approve',
             'inventory.view', 'inventory.manage', 'inventory.delete', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
@@ -225,7 +226,7 @@ export const ROLE_DEFAULT_PERMISSIONS = {
             'accounting.view', 'funds.spend', 'payroll.view', 'assets.view', 'bankrec.view',
             'reports.view', 'analytics.view', 'audit.view', 'scheduling.manage', 'settings.manage'],
   // Operations lead: full ops (incl. building rosters), no books/settings/staff.
-  manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'orders.override', 'clients.links', 'clients.invite', 'clients.create',
+  manager: ['pos.use', 'orders.view', 'orders.manage', 'orders.delete', 'orders.comp', 'orders.override', 'orders.transfer', 'clients.links', 'clients.invite', 'clients.create',
             'inventory.view', 'inventory.manage', 'inventory.waste', 'inventory.count', 'production.view', 'production.approve',
             'products.view', 'products.manage',
             'procurement.view', 'procurement.manage', 'funds.spend',

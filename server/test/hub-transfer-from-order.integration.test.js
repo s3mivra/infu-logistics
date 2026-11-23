@@ -63,3 +63,14 @@ describe('POST /api/hub/transfers/from-order/:id', () => {
     expect((await mongoose.model('Order').findById(order._id).lean()).status).toBe('Pending');
   });
 });
+
+describe('Send as stock transfer: its own permission', () => {
+  it('needs orders.transfer', async () => {
+    await makeUser({ name: 'XferClerk', role: 'staff', password: 'pw', permissions: ['pos.use', 'orders.view', 'inventory.manage'] });
+    await mongoose.model('User').updateMany({}, { $set: { tenantId: null } });
+    const clerk = await loginStaff(app, 'XferClerk', 'pw');
+    const order = await mkOrder('XF-9', 'XFER BEANS', 1);
+    const r = await request(app).post(`/api/hub/transfers/from-order/${order._id}`).set(auth(clerk)).send({ preview: true });
+    expect(r.status).toBe(403);
+  });
+});

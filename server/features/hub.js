@@ -409,7 +409,7 @@ export default function registerHub(ctx) {
   //    journal entry a released hub shipment posts.
   // Either way it lands in the hub's transfer history and prints the same slip.
   // Body: { partnerSlug } or { branchName }
-  app.post('/api/hub/transfers/from-order/:id', verifyToken, requireAuth, permit('inventory.manage'), atomic(mongoose, async (req, res) => {
+  app.post('/api/hub/transfers/from-order/:id', verifyToken, requireAuth, permit('orders.transfer'), atomic(mongoose, async (req, res) => {
     const partnerSlug = String(req.body?.partnerSlug || '').trim();
     const order = await Order.findOne({ _id: req.params.id, businessType: BUSINESS_TYPE });
     if (!order) return res.status(404).json({ error: 'Order not found.' });
