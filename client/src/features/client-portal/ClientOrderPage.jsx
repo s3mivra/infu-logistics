@@ -66,6 +66,10 @@ const ENV_BILLING = {
 };
 
 // Client-selectable payment methods - mirrors the POS order tab, minus delivery partners.
+// Nothing paid yet: only then may the client cancel (a paid order needs a refund from us).
+const unpaid = (o) => !((o.payments || []).some(p => Number(p.amount) > 0) || Number(o.amountPaid) > 0
+  || (o.arPayments || []).some(p => Number(p.amount) > 0) || (o.reservationDeposits || []).some(d => Number(d.amount) > 0));
+
 const CLIENT_PAYMENT_METHODS = ['Cash', 'Bank Transfer', 'Check', 'QR', 'GCash', 'Maya', 'Maribank', 'Other E-Wallet', 'Credit'];
 // Nicer labels for the canonical tenders; a custom one (e.g. "GoTyme" added in
 // the Payment Routing screen) just displays its own name as-is.
@@ -1251,7 +1255,7 @@ export default function ClientOrderPage() {
                   I received my order
                 </button>
               )}
-              {slipOrder.status === 'Pending' && (
+              {slipOrder.status === 'Pending' && unpaid(slipOrder) && (
                 <button onClick={() => cancelOrder(slipOrder._id)}
                   className="w-full border border-red-500/30 text-danger hover:bg-red-500/10 transition rounded-xl px-3 py-2.5 text-[11px] font-black uppercase tracking-wider">
                   Cancel order
@@ -1613,7 +1617,7 @@ export default function ClientOrderPage() {
                             </button>
                           )
                         )}
-                        {o.status === 'Pending' && (
+                        {o.status === 'Pending' && unpaid(o) && (
                           <button onClick={e => { e.stopPropagation(); cancelOrder(o._id); }}
                             className="border border-red-500/30 text-danger hover:bg-red-500/10 transition rounded-full px-4 py-1.5 text-[11px] font-black uppercase tracking-wider">
                             Cancel order

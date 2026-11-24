@@ -141,6 +141,17 @@ describe('client portal: a client buys from the portal', () => {
     expect(res.status).toBe(400);
   });
 
+  it('a client cannot cancel a pending order we have taken payment for (it needs a refund)', async () => {
+    const placed = await post('/api/orders', clientATok, orderBody(1));
+    const id = placed.body.order._id;
+    const Order = mongoose.model('Order');
+    await Order.updateOne({ _id: id }, { $set: { amountPaid: 50, payments: [{ method: 'Cash', amount: 50 }] } });
+    const res = await post(`/api/client/orders/${id}/cancel`, clientATok);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/refund/i);
+    expect((await Order.findById(id).lean()).status).toBe('Pending');
+  });
+
   it('DATA ISOLATION: client B cannot cancel client A\'s order', async () => {
     const placed = await post('/api/orders', clientATok, orderBody(1));
     const res = await post(`/api/client/orders/${placed.body.order._id}/cancel`, clientBTok);

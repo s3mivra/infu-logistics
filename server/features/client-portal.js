@@ -294,6 +294,13 @@ app.post('/api/client/orders/:id/cancel', verifyClientToken, async (req, res) =>
     if (order.status !== 'Pending') {
       return res.status(400).json({ success: false, error: 'Only a pending, unpaid order can be cancelled. Please contact us for changes.' });
     }
+    // Paid on our side (in full or in part, or a deposit taken): the money has
+    // to be refunded by us first, so the client cannot cancel it themselves.
+    const paid = (order.payments || []).some(p => Number(p.amount) > 0) || Number(order.amountPaid) > 0
+      || (order.arPayments || []).some(p => Number(p.amount) > 0) || (order.reservationDeposits || []).some(d => Number(d.amount) > 0);
+    if (paid) {
+      return res.status(400).json({ success: false, error: 'This order has been paid, so it cannot be cancelled here. Please contact us to arrange a refund.' });
+    }
     order.status = 'Cancelled';
     await order.save();
     // The latest number goes back for the next order (lib/orderNumbers.js).
