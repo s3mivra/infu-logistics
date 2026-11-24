@@ -1661,7 +1661,7 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePer
     }
     const orders = await Order.find(match, {
       orderNumber: 1, total: 1, subtotal: 1, paymentMethod: 1, payments: 1, createdAt: 1,
-      customerName: 1, clientId: 1, clientAccountId: 1,
+      customerName: 1, clientId: 1, clientAccountId: 1, 'items.name': 1,
     }).sort({ createdAt: 1 }).lean();
 
     // Resolve to the client's standard CUS-1000-A0000 code, not the raw ObjectId
@@ -1696,6 +1696,8 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePer
         // Subtotal is the sale before discount and delivery fee; Total is what
         // was charged. Both are shown, side by side.
         ...ch, methods, subtotal: Number(o.subtotal) || 0, total: Number(o.total) || 0,
+        // Product names, so the report can be searched by product.
+        items: [...new Set((o.items || []).map(i => i.name).filter(Boolean))],
       };
     });
 

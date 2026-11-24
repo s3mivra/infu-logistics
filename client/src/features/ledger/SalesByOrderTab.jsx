@@ -14,10 +14,35 @@ export const checkOf = (r) => ['Check', 'Cheque'].reduce((t, m) => t + (Number(r
 export const cashOnly = (r) => Math.max(0, (Number(r?.cash) || 0) - checkOf(r));
 const ewalletOnly = (r) => (r?.credit === undefined ? Math.max(0, (Number(r?.ewallet) || 0) - creditOf(r)) : Number(r?.ewallet) || 0);
 
+// Search by customer name, ID, order number or product: filters the orders,
+// then (per-day view) rolls them up again, and the totals follow the filter.
+const NUM = ['cash', 'ewallet', 'bank', 'delivery', 'credit', 'subtotal', 'total'];
+const sumRows = (rows, base = {}) => rows.reduce((t, r) => {
+  for (const k of NUM) t[k] = (t[k] || 0) + (Number(r[k]) || 0);
+  for (const [m, a] of Object.entries(r.methods || {})) t.methods[m] = (t.methods[m] || 0) + a;
+  t.count = (t.count || 0) + 1;
+  return t;
+}, { ...base, methods: {} });
+
 export default function SalesByOrderTab({
-  ledgerSubTab, salesView, salesViewTabs, sssRange, setSssRange, fetchSalesSummary, salesSourceSelect, salesSummary,
-  exportSalesSummaryPDF, exportSssExcel, sssRows, money2,
+  ledgerSubTab, salesView, salesViewTabs, sssRange, setSssRange, fetchSalesSummary, salesSourceSelect, salesSummary: fullSummary,
+  exportSalesSummaryPDF, exportSssExcel, sssRows: allRows, money2,
 }) {
+  const [q, setQ] = React.useState('');
+  const needle = q.trim().toLowerCase();
+  const { sssRows, salesSummary } = React.useMemo(() => {
+    if (!needle || !fullSummary) return { sssRows: allRows, salesSummary: fullSummary };
+    const hits = (fullSummary.rows || []).filter(r => [r.customerName, r.customerId, r.orderNumber, ...(r.items || [])]
+      .some(v => String(v || '').toLowerCase().includes(needle)));
+    let rows = hits;
+    if (salesView === 'day') {
+      const byDay = {};
+      for (const r of hits) (byDay[new Date(r.date).toLocaleDateString('en-CA')] ||= []).push(r);
+      rows = Object.values(byDay).map(g => sumRows(g, { date: g[0].date, orderNumber: null }))
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+    }
+    return { sssRows: rows, salesSummary: { ...fullSummary, totals: sumRows(hits) } };
+  }, [needle, fullSummary, allRows, salesView]);
   return (
     <>
     {ledgerSubTab === 'salessummary' && (salesView === 'order' || salesView === 'day') && (
@@ -38,13 +63,15 @@ export default function SalesByOrderTab({
               onChange={e => setSssRange(r => ({ ...r, end: e.target.value }))}
               className="bg-white/5 border border-white/10 rounded-xl px-2.5 py-2 text-fg text-xs font-bold outline-none focus:border-brand" />
             {salesSourceSelect(fetchSalesSummary)}
+            <input type="search" value={q} onChange={e => setQ(e.target.value)} placeholder="Search customer, order or product…" aria-label="Search sales"
+              className="bg-white/5 border border-white/10 rounded-xl px-2.5 py-2 text-fg text-xs font-bold outline-none focus:border-brand w-56" />
             <button onClick={fetchSalesSummary} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-fg/80 hover:text-fg px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><RefreshCw size={12} /> Refresh</button>
             {salesSummary && <button onClick={exportSalesSummaryPDF} className="flex items-center gap-1.5 bg-white/5 text-fg/70 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> PDF</button>}
             {salesSummary && <button onClick={exportSssExcel} className="flex items-center gap-1.5 bg-white/5 text-fg/80 hover:text-fg hover:bg-white/10 px-3 py-2 rounded-xl font-bold text-xs uppercase tracking-wider transition"><Download size={12} /> Excel</button>}
           </div>
         </div>
         {!sssRows || sssRows.length === 0 ? (
-          <p className="text-fg/80 text-sm">No completed sales in range. Press Refresh.</p>
+          <p className="text-fg/80 text-sm">{needle ? `No sales match "${q.trim()}".` : 'No completed sales in range. Press Refresh.'}</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
