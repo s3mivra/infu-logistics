@@ -302,6 +302,9 @@ app.post('/api/client/orders/:id/cancel', verifyClientToken, async (req, res) =>
       return res.status(400).json({ success: false, error: 'This order has been paid, so it cannot be cancelled here. Please contact us to arrange a refund.' });
     }
     order.status = 'Cancelled';
+    order.cancelledByClient = true;
+    order.cancelledBy = req.user?.name || order.customerName || 'Client';
+    order.cancelledAt = new Date();
     await order.save();
     // The latest number goes back for the next order (lib/orderNumbers.js).
     try {

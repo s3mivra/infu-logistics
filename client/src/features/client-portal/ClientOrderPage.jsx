@@ -82,7 +82,7 @@ const REFERENCE_REQUIRED = ['QR'];
 const peso = formatPeso;
 // Map an order's status to a client-facing queue state for the portal sidebar.
 // The first step after ordering asks the client to send payment proof on FB.
-const STATUS_VIEW = (status) => {
+const STATUS_VIEW = (status, order) => {
   switch (status) {
     case 'Pending':
       return { label: 'Sent to logistics', tone: 'amber',
@@ -105,7 +105,9 @@ const STATUS_VIEW = (status) => {
     case 'Completed':
       return { label: 'Completed', tone: 'green', msg: 'This order is complete. Thank you!', canConfirm: true };
     case 'Cancelled':
-      return { label: 'Cancelled', tone: 'red', msg: 'This order was cancelled.' };
+      return order?.cancelledByClient
+        ? { label: 'Cancelled by you', tone: 'red', msg: 'You cancelled this order.' }
+        : { label: 'Cancelled by us', tone: 'red', msg: 'We cancelled this order. Contact us if you have questions.' };
     case 'Voided':
     case 'Refunded':
       return { label: status, tone: 'red', msg: `This order was ${String(status).toLowerCase()}.` };
@@ -676,7 +678,7 @@ export default function ClientOrderPage() {
           { label: 'Order No.', value: order.orderNumber },
         ],
         subFields: [
-          { label: 'Status', value: STATUS_VIEW(order.status).label },
+          { label: 'Status', value: STATUS_VIEW(order.status, order).label },
           ...(order.billingNumber ? [{ label: 'Billing No.', value: order.billingNumber }] : []),
           ...(order.orNumber ? [{ label: 'OR No.', value: order.orNumber }] : []),
           ...((order.deliveryReceipts || []).length || order.drNumber ? [{ label: 'DR No.', value: (order.deliveryReceipts || []).map(d => d.drNumber).join(', ') || order.drNumber }] : []),
@@ -1035,7 +1037,7 @@ export default function ClientOrderPage() {
   // Declared as a closure so both the success screen and the main UI render the
   // exact same document.
   function OrderSlipModal() {
-    const v = STATUS_VIEW(slipOrder.status);
+    const v = STATUS_VIEW(slipOrder.status, slipOrder);
     const terminated = isTerminated(slipOrder.status);
     const stepIdx = STEP_INDEX[slipOrder.status] ?? 0;
     const items = slipOrder.items || [];
@@ -1544,7 +1546,7 @@ export default function ClientOrderPage() {
                   <p className="text-fg/70 text-sm font-bold">No orders in this filter.</p>
                 </div>
               ) : filteredOrders.map(o => {
-                const v = STATUS_VIEW(o.status);
+                const v = STATUS_VIEW(o.status, o);
                 const items = o.items || [];
                 const totalQty = items.reduce((s, i) => s + Number(i.quantity || 0), 0);
                 const orderTotal = items.reduce((s, i) => {

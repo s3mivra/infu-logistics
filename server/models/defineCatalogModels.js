@@ -444,6 +444,8 @@ export default function defineCatalogModels({ BUSINESS_TYPE }) {
     voidedBy: { type: String, default: '' },
     voidedAt: { type: Date },
     cancelledBy: { type: String, default: '' },
+    // true when the client cancelled it themselves from the portal.
+    cancelledByClient: { type: Boolean, default: false },
     cancelledAt: { type: Date },
     // Audit trail of partial refunds (see POST /api/orders/:id/partial-refund) -
     // not everything has to be refunded at once, and it can happen more than once

@@ -138,7 +138,9 @@ export default function AuditTab({ ctx }) {
                           // client themselves).
                           const actor = o.status === 'Voided'
                             ? (o.voidedBy || o.cashier || '-')
-                            : (o.cancelledBy || o.cashier || '-');
+                            : o.status === 'Cancelled'
+                              ? (o.cancelledByClient ? `Client${o.cancelledBy ? ` (${o.cancelledBy})` : ''}` : `Us${o.cancelledBy ? ` (${o.cancelledBy})` : ''}`)
+                              : (o.cancelledBy || o.cashier || '-');
                           return (
                           <tr key={o._id} className="border-b border-white/5 last:border-0 hover:bg-white/3 transition">
                             <td className="px-5 py-2.5 text-xs text-fg/65 font-mono">{fmtDate(o.createdAt)}</td>

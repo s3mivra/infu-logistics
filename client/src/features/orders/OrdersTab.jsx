@@ -1498,6 +1498,14 @@ export default function OrdersTab({ ctx }) {
                                 <span className="text-brand-text font-black text-sm whitespace-nowrap tabular-nums" title="Sent as a stock transfer">{order.transferRef}</span>
                                 <span className="text-[10px] font-bold uppercase tracking-wider text-fg/55">Stock transfer</span>
                               </span>
+                            ) : order.status === 'Cancelled' ? (
+                              <span className="flex flex-col leading-tight">
+                                <span className="text-fg font-black text-sm whitespace-nowrap tabular-nums">{order.orderNumber}</span>
+                                <span className={`text-[10px] font-bold uppercase tracking-wider ${order.cancelledByClient ? 'text-warning' : 'text-fg/55'}`}
+                                  title={order.cancelledBy ? `Cancelled by ${order.cancelledBy}` : undefined}>
+                                  {order.cancelledByClient ? 'Cancelled by client' : 'Cancelled by us'}{order.cancelledBy ? ` · ${order.cancelledBy}` : ''}
+                                </span>
+                              </span>
                             ) : <span className="text-fg font-black text-sm whitespace-nowrap tabular-nums">{order.orderNumber}</span>}
                             <div className="flex items-center gap-0.5 flex-shrink-0 text-fg/65">
                               {order.isParked && (

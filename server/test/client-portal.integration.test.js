@@ -130,7 +130,7 @@ describe('client portal: a client buys from the portal', () => {
     const res = await post(`/api/client/orders/${id}/cancel`, clientATok);
     expect(res.status).toBe(200);
     const Order = mongoose.model('Order');
-    expect((await Order.findById(id).lean()).status).toBe('Cancelled');
+    expect(await Order.findById(id).lean()).toMatchObject({ status: 'Cancelled', cancelledByClient: true });
   });
 
   it('a client cannot cancel once the order left Pending (e.g. Preparing)', async () => {
