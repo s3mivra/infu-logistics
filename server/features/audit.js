@@ -246,6 +246,16 @@ app.get('/api/audit-logs', verifyToken, ...canViewAudit, async (req, res) => {
 // Bounded + streamed, same convention as /api/journal/export (finance.js): a
 // date range is required and capped at 92 days, rows stream straight from a
 // DB cursor so a wide export never builds the whole result set in memory.
+// The actions on record, for the filter's pick list.
+app.get('/api/audit-logs/actions', verifyToken, ...canViewAudit, async (req, res) => {
+  try {
+    const actions = (await AuditLog.distinct('action')).filter(Boolean).sort((a, b) => a.localeCompare(b));
+    res.json({ success: true, actions });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
 app.get('/api/audit-logs/export', verifyToken, ...canViewAudit, async (req, res) => {
   const { start, end, action, actor } = req.query;
   const range = validateDateRange(start, end);

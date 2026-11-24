@@ -1,4 +1,5 @@
-﻿import RangePresets from '../../shared/RangePresets';
+import React from 'react';
+import RangePresets from '../../shared/RangePresets';
 import { Users, DollarSign, FileText, Download, RefreshCw, Gift, XCircle, ShieldCheck } from 'lucide-react';
 
 // ── AuditTab - extracted from AdminDashboard.jsx ──
@@ -17,6 +18,13 @@ export default function AuditTab({ ctx }) {
     auditLogs, auditLogsPage, auditLogsTotal, AUDIT_LOGS_PAGE_SIZE, fetchAuditLogs,
     auditLogFilters, setAuditLogFilters, exportAuditLogsRangePdf, exportAuditLogsPdf,
   } = ctx;
+  // Every action on record, offered as options in the action box (it still
+  // takes free text: a BILL or order number, or part of a word).
+  const [auditActions, setAuditActions] = React.useState([]);
+  React.useEffect(() => {
+    ctx.apiFetch?.('/api/audit-logs/actions').then(r => (r.ok ? r.json() : null))
+      .then(d => d?.actions && setAuditActions(d.actions)).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const now    = new Date();
   const cutoff = auditFilter === 'today' ? new Date(now.getFullYear(), now.getMonth(), now.getDate())
@@ -306,8 +314,13 @@ export default function AuditTab({ ctx }) {
                 <span className="text-[10px] bg-white/10 text-fg/70 px-2 py-0.5 rounded-full font-bold">{auditLogsTotal} total</span>
                 <input type="text" value={auditLogFilters.actor} onChange={e => setAuditLogFilters(f => ({ ...f, actor: e.target.value }))}
                   placeholder="Filter by user" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60 w-32" />
-                <input type="text" value={auditLogFilters.action} onChange={e => setAuditLogFilters(f => ({ ...f, action: e.target.value }))}
-                  placeholder="Search action, BILL, ORD…" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60 w-36" />
+                <select value={auditActions.includes(auditLogFilters.action) ? auditLogFilters.action : ''} onChange={e => setAuditLogFilters(f => ({ ...f, action: e.target.value }))}
+                  aria-label="Action" className="bg-surface border border-white/10 rounded-lg px-2 py-1 text-xs text-fg focus:outline-none focus:border-brand/60 max-w-[12rem]">
+                  <option value="">All actions</option>
+                  {auditActions.map(a => <option key={a} value={a}>{a.replace(/_/g, ' ').toLowerCase().replace(/^./, c => c.toUpperCase())}</option>)}
+                </select>
+                <input type="text" value={auditActions.includes(auditLogFilters.action) ? '' : auditLogFilters.action} onChange={e => setAuditLogFilters(f => ({ ...f, action: e.target.value }))}
+                  placeholder="Search BILL, ORD, word…" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60 w-36" />
                 <RangePresets value={auditLogFilters} onChange={r => setAuditLogFilters(f => ({ ...f, ...r }))} onRun={() => fetchAuditLogs(1)} />
                 <input type="date" value={auditLogFilters.start} onChange={e => setAuditLogFilters(f => ({ ...f, start: e.target.value }))}
                   className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg focus:outline-none focus:border-brand/60" />
