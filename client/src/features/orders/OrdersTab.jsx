@@ -229,7 +229,7 @@ export default function OrdersTab({ ctx }) {
     fetchOrders, 
     handleVoidOrder, 
     isPosOpen, isStatusMenuOpen, isSuperAdmin, canVoidRefund, canVoid, 
-    openProductModal, orderFilter, orders,
+    openProductModal, orderFilter, orders, cancelledRange, setCancelledRange,
     paymentSelections, peso,
     posActiveAddOns, posActiveSize, posItemQty, setPosItemQty,
     posCart, posCategory, posCustomerName,
@@ -1349,9 +1349,20 @@ export default function OrdersTab({ ctx }) {
                     ))}
                   </div>
                   
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {orderFilter === 'Cancelled' && cancelledRange && (
+                      <div className="flex items-center gap-1.5" title="Cancelled orders in this range, closed days included">
+                        <input type="date" aria-label="Cancelled from" value={cancelledRange.start} max={cancelledRange.end || undefined}
+                          onChange={e => setCancelledRange(r => ({ ...r, start: e.target.value }))}
+                          className="bg-page-bg border border-white/10 rounded-lg px-2 py-1.5 text-fg text-xs font-bold outline-none focus:border-brand/50" />
+                        <span className="text-fg/70 text-xs font-bold">to</span>
+                        <input type="date" aria-label="Cancelled to" value={cancelledRange.end} min={cancelledRange.start || undefined}
+                          onChange={e => setCancelledRange(r => ({ ...r, end: e.target.value }))}
+                          className="bg-page-bg border border-white/10 rounded-lg px-2 py-1.5 text-fg text-xs font-bold outline-none focus:border-brand/50" />
+                      </div>
+                    )}
                     <div className="relative">
-                      <button 
+                      <button
                         onClick={() => setIsStatusMenuOpen(!isStatusMenuOpen)}
                         className="flex items-center gap-2 px-4 py-2 bg-brand text-on-brand rounded-lg font-bold uppercase tracking-wider text-xs hover:bg-transparent hover:text-brand-text transition shadow-md"
                       >

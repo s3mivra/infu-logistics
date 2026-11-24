@@ -1616,6 +1616,21 @@ export default function AdminDashboard() {
     }
   };
 
+  // Cancelled filter: a date range, archived days included (default: last 7 days).
+  const [cancelledRange, setCancelledRange] = useState(() => {
+    const d = (n) => new Date(Date.now() - n * 86400000).toLocaleDateString('en-CA');
+    return { start: d(6), end: d(0) };
+  });
+  const [cancelledOrders, setCancelledOrders] = useState(null);
+  useEffect(() => {
+    if (orderFilter !== 'Cancelled') return;
+    let live = true;
+    apiFetch(`/api/orders?status=Cancelled&start=${cancelledRange.start}&end=${cancelledRange.end}`, { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null)).then(d => { if (live && d) setCancelledOrders(d.orders || []); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [orderFilter, cancelledRange.start, cancelledRange.end, orders]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const fetchOrders = async () => {
     try {
       const cacheBuster = new Date().getTime();
@@ -6594,7 +6609,8 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     for (const p of parkedOrders) if (!byId.has(p._id)) byId.set(p._id, p);
     return [...byId.values()];
   })();
-  const filteredOrders = (orderFilter === 'Parked' ? parkedOrders : orderFilter === 'All' ? allOrdersSource : orders).filter(o => {
+  const filteredOrders = (orderFilter === 'Parked' ? parkedOrders : orderFilter === 'All' ? allOrdersSource
+    : orderFilter === 'Cancelled' && cancelledOrders ? cancelledOrders : orders).filter(o => {
     // "All" is the working queue. A cancelled ticket - one deleted as entered
     // by mistake - leaves it at once instead of lingering until the day
     // closes; it is still there under the Cancelled filter, and in the audit.
@@ -7343,7 +7359,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     rfReplModal, setRfReplModal, rfReplForm, setRfReplForm, rfReplSubmitting,
     fetchRfFunds, fetchRfTxs, submitRfNew, submitRfDisb, submitRfRepl, closeRfFund,
     // ── Orders & POS ────────────────────────────────────────────────────────
-    filteredOrders, displayOrders, orderFilter, setOrderFilter, departmentFilter, setDepartmentFilter,
+    filteredOrders, displayOrders, orderFilter, setOrderFilter, departmentFilter, setDepartmentFilter, cancelledRange, setCancelledRange,
     orderSearch, setOrderSearch,
     collapsedOrders, setCollapsedOrders, updatingOrders, cashTendered, setCashTendered,
     isPosOpen, setIsPosOpen, posCart, setPosCart, posCategory, setPosCategory, posPage, setPosPage,

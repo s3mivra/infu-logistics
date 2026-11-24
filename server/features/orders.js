@@ -495,10 +495,19 @@ async function maybePromoteWalkInClient(order) {
 // Orders
 app.get('/api/orders', verifyToken, requireStaff, async (req, res) => {
   try {
-    const { page, limit, search } = req.query;
+    const { page, limit, search, status, start, end } = req.query;
     // Tenancy filter - businessType: undefined still matches via $in so that any
     // unbackfilled docs (shouldn't exist after startup migration) still show up.
     const baseFilter = { isArchived: false, isParked: { $ne: true }, businessType: BUSINESS_TYPE, ...tenantScope(req) };
+    // Cancelled orders over a date range, archived days included, so a
+    // cancellation can be traced back after the day was closed.
+    if (status === 'Cancelled' && (start || end)) {
+      delete baseFilter.isArchived;
+      baseFilter.status = 'Cancelled';
+      baseFilter.createdAt = {};
+      if (start) baseFilter.createdAt.$gte = dayStart(start);
+      if (end) baseFilter.createdAt.$lte = dayEnd(end);
+    }
     if (search && search.trim()) {
       const rx = { $regex: escapeRegex(search.trim()), $options: 'i' };
       baseFilter.$or = [{ customerName: rx }, { orderNumber: rx }, { table: rx }];
