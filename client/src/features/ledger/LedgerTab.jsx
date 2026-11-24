@@ -419,7 +419,9 @@ export default function LedgerTab({ ctx }) {
       ))}
     </div>
   );
-  const exportSssExcel = async () => {
+  const exportSssExcel = async (over) => {
+    const { summary = salesSummary, rows = sssRows, search = '' } = (over && over.summary) ? over : {};
+    return (async (salesSummary, sssRows) => {
     if (!salesSummary) return ui.alert('Load the report first.');
     const XLSX = await loadXlsx();
     const day = sssGroup === 'day';
@@ -435,7 +437,8 @@ export default function LedgerTab({ ctx }) {
       ...col.map(c => [dateStr(c.date), c.orderNumber, dateStr(c.saleDate), c.customerName, c.method, c.reference || '', c.amount]),
       [], ['TOTAL COLLECTED', '', '', '', '', '', salesSummary.collectionTotals?.total || 0],
     ]), 'AR collected');
-    XLSX.writeFile(wb, `Sales-${day ? 'Daily' : 'Summary'}_${sssRange.start}_to_${sssRange.end}.xlsx`);
+    XLSX.writeFile(wb, `Sales-${day ? 'Daily' : 'Summary'}_${sssRange.start}_to_${sssRange.end}${search ? `_${search.replace(/[^A-Za-z0-9-]+/g, "-")}` : ""}.xlsx`);
+    })(summary, rows);
   };
   const exportSliSummaryPDF = async () => {
     if (!sliSummary) return ui.alert('Load the report first.');

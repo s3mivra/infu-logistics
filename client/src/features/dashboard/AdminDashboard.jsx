@@ -5959,12 +5959,14 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     return Object.values(byDay).sort((a, b) => new Date(a.date) - new Date(b.date));
   }, [salesSummary, sssGroup]);
 
-  const exportSalesSummaryPDF = async () => {
+  const exportSalesSummaryPDF = async (over) => {
+    const { summary = salesSummary, rows = sssRows, search = '' } = (over && over.summary) ? over : {};
+    return (async (salesSummary, sssRows) => {
     if (!salesSummary) return ui.alert('Load the Summary Sales report first.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF('landscape');
     await addLogoToPDF(doc);
     doc.setFontSize(16); doc.text(`${BIZ_NAME} - Sales Summary`, 14, 14);
-    doc.setFontSize(9); doc.text(`${sssRange.start} to ${sssRange.end}  ·  ${sssGroup === 'day' ? 'Per Day' : 'Per Order'}`, 14, 20);
+    doc.setFontSize(9); doc.text(`${sssRange.start} to ${sssRange.end}  ·  ${sssGroup === 'day' ? 'Per Day' : 'Per Order'}${search ? `  ·  Search: "${search}"` : ''}`, 14, 20);
     // Fixed columns (match the on-screen Summary Sales table).
     const tm = salesSummary.totals?.methods || {};
     const COLS = [
@@ -6056,6 +6058,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
       });
     }
     doc.save(`Sales-Summary_${sssRange.start}_to_${sssRange.end}.pdf`);
+    })(summary, rows);
   };
 
   // ── Sales Line Items (item-level detail) ─────────────────────────────────────
