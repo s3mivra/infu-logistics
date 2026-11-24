@@ -307,7 +307,7 @@ export default function AuditTab({ ctx }) {
                 <input type="text" value={auditLogFilters.actor} onChange={e => setAuditLogFilters(f => ({ ...f, actor: e.target.value }))}
                   placeholder="Filter by user" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60 w-32" />
                 <input type="text" value={auditLogFilters.action} onChange={e => setAuditLogFilters(f => ({ ...f, action: e.target.value }))}
-                  placeholder="Filter by action" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60 w-36" />
+                  placeholder="Search action, BILL, ORD…" className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60 w-36" />
                 <RangePresets value={auditLogFilters} onChange={r => setAuditLogFilters(f => ({ ...f, ...r }))} onRun={() => fetchAuditLogs(1)} />
                 <input type="date" value={auditLogFilters.start} onChange={e => setAuditLogFilters(f => ({ ...f, start: e.target.value }))}
                   className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-fg focus:outline-none focus:border-brand/60" />
@@ -376,7 +376,7 @@ export default function AuditTab({ ctx }) {
                                 {new Date(log.timestamp).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} {new Date(log.timestamp).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
                               </td>
                               <td className={`px-5 py-2.5 font-black uppercase tracking-wider text-[10px] ${actionColor}`}>{log.action.replace(/_/g,' ')}</td>
-                              <td className="px-5 py-2.5 font-mono text-fg/65">{log.targetReference}</td>
+                              <td className="px-5 py-2.5 font-mono text-fg/65">{log.details?.after?.billNumber || log.details?.after?.orderNumber || log.targetReference}</td>
                               <td className="px-5 py-2.5 text-fg/70 font-bold">{log.userId || '-'}</td>
                               <td className="px-5 py-2.5 text-fg/70 truncate max-w-[180px]">{detail}</td>
                             </tr>

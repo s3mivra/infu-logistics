@@ -224,7 +224,7 @@ app.get('/api/audit-logs', verifyToken, ...canViewAudit, async (req, res) => {
     const pageSize = Math.min(100, parseInt(lim) || 30);
 
     const filter = {};
-    if (action && action !== 'all') filter.action = String(action);
+    if (action && action !== 'all') { const rx = { $regex: escapeRegex(String(action).trim()), $options: 'i' }; filter.$or = [{ action: rx }, { targetReference: rx }, { 'details.after.billNumber': rx }, { 'details.after.orderNumber': rx }]; }
     if (actor)  filter.userId = String(actor);
     if (start || end) {
       filter.timestamp = {};
@@ -252,7 +252,7 @@ app.get('/api/audit-logs/export', verifyToken, ...canViewAudit, async (req, res)
   if (!range.ok) return res.status(400).json({ success: false, error: range.error });
 
   const filter = { timestamp: { $gte: range.startDate, $lte: range.endDate } };
-  if (action && action !== 'all') filter.action = String(action);
+  if (action && action !== 'all') { const rx = { $regex: escapeRegex(String(action).trim()), $options: 'i' }; filter.$or = [{ action: rx }, { targetReference: rx }, { 'details.after.billNumber': rx }, { 'details.after.orderNumber': rx }]; }
   if (actor) filter.userId = String(actor);
 
   // Formula-safe (lib/csv.js): an anonymous failed sign-in could plant
