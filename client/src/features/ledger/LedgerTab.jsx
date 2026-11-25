@@ -100,7 +100,7 @@ export default function LedgerTab({ ctx }) {
     currentEntries,
     exportLedgerToPDF, fetchArOutstanding,
     fetchBalanceSheet, fetchERPData, fetchExpenseCategories, setBulkOpInProgress,
-    exportRevolvingFundsPDF,
+    exportRevolvingFundsPDF, exportFundPDF,
     fetchPnl, fetchRfFunds, fetchRfTxs, 
     isSuperAdmin, 
     jeForm, jeDraft, ledgerSubTab, 
@@ -3018,7 +3018,7 @@ It posts only what is not already accrued for that month.`)) return;
           )}
 
           <RevolvingFundTab
-            ledgerSubTab={ledgerSubTab} exportRevolvingFundsPDF={exportRevolvingFundsPDF} setRfNewModal={setRfNewModal} rfLoading={rfLoading} rfFunds={rfFunds} rfActiveFund={rfActiveFund}
+            ledgerSubTab={ledgerSubTab} exportRevolvingFundsPDF={exportRevolvingFundsPDF} exportFundPDF={exportFundPDF} setRfNewModal={setRfNewModal} rfLoading={rfLoading} rfFunds={rfFunds} rfActiveFund={rfActiveFund}
             closeRfFund={closeRfFund} setRfActiveFund={setRfActiveFund} setRfDisbForm={setRfDisbForm} setRfDisbModal={setRfDisbModal} setRfReplForm={setRfReplForm} setRfReplModal={setRfReplModal}
             setRfTxs={setRfTxs} fetchRfTxs={fetchRfTxs} rfTxTotal={rfTxTotal} rfTxs={rfTxs} rfTxPage={rfTxPage} rfTxPages={rfTxPages}
             apiFetch={apiFetch} fetchRfFunds={fetchRfFunds} />

@@ -1,12 +1,12 @@
 import LoadingRows from '../../shared/LoadingRows';
-import { X, FileText, Plus, RefreshCw, Minus } from 'lucide-react';
+import { X, FileText, Plus, RefreshCw, Minus, Download } from 'lucide-react';
 import RevolvingFundLiquidation from './RevolvingFundLiquidation';
 
 import PagedRows from '../../shared/PagedRows';
 // Revolving funds: release, spend and replenish.
 // Moved out of LedgerTab.jsx as it was; it reads everything it needs from its props.
 export default function RevolvingFundTab({
-  ledgerSubTab, exportRevolvingFundsPDF, setRfNewModal, rfLoading, rfFunds, rfActiveFund, closeRfFund, setRfActiveFund,
+  ledgerSubTab, exportRevolvingFundsPDF, exportFundPDF, setRfNewModal, rfLoading, rfFunds, rfActiveFund, closeRfFund, setRfActiveFund,
   setRfDisbForm, setRfDisbModal, setRfReplForm, setRfReplModal, setRfTxs, fetchRfTxs, rfTxTotal, rfTxs,
   rfTxPage, rfTxPages, apiFetch, fetchRfFunds,
 }) {
@@ -120,6 +120,12 @@ export default function RevolvingFundTab({
                       <FileText size={11} className="inline mr-1"/>{isActive ? 'Hide' : 'History'}
                     </button>
                   </div>
+                  {exportFundPDF && (
+                    <button type="button" onClick={() => exportFundPDF(fund)}
+                      className="mt-2 w-full rounded-xl py-2 font-bold text-[10px] uppercase tracking-wider transition min-h-[40px] border bg-white/5 text-fg/70 border-white/10 hover:bg-white/10 hover:text-fg">
+                      <Download size={11} className="inline mr-1"/>Download report (PDF)
+                    </button>
+                  )}
                 </div>
               );
             })}

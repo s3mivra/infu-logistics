@@ -361,6 +361,93 @@ export default function makeReportExports(deps) {
     doc.save(`Revolving-Funds-${todayStr()}.pdf`);
   };
 
+  // One fund's report: a summary on top, then every transaction (oldest first).
+  const exportFundPDF = async (fund) => {
+    if (!fund?._id) return;
+    const all = [];
+    for (let page = 1; page <= 200; page++) {
+      const d = await (await apiFetch(`/api/revolving-funds/${fund._id}/transactions?page=${page}&limit=50`)).json();
+      if (!d.success) return ui.alert(d.error || 'Could not load the fund\'s transactions.');
+      all.push(...(d.txs || []));
+      if (page >= (d.pages || 1)) break;
+    }
+    const txs = all.sort((a, b) => new Date(a.date) - new Date(b.date));
+    const sum = (f) => txs.filter(f).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+    const isOut = (t) => t.type === 'disbursement';
+    const live = (t) => t.validation?.status !== 'Rejected';
+    const totalOut = sum(t => isOut(t) && live(t));
+    const totalIn = sum(t => t.type === 'replenishment');
+    const pending = txs.filter(t => isOut(t) && t.validation?.status === 'Unvalidated');
+    const rejected = txs.filter(t => isOut(t) && t.validation?.status === 'Rejected');
+    const byAcct = {};
+    for (const t of txs) if (isOut(t) && live(t)) byAcct[t.categoryCode || '-'] = (byAcct[t.categoryCode || '-'] || 0) + (Number(t.amount) || 0);
+    const pct = fund.initialAmount > 0 ? (fund.currentBalance / fund.initialAmount) * 100 : 0;
+    const first = txs[0]?.date, last = txs[txs.length - 1]?.date;
+
+    const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
+    await addLogoToPDF(doc);
+    doc.setFontSize(16); doc.text(BIZ_NAME, 105, 15, { align: 'center' });
+    doc.setFontSize(11); doc.text(`REVOLVING FUND REPORT - ${String(fund.name || '').toUpperCase()}`, 105, 22, { align: 'center', maxWidth: 180 });
+    doc.setFontSize(8.5); doc.setTextColor(110);
+    doc.text(`${fund.description ? `${fund.description}  ·  ` : ''}${first ? `${formatDate(first)} to ${formatDate(last)}  ·  ` : ''}Printed ${formatDateTime(new Date())}`, 105, 28, { align: 'center', maxWidth: 180 });
+    doc.setTextColor(0);
+
+    // ── Summary
+    doc.setFontSize(11); doc.setFont(undefined, 'bold'); doc.text('Summary', 14, 37); doc.setFont(undefined, 'normal');
+    autoTable(doc, {
+      startY: 40, theme: 'plain', styles: { fontSize: 9, cellPadding: 1.6 }, columnStyles: { 0: { cellWidth: 70, textColor: 90 }, 1: { halign: 'right', fontStyle: 'bold' } },
+      body: [
+        ['Initial amount', pdfMoney(fund.initialAmount)],
+        ['Total spent (out)', pdfMoney(totalOut)],
+        ['Total replenished (in)', pdfMoney(totalIn)],
+        ['Current balance', `${pdfMoney(fund.currentBalance)}  (${pct.toFixed(0)}% remaining)`],
+        ['To replenish to full', pdfMoney(Math.max(0, fund.initialAmount - fund.currentBalance))],
+        ['Transactions', `${txs.length}  (${txs.filter(isOut).length} out, ${txs.filter(t => t.type === 'replenishment').length} in)`],
+        ['Receipts not yet validated', pending.length ? `${pending.length}  ·  ${pdfMoney(sum(t => pending.includes(t)))}` : 'None'],
+        ...(rejected.length ? [['Rejected spends (owed back)', `${rejected.length}  ·  ${pdfMoney(sum(t => rejected.includes(t)))}`]] : []),
+        ['Status', fund.isActive === false ? 'Closed' : 'Active'],
+      ],
+      margin: { left: 14, right: 14 },
+    });
+    if (Object.keys(byAcct).length) {
+      autoTable(doc, {
+        startY: (doc.lastAutoTable?.finalY || 40) + 4,
+        head: [['Spent by account', 'Amount', 'Share']],
+        body: Object.entries(byAcct).sort((a, b) => b[1] - a[1]).map(([code, amt]) => [code, pdfMoney(amt), totalOut ? `${((amt / totalOut) * 100).toFixed(1)}%` : '-']),
+        foot: [['Total', pdfMoney(totalOut), '100%']],
+        styles: { fontSize: 8.5 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], textColor: 255 },
+        columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } }, margin: { left: 14, right: 14 },
+      });
+    }
+
+    // ── Detail
+    let y = (doc.lastAutoTable?.finalY || 60) + 10;
+    if (y > doc.internal.pageSize.getHeight() - 30) { doc.addPage(); y = 18; }
+    doc.setFontSize(11); doc.setFont(undefined, 'bold'); doc.text('Transactions', 14, y); doc.setFont(undefined, 'normal');
+    autoTable(doc, {
+      startY: y + 3,
+      head: [['Date', 'Type', 'Description', 'Payee / Ref', 'By', 'Receipt', 'Out', 'In', 'Balance']],
+      body: txs.length ? txs.map(t => [
+        formatDate(t.date),
+        isOut(t) ? 'Out' : t.type === 'replenishment' ? 'In' : 'Adj.',
+        t.description || '',
+        [t.payee, t.refNo].filter(Boolean).join(' · ') || '-',
+        t.performedBy || '-',
+        isOut(t) ? (t.validation?.status || 'Validated') : '',
+        isOut(t) ? pdfMoney(t.amount) : '',
+        isOut(t) ? '' : pdfMoney(t.amount),
+        pdfMoney(t.balanceAfter ?? 0),
+      ]) : [[{ content: 'No transactions yet.', colSpan: 9 }]],
+      foot: [['', '', '', '', '', 'Totals', pdfMoney(totalOut), pdfMoney(totalIn), pdfMoney(fund.currentBalance)]],
+      styles: { fontSize: 7.5, cellPadding: 1.5 }, headStyles: { fillColor: [30, 30, 30] }, footStyles: { fillColor: [70, 70, 70], textColor: 255 },
+      columnStyles: { 2: { cellWidth: 42 }, 6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' } },
+      margin: { left: 10, right: 10 },
+    });
+    const pages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pages; i++) { doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(130); doc.text(`Page ${i} of ${pages}`, 200, 290, { align: 'right' }); }
+    doc.save(`Revolving-Fund_${String(fund.name || 'fund').replace(/[^A-Za-z0-9-]+/g, '-')}_${todayStr()}.pdf`);
+  };
+
   const exportPricingMasterlistPDF = async () => {
     if (!products || products.length === 0) return ui.alert('No products to export.');
     const { jsPDF, autoTable } = await loadPdfLibs(); const doc = new jsPDF();
@@ -403,6 +490,6 @@ export default function makeReportExports(deps) {
   return {
     exportArPDF, exportApPDF, exportPaymentsPDF, exportProfitByCategoryPDF, exportMenuEngineeringPDF, exportVariancePDF, exportCommissionsPDF, exportBillsPDF,
     exportAuditLogPDF, exportExpensesPDF, exportStockTransfersPDF, exportProductionHistoryPDF, exportProductionOrdersPDF, exportMenuItemsPDF, exportRevolvingFundsPDF, exportPricingMasterlistPDF,
-    exportPriceTiersPDF,
+    exportPriceTiersPDF, exportFundPDF,
   };
 }

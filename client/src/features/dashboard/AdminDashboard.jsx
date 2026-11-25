@@ -6692,7 +6692,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
   const {
     exportArPDF, exportApPDF, exportPaymentsPDF, exportProfitByCategoryPDF, exportMenuEngineeringPDF, exportVariancePDF, exportCommissionsPDF, exportBillsPDF,
     exportAuditLogPDF, exportExpensesPDF, exportStockTransfersPDF, exportProductionHistoryPDF, exportProductionOrdersPDF, exportMenuItemsPDF, exportRevolvingFundsPDF, exportPricingMasterlistPDF,
-    exportPriceTiersPDF,
+    exportPriceTiersPDF, exportFundPDF,
   } = makeReportExports({
     arOutstanding, loadPdfLibs, addLogoToPDF, BIZ_NAME, pdfMoney, arAgeing, apData, salesByPayment,
     sbpRange, profitByCategory, menuEngineering, cashierVariance, commissions, bills, billsFilter, auditLogEntries,
@@ -7449,7 +7449,7 @@ ${rsPreview.counts.drinksNeedingReview} drink(s) flagged for review are SKIPPED.
     exportArPDF, exportApPDF, exportPaymentsPDF,
     exportProfitByCategoryPDF, exportMenuEngineeringPDF, exportVariancePDF, exportCommissionsPDF,
     exportBillsPDF, exportAuditLogPDF, exportExpensesPDF,
-    exportStockTransfersPDF, exportProductionHistoryPDF, exportProductionOrdersPDF, exportMenuItemsPDF, exportRevolvingFundsPDF,
+    exportStockTransfersPDF, exportProductionHistoryPDF, exportProductionOrdersPDF, exportMenuItemsPDF, exportRevolvingFundsPDF, exportFundPDF,
     exportPricingMasterlistPDF, exportPriceTiersPDF, exportShiftHistoryPDF, exportTimesheetsPDF,
     exportPriceTiersExcel, priceTierImportPreview, setPriceTierImportPreview, parsePriceTierExcel, submitPriceTierImport, priceTierImporting,
     exportInventoryToPDF, exportLedgerToPDF, exportAllToPDF,
