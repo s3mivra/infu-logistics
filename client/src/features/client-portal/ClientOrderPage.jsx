@@ -601,15 +601,16 @@ export default function ClientOrderPage() {
     if (!editDraft || editDraft.orderId !== order._id) return;
     const changes = (order.items || []).map((it, index) => ({ index, quantity: Number(editDraft.qty[index]) || 0 }))
       .filter(c => c.quantity !== Number(order.items[c.index].quantity));
-    if (!changes.length) { setEditDraft(null); return; }
-    if (changes.every(c => c.quantity === 0) && changes.length === order.items.length) {
+    const adds = (editDraft.adds || []).filter(a => Number(a.quantity) > 0).map(a => ({ productId: a.productId, quantity: Number(a.quantity) }));
+    if (!changes.length && !adds.length) { setEditDraft(null); return; }
+    if (!adds.length && changes.every(c => c.quantity === 0) && changes.length === order.items.length) {
       return ui.alert('An order needs at least one item. Cancel the order instead.');
     }
     setEditSaving(true);
     try {
       const res = await fetch(`${API_URL}/api/client/orders/${order._id}/edit`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ changes }),
+        body: JSON.stringify({ changes, adds }),
       });
       const data = await res.json();
       if (data.success) { setEditDraft(null); setSlipOrder(data.order); fetchMyOrders(); ui.toast?.('Your order was updated. We have been told.', { tone: 'success' }); }
@@ -1292,7 +1293,7 @@ export default function ClientOrderPage() {
               )}
               {slipOrder.status === 'Reserved' && unpaid(slipOrder) && (editDraft?.orderId === slipOrder._id ? (
                 <div className="rounded-xl border border-white/10 p-3 space-y-2">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-fg/70">Change quantities</p>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-fg/70">Change your order</p>
                   {(slipOrder.items || []).map((it, i) => (
                     <div key={i} className="flex items-center justify-between gap-2 text-xs">
                       <span className={`flex-1 min-w-0 truncate ${Number(editDraft.qty[i]) === 0 ? 'line-through text-fg/50' : 'text-fg'}`}>{it.name}</span>
@@ -1305,6 +1306,33 @@ export default function ClientOrderPage() {
                       </div>
                     </div>
                   ))}
+                  {(editDraft.adds || []).map((a, k) => (
+                    <div key={`add-${k}`} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="flex-1 min-w-0 truncate text-brand-text">+ {a.name}</span>
+                      <div className="flex items-center gap-1">
+                        <button type="button" aria-label={`Less ${a.name}`} onClick={() => setEditDraft(d => ({ ...d, adds: d.adds.map((x, j) => (j === k ? { ...x, quantity: Math.max(0, x.quantity - 1) } : x)).filter(x => x.quantity > 0) }))}
+                          className="w-7 h-7 rounded-lg bg-white/10 text-fg font-black">−</button>
+                        <span className="w-8 text-center font-mono font-bold tabular-nums">{a.quantity}</span>
+                        <button type="button" aria-label={`More ${a.name}`} onClick={() => setEditDraft(d => ({ ...d, adds: d.adds.map((x, j) => (j === k ? { ...x, quantity: x.quantity + 1 } : x)) }))}
+                          className="w-7 h-7 rounded-lg bg-white/10 text-fg font-black">+</button>
+                      </div>
+                    </div>
+                  ))}
+                  {(() => {
+                    // Products that can be added here: available, and needing no size or option picked.
+                    const onOrder = new Set([...(slipOrder.items || []).map(it => String(it.productId)), ...(editDraft.adds || []).map(a => a.productId)]);
+                    const addable = products.filter(p => p.isAvailable !== false && p.stockAvailable !== false && !(p.modifierGroups || []).length && !onOrder.has(String(p._id)));
+                    if (!addable.length) return null;
+                    return (
+                      <select value="" aria-label="Add a product" onChange={e => {
+                        const p = addable.find(x => String(x._id) === e.target.value);
+                        if (p) setEditDraft(d => ({ ...d, adds: [...(d.adds || []), { productId: String(p._id), name: p.name, quantity: 1 }] }));
+                      }} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-2 text-xs text-fg font-bold outline-none focus:border-brand/60">
+                        <option value="">+ Add a product…</option>
+                        {addable.map(p => <option key={p._id} value={String(p._id)}>{p.name} · {peso(Number(p.basePrice) || 0)}</option>)}
+                      </select>
+                    );
+                  })()}
                   <p className="text-[10.5px] text-fg/60">Set a line to 0 to remove it. Prices follow your current price; we check stock when you save.</p>
                   <div className="flex gap-2">
                     <button type="button" disabled={editSaving} onClick={() => saveEdit(slipOrder)}
@@ -1313,7 +1341,7 @@ export default function ClientOrderPage() {
                   </div>
                 </div>
               ) : (
-                <button type="button" onClick={() => setEditDraft({ orderId: slipOrder._id, qty: (slipOrder.items || []).map(it => Number(it.quantity) || 0) })}
+                <button type="button" onClick={() => setEditDraft({ orderId: slipOrder._id, qty: (slipOrder.items || []).map(it => Number(it.quantity) || 0), adds: [] })}
                   className="w-full border border-brand/40 text-brand-text hover:bg-brand/10 transition rounded-xl px-3 py-2.5 text-[11px] font-black uppercase tracking-wider">
                   Change order
                 </button>

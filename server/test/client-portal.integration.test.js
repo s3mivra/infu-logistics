@@ -191,6 +191,16 @@ describe('client portal: a client changes their own reserved order', () => {
     expect(r2.status).toBe(409);
   });
 
+  it('adds a product, priced from the catalogue', async () => {
+    const id = await reserve(1);
+    const crate = await mongoose.model('Product').create({ name: 'Crate', category: 'Freight', basePrice: 40 });
+    const res = await post(`/api/client/orders/${id}/edit`, clientATok, { adds: [{ productId: String(crate._id), quantity: 2 }] });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const o = await mongoose.model('Order').findById(id).lean();
+    expect(o.items.find(i => i.name.toUpperCase() === 'CRATE')).toMatchObject({ quantity: 2, price: 40 });
+    expect(o.total).toBe(180);
+  });
+
   it('another client cannot change it', async () => {
     const id = await reserve(1);
     const r = await post(`/api/client/orders/${id}/edit`, clientBTok, { changes: [{ index: 0, quantity: 3 }] });
