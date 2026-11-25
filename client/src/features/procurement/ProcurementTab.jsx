@@ -13,6 +13,12 @@ import { buildBillingDocHTML, printBillingDoc } from '../../shared/billingDocume
 import { dateStr, monthStartStr, todayStr } from '../../shared/businessDay.js';
 import SearchSelect from '../../shared/ui/SearchSelect';
 import { useRefreshTick } from '../../shared/refreshBus';
+// A PO line's discounts. unitCost is the net cost paid; listUnitCost (when a
+// discount was given) is the price before it.
+const listOf = (l) => (l.listUnitCost != null ? Number(l.listUnitCost) : Number(l.unitCost)) || 0;
+const pctOf = (l) => Number(l.discountPercent) || 0;
+const afterLineDisc = (l, qty) => qty * listOf(l) * (1 - pctOf(l) / 100);
+
 // ── ProcurementTab - Purchase Order workflow ──────────────────────────────────
 // Two-stage tracking. LEFT tab ("Purchase Orders") drafts & tracks planned POs
 // through Ordered → Processing. RIGHT tab ("Receiving") reconciles a delivery by
@@ -52,14 +58,16 @@ export default function ProcurementTab({ ctx }) {
   const printPurchaseOrder = (po) => {
     const items = (po.lines || []).map(l => ({
       code: l.itemCode || '',
-      desc: l.itemName + (l.unit ? ` (${l.unit})` : ''),
+      desc: l.itemName + (l.unit ? ` (${l.unit})` : '') + (pctOf(l) ? ` - less ${pctOf(l)}%` : ''),
       qty: l.orderedQty,
-      unitPrice: Number(l.unitCost) || 0,
-      total: (Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0),
+      unitPrice: listOf(l),
+      total: afterLineDisc(l, Number(l.orderedQty) || 0),
     }));
-    const total = po.estTotal != null
-      ? po.estTotal
-      : items.reduce((s, l) => s + l.total, 0);
+    const gross = (po.lines || []).reduce((s, l) => s + (Number(l.orderedQty) || 0) * listOf(l), 0);
+    const afterLines = items.reduce((s, l) => s + l.total, 0);
+    const total = po.estTotal != null ? po.estTotal : afterLines - (Number(po.orderDiscount) || 0);
+    const lineDisc = gross - afterLines;
+    const orderDisc = Number(po.orderDiscount) || 0;
 
     const schedRows = [
       po.expectedDate ? { label: 'Expected Delivery:', value: fmtDate(po.expectedDate) } : null,
@@ -78,7 +86,12 @@ export default function ProcurementTab({ ctx }) {
       ],
       schedRows,
       items,
-      totals: [{ label: 'ESTIMATED TOTAL', value: total, grand: true }],
+      totals: [
+        ...(lineDisc > 0.004 || orderDisc > 0.004 ? [{ label: 'Gross', value: gross }] : []),
+        ...(lineDisc > 0.004 ? [{ label: 'Less line discounts', value: -lineDisc }] : []),
+        ...(orderDisc > 0.004 ? [{ label: 'Less order discount', value: -orderDisc }] : []),
+        { label: 'ESTIMATED TOTAL', value: total, grand: true },
+      ],
       // A PO to a supplier isn't a billed sale - swap the sales T&C for
       // procurement-appropriate terms and signatory roles.
       termsTitle: 'Purchase Terms',
@@ -2145,7 +2158,7 @@ export default function ProcurementTab({ ctx }) {
                       {p.lines.map((l, li) => (
                         <div key={li} className="flex items-center justify-between text-xs text-fg/65">
                           <span className="truncate pr-2">{l.itemCode ? `${l.itemCode} · ` : ''}{l.itemName}</span>
-                          <span className="whitespace-nowrap font-mono">{l.orderedQty} {l.unit} × {money(l.unitCost)}</span>
+                          <span className="whitespace-nowrap font-mono">{l.orderedQty} {l.unit} × {pctOf(l) ? <><span className="line-through text-fg/45">{money(listOf(l))}</span> {money(listOf(l) * (1 - pctOf(l) / 100))} <span className="text-success">−{pctOf(l)}%</span></> : money(listOf(l))}</span>
                         </div>
                       ))}
                     </div>
@@ -2222,6 +2235,7 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
                         <th className="pb-1.5 text-right">Ordered</th>
                         {showReceived && <th className="pb-1.5 text-right">Received</th>}
                         <th className="pb-1.5 text-right">Unit Cost</th>
+                        <th className="pb-1.5 text-right">Disc.</th>
                         <th className="pb-1.5 text-right">Total</th>
                       </tr>
                     </thead>
@@ -2233,12 +2247,29 @@ function PoSection({ title, pos, empty, money, renderActions, showReceived }) {
                             <td className="py-1.5 font-bold text-white">{l.itemName}</td>
                             <td className="py-1.5 text-white text-right">{l.orderedQty} {l.unit}</td>
                             {showReceived && <td className={`py-1.5 text-right font-bold ${short ? 'text-danger' : 'text-success'}`}>{l.receivedQty ?? '-'} {l.unit}</td>}
-                            <td className="py-1.5 text-white text-right">{money(l.unitCost)}</td>
-                            <td className="py-1.5 text-white text-right">{money((showReceived && l.receivedQty != null ? l.receivedQty : l.orderedQty) * l.unitCost)}</td>
+                            <td className="py-1.5 text-white text-right">{money(listOf(l))}</td>
+                            <td className="py-1.5 text-right text-success">{pctOf(l) ? `${pctOf(l)}%` : '-'}</td>
+                            <td className="py-1.5 text-white text-right">{money(afterLineDisc(l, showReceived && l.receivedQty != null ? l.receivedQty : l.orderedQty))}</td>
                           </tr>
                         );
                       })}
                     </tbody>
+                    {(() => {
+                      const qtyOf = (l) => (showReceived && l.receivedQty != null ? l.receivedQty : l.orderedQty) || 0;
+                      const gross = po.lines.reduce((s, l) => s + qtyOf(l) * listOf(l), 0);
+                      const afterLines = po.lines.reduce((s, l) => s + afterLineDisc(l, qtyOf(l)), 0);
+                      const net = po.lines.reduce((s, l) => s + qtyOf(l) * (Number(l.unitCost) || 0), 0);
+                      if (gross - net < 0.005) return null;
+                      const span = showReceived ? 5 : 4;
+                      return (
+                        <tfoot className="text-white text-xs">
+                          <tr className="border-t border-white"><td className="pt-1.5" colSpan={span}>Gross</td><td className="pt-1.5 text-right">{money(gross)}</td></tr>
+                          {gross - afterLines > 0.004 && <tr><td colSpan={span}>Less line discounts</td><td className="text-right text-success">−{money(gross - afterLines)}</td></tr>}
+                          {afterLines - net > 0.004 && <tr><td colSpan={span}>Less order discount</td><td className="text-right text-success">−{money(afterLines - net)}</td></tr>}
+                          <tr className="font-black"><td colSpan={span}>Net</td><td className="text-right">{money(net)}</td></tr>
+                        </tfoot>
+                      );
+                    })()}
                   </table>
                   {po.notes && <p className="text-white text-xs mt-2 pt-2 border-t border-white/5"><span className="font-black uppercase tracking-wider text-[10px] text-fg/65">Notes: </span>{po.notes}</p>}
                   {po.receivedBy && <p className="text-white text-[11px] mt-1.5 font-bold">Received by {po.receivedBy}</p>}
