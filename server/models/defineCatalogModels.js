@@ -446,6 +446,9 @@ export default function defineCatalogModels({ BUSINESS_TYPE }) {
     cancelledBy: { type: String, default: '' },
     // true when the client cancelled it themselves from the portal.
     cancelledByClient: { type: Boolean, default: false },
+    // The client last changed this (reserved) order from the portal.
+    editedByClientAt: { type: Date },
+    editedByClientName: { type: String, default: '' },
     cancelledAt: { type: Date },
     // Audit trail of partial refunds (see POST /api/orders/:id/partial-refund) -
     // not everything has to be refunded at once, and it can happen more than once

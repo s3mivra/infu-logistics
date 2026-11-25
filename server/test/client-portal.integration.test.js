@@ -158,3 +158,49 @@ describe('client portal: a client buys from the portal', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('client portal: a client changes their own reserved order', () => {
+  const reserve = async (qty = 2) => {
+    const placed = await post('/api/orders', clientATok, orderBody(qty));
+    const id = placed.body.order._id;
+    const r = await request(app).put(`/api/orders/${id}`).set('Authorization', `Bearer ${superTok}`).send({ status: 'Reserved' });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    return id;
+  };
+
+  it('changes the quantity, re-priced, marked as edited by the client and audited', async () => {
+    const id = await reserve(2);
+    const res = await post(`/api/client/orders/${id}/edit`, clientATok, { changes: [{ index: 0, quantity: 5, price: 1 }] });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const o = await mongoose.model('Order').findById(id).lean();
+    expect(o.items[0].quantity).toBe(5);
+    expect(o.items[0].price).toBe(100); // the client cannot set a price
+    expect(o.total).toBe(500);
+    expect(o.editedByClientAt).toBeTruthy();
+    expect(await mongoose.model('AuditLog').exists({ action: 'Order_CLIENT_EDIT', targetReference: String(id) })).toBeTruthy();
+  });
+
+  it('refuses once the order is paid, or is not reserved', async () => {
+    const id = await reserve(1);
+    await mongoose.model('Order').updateOne({ _id: id }, { $set: { amountPaid: 10 } });
+    const r1 = await post(`/api/client/orders/${id}/edit`, clientATok, { changes: [{ index: 0, quantity: 3 }] });
+    expect(r1.status).toBe(409);
+    expect(r1.body.error).toMatch(/contact us/i);
+    const pending = (await post('/api/orders', clientATok, orderBody(1))).body.order._id;
+    const r2 = await post(`/api/client/orders/${pending}/edit`, clientATok, { changes: [{ index: 0, quantity: 3 }] });
+    expect(r2.status).toBe(409);
+  });
+
+  it('another client cannot change it', async () => {
+    const id = await reserve(1);
+    const r = await post(`/api/client/orders/${id}/edit`, clientBTok, { changes: [{ index: 0, quantity: 3 }] });
+    expect(r.status).toBe(404);
+  });
+
+  it('a client can cancel an unpaid reserved order', async () => {
+    const id = await reserve(1);
+    const r = await post(`/api/client/orders/${id}/cancel`, clientATok);
+    expect(r.status).toBe(200);
+    expect(await mongoose.model('Order').findById(id).lean()).toMatchObject({ status: 'Cancelled', cancelledByClient: true });
+  });
+});

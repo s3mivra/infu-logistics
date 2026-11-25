@@ -1711,9 +1711,23 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
       return res.status(409).json({ success: false, error: 'Part of this order was already fulfilled. Use Drop Remaining for the undelivered units.' });
     }
     if ((order.payments || []).length > 0) return res.status(409).json({ success: false, error: 'This order already has split payments recorded. Cancel it and place a corrected order.' });
+    return await amendOrderCore(req, res, order);
+  } catch (err) {
+    console.error('POST /api/orders/:id/amend failed', err);
+    captureError(req, err);
+    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
+  }
+});
 
-    const reason = String(req.body?.reason || '').trim().slice(0, 300);
+// The amendment itself, shared by staff (above) and a client changing their
+// own reserved order from the portal (client-portal.js). For a client:
+// prices are never set by hand, no credit override, and every line is checked
+// against free stock.
+async function amendOrderCore(req, res, order, { byClient = false } = {}) {
+  {
+    const reason = byClient ? 'Changed by the client' : String(req.body?.reason || '').trim().slice(0, 300);
     if (!reason) return res.status(400).json({ success: false, error: 'A reason is required to amend an order.' });
+    if (byClient) for (const ch of (Array.isArray(req.body?.changes) ? req.body.changes : [])) { if (ch) { delete ch.price; delete ch.discountPercent; } }
 
     const changes = Array.isArray(req.body?.changes) ? req.body.changes : [];
     const wholeUnits = BUSINESS_TYPE === 'log';
@@ -1844,12 +1858,32 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
     const math = validateOrderMath(order);
     if (!math.valid) return res.status(400).json({ success: false, error: `SYSTEM AUDIT REJECTED: ${math.error}` });
 
+    // A client's change must fit the stock that is free now.
+    if (byClient) {
+      const need = new Map(); // invId -> { inv, qty }
+      for (const it of order.items) {
+        if (!it.productId || !mongoose.Types.ObjectId.isValid(String(it.productId))) continue;
+        const product = await Product.findById(it.productId).lean();
+        if (!product) continue;
+        const inv = await resolveLinkedInventory(product, it.productCode);
+        if (!inv) continue;
+        const k = String(inv._id);
+        const cur = need.get(k) || { inv, qty: 0, name: it.name };
+        cur.qty += Number(it.quantity) * baseUnitsPerSale(product, inv);
+        need.set(k, cur);
+      }
+      for (const { inv, qty, name } of need.values()) {
+        const free = (Number(inv.stockQty) || 0) - (Number(inv.reservedQty) || 0);
+        if (qty > free + 1e-6) return res.status(409).json({ success: false, error: `Not enough stock for ${name}. Lower the quantity or contact us.` });
+      }
+    }
+
     // Growing an on-account order spends more credit - the same gate as creation.
     const totalAfter = Number(order.total) || 0;
     if (totalAfter > totalBefore + 0.005 && buyerClientId && order.paymentMethod !== 'Cash' && !order.isComplimentary) {
       const refusal = await creditRefusal({ buyerClientId, excludeId: order._id, orderTotal: totalAfter });
       if (refusal) {
-        const override = creditOverrideFor(req, buyerClientId);
+        const override = byClient ? null : creditOverrideFor(req, buyerClientId);
         if (!override) return res.status(409).json({ success: false, error: refusal, needsCreditApproval: true, clientId: buyerClientId });
         order.creditOverride = creditOverrideRecord(override, { orderTotal: totalAfter });
       }
@@ -1859,25 +1893,30 @@ app.post('/api/orders/:id/amend', verifyToken, requireStaff, requirePermission('
     if (order.amountTendered) order.changeDue = Number(Math.max(0, order.amountTendered - totalAfter).toFixed(2));
 
     order.revision = (order.revision || 0) + 1;
-    order.amendments.push({ revision: order.revision, by: req.user?.name || '', reason, totalBefore, totalAfter, changes: changeLog,
+    const by = byClient ? (req.user?.name || order.customerName || 'Client') : (req.user?.name || '');
+    order.amendments.push({ revision: order.revision, by, reason, totalBefore, totalAfter, changes: changeLog,
       ...(priceApprovedBy ? { priceApprovedBy: priceApprovedBy.approverName || '' } : {}) });
+    if (byClient) { order.editedByClientAt = new Date(); order.editedByClientName = by; }
     await order.save();
 
     await logAudit(req, {
-      action: 'amend', entity: 'Order', entityId: order._id,
-      after: { orderNumber: order.orderNumber, revision: order.revision, reason, totalBefore, totalAfter, changes: changeLog },
+      action: byClient ? 'client_edit' : 'amend', entity: 'Order', entityId: order._id,
+      before: { orderNumber: order.orderNumber, total: totalBefore },
+      after: { orderNumber: order.orderNumber, revision: order.revision, reason, by, totalBefore, totalAfter, changes: changeLog },
     });
     emitToOps('orderUpdated', order.toObject());
-    res.json({
+    if (byClient) {
+      emitToMgr('mgrAlert', { kind: 'clientEdited', ref: order.orderNumber,
+        message: `${by} changed reserved order ${order.orderNumber}: ${changeLog.map(c => `${c.name} ${c.from}→${c.to}`).join(', ')}. Total ₱${totalAfter.toFixed(2)}.` });
+      emitToMgr('erpUpdated');
+    }
+    return res.json({
       success: true, order,
       ...(order.amountTendered && order.amountTendered < totalAfter ? { shortBy: Number((totalAfter - order.amountTendered).toFixed(2)) } : {}),
     });
-  } catch (err) {
-    console.error('POST /api/orders/:id/amend failed', err);
-    captureError(req, err);
-    res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message });
   }
-});
+}
+ctx.amendOrderCore = amendOrderCore;
 
 // Would this order put its client over their credit limit? -> an error message,
 // or null when it fits (or the client has no limit). Exposure is every other

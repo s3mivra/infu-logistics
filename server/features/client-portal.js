@@ -254,7 +254,9 @@ app.get('/api/client/orders', verifyClientToken, async (req, res) => {
     const orders = await Order.find(
       { clientId: String(clientId) },
       // orderNotes is the client's own text - it belongs on their order slip.
-      { orderNumber: 1, billingNumber: 1, orNumber: 1, status: 1, total: 1, items: 1, paymentMethod: 1, createdAt: 1, transactionType: 1, clientReceived: 1, orderNotes: 1, revision: 1, 'amendments.revision': 1, 'amendments.at': 1, 'amendments.reason': 1, 'amendments.changes': 1 }
+      { orderNumber: 1, billingNumber: 1, orNumber: 1, status: 1, total: 1, items: 1, paymentMethod: 1, createdAt: 1, transactionType: 1, clientReceived: 1, orderNotes: 1, revision: 1, 'amendments.revision': 1, 'amendments.at': 1, 'amendments.reason': 1, 'amendments.changes': 1,
+        // What the portal needs to show a reservation, who cancelled, and whether it is paid (paid locks editing).
+        reservedFor: 1, cancelledByClient: 1, editedByClientAt: 1, amountPaid: 1, 'payments.amount': 1, 'arPayments.amount': 1, 'reservationDeposits.amount': 1 }
     ).sort({ createdAt: -1 }).limit(30).lean();
     res.json({ success: true, orders });
   } catch (err) {
@@ -291,8 +293,8 @@ app.post('/api/client/orders/:id/cancel', verifyClientToken, async (req, res) =>
     if (!clientId || req.user?.role !== 'client') return res.status(403).json({ success: false, error: 'Client session required.' });
     const order = await Order.findOne({ _id: req.params.id, clientId: String(clientId) });
     if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
-    if (order.status !== 'Pending') {
-      return res.status(400).json({ success: false, error: 'Only a pending, unpaid order can be cancelled. Please contact us for changes.' });
+    if (!['Pending', 'Reserved'].includes(order.status)) {
+      return res.status(400).json({ success: false, error: 'Only a pending or reserved, unpaid order can be cancelled. Please contact us for changes.' });
     }
     // Paid on our side (in full or in part, or a deposit taken): the money has
     // to be refunded by us first, so the client cannot cancel it themselves.
@@ -301,6 +303,7 @@ app.post('/api/client/orders/:id/cancel', verifyClientToken, async (req, res) =>
     if (paid) {
       return res.status(400).json({ success: false, error: 'This order has been paid, so it cannot be cancelled here. Please contact us to arrange a refund.' });
     }
+    const wasReserved = order.status === 'Reserved';
     order.status = 'Cancelled';
     order.cancelledByClient = true;
     order.cancelledBy = req.user?.name || order.customerName || 'Client';
@@ -311,9 +314,38 @@ app.post('/api/client/orders/:id/cancel', verifyClientToken, async (req, res) =>
       const freed = await releaseCancelledOrderNumber(order._id);
       if (freed) order.orderNumber = freed.renamedTo;
     } catch (err) { captureError(req, err); }
+    // Any stock set aside for it goes back on the shelf.
+    try { if (ctx.releaseReservationsForOrder) await ctx.releaseReservationsForOrder(order._id, { by: order.cancelledBy }); } catch (err) { captureError(req, err); }
+    try { await logAudit(req, { action: 'client_cancel', entity: 'Order', entityId: order._id, before: { status: wasReserved ? 'Reserved' : 'Pending' }, after: { orderNumber: order.orderNumber, by: order.cancelledBy, total: order.total } }); } catch { /* best effort */ }
+    if (wasReserved) emitToMgr('mgrAlert', { kind: 'clientCancelled', ref: order.orderNumber, message: `${order.cancelledBy} cancelled reserved order ${order.orderNumber}.` });
     emitToOps('orderUpdated', order);
     emitToMgr('erpUpdated');
     res.json({ success: true, order });
+  } catch (err) {
+    (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
+  }
+});
+
+// Client changes their own RESERVED order: quantities (0 removes a line) and
+// added products, while nothing is paid. Body: { changes: [{ index, quantity }],
+// adds: [{ productId, quantity }] }. Re-priced at the client's current price,
+// checked against free stock, recorded as an amendment and in the audit log.
+app.post('/api/client/orders/:id/edit', verifyClientToken, async (req, res) => {
+  try {
+    const clientId = req.user?.clientId || req.user?._id;
+    if (!clientId || req.user?.role !== 'client') return res.status(403).json({ success: false, error: 'Client session required.' });
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, error: 'Order not found.' });
+    const order = await Order.findOne({ _id: req.params.id, clientId: String(clientId) });
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found.' });
+    const paid = (order.payments || []).some(p => Number(p.amount) > 0) || Number(order.amountPaid) > 0
+      || (order.arPayments || []).some(p => Number(p.amount) > 0) || (order.reservationDeposits || []).some(d => Number(d.amount) > 0);
+    if (order.status !== 'Reserved' || paid || order.isParked || (order.items || []).some(i => (i.fulfilledQty || 0) > 0)) {
+      return res.status(409).json({ success: false, error: 'Contact us to change this order.' });
+    }
+    const held = mongoose.modelNames().includes('Reservation') ? await mongoose.model('Reservation').countDocuments({ orderId: order._id, status: 'Open' }) : 0;
+    if (held) return res.status(409).json({ success: false, error: 'Stock is already set aside for this order. Contact us to change it.' });
+    if (!ctx.amendOrderCore) return res.status(503).json({ success: false, error: 'Editing is not available right now.' });
+    return await ctx.amendOrderCore(req, res, order, { byClient: true });
   } catch (err) {
     (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message }));
   }

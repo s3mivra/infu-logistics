@@ -23,7 +23,7 @@ const SEVERITY = {
 export const NOTIF_GROUPS = [
   { key: 'stock',    label: 'Stock levels',  kinds: ['below_zero', 'low_stock'] },
   { key: 'expiry',   label: 'Expiry',        kinds: ['expired', 'expiring'] },
-  { key: 'orders',   label: 'Orders',        kinds: ['parked_order'] },
+  { key: 'orders',   label: 'Orders',        kinds: ['parked_order', 'client_edited'] },
   { key: 'ar',       label: 'Receivables',   kinds: ['ar_overdue'] },
   { key: 'purchase', label: 'Purchasing',    kinds: ['po_short', 'po_overdue'] },
   { key: 'sheets',   label: 'Stock sheets',  kinds: ['sheet_changed', 'sheet_error'] },

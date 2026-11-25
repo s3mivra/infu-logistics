@@ -73,6 +73,10 @@ export default function registerNotifications(ctx) {
         catch { return false; }
       };
 
+      const clientEdits = may('orders.view')
+        ? await Order.find({ ...scope, editedByClientAt: { $gte: new Date(Date.now() - 3 * 86400000) }, status: 'Reserved' },
+            { orderNumber: 1, customerName: 1, total: 1, editedByClientAt: 1, editedByClientName: 1 }).lean()
+        : [];
       const [inventory, parkedOrders, arOrders, openPOs] = await Promise.all([
         may('inventory.view')
           ? Inventory.find(scope, { itemName: 1, stockQty: 1, lowStockThreshold: 1, unit: 1, displayUnit: 1, unitMultiplier: 1, packSize: 1, expiryDate: 1, expiryWarnDays: 1 }).lean()
@@ -153,6 +157,17 @@ export default function registerNotifications(ctx) {
             tab: 'inventory', focusId: String(i._id),
           });
         }
+      }
+
+      // ── Reserved orders the client changed from the portal ─────────────────
+      for (const o of clientEdits) {
+        items.push({
+          id: `cedit:${o._id}:${new Date(o.editedByClientAt).getTime()}`,
+          kind: 'client_edited', severity: WARN,
+          title: `Client changed order #${o.orderNumber}`,
+          detail: `${o.editedByClientName || o.customerName || 'Client'} · now ₱${(o.total || 0).toFixed(2)} · ${new Date(o.editedByClientAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
+          tab: 'orders', focusId: String(o._id),
+        });
       }
 
       // ── Parked / unfinished orders ─────────────────────────────────────────

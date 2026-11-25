@@ -1498,6 +1498,13 @@ export default function OrdersTab({ ctx }) {
                                 <span className="text-brand-text font-black text-sm whitespace-nowrap tabular-nums" title="Sent as a stock transfer">{order.transferRef}</span>
                                 <span className="text-[10px] font-bold uppercase tracking-wider text-fg/55">Stock transfer</span>
                               </span>
+                            ) : order.editedByClientAt && order.status !== 'Cancelled' ? (
+                              <span className="flex flex-col leading-tight">
+                                <span className="text-fg font-black text-sm whitespace-nowrap tabular-nums">{order.orderNumber}</span>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-warning" title="The client changed this order from the portal - check the items before preparing">
+                                  Edited by client · {new Date(order.editedByClientAt).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                                </span>
+                              </span>
                             ) : order.status === 'Cancelled' ? (
                               <span className="flex flex-col leading-tight">
                                 <span className="text-fg font-black text-sm whitespace-nowrap tabular-nums">{order.orderNumber}</span>

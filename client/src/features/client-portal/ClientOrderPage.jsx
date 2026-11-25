@@ -84,6 +84,11 @@ const peso = formatPeso;
 // The first step after ordering asks the client to send payment proof on FB.
 const STATUS_VIEW = (status, order) => {
   switch (status) {
+    case 'Reserved':
+      return { label: 'Reserved for you', tone: 'blue',
+        msg: order?.reservedFor
+          ? `We reserved this order for ${new Date(order.reservedFor).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}. You can still change it until it is paid.`
+          : 'We reserved this order for you. You can still change it until it is paid.' };
     case 'Pending':
       return { label: 'Sent to logistics', tone: 'amber',
         msg: 'Please send your payment proof so we can process your order.', needsProof: true };
@@ -120,7 +125,7 @@ const STATUS_VIEW = (status, order) => {
 // they render as a single terminal step instead of a half-filled timeline.
 const SLIP_STEPS = ['Ordered', 'Payment confirmed', 'Preparing', 'On the way', 'Completed'];
 const STEP_INDEX = {
-  Pending: 0,
+  Reserved: 0, Pending: 0,
   Preparing: 2, 'Partially Fulfilled': 2,
   'Out for Delivery': 3, 'Awaiting Pickup': 3,
   Delivered: 4, 'Picked Up': 4, Completed: 4,
@@ -131,7 +136,7 @@ const isTerminated = (s) => ['Cancelled', 'Voided', 'Refunded'].includes(s);
 // client actually cares about: still moving, partially done, cancelled, or done.
 const FILTER_BUCKETS = [
   { key: 'all',       label: 'All',                statuses: null },
-  { key: 'sent',      label: 'Sent',                statuses: ['Pending', 'Preparing', 'Out for Delivery', 'Awaiting Pickup'] },
+  { key: 'sent',      label: 'Sent',                statuses: ['Reserved', 'Pending', 'Preparing', 'Out for Delivery', 'Awaiting Pickup'] },
   { key: 'partial',   label: 'Partially Fulfilled', statuses: ['Partially Fulfilled'] },
   { key: 'complete',  label: 'Complete',            statuses: ['Completed', 'Delivered', 'Picked Up'] },
   { key: 'cancelled', label: 'Cancelled',           statuses: ['Cancelled', 'Voided', 'Refunded'] },
@@ -368,7 +373,10 @@ export default function ClientOrderPage() {
   const [queueOpen, setQueueOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);   // mobile hamburger menu
   const [orderFilter, setOrderFilter] = useState('all');
-  const [slipOrder, setSlipOrder] = useState(null);        // order shown in the PO-slip popup
+  const [slipOrder, setSlipOrder] = useState(null);
+  // Changing a reserved order: { orderId, qty: [per line] } while the editor is open.
+  const [editDraft, setEditDraft] = useState(null);
+  const [editSaving, setEditSaving] = useState(false);        // order shown in the PO-slip popup
   const [slipDownloading, setSlipDownloading] = useState(false);
   const [announcementOpen, setAnnouncementOpen] = useState(true);
 
@@ -588,7 +596,29 @@ export default function ClientOrderPage() {
     } catch { ui.alert('Network error.'); }
   }, [token, fetchMyOrders]);
 
-  // Cancel a still-pending (unpaid) order from the portal.
+  // Save the client's changes to their reserved order.
+  const saveEdit = useCallback(async (order) => {
+    if (!editDraft || editDraft.orderId !== order._id) return;
+    const changes = (order.items || []).map((it, index) => ({ index, quantity: Number(editDraft.qty[index]) || 0 }))
+      .filter(c => c.quantity !== Number(order.items[c.index].quantity));
+    if (!changes.length) { setEditDraft(null); return; }
+    if (changes.every(c => c.quantity === 0) && changes.length === order.items.length) {
+      return ui.alert('An order needs at least one item. Cancel the order instead.');
+    }
+    setEditSaving(true);
+    try {
+      const res = await fetch(`${API_URL}/api/client/orders/${order._id}/edit`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ changes }),
+      });
+      const data = await res.json();
+      if (data.success) { setEditDraft(null); setSlipOrder(data.order); fetchMyOrders(); ui.toast?.('Your order was updated. We have been told.', { tone: 'success' }); }
+      else ui.alert(data.error || 'Could not change the order.');
+    } catch { ui.alert('Network error.'); }
+    finally { setEditSaving(false); }
+  }, [editDraft, token, fetchMyOrders]);
+
+  // Cancel a still-pending or reserved (unpaid) order from the portal.
   const cancelOrder = useCallback(async (orderId) => {
     if (!(await ui.confirm('Cancel this order? This cannot be undone.'))) return;
     try {
@@ -1257,7 +1287,38 @@ export default function ClientOrderPage() {
                   I received my order
                 </button>
               )}
-              {slipOrder.status === 'Pending' && unpaid(slipOrder) && (
+              {slipOrder.status === 'Reserved' && !unpaid(slipOrder) && (
+                <p className="text-center text-[11px] text-fg/70">This order is paid. Contact us to change this order.</p>
+              )}
+              {slipOrder.status === 'Reserved' && unpaid(slipOrder) && (editDraft?.orderId === slipOrder._id ? (
+                <div className="rounded-xl border border-white/10 p-3 space-y-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-fg/70">Change quantities</p>
+                  {(slipOrder.items || []).map((it, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                      <span className={`flex-1 min-w-0 truncate ${Number(editDraft.qty[i]) === 0 ? 'line-through text-fg/50' : 'text-fg'}`}>{it.name}</span>
+                      <div className="flex items-center gap-1">
+                        <button type="button" aria-label={`Less ${it.name}`} onClick={() => setEditDraft(d => ({ ...d, qty: d.qty.map((q, j) => (j === i ? Math.max(0, Number(q) - 1) : q)) }))}
+                          className="w-7 h-7 rounded-lg bg-white/10 text-fg font-black">−</button>
+                        <span className="w-8 text-center font-mono font-bold tabular-nums">{editDraft.qty[i]}</span>
+                        <button type="button" aria-label={`More ${it.name}`} onClick={() => setEditDraft(d => ({ ...d, qty: d.qty.map((q, j) => (j === i ? Number(q) + 1 : q)) }))}
+                          className="w-7 h-7 rounded-lg bg-white/10 text-fg font-black">+</button>
+                      </div>
+                    </div>
+                  ))}
+                  <p className="text-[10.5px] text-fg/60">Set a line to 0 to remove it. Prices follow your current price; we check stock when you save.</p>
+                  <div className="flex gap-2">
+                    <button type="button" disabled={editSaving} onClick={() => saveEdit(slipOrder)}
+                      className="flex-1 bg-brand text-on-brand rounded-xl py-2.5 text-[11px] font-black uppercase tracking-wider disabled:opacity-50">{editSaving ? 'Saving…' : 'Save changes'}</button>
+                    <button type="button" onClick={() => setEditDraft(null)} className="px-3 text-[11px] font-bold text-fg/70 underline">Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" onClick={() => setEditDraft({ orderId: slipOrder._id, qty: (slipOrder.items || []).map(it => Number(it.quantity) || 0) })}
+                  className="w-full border border-brand/40 text-brand-text hover:bg-brand/10 transition rounded-xl px-3 py-2.5 text-[11px] font-black uppercase tracking-wider">
+                  Change order
+                </button>
+              ))}
+              {['Pending', 'Reserved'].includes(slipOrder.status) && unpaid(slipOrder) && (
                 <button onClick={() => cancelOrder(slipOrder._id)}
                   className="w-full border border-red-500/30 text-danger hover:bg-red-500/10 transition rounded-xl px-3 py-2.5 text-[11px] font-black uppercase tracking-wider">
                   Cancel order
@@ -1619,7 +1680,7 @@ export default function ClientOrderPage() {
                             </button>
                           )
                         )}
-                        {o.status === 'Pending' && unpaid(o) && (
+                        {['Pending', 'Reserved'].includes(o.status) && unpaid(o) && (
                           <button onClick={e => { e.stopPropagation(); cancelOrder(o._id); }}
                             className="border border-red-500/30 text-danger hover:bg-red-500/10 transition rounded-full px-4 py-1.5 text-[11px] font-black uppercase tracking-wider">
                             Cancel order
