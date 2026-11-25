@@ -368,7 +368,7 @@ export default function registerInsights(ctx) {
 
       const [agg, targets, users] = await Promise.all([
         Order.aggregate([
-          { $match: { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: dayStart(startKey), $lte: dayEnd(endKey) } } },
+          { $match: { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, $or: [{ completedAt: { $gte: dayStart(startKey), $lte: dayEnd(endKey) } }, { completedAt: null, createdAt: { $gte: dayStart(startKey), $lte: dayEnd(endKey) } }] } },
           { $group: { _id: sellerOf, sales: { $sum: '$total' }, orders: { $sum: 1 } } },
         ]),
         readTargets(),

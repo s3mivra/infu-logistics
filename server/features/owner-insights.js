@@ -77,7 +77,7 @@ export default function registerOwnerInsights(ctx) {
   const productLines = async (req, { from, to }) => {
     const scope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
     const [orders, prods, inv, addOns] = await Promise.all([
-      Order.find({ ...scope, status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: from, $lte: to } }, { items: 1 }).lean(),
+      Order.find({ ...scope, status: 'Completed', isComplimentary: { $ne: true }, $or: [{ completedAt: { $gte: from, $lte: to } }, { completedAt: null, createdAt: { $gte: from, $lte: to } }] }, { items: 1 }).lean(),
       Product.find(scope, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1, addOns: 1, modifierGroups: 1 }).populate('modifierGroups').lean(),
       Inventory.find(scope, { _id: 1, itemCode: 1, itemName: 1, unitCost: 1, unitMultiplier: 1 }).lean(),
       AddOn.find({}, { name: 1, recipe: 1 }).lean(),

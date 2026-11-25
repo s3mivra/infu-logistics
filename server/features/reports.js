@@ -16,6 +16,24 @@ import { AR_PAYMENT_METHOD_FILTER } from '../lib/ledger.js';
 import { itemSuppliers } from '../lib/itemSuppliers.js';
 import { readCommissionRules, loadCommissionRulesFrom, commissionsFromDb, COMMISSION_RULES_KEY } from '../lib/commissions.js';
 
+
+// A sale belongs to the day it was COMPLETED (paid / released), not the day the
+// order was first made: a reservation made Monday and paid Wednesday is
+// Wednesday's sale - the same day its journal entry posts. Orders from before
+// completedAt was kept fall back to their created date.
+const saleWhen = (from, to) => {
+  const r = {};
+  if (from) r.$gte = from;
+  if (to) r.$lte = to;
+  return { $or: [{ completedAt: r }, { completedAt: null, createdAt: r }] };
+};
+const addSaleRange = (match, from, to) => {
+  if (!from && !to) return match;
+  match.$and = [...(match.$and || []), saleWhen(from, to)];
+  return match;
+};
+const SALE_DATE_EXPR = { $ifNull: ['$completedAt', '$createdAt'] };
+
 export default function registerReports(ctx) {
   const {
     app,
@@ -583,7 +601,7 @@ app.get('/api/analytics/dashboard', verifyToken, ...canViewAnalytics, async (req
 
       // 1. Today's KPIs
       Order.aggregate([
-        { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: todayStart, $lte: periodEnd } } },
+        { $match: { ...bizScope, status: 'Completed', ...saleWhen(todayStart, periodEnd) } },
         { $group: {
           _id: null,
           gross:      { $sum: '$subtotal' },
@@ -944,7 +962,7 @@ app.get('/api/analytics/by-location', verifyToken, ...canViewAnalytics, async (r
         { $group: groupStage },
       ]),
       Order.aggregate([
-        { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: todayStart } } },
+        { $match: { ...bizScope, status: 'Completed', ...saleWhen(todayStart, null) } },
         { $group: groupStage },
       ]),
       Inventory.find(bizScope, { stockQty: 1, unitCost: 1, stockLocation: 1 }).lean(),
@@ -977,11 +995,7 @@ app.get('/api/reports/menu-engineering', verifyToken, ...canViewReports, require
     const { start, end } = req.query;
     const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
     const match = { ...bizScope, status: 'Completed', isComplimentary: { $ne: true } };
-    if (start || end) {
-      match.createdAt = {};
-      if (start) match.createdAt.$gte = dayStart(start);
-      if (end) { match.createdAt.$lte = dayEnd(end); }
-    }
+    addSaleRange(match, start ? dayStart(start) : null, end ? dayEnd(end) : null);
     const [ordersData, prods, invItems, globalAddOns] = await Promise.all([
       Order.find(match, { items: 1 }).lean(),
       Product.find(bizScope, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1, addOns: 1, modifierGroups: 1 })
@@ -1033,11 +1047,7 @@ app.get('/api/reports/complimentary', verifyToken, ...canViewReports, requirePer
   try {
     const { start, end } = req.query;
     const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: true };
-    if (start || end) {
-      match.createdAt = {};
-      if (start) match.createdAt.$gte = dayStart(start);
-      if (end) match.createdAt.$lte = dayEnd(end);
-    }
+    addSaleRange(match, start ? dayStart(start) : null, end ? dayEnd(end) : null);
     const orders = await Order.find(match, {
       orderNumber: 1, createdAt: 1, completedAt: 1, items: 1, subtotal: 1, complimentaryCost: 1, employeeName: 1, customerName: 1,
       complimentaryReasonType: 1, complimentaryReasonNote: 1, complimentaryApprovedBy: 1, complimentaryReferenceNumber: 1, cashier: 1,
@@ -1096,7 +1106,7 @@ app.get('/api/reports/daily-closing', verifyToken, requireStaff, requirePermissi
     const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
     const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
     const [orders, shifts, deposits] = await Promise.all([
-      Order.find({ ...bizScope, status: 'Completed', isComplimentary: { $ne: true }, isBackdated: { $ne: true }, createdAt: { $gte: from, $lte: to } },
+      Order.find({ ...bizScope, status: 'Completed', isComplimentary: { $ne: true }, isBackdated: { $ne: true }, ...saleWhen(from, to) },
         { total: 1, paymentMethod: 1, payments: 1 }).lean(),
       Shift.find({ shiftStart: { $gte: from, $lte: to } }).sort({ shiftStart: 1 }).lean(),
       BankDeposit.find({ createdAt: { $gte: from, $lte: to } }).sort({ createdAt: 1 }).lean(),
@@ -1163,7 +1173,7 @@ app.get('/api/owner/overview', verifyToken, requireStaff, requirePermission('own
     const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
     const salesBetween = async (from, to) => {
       const [row] = await Order.aggregate([
-        { $match: { ...bizScope, status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: from, $lte: to } } },
+        { $match: { ...bizScope, status: 'Completed', isComplimentary: { $ne: true }, ...saleWhen(from, to) } },
         { $group: { _id: null, total: { $sum: '$total' }, count: { $sum: 1 } } },
       ]);
       return { total: r2(row?.total), count: row?.count || 0 };
@@ -1367,11 +1377,7 @@ app.get('/api/reports/profit-by-category', verifyToken, ...canViewReports, requi
     const { start, end } = req.query;
     const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
     const match = { ...bizScope, status: 'Completed', isComplimentary: { $ne: true } };
-    if (start || end) {
-      match.createdAt = {};
-      if (start) match.createdAt.$gte = dayStart(start);
-      if (end) { match.createdAt.$lte = dayEnd(end); }
-    }
+    addSaleRange(match, start ? dayStart(start) : null, end ? dayEnd(end) : null);
     const [ordersData, prods, invItems, globalAddOns] = await Promise.all([
       Order.find(match, { items: 1 }).lean(),
       Product.find(bizScope, { _id: 1, name: 1, category: 1, basePrice: 1, baseRecipe: 1, sizes: 1, addOns: 1, modifierGroups: 1 })
@@ -1470,11 +1476,7 @@ app.get('/api/reports/commissions', verifyToken, ...canViewReports, requirePermi
   try {
     const { start, end } = req.query;
     const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...salesSourceFilter(req.query.source) };
-    if (start || end) {
-      match.createdAt = {};
-      if (start) match.createdAt.$gte = dayStart(start);
-      if (end) { match.createdAt.$lte = dayEnd(end); }
-    }
+    addSaleRange(match, start ? dayStart(start) : null, end ? dayEnd(end) : null);
     const { sellers, totalCommission } = await commissionsFor(match);
     res.json({ success: true, sellers, totalCommission });
   } catch (err) { (captureError(req, err), res.status(500).json({ success: false, error: IS_PROD ? 'Internal server error' : err.message })); }
@@ -1489,7 +1491,7 @@ app.get('/api/reports/sales-by-channel', verifyToken, ...canViewReports, require
     if (!start || !end) return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
     const orders = await Order.find({
       businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true },
-      createdAt: { $gte: dayStart(start), $lte: dayEnd(end) },
+      ...saleWhen(dayStart(start), dayEnd(end)),
     }, { channel: 1, clientId: 1, clientAccountId: 1, subtotal: 1, discount: 1, total: 1, items: 1, refundedAmount: 1 }).limit(50000).lean();
     const ids = [...new Set(orders.map(o => o.clientAccountId || o.clientId).filter(id => id && mongoose.Types.ObjectId.isValid(String(id))))];
     const wholesaleIds = new Set((await ClientAccount.find({ _id: { $in: ids }, segments: { $regex: /wholesale/i } }, { _id: 1 }).lean()).map(c => String(c._id)));
@@ -1530,7 +1532,7 @@ app.get('/api/reports/sales-by-customer', verifyToken, ...canViewReports, requir
     if (!start || !end) return res.status(400).json({ success: false, error: 'A start and end date are both required.' });
     const orders = await Order.find({
       businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true },
-      createdAt: { $gte: dayStart(start), $lte: dayEnd(end) },
+      ...saleWhen(dayStart(start), dayEnd(end)),
     }, { customerName: 1, clientId: 1, clientAccountId: 1, subtotal: 1, discount: 1, total: 1, refundedAmount: 1, items: 1, createdAt: 1, paymentMethod: 1, arSettled: 1, amountPaid: 1 }).limit(100000).lean();
     const ids = [...new Set(orders.map(o => String(o.clientAccountId || o.clientId || '')).filter(id => mongoose.Types.ObjectId.isValid(id)))];
     const accounts = new Map((await ClientAccount.find({ _id: { $in: ids } }, { name: 1, clientCode: 1, segments: 1 }).lean()).map(c => [String(c._id), c]));
@@ -1566,11 +1568,7 @@ app.get('/api/reports/sales-by-payment', verifyToken, ...canViewReports, require
   try {
     const { start, end } = req.query;
     const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...salesSourceFilter(req.query.source) };
-    if (start || end) {
-      match.createdAt = {};
-      if (start) match.createdAt.$gte = dayStart(start);
-      if (end) { match.createdAt.$lte = dayEnd(end); }
-    }
+    addSaleRange(match, start ? dayStart(start) : null, end ? dayEnd(end) : null);
     const result = await Order.aggregate([
       { $match: match },
       { $group: { _id: '$paymentMethod', count: { $sum: 1 }, total: { $sum: '$total' }, subtotal: { $sum: '$subtotal' }, discount: { $sum: '$discount' } } },
@@ -1611,15 +1609,15 @@ app.get('/api/reports/sales-trend', verifyToken, ...canViewReports, async (req, 
     const bizScope = { businessType: BUSINESS_TYPE, ...tenantScope(req) };
     const [buckets, priorAgg] = await Promise.all([
       Order.aggregate([
-        { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: startDate, $lte: endDate } } },
+        { $match: { ...bizScope, status: 'Completed', ...saleWhen(startDate, endDate) } },
         { $group: {
-            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: businessTimeZone() } },
+            _id: { $dateToString: { format: '%Y-%m-%d', date: SALE_DATE_EXPR, timezone: businessTimeZone() } },
             net: { $sum: { $cond: ['$isComplimentary', 0, '$total'] } },
         }},
         { $sort: { _id: 1 } },
       ]),
       Order.aggregate([
-        { $match: { ...bizScope, status: 'Completed', createdAt: { $gte: priorStart, $lte: priorEnd } } },
+        { $match: { ...bizScope, status: 'Completed', ...saleWhen(priorStart, priorEnd) } },
         { $group: { _id: null, net: { $sum: { $cond: ['$isComplimentary', 0, '$total'] } } } },
       ]),
     ]);
@@ -1654,13 +1652,9 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePer
   try {
     const { start, end } = req.query;
     const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...salesSourceFilter(req.query.source) };
-    if (start || end) {
-      match.createdAt = {};
-      if (start) match.createdAt.$gte = dayStart(start);
-      if (end) { match.createdAt.$lte = dayEnd(end); }
-    }
+    addSaleRange(match, start ? dayStart(start) : null, end ? dayEnd(end) : null);
     const orders = await Order.find(match, {
-      orderNumber: 1, total: 1, subtotal: 1, paymentMethod: 1, payments: 1, createdAt: 1,
+      orderNumber: 1, total: 1, subtotal: 1, paymentMethod: 1, payments: 1, createdAt: 1, completedAt: 1,
       customerName: 1, clientId: 1, clientAccountId: 1, 'items.name': 1,
     }).sort({ createdAt: 1 }).lean();
 
@@ -1690,7 +1684,7 @@ app.get('/api/reports/sales-summary', verifyToken, ...canViewReports, requirePer
       }
       const refId = o.clientId || o.clientAccountId || '';
       return {
-        date: o.createdAt, orderNumber: o.orderNumber,
+        date: o.completedAt || o.createdAt, orderNumber: o.orderNumber,
         customerId: (clientCodeById[String(refId)] || WALK_IN_CUSTOMER_CODE).toUpperCase(),
         customerName: (o.customerName || 'WALK-IN').toUpperCase(),
         // Subtotal is the sale before discount and delivery fee; Total is what
@@ -1778,11 +1772,7 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, require
   try {
     const { start, end } = req.query;
     const match = { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...salesSourceFilter(req.query.source) };
-    if (start || end) {
-      match.createdAt = {};
-      if (start) match.createdAt.$gte = dayStart(start);
-      if (end) { match.createdAt.$lte = dayEnd(end); }
-    }
+    addSaleRange(match, start ? dayStart(start) : null, end ? dayEnd(end) : null);
     const orders = await Order.find(match, {
       orderNumber: 1, paymentMethod: 1, createdAt: 1, completedAt: 1, customerName: 1, clientId: 1, clientAccountId: 1, items: 1,
       billingNumber: 1, orNumber: 1, drNumber: 1, deliveryReceipts: 1, discount: 1,
@@ -1851,7 +1841,7 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, require
         const baseSrp = it.listPrice != null ? Number(it.listPrice)
           : (old && sameName(old.name, it.name) ? Number(old.basePrice) || 0 : Number(it.price) || 0);
         rows.push({
-          date: o.createdAt, orderNumber: o.orderNumber, paymentMethod: o.paymentMethod,
+          date: o.completedAt || o.createdAt, orderNumber: o.orderNumber, paymentMethod: o.paymentMethod,
           customerId, customerName, ...docFields,
           itemCode: (it.productCode || '').toUpperCase(), itemName: (it.name || '').toUpperCase(), quantity: qty, lineTotal,
           unitPrice: qty ? Math.round((lineTotal / qty) * 100) / 100 : 0,
@@ -1866,7 +1856,7 @@ app.get('/api/reports/sales-line-items', verifyToken, ...canViewReports, require
         if (isCombo) {
           for (const comp of it.comboItems) {
             rows.push({
-              date: o.createdAt, orderNumber: o.orderNumber, paymentMethod: o.paymentMethod,
+              date: o.completedAt || o.createdAt, orderNumber: o.orderNumber, paymentMethod: o.paymentMethod,
               customerId, customerName, ...docFields,
               unitPrice: 0, grossSales: 0, discount: 0, netSales: 0,
               itemCode: (codeByProductId[String(comp.productId)] || '').toUpperCase(),
@@ -2162,7 +2152,7 @@ app.get('/api/reports/vat', verifyToken, ...canViewReports, requirePermission('s
     // VAT-exempt (SC/PWD) sales, which the ledger's revenue total does not
     // separate.
     const [sales] = await Order.aggregate([
-      { $match: { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, createdAt: { $gte: startDate, $lte: endDate } } },
+      { $match: { businessType: BUSINESS_TYPE, ...tenantScope(req), status: 'Completed', isComplimentary: { $ne: true }, ...saleWhen(startDate, endDate) } },
       { $group: {
         _id: null,
         vatableSales: { $sum: { $ifNull: ['$vatableSales', 0] } },

@@ -103,7 +103,7 @@ describe('a month of business, through the app', () => {
     for (const [id, d] of saleIds) {
       const _id = new mongoose.Types.ObjectId(String(id));
       const { orderNumber } = await M('Order').findById(_id, { orderNumber: 1 }).lean();
-      await M('Order').collection.updateOne({ _id }, { $set: { createdAt: ago(d), updatedAt: ago(d) } });
+      await M('Order').collection.updateOne({ _id }, { $set: { createdAt: ago(d), updatedAt: ago(d), completedAt: ago(d) } });
       await M('StockCard').collection.updateMany({ reference: orderNumber }, { $set: { date: ago(d) } });
     }
     // Counted at zero on the import, then the delivery, before the first sale.
