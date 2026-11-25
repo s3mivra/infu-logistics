@@ -2,6 +2,7 @@
 import { formatDate } from '../../shared/dates.js';
 import { useState, useEffect, useCallback, Fragment } from 'react';
 import { statusTone } from '../../shared/statusTone';
+import * as ui from '../../shared/ui';
 import { Network, Link2, Link2Off, Send, Download, Copy, Check, RefreshCw, Plus, LayoutGrid, BarChart3, ExternalLink, Boxes, Share2, Landmark, AlertTriangle } from 'lucide-react';
 
 import { todayStr } from '../../shared/businessDay.js';
@@ -1527,11 +1528,33 @@ export default function HubTab({ ctx }) {
                         <td className="py-2 pl-3">
                           <span className={`text-[10px] font-black px-2 py-1 rounded ${sh.status.mixed ? 'bg-white/10 text-fg/80' : (statusColor[firstStatus] || 'bg-white/10 text-fg/70')}`}>{sh.status.label}</span>
                         </td>
-                        <td className="py-2 text-right">
+                        <td className="py-2 text-right whitespace-nowrap">
                           <button onClick={e => { e.stopPropagation(); exportTransferSlip(sh, pdfDeps); }} title="Print this shipment's transfer slip"
                             className="text-[10px] font-bold uppercase px-2 py-1 rounded bg-white/8 text-fg/80 hover:bg-white/15 min-h-[28px] inline-flex items-center gap-1">
                             <FileText size={11} /> Slip
                           </button>
+                          {can('transfers.void') && sh.lines.every(t => t.direction === 'outbound')
+                            && sh.lines.some(t => !['Cancelled', 'Rejected', 'Voided'].includes(t.status))
+                            && sh.lines.every(t => ['Cancelled', 'Rejected', 'Voided', 'Requested'].includes(t.status) || (t.status === 'Released' && !t.partnerSlug)) && (
+                            <button onClick={async e => {
+                              e.stopPropagation();
+                              const reason = window.prompt(`Void stock transfer ${sh.key}? The stock comes back and the entry is reversed.\n\nReason:`);
+                              if (reason === null) return;
+                              if (!reason.trim()) { ui.alert('A reason is required to void a transfer.'); return; }
+                              setSlipBusy(sh.key); setErr('');
+                              try {
+                                const r = await authFetch('/api/hub/transfers/void', { method: 'POST', body: JSON.stringify({ shipmentRef: sh.key, reason: reason.trim() }) });
+                                const d = await r.json();
+                                if (!r.ok) { setErr(d.error || 'Could not void the transfer.'); return; }
+                                ui.toast?.(`Transfer ${sh.key} voided${d.valueReturned ? ` - ${peso ? peso(d.valueReturned) : d.valueReturned} back in stock` : ''}.`, { tone: 'success' });
+                                load(); fetchERPData?.();
+                              } catch (er) { setErr(er.message); }
+                              finally { setSlipBusy(''); }
+                            }} disabled={slipBusy === sh.key} title="Void this transfer: the stock comes back and the entry is reversed"
+                              className="ml-1 text-[10px] font-bold uppercase px-2 py-1 rounded bg-red-500/10 text-danger hover:bg-red-500/20 min-h-[28px] disabled:opacity-40">
+                              Void
+                            </button>
+                          )}
                         </td>
                       </tr>
                       {open && sh.lines.map(t => (

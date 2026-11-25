@@ -948,6 +948,63 @@ export default function registerHub(ctx) {
     res.json({ ok: true, transfer });
   });
 
+  // Void a whole outbound shipment, like voiding a sale. Lines still awaiting
+  // approval are simply cancelled. Lines already released to a branch that is
+  // not in the hub (nobody on the other side to receive them) come back: the
+  // stock is returned and the clearing entry is reversed. A shipment a hub
+  // partner has, or has been told about, cannot be voided here - they must
+  // send the goods back (or it is cancelled before they accept it).
+  app.post('/api/hub/transfers/void', verifyToken, requireAuth, permit('transfers.void'), atomic(mongoose, async (req, res) => {
+    const shipmentRef = String(req.body?.shipmentRef || '').trim();
+    const reason = String(req.body?.reason || '').trim().slice(0, 300);
+    if (!shipmentRef) return res.status(400).json({ error: 'Which shipment?' });
+    if (!reason) return res.status(400).json({ error: 'A reason is required to void a transfer.' });
+    const refRx = new RegExp(`^${shipmentRef.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(-L\\d+)?$`);
+    // Older lines carry no shipmentRef: their reference is the shipment's, plus -L<n>.
+    const lines = await CrossTransfer.find({ businessType: BUSINESS_TYPE, direction: 'outbound', $or: [{ shipmentRef }, { shipmentRef: { $in: [null, ''] }, reference: refRx }] });
+    if (!lines.length) return res.status(404).json({ error: 'Transfer not found.' });
+    const live = lines.filter(t => !['Cancelled', 'Rejected', 'Voided'].includes(t.status));
+    if (!live.length) return res.status(409).json({ error: 'This transfer is already cancelled or voided.' });
+    const blocked = live.find(t => !(t.status === 'Requested' || (t.status === 'Released' && !t.partnerSlug)));
+    if (blocked) {
+      return res.status(409).json({ error: `${blocked.partnerName || 'The branch'} already has this shipment (or it is on its way to them). Cancel it before they accept it, or have them send the goods back.` });
+    }
+    const by = req.user?.name || '';
+    const now = new Date();
+    let returned = 0;
+    for (const t of live) {
+      if (t.status === 'Released') {
+        const item = await Inventory.findByIdAndUpdate(t.itemId, { $inc: { stockQty: t.qtyBase } }, { returnDocument: 'after' });
+        if (item) {
+          await StockCard.create([{
+            inventoryId: item._id, itemName: item.itemName, type: 'Transfer Void', reference: `${t.reference}-VOID`,
+            qtyChange: t.qtyBase, balanceAfter: item.stockQty, unitCost: item.unitCost || 0,
+            remarks: `Stock transfer ${shipmentRef} voided: ${reason}`,
+          }]);
+        }
+        const value = (Number(t.unitCost) || Number(item?.unitCost) || 0) * (Number(t.qtyBase) || 0);
+        // The mirror of the release: DR Inventory / CR Hub Transfer Clearing.
+        await postHubJE({
+          reference: `${t.reference}-VOID`,
+          description: `Void of stock transfer ${shipmentRef}: ${t.qtyBase}${t.unit || ''} of ${t.itemName} back from ${t.partnerName || 'branch'} (${reason})`,
+          debitCode: '130000', debitName: 'Inventory Asset',
+          creditCode: HUB_CLEARING_CODE, creditName: 'Hub Transfer Clearing',
+          amount: Math.round(value * 100) / 100,
+        });
+        returned += value;
+      }
+      t.status = 'Voided';
+      t.voidedBy = by; t.voidedAt = now; t.voidReason = reason;
+      t.partnerTodo = '';
+      await t.save();
+    }
+    try {
+      await logAudit?.(req, { action: 'void', entity: 'StockTransfer', entityId: shipmentRef,
+        after: { shipmentRef, reason, by, lines: live.map(t => ({ itemName: t.itemName, qtyBase: t.qtyBase, was: t.status === 'Voided' ? undefined : t.status })), valueReturned: Math.round(returned * 100) / 100 } });
+    } catch { /* best effort */ }
+    res.json({ ok: true, shipmentRef, voided: live.length, valueReturned: Math.round(returned * 100) / 100 });
+  }));
+
   // Cancel outbound transfer - either withdrawing a slip that was never
   // approved, or pulling back an approved one before the partner accepts.
   app.post('/api/hub/transfers/:id/cancel', verifyToken, requireAuth, permit('inventory.manage'), async (req, res) => {

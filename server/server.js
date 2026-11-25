@@ -2036,7 +2036,10 @@ const CrossTransferSchema = new mongoose.Schema({
   // the partner notified, so nothing crosses a business boundary unapproved.
   // Inbound rows never enter 'Requested' - they arrive already approved by the
   // sending business and start at 'Pending' awaiting our accept/reject.
-  status:       { type: String, enum: ['Requested', 'Pending', 'Accepted', 'Rejected', 'Cancelled', 'Released', 'Received'], default: 'Pending' },
+  status:       { type: String, enum: ['Requested', 'Pending', 'Accepted', 'Rejected', 'Cancelled', 'Released', 'Received', 'Voided'], default: 'Pending' },
+  voidedBy:     { type: String, default: '' },
+  voidedAt:     { type: Date },
+  voidReason:   { type: String, default: '' },
   receivedAt:   Date,
   // Transfer-slip trail - who asked, who authorised, and why it was refused.
   requestedBy:  { type: String, default: '' },

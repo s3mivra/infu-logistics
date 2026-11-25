@@ -74,3 +74,35 @@ describe('Send as stock transfer: its own permission', () => {
     expect(r.status).toBe(403);
   });
 });
+
+describe('Void a stock transfer', () => {
+  it('a transfer to a new branch: stock comes back, entry reversed, needs a reason', async () => {
+    const inv = (await request(app).post('/api/inventory').set(auth(token)).send({ itemName: 'VOID BEANS', unit: 'pcs', stockQty: 50, unitCost: 10 })).body.item;
+    const order = await mkOrder('XF-V1', 'VOID BEANS', 20);
+    const sent = await request(app).post(`/api/hub/transfers/from-order/${order._id}`).set(auth(token)).send({ newBranch: true });
+    expect(sent.status, JSON.stringify(sent.body)).toBe(200);
+    expect((await mongoose.model('Inventory').findById(inv._id).lean()).stockQty).toBe(30);
+
+    const noReason = await request(app).post('/api/hub/transfers/void').set(auth(token)).send({ shipmentRef: sent.body.shipmentRef });
+    expect(noReason.status).toBe(400);
+    const r = await request(app).post('/api/hub/transfers/void').set(auth(token)).send({ shipmentRef: sent.body.shipmentRef, reason: 'wrong branch' });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.valueReturned).toBe(200);
+    expect((await mongoose.model('Inventory').findById(inv._id).lean()).stockQty).toBe(50);
+    const lines = await mongoose.model('CrossTransfer').find({ shipmentRef: sent.body.shipmentRef }).lean();
+    expect(lines.every(l => l.status === 'Voided' && l.voidReason === 'wrong branch')).toBe(true);
+    const je = await mongoose.model('JournalEntry').findOne({ reference: `${lines[0].reference}-VOID` }).lean();
+    expect(je.lines.find(l => l.accountCode === '130000').debit).toBe(200);
+    const again = await request(app).post('/api/hub/transfers/void').set(auth(token)).send({ shipmentRef: sent.body.shipmentRef, reason: 'again' });
+    expect(again.status).toBe(409);
+  });
+
+  it('refuses a shipment a hub partner has been sent', async () => {
+    await request(app).post('/api/inventory').set(auth(token)).send({ itemName: 'VOID CUPS', unit: 'pcs', stockQty: 40, unitCost: 2 });
+    const order = await mkOrder('XF-V2', 'VOID CUPS', 5);
+    const sent = await request(app).post(`/api/hub/transfers/from-order/${order._id}`).set(auth(token)).send({ partnerSlug: 'xf-partner' });
+    await mongoose.model('CrossTransfer').updateMany({ shipmentRef: sent.body.shipmentRef }, { $set: { status: 'Pending' } });
+    const r = await request(app).post('/api/hub/transfers/void').set(auth(token)).send({ shipmentRef: sent.body.shipmentRef, reason: 'x' });
+    expect(r.status).toBe(409);
+  });
+});
