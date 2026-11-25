@@ -101,7 +101,7 @@ function drawSlip(doc, autoTable, s, { bizName = '', y = 16 } = {}) {
     doc.line(x, yy + 12, x + 70, yy + 12);
     doc.text(name ? `${label}: ${name}` : label, x, yy + 17);
   };
-  sig('Prepared by', s.requestedBy, 14);
+  sig('Prepared by', '', 14);
   sig('Approved by', s.approvedBy, pageW / 2 + 4);
   yy += 22;
   sig('Released by', '', 14);

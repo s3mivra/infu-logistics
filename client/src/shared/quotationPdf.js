@@ -68,7 +68,7 @@ export async function exportQuotationPDF(q, { loadPdfLibs, addLogoToPDF, bizName
   doc.setTextColor(0);
   yy += 16;
   doc.setFontSize(8.5);
-  doc.line(14, yy, 84, yy); doc.text(`Prepared by${q.quotedBy ? `: ${q.quotedBy}` : ''}`, 14, yy + 5);
+  doc.line(14, yy, 84, yy); doc.text('Prepared by', 14, yy + 5);
   doc.line(pageW / 2 + 4, yy, pageW / 2 + 74, yy); doc.text('Accepted by (name, date)', pageW / 2 + 4, yy + 5);
   doc.save(`Quotation-${q.quoteNumber || 'draft'}.pdf`);
   return doc;

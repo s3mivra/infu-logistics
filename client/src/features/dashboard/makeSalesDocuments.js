@@ -9,7 +9,7 @@ import { } from '../../shared/businessDay.js';
 // that render's values exactly as it did inline.
 export default function makeSalesDocuments(deps) {
   const {
-    clientAccounts, systemSettings, activeAdmin, BIZ_NAME,
+    clientAccounts, systemSettings, BIZ_NAME,
   } = deps;
 
   // ── Billing Statement print (log mode) ──────────────────────────────────────
@@ -104,7 +104,7 @@ export default function makeSalesDocuments(deps) {
       // Checked/Received By stay blank ruled lines - those really do get signed
       // by someone else after the fact.
       signatures: [
-        `PREPARED BY${(order.cashier || activeAdmin?.name) ? `: ${order.cashier || activeAdmin?.name}` : ''} - Signature over Printed Name / Date`,
+        'PREPARED BY: Signature over Printed Name / Date',
         'CHECKED BY: Signature over Printed Name / Date',
         'RECEIVED BY: Signature over Printed Name / Date',
       ],
@@ -190,7 +190,7 @@ export default function makeSalesDocuments(deps) {
         ${order.orderNotes ? `<div class="notes"><b>Notes:</b> ${esc(order.orderNotes)}</div>` : ''}
 
         <div class="sigs">
-          <div class="sig"><div class="line"></div><div class="cap">Prepared By${(order.cashier || activeAdmin?.name) ? `: ${esc(order.cashier || activeAdmin?.name)}` : ''}</div></div>
+          <div class="sig"><div class="line"></div><div class="cap">Prepared By</div></div>
           <div class="sig"><div class="line"></div><div class="cap">Driver / Plate No.</div></div>
           <div class="sig"><div class="line"></div><div class="cap">Received By (Signature over Printed Name)</div></div>
           <div class="sig narrow"><div class="line"></div><div class="cap">Date Received</div></div>

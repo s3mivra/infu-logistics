@@ -103,7 +103,7 @@ export default function ProcurementTab({ ctx }) {
       signatures: [
         // preparedBy the PO was actually created under, falling back to
         // whoever's printing it now (legacy POs from before createdBy existed).
-        `PREPARED BY${(po.createdBy || activeAdmin?.name) ? `: ${po.createdBy || activeAdmin?.name}` : ''} - Signature over Printed Name / Date`,
+        'PREPARED BY: Signature over Printed Name / Date',
         'APPROVED BY: Signature over Printed Name / Date',
         'RECEIVED BY (Supplier): Signature over Printed Name / Date',
       ],
