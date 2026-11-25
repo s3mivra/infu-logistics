@@ -105,6 +105,11 @@ export default function defineWorkflowModels({ BUSINESS_TYPE, currentBranchCode,
       packSize:    { type: Number, default: null },           // weight/volume per pack, in `unit` (e.g. 1 for "1L", 250 for "250g"); optional
       orderedQty:  { type: Number, default: 0 },
       unitCost:    { type: Number, default: 0 },
+      // Supplier discount. unitCost is always the NET cost actually paid (what
+      // stock and the payable are booked at); these keep the list price and the
+      // discounts behind it for the PO and its print-out.
+      listUnitCost: { type: Number, default: null },
+      discountPercent: { type: Number, default: 0 },
       expiryDate:  { type: Date, default: null },             // optional expiry for the incoming stock
       productionDate: { type: Date, default: null },          // for goods with no real expiry (beans, etc.)
       receivedQty: { type: Number, default: null },           // null until reconciled
@@ -151,6 +156,8 @@ export default function defineWorkflowModels({ BUSINESS_TYPE, currentBranchCode,
     // ordered. No payable, no bill. The receive step may still change it.
     payOnDelivery: { type: Boolean, default: false },
     payOnDeliveryAccount: { type: String, default: '' },
+    // A discount off the whole order (₱), already spread into each line's unitCost.
+    orderDiscount: { type: Number, default: 0 },
     // Closed without a delivery, because a payable already in the books (carried
     // in by the setup workbook, or typed in) was linked to it: the bill's number,
     // and the status the order had, so taking the link off reopens it.

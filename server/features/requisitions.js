@@ -156,7 +156,7 @@ export default function registerRequisitions(ctx) {
       }
 
       // type === 'procurement'
-      const { supplier, supplierId, expectedDate, lines, notes, payOnDelivery = false, payOnDeliveryAccount = '' } = req.body;
+      const { supplier, supplierId, expectedDate, lines, notes, payOnDelivery = false, payOnDeliveryAccount = '', orderDiscount = 0 } = req.body;
       if (!Array.isArray(lines) || lines.length === 0) return res.status(400).json({ success: false, error: 'At least one line item is required.' });
       const cleanLines = [];
       for (const l of lines) {
@@ -178,6 +178,8 @@ export default function registerRequisitions(ctx) {
           salvageValue: kind === 'fixedAsset' ? Number(l.salvageValue) || 0 : 0,
           invId: (kind === 'inventory' && l.invId) || null, itemName: String(l.itemName).trim(), itemCode: l.itemCode || '',
           unit: l.unit || '', packSize: l.packSize || null, orderedQty: qty, unitCost: Number.isFinite(cost) ? cost : 0,
+          listUnitCost: l.listUnitCost != null && l.listUnitCost !== '' ? Math.max(0, Number(l.listUnitCost) || 0) : null,
+          discountPercent: Math.min(100, Math.max(0, Number(l.discountPercent) || 0)),
           expiryDate: l.expiryDate ? new Date(l.expiryDate) : null, productionDate: l.productionDate ? new Date(l.productionDate) : null,
           expiryWarnDays: l.expiryWarnDays != null && l.expiryWarnDays !== '' ? Number(l.expiryWarnDays) || null : null,
           lowStockThreshold: l.lowStockThreshold != null && l.lowStockThreshold !== '' ? Number(l.lowStockThreshold) || null : null,
@@ -193,6 +195,7 @@ export default function registerRequisitions(ctx) {
         lines: cleanLines, estTotal, notes: notes || '',
         // Paid on delivery from a cash, bank or e-wallet account (11xxxx).
         ...(payOnDelivery && /^11[123]/.test(String(payOnDeliveryAccount || '111000')) ? { payOnDelivery: true, payOnDeliveryAccount: String(payOnDeliveryAccount || '111000') } : {}),
+        orderDiscount: Math.max(0, Number(orderDiscount) || 0),
         preparedBy, preparedById: String(req.user?._id || ''),
       });
       await attachBudgetCheck(req, slip);
@@ -419,6 +422,7 @@ export default function registerRequisitions(ctx) {
         poNumber, supplier: slip.supplier, supplierId: slip.supplierId || null,
         status: 'Ordered', expectedDate: slip.expectedDate,
         ...(slip.payOnDelivery ? { payOnDelivery: true, payOnDeliveryAccount: slip.payOnDeliveryAccount || '111000' } : {}),
+        orderDiscount: slip.orderDiscount || 0,
         notes: `${slip.notes || ''}${slip.notes ? ' - ' : ''}Requisition ${slip.slipNumber}`.trim(),
         lines: slip.lines.map(l => ({
           purchaseType: l.purchaseType || 'inventory',
@@ -427,7 +431,8 @@ export default function registerRequisitions(ctx) {
           usefulLifeMonths: l.usefulLifeMonths ?? null,
           salvageValue: l.salvageValue || 0,
           invId: l.invId, itemName: l.itemName, itemCode: l.itemCode, unit: l.unit, packSize: l.packSize,
-          orderedQty: l.orderedQty, unitCost: l.unitCost, expiryDate: l.expiryDate, productionDate: l.productionDate,
+          orderedQty: l.orderedQty, unitCost: l.unitCost, listUnitCost: l.listUnitCost ?? null, discountPercent: l.discountPercent || 0,
+          expiryDate: l.expiryDate, productionDate: l.productionDate,
           expiryWarnDays: l.expiryWarnDays, lowStockThreshold: l.lowStockThreshold,
           stockLocation: l.stockLocation, stockCategory: l.stockCategory, creditAccount: l.creditAccount,
           receivedQty: null,

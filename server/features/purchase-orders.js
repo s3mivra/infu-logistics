@@ -102,6 +102,8 @@ export default function registerPurchaseOrders(ctx) {
     packSize:          l.packSize != null && l.packSize !== '' ? Math.max(0, Number(l.packSize) || 0) : null,
     orderedQty:        Math.max(0, Number(l.orderedQty) || 0),
     unitCost:          Math.max(0, money(l.unitCost)),
+    listUnitCost:      l.listUnitCost != null && l.listUnitCost !== '' ? Math.max(0, Number(l.listUnitCost) || 0) : null,
+    discountPercent:   Math.min(100, Math.max(0, Number(l.discountPercent) || 0)),
     expiryDate:        l.expiryDate ? new Date(l.expiryDate) : null,
     productionDate:    l.productionDate ? new Date(l.productionDate) : null,
     expiryWarnDays:    l.expiryWarnDays != null ? Math.max(1, Number(l.expiryWarnDays) || 7) : null,
@@ -174,7 +176,7 @@ export default function registerPurchaseOrders(ctx) {
       const {
         supplier = '', supplierId = null, expectedDate = null, notes = '', lines = [],
         prepaid = false, prepaidAmount, prepaidDate, prepaidFromAccount,
-        payOnDelivery = false, payOnDeliveryAccount = '',
+        payOnDelivery = false, payOnDeliveryAccount = '', orderDiscount = 0,
       } = req.body || {};
       if (payOnDelivery && prepaid) return res.status(400).json({ success: false, error: 'An order is either paid in advance or paid on delivery - not both.' });
       const codAccount = payOnDelivery ? String(payOnDeliveryAccount || '111000') : '';
@@ -209,6 +211,7 @@ export default function registerPurchaseOrders(ctx) {
         estTotal: estTotalOf(clean),
         createdBy: req.user?.name || '',
         ...(payOnDelivery ? { payOnDelivery: true, payOnDeliveryAccount: codAccount } : {}),
+        orderDiscount: Math.max(0, Number(orderDiscount) || 0),
         ...tenantScope(req),
       });
 
@@ -252,7 +255,8 @@ export default function registerPurchaseOrders(ctx) {
         return res.status(409).json({ success: false, error: 'This PO has already been received. Reconciled POs cannot be edited.' });
       }
 
-      const { supplier, expectedDate, notes, status, lines, payOnDelivery, payOnDeliveryAccount } = req.body || {};
+      const { supplier, expectedDate, notes, status, lines, payOnDelivery, payOnDeliveryAccount, orderDiscount } = req.body || {};
+      if (orderDiscount !== undefined) po.orderDiscount = Math.max(0, Number(orderDiscount) || 0);
       if (payOnDelivery !== undefined) {
         const acct = String(payOnDeliveryAccount || po.payOnDeliveryAccount || '111000');
         if (payOnDelivery && po.prepaid) return res.status(400).json({ success: false, error: 'This order was paid in advance - it cannot also be paid on delivery.' });

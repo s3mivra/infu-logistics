@@ -426,3 +426,17 @@ describe('cancelling the remainder of a partially-received PO', () => {
     expect(editStatus.status).toBe(409);
   });
 });
+
+describe('purchase order discounts', () => {
+  it('keeps the list price and discounts, and books the net unit cost', async () => {
+    const res = await request(app).post('/api/purchase-orders').set(auth(superToken)).send({
+      supplier: 'Disc Supplies', orderDiscount: 50,
+      lines: [{ itemName: 'Sugar', unit: 'kg', orderedQty: 10, unitCost: 85.5, listUnitCost: 100, discountPercent: 10 }],
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const po = res.body.po || res.body.order || res.body.purchaseOrder;
+    const saved = await mongoose.model('PurchaseOrder').findById(po._id).lean();
+    expect(saved.orderDiscount).toBe(50);
+    expect(saved.lines[0]).toMatchObject({ unitCost: 85.5, listUnitCost: 100, discountPercent: 10 });
+  });
+});

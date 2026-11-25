@@ -3405,6 +3405,7 @@ const RequisitionSlipSchema = new mongoose.Schema({
   // Procurement slips: paid on delivery, carried onto the PO it becomes.
   payOnDelivery: { type: Boolean, default: false },
   payOnDeliveryAccount: { type: String, default: '' },
+  orderDiscount: { type: Number, default: 0 },
   businessType: { type: String, default: () => BUSINESS_TYPE, index: true },
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
   slipNumber: { type: String, index: true },              // REQ-2026-000001
@@ -3453,7 +3454,9 @@ const RequisitionSlipSchema = new mongoose.Schema({
     unit: { type: String, default: '' },
     packSize: { type: Number, default: null },
     orderedQty: { type: Number, default: 0 },
-    unitCost: { type: Number, default: 0 },
+    unitCost: { type: Number, default: 0 },   // net of discounts
+    listUnitCost: { type: Number, default: null },
+    discountPercent: { type: Number, default: 0 },
     expiryDate: { type: Date, default: null },
     productionDate: { type: Date, default: null },
     // Carried through unchanged to the PurchaseOrder line on approval - only

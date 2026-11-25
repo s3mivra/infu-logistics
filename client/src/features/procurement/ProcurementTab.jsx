@@ -294,7 +294,7 @@ export default function ProcurementTab({ ctx }) {
   };
 
   // ── Draft form state ────────────────────────────────────────────────────────
-  const blankLine = () => ({ purchaseType: 'inventory', assetAccountCode: '', expenseAccountCode: '', usefulLifeMonths: '', invId: null, itemName: '', itemCode: '', unit: '', packSize: '', orderedQty: '', unitCost: '', expiryDate: '', productionDate: '', expiryWarnDays: '', lowStockThreshold: '', stockLocation: '', stockCategory: '', creditAccount: '' });
+  const blankLine = () => ({ purchaseType: 'inventory', assetAccountCode: '', expenseAccountCode: '', usefulLifeMonths: '', invId: null, itemName: '', itemCode: '', unit: '', packSize: '', orderedQty: '', unitCost: '', discountPercent: '', expiryDate: '', productionDate: '', expiryWarnDays: '', lowStockThreshold: '', stockLocation: '', stockCategory: '', creditAccount: '' });
 
   // What a PO line actually buys. Only stock touches inventory: equipment is an
   // asset to depreciate and a service is an expense, and both owe a NON-trade
@@ -332,11 +332,13 @@ export default function ProcurementTab({ ctx }) {
       supplier: po.supplier || '',
       supplierId: po.supplierId || '',
       expectedDate: po.expectedDate ? dateStr(po.expectedDate) : '',
-      notes: po.notes || '',
+      notes: po.notes || '', orderDiscount: po.orderDiscount || '',
       payOnDelivery: !!po.payOnDelivery, payOnDeliveryAccount: po.payOnDeliveryAccount || '111000',
       lines: (po.lines || []).map(l => ({
         invId: l.invId || null, itemName: l.itemName || '', itemCode: l.itemCode || '',
-        unit: l.unit || '', packSize: l.packSize ?? '', orderedQty: l.orderedQty ?? '', unitCost: l.unitCost ?? '',
+        unit: l.unit || '', packSize: l.packSize ?? '', orderedQty: l.orderedQty ?? '',
+        // Back to the price before discounts, so the form shows what was typed.
+        unitCost: l.listUnitCost ?? l.unitCost ?? '', discountPercent: l.discountPercent || '',
         expiryDate: l.expiryDate ? dateStr(l.expiryDate) : '',
         productionDate: l.productionDate ? dateStr(l.productionDate) : '',
       })),
@@ -703,17 +705,30 @@ export default function ProcurementTab({ ctx }) {
     });
   };
 
-  const formEstTotal = useMemo(
-    () => form.lines.reduce((s, l) => s + (Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0), 0),
-    [form.lines]
-  );
+  // Before any discount; after the line discounts; and the order discount on top.
+  const lineNet = (l) => (Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0) * (1 - Math.min(100, Math.max(0, Number(l.discountPercent) || 0)) / 100);
+  const formGross = useMemo(() => form.lines.reduce((s, l) => s + (Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0), 0), [form.lines]);
+  const formAfterLines = useMemo(() => form.lines.reduce((s, l) => s + lineNet(l), 0), [form.lines]);
+  const formOrderDiscount = Math.min(formAfterLines, Math.max(0, Number(form.orderDiscount) || 0));
+  const formEstTotal = formAfterLines - formOrderDiscount;
 
   const saveDraft = async () => {
     const cleanLines = form.lines
-      .map(l => ({
+      .map(l => {
+        // unitCost goes to the server NET of the line discount and this line's
+        // share of the order discount - that is what stock and the payable are
+        // booked at. The list price and discount ride along for the record.
+        const list = Number(l.unitCost) || 0;
+        const pct = Math.min(100, Math.max(0, Number(l.discountPercent) || 0));
+        const share = formAfterLines > 0 ? 1 - formOrderDiscount / formAfterLines : 1;
+        const net = +(list * (1 - pct / 100) * share).toFixed(4);
+        const discounted = pct > 0 || formOrderDiscount > 0;
+        return {
         ...l,
         orderedQty: Number(l.orderedQty) || 0,
-        unitCost: Number(l.unitCost) || 0,
+        unitCost: net,
+        listUnitCost: discounted ? list : null,
+        discountPercent: pct,
         packSize: l.packSize === '' || l.packSize == null ? null : Number(l.packSize) || null,
         expiryDate: l.expiryDate || null,
         productionDate: l.expiryDate ? null : (l.productionDate || null),
@@ -722,7 +737,7 @@ export default function ProcurementTab({ ctx }) {
         stockLocation: l.stockLocation || null,
         stockCategory: l.stockCategory || null,
         creditAccount: l.creditAccount || null,
-      }))
+      }; })
       .filter(l => l.itemName.trim() && l.orderedQty > 0);
     if (cleanLines.length === 0) { setError('Add at least one line with an item name and quantity.'); return; }
     setSaving(true); setError('');
@@ -736,13 +751,14 @@ export default function ProcurementTab({ ctx }) {
         ? {
             supplier: form.supplier, supplierId: form.supplierId || null,
             expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines,
+            orderDiscount: formOrderDiscount,
             prepaid: !!form.prepaid,
             prepaidAmount: form.prepaidAmount === '' ? undefined : Number(form.prepaidAmount),
             prepaidDate: form.prepaidDate || undefined,
             prepaidFromAccount: form.prepaidFromAccount || undefined,
             payOnDelivery: !!form.payOnDelivery, payOnDeliveryAccount: form.payOnDelivery ? form.payOnDeliveryAccount : undefined,
           }
-        : { type: 'procurement', supplier: form.supplier, supplierId: form.supplierId || null, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines,
+        : { type: 'procurement', supplier: form.supplier, supplierId: form.supplierId || null, expectedDate: form.expectedDate || null, notes: form.notes, lines: cleanLines, orderDiscount: formOrderDiscount,
             payOnDelivery: !!form.payOnDelivery, payOnDeliveryAccount: form.payOnDelivery ? form.payOnDeliveryAccount : undefined };
       const res = await apiFetch(url, { method: editId ? 'PATCH' : 'POST', body: JSON.stringify(body) });
       const d = await res.json();
@@ -1778,6 +1794,10 @@ export default function ProcurementTab({ ctx }) {
                           <input type="number" min="0" step="any" value={l.unitCost} onChange={e => updateLine(idx, { unitCost: e.target.value })} placeholder="500.00" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60" />
                         </div>
                         <div>
+                          <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Discount %</p>
+                          <input type="number" min="0" max="100" step="any" inputMode="decimal" value={l.discountPercent ?? ''} onChange={e => updateLine(idx, { discountPercent: e.target.value })} placeholder="0" title="Supplier discount on this line" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60" />
+                        </div>
+                        <div>
                           <p className="text-[9px] text-fg/65 uppercase font-bold mb-1">Size per Pack</p>
                           <input type="number" min="0" step="any" value={l.packSize} onChange={e => updateLine(idx, { packSize: e.target.value })} title="Weight / volume per pack, in the selected unit" placeholder="1000" className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg placeholder-fg/70 focus:outline-none focus:border-brand/60" />
                         </div>
@@ -1841,7 +1861,10 @@ export default function ProcurementTab({ ctx }) {
                             {lineDetails.has(idx) ? 'Fewer details' : 'More details (expiry, storage, payment, alerts)'}
                           </button>
                         )}
-                        <p className="text-right text-fg/70 text-xs font-bold">Line: {money((Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0))}</p>
+                        <p className="text-right text-fg/70 text-xs font-bold">
+                          {Number(l.discountPercent) > 0 && <span className="line-through text-fg/45 mr-1.5 font-normal">{money((Number(l.orderedQty) || 0) * (Number(l.unitCost) || 0))}</span>}
+                          Line: {money(lineNet(l))}{Number(l.discountPercent) > 0 && <span className="text-success ml-1">(−{Number(l.discountPercent)}%)</span>}
+                        </p>
                       </div>
                     </div>
                   ))}
@@ -1921,7 +1944,17 @@ export default function ProcurementTab({ ctx }) {
               </div>
             </div>
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-white/10">
-              <span className="text-sm font-black text-fg">Estimated total: <span className="text-brand-text">{money(formEstTotal)}</span></span>
+              <div className="flex flex-col gap-1.5 min-w-0">
+                <label className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-fg/70">
+                  Order discount ₱
+                  <input type="number" min="0" step="any" inputMode="decimal" value={form.orderDiscount ?? ''} onChange={e => setForm(f => ({ ...f, orderDiscount: e.target.value }))}
+                    placeholder="0.00" aria-label="Discount off the whole order" className="w-28 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-fg font-bold normal-case tracking-normal focus:outline-none focus:border-brand/60" />
+                </label>
+                {formGross - formEstTotal > 0.004 && (
+                  <span className="text-[11px] text-fg/65">Before discount {money(formGross)} · <span className="text-success">you save {money(formGross - formEstTotal)}</span></span>
+                )}
+                <span className="text-sm font-black text-fg">Estimated total: <span className="text-brand-text">{money(formEstTotal)}</span></span>
+              </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => !saving && closeForm()} className="text-sm font-bold px-4 py-2 rounded-xl text-fg/75 hover:text-fg transition">{suggestedQueue.length > 0 ? 'Cancel remaining' : 'Cancel'}</button>
                 <button onClick={saveDraft} disabled={saving} className="flex items-center gap-2 bg-brand hover:bg-brand/90 disabled:opacity-50 text-on-brand font-bold text-sm px-5 py-2 rounded-xl transition">
