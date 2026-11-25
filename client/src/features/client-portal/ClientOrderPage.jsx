@@ -1295,26 +1295,26 @@ export default function ClientOrderPage() {
                 <div className="rounded-xl border border-white/10 p-3 space-y-2">
                   <p className="text-[10px] font-black uppercase tracking-widest text-fg/70">Change your order</p>
                   {(slipOrder.items || []).map((it, i) => (
-                    <div key={i} className="flex items-center justify-between gap-2 text-xs">
-                      <span className={`flex-1 min-w-0 truncate ${Number(editDraft.qty[i]) === 0 ? 'line-through text-fg/50' : 'text-fg'}`}>{it.name}</span>
-                      <div className="flex items-center gap-1">
+                    <div key={i} className="flex items-center justify-between gap-3 text-sm sm:text-xs py-1 border-b border-white/5 last:border-0">
+                      <span className={`flex-1 min-w-0 break-words leading-snug ${Number(editDraft.qty[i]) === 0 ? 'line-through text-fg/50' : 'text-fg'}`}>{it.name}</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
                         <button type="button" aria-label={`Less ${it.name}`} onClick={() => setEditDraft(d => ({ ...d, qty: d.qty.map((q, j) => (j === i ? Math.max(0, Number(q) - 1) : q)) }))}
-                          className="w-7 h-7 rounded-lg bg-white/10 text-fg font-black">−</button>
-                        <span className="w-8 text-center font-mono font-bold tabular-nums">{editDraft.qty[i]}</span>
+                          className="w-10 h-10 sm:w-8 sm:h-8 rounded-lg bg-white/10 active:bg-white/20 text-fg text-base font-black touch-manipulation select-none">−</button>
+                        <span className="w-9 text-center font-mono font-bold tabular-nums">{editDraft.qty[i]}</span>
                         <button type="button" aria-label={`More ${it.name}`} onClick={() => setEditDraft(d => ({ ...d, qty: d.qty.map((q, j) => (j === i ? Number(q) + 1 : q)) }))}
-                          className="w-7 h-7 rounded-lg bg-white/10 text-fg font-black">+</button>
+                          className="w-10 h-10 sm:w-8 sm:h-8 rounded-lg bg-white/10 active:bg-white/20 text-fg text-base font-black touch-manipulation select-none">+</button>
                       </div>
                     </div>
                   ))}
                   {(editDraft.adds || []).map((a, k) => (
-                    <div key={`add-${k}`} className="flex items-center justify-between gap-2 text-xs">
-                      <span className="flex-1 min-w-0 truncate text-brand-text">+ {a.name}</span>
-                      <div className="flex items-center gap-1">
+                    <div key={`add-${k}`} className="flex items-center justify-between gap-3 text-sm sm:text-xs py-1 border-b border-white/5 last:border-0">
+                      <span className="flex-1 min-w-0 break-words leading-snug text-brand-text">+ {a.name}</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
                         <button type="button" aria-label={`Less ${a.name}`} onClick={() => setEditDraft(d => ({ ...d, adds: d.adds.map((x, j) => (j === k ? { ...x, quantity: Math.max(0, x.quantity - 1) } : x)).filter(x => x.quantity > 0) }))}
-                          className="w-7 h-7 rounded-lg bg-white/10 text-fg font-black">−</button>
-                        <span className="w-8 text-center font-mono font-bold tabular-nums">{a.quantity}</span>
+                          className="w-10 h-10 sm:w-8 sm:h-8 rounded-lg bg-white/10 active:bg-white/20 text-fg text-base font-black touch-manipulation select-none">−</button>
+                        <span className="w-9 text-center font-mono font-bold tabular-nums">{a.quantity}</span>
                         <button type="button" aria-label={`More ${a.name}`} onClick={() => setEditDraft(d => ({ ...d, adds: d.adds.map((x, j) => (j === k ? { ...x, quantity: x.quantity + 1 } : x)) }))}
-                          className="w-7 h-7 rounded-lg bg-white/10 text-fg font-black">+</button>
+                          className="w-10 h-10 sm:w-8 sm:h-8 rounded-lg bg-white/10 active:bg-white/20 text-fg text-base font-black touch-manipulation select-none">+</button>
                       </div>
                     </div>
                   ))}
@@ -1327,17 +1327,17 @@ export default function ClientOrderPage() {
                       <select value="" aria-label="Add a product" onChange={e => {
                         const p = addable.find(x => String(x._id) === e.target.value);
                         if (p) setEditDraft(d => ({ ...d, adds: [...(d.adds || []), { productId: String(p._id), name: p.name, quantity: 1 }] }));
-                      }} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-2 text-xs text-fg font-bold outline-none focus:border-brand/60">
+                      }} className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-3 sm:py-2 text-base sm:text-xs text-fg font-bold outline-none focus:border-brand/60">
                         <option value="">+ Add a product…</option>
                         {addable.map(p => <option key={p._id} value={String(p._id)}>{p.name} · {peso(Number(p.basePrice) || 0)}</option>)}
                       </select>
                     );
                   })()}
                   <p className="text-[10.5px] text-fg/60">Set a line to 0 to remove it. Prices follow your current price; we check stock when you save.</p>
-                  <div className="flex gap-2">
+                  <div className="flex flex-col-reverse sm:flex-row gap-2">
                     <button type="button" disabled={editSaving} onClick={() => saveEdit(slipOrder)}
-                      className="flex-1 bg-brand text-on-brand rounded-xl py-2.5 text-[11px] font-black uppercase tracking-wider disabled:opacity-50">{editSaving ? 'Saving…' : 'Save changes'}</button>
-                    <button type="button" onClick={() => setEditDraft(null)} className="px-3 text-[11px] font-bold text-fg/70 underline">Cancel</button>
+                      className="w-full sm:flex-1 bg-brand text-on-brand rounded-xl py-3.5 sm:py-2.5 text-[11px] font-black uppercase tracking-wider disabled:opacity-50">{editSaving ? 'Saving…' : 'Save changes'}</button>
+                    <button type="button" onClick={() => setEditDraft(null)} className="w-full sm:w-auto py-3 sm:py-0 px-3 text-[11px] font-bold text-fg/70 underline">Cancel</button>
                   </div>
                 </div>
               ) : (
