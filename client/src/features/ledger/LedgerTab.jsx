@@ -521,7 +521,7 @@ export default function LedgerTab({ ctx }) {
     setBdBusy(true);
     try {
       const r = await apiFetch('/api/admin/backdate-sale', { method: 'POST', body: JSON.stringify({
-        date: bd.date, customerName: bd.customerName, paymentMethod: bd.paymentMethod, notes: bd.notes,
+        date: bd.date, customerName: bd.customerName, ...(bd.clientId ? { clientId: bd.clientId } : {}), paymentMethod: bd.paymentMethod, notes: bd.notes,
         ...(bd.isComplimentary ? {} : paymentDetailsPayload(bd.paymentMethod, bd)),
         ...(bd.paymentMethod === 'Split' && !bd.isComplimentary ? { payments: splitPayload(bd.payments) } : {}),
         discountPercent: bdPct, affectInventory: bd.affectInventory, isComplimentary: bd.isComplimentary,
@@ -533,7 +533,7 @@ export default function LedgerTab({ ctx }) {
         ui.alert(`Backdated sale recorded: ${d.order.orderNumber}\nJournal ref: ${d.journalReference}`);
         setBdCart([]);
         notePaymentMethodUsed(bd.paymentMethod);
-        setBd(b => ({ ...b, customerName: '', notes: '', discountPercent: 0, isComplimentary: false, checkNumber: '', checkBank: '', checkDate: '', reference: '', deliveryFee: '', packagingFee: '' }));
+        setBd(b => ({ ...b, customerName: '', clientId: '', notes: '', discountPercent: 0, isComplimentary: false, checkNumber: '', checkBank: '', checkDate: '', reference: '', deliveryFee: '', packagingFee: '' }));
         fetchERPData();
         fetchBdHistory(1);
       } else ui.alert(d.error || 'Failed to record backdated sale.');
@@ -3271,9 +3271,23 @@ It posts only what is not already accrued for that month.`)) return;
                       </button>
                     </div>
 
+                    {/* A client account: the sale goes on their record (statement,
+                        A/R, sales by client). Otherwise just a name, or walk-in. */}
+                    <div>
+                      <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Client (optional)</label>
+                      <SearchSelect value={bd.clientId || ''}
+                        onChange={e => {
+                          const c = (clientAccounts || []).find(x => String(x._id) === String(e.target.value));
+                          setBd(b => ({ ...b, clientId: c ? String(c._id) : '', customerName: c ? (c.name || c.username || '') : b.customerName }));
+                        }}
+                        className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg outline-none focus:border-brand/60"
+                        placeholder="Type to find a client - or leave blank"
+                        options={[{ value: '', label: '- No client account (walk-in or a name) -' },
+                          ...(clientAccounts || []).map(c => ({ value: String(c._id), label: c.name || c.username, hint: c.clientCode || '' }))]} />
+                    </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">Customer (optional)</label>
+                        <label className="text-[10px] text-fg/70 font-bold uppercase block mb-1">{bd.clientId ? 'Name on the sale' : 'Customer (optional)'}</label>
                         <input type="text" placeholder="Walk-in" value={bd.customerName}
                           onChange={e => setBd({ ...bd, customerName: e.target.value })}
                           className="w-full bg-surface border border-white/10 rounded-lg px-3 py-2 text-fg outline-none focus:border-brand/60" />
