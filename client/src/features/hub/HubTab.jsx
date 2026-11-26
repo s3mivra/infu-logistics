@@ -152,6 +152,9 @@ export default function HubTab({ ctx }) {
   // branch under "Unassigned".
   const [branchCode, setBranchCode] = useState('');
   const [branchCodeSaved, setBranchCodeSaved] = useState('');
+  const [branchErr, setBranchErr] = useState('');
+  // Same rule as the server (lib/branchCode.js): AC-A001.
+  const branchCodeOk = (c) => !c.trim() || /^[A-Z0-9]{1,8}-[A-Z]{1,4}\d{1,6}$/i.test(c.trim());
   const [branchBusy, setBranchBusy] = useState(false);
   const loadBranchCode = useCallback(async () => {
     try {
@@ -163,14 +166,15 @@ export default function HubTab({ ctx }) {
   useEffect(() => { loadBranchCode(); }, [loadBranchCode]);
 
   const saveBranchCode = async () => {
-    setBranchBusy(true); setErr('');
+    if (!branchCodeOk(branchCode)) { setBranchErr('Use the form AC-A001: letters, a dash, a location letter, then a number.'); return; }
+    setBranchBusy(true); setBranchErr('');
     try {
       const r = await authFetch('/api/settings/branchCode', { method: 'PATCH', body: JSON.stringify({ value: branchCode }) });
       const d = await r.json();
-      if (!d.success) { setErr(d.error || 'Could not save the branch code.'); return; }
+      if (!d.success) { setBranchErr(d.error || 'Could not save the branch code.'); return; }
       setBranchCodeSaved(d.setting?.value || '');
       setBranchCode(d.setting?.value || '');
-    } catch { setErr('Network error saving the branch code.'); }
+    } catch { setBranchErr('Network error saving the branch code.'); }
     finally { setBranchBusy(false); }
   };
   const [transfers, setTransfers] = useState([]);
@@ -613,13 +617,19 @@ export default function HubTab({ ctx }) {
         <div className="flex flex-wrap gap-2 items-center">
           <input
             type="text" value={branchCode} placeholder="AC-A001"
-            onChange={e => setBranchCode(e.target.value.toUpperCase())}
-            className={`${input} font-mono max-w-[180px]`} />
-          <button onClick={saveBranchCode} disabled={branchBusy || branchCode === branchCodeSaved} className={btn()}>
+            onChange={e => { setBranchCode(e.target.value.toUpperCase().replace(/\s+/g, '')); setBranchErr(''); }}
+            aria-invalid={!branchCodeOk(branchCode)} aria-describedby="branch-code-help"
+            className={`${input} font-mono max-w-[180px] ${branchCodeOk(branchCode) ? '' : 'border-danger/70 focus:border-danger'}`} />
+          <button onClick={saveBranchCode} disabled={branchBusy || branchCode === branchCodeSaved || !branchCodeOk(branchCode)} className={btn()}>
             {branchBusy ? 'Saving…' : 'Save'}
           </button>
         </div>
-        <p className="text-[11px] text-fg/70 mt-2">
+        {(branchErr || !branchCodeOk(branchCode)) && (
+          <p className="text-danger text-xs font-bold mt-2" role="alert">
+            {branchErr || `"${branchCode}" is not a branch code yet - it needs a dash, a location letter and a number, like AC-A001.`}
+          </p>
+        )}
+        <p id="branch-code-help" className="text-[11px] text-fg/70 mt-2">
           <span className="font-mono text-fg/65">AC</span> business ·
           <span className="font-mono text-fg/65"> A</span> location ·
           <span className="font-mono text-fg/65"> 001</span> which inventory there.
